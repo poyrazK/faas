@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,16 +18,16 @@ import (
 // Exercises API-created intent and credentials through the gateway, with a
 // warm HTTP guest substitute. No database, scheduler or KVM is needed.
 func TestPlatformTenantAPIToGatewayIdentityLifecycle(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	const slug = "customer-api"
 	required, operatorAuth := true, false
-	created := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	created := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: slug, PlatformTenantRequired: &required, RequireAuthn: &operatorAuth,
 	}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create app: %d %s", created.Code, created.Body.String())
 	}
-	consumerRec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{ExternalRef: "customer-42", Name: "Customer 42"}, nil)
+	consumerRec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{ExternalRef: "customer-42", Name: "Customer 42"}, nil)
 	if consumerRec.Code != http.StatusCreated {
 		t.Fatalf("create consumer: %d %s", consumerRec.Code, consumerRec.Body.String())
 	}
@@ -41,8 +42,8 @@ func TestPlatformTenantAPIToGatewayIdentityLifecycle(t *testing.T) {
 		_, _ = w.Write([]byte(r.Header.Get(api.PlatformTenantIDHeader)))
 	}))
 	defer guest.Close()
-	backend := &tenantIngressBackend{store: e.store, slug: slug, address: guest.Listener.Addr().String()}
-	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{e.store})
+	backend := &tenantIngressBackend{store: (*e.Store()), slug: slug, address: guest.Listener.Addr().String()}
+	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{(*e.Store())})
 	request := func(token string, status int, tenantID string) {
 		t.Helper()
 		before := guestCalls.Load()
@@ -66,7 +67,7 @@ func TestPlatformTenantAPIToGatewayIdentityLifecycle(t *testing.T) {
 	}
 	request("", http.StatusForbidden, "")
 	request(key.Key, http.StatusForbidden, "")
-	createTenant := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{ExternalRef: "customer-42", Name: "Customer 42"}, nil)
+	createTenant := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{ExternalRef: "customer-42", Name: "Customer 42"}, nil)
 	if createTenant.Code != http.StatusCreated {
 		t.Fatalf("create tenant: %d %s", createTenant.Code, createTenant.Body.String())
 	}
@@ -74,13 +75,13 @@ func TestPlatformTenantAPIToGatewayIdentityLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createTenant.Body.Bytes(), &tenant); err != nil {
 		t.Fatal(err)
 	}
-	link := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/consumers", api.LinkPlatformTenantConsumerRequest{ConsumerID: consumer.ID}, nil)
+	link := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/consumers", api.LinkPlatformTenantConsumerRequest{ConsumerID: consumer.ID}, nil)
 	if link.Code != http.StatusOK {
 		t.Fatalf("link consumer: %d %s", link.Code, link.Body.String())
 	}
 	request(key.Key, http.StatusOK, tenant.ID)
 	for _, status := range []string{"suspended", "active"} {
-		changed := e.do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID, api.SetPlatformTenantStatusRequest{Status: status}, nil)
+		changed := e.Do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID, api.SetPlatformTenantStatusRequest{Status: status}, nil)
 		if changed.Code != http.StatusOK {
 			t.Fatalf("tenant status: %d %s", changed.Code, changed.Body.String())
 		}

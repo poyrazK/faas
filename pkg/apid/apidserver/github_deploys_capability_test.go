@@ -1,10 +1,12 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // production-us hunt #8: githubd answered /readyz, so github-deploys was
@@ -21,10 +23,10 @@ func TestGitHubDeploysAvailabilityNeedsTheEnqueueBridge(t *testing.T) {
 		}
 		return ""
 	}
-	if githubDeploysAvailabilityProbe(getenv, "")(context.Background()) {
+	if apidserver.GithubDeploysAvailabilityProbe(getenv, "")(context.Background()) {
 		t.Fatal("github-deploys advertised without a build-enqueue bridge")
 	}
-	if !githubDeploysAvailabilityProbe(getenv, "/run/faas/apid-githubd.sock")(context.Background()) {
+	if !apidserver.GithubDeploysAvailabilityProbe(getenv, "/run/faas/apid-githubd.sock")(context.Background()) {
 		t.Fatal("github-deploys unavailable with a bridge and a ready githubd")
 	}
 }

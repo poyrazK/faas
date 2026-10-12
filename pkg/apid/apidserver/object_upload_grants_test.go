@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
@@ -30,11 +32,11 @@ func brokerGrantRequest(g api.ObjectSignedRequest, body string) *http.Request {
 	return r
 }
 
-func brokerGrantGateway(t *testing.T, e testEnv, transport uploadGrantRoundTripper) *s3gateway.Handler {
+func brokerGrantGateway(t *testing.T, e apidserver.TestEnv, transport uploadGrantRoundTripper) *s3gateway.Handler {
 	t.Helper()
-	h, err := s3gateway.New(s3gateway.Config{Registry: e.s.objectStorage, Store: e.store, SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
+	h, err := s3gateway.New(s3gateway.Config{Registry: (*(*e.S()).ObjectStorage()), Store: (*e.Store()), SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
 		OpenSecret: func(blob []byte) (string, error) {
-			for _, identity := range mfaIdentities() {
+			for _, identity := range (*apidserver.MfaIdentities)() {
 				ns, plain, err := secretbox.OpenBytes(identity, blob)
 				if err == nil && ns == s3gateway.CredentialSecretNamespace {
 					return string(plain), nil
@@ -48,13 +50,13 @@ func brokerGrantGateway(t *testing.T, e testEnv, transport uploadGrantRoundTripp
 	return h
 }
 
-func mintAPIPutGrant(t *testing.T, e testEnv, path string, keys ...string) api.ObjectSignedRequest {
+func mintAPIPutGrant(t *testing.T, e apidserver.TestEnv, path string, keys ...string) api.ObjectSignedRequest {
 	t.Helper()
 	key := "folder/a b%2F.txt"
 	if len(keys) > 0 {
 		key = keys[0]
 	}
-	response := e.do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": key, "size_bytes": 3, "content_type": "text/plain", "cache_control": "private", "metadata": map[string]string{"custom": "frozen"}, "tags": map[string]string{"tag": "value"}}, nil)
+	response := e.Do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": key, "size_bytes": 3, "content_type": "text/plain", "cache_control": "private", "metadata": map[string]string{"custom": "frozen"}, "tags": map[string]string{"tag": "value"}}, nil)
 	var grant api.ObjectSignedRequest
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &grant) != nil {
 		t.Fatalf("mint = %d %s", response.Code, response.Body.String())
@@ -70,7 +72,7 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	e, provider, b, path := mutationAPIFixture(t)
 	g := mintAPIPutGrant(t, e, path)
 	unused := mintAPIPutGrant(t, e, path, "folder/unused")
-	if len(provider.accessed) != 0 {
+	if len((*provider.Accessed())) != 0 {
 		t.Fatal("minting broker grant contacted storage")
 	}
 	token := uuid.NewString()
@@ -81,7 +83,7 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 		if err != nil || string(body) != "abc" || r.ContentLength != 3 {
 			t.Fatal("provider upload bytes changed", err)
 		}
-		fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
+		fence, err := (*e.Store()).AcquireObjectBucketWriteFence(context.Background(), b, token)
 		if err != nil || fence.Requests != int64(3-calls) || fence.Uploads != int64(3-calls) || fence.NativeGrants != 0 {
 			t.Fatalf("active broker writer absent: %+v %v", fence, err)
 		}
@@ -92,7 +94,7 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	if out.Code != 200 || calls != 1 {
 		t.Fatalf("redeem = %d %s", out.Code, out.Body.String())
 	}
-	fence, err := e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
+	fence, err := (*e.Store()).ReadObjectBucketWriteFence(context.Background(), b, token)
 	if err != nil || fence.Requests != 1 || fence.Uploads != 1 || fence.NativeGrants != 0 {
 		t.Fatalf("completed broker request failed to drain: %+v %v", fence, err)
 	}
@@ -103,11 +105,11 @@ func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	if out.Code != 200 || calls != 2 {
 		t.Fatalf("original prepared writer blocked: %d %s", out.Code, out.Body.String())
 	}
-	fence, err = e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
+	fence, err = (*e.Store()).ReadObjectBucketWriteFence(context.Background(), b, token)
 	if err != nil || fence.Requests != 0 || fence.Uploads != 0 || fence.NativeGrants != 0 {
 		t.Fatal("original receipts did not drain", fence, err)
 	}
-	response := e.do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": "fresh", "size_bytes": 3}, nil)
+	response := e.Do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": "fresh", "size_bytes": 3}, nil)
 	if response.Code != 503 || !strings.Contains(response.Body.String(), "object_storage_checkpoint_active") || calls != 2 {
 		t.Fatal("hold admitted a new writer", response.Code, response.Body.String(), calls)
 	}
@@ -159,15 +161,15 @@ func TestObjectUploadGrantAPIAndGatewayRejectCapabilitySubstitution(t *testing.T
 
 func TestObjectUploadGrantAPIAndGatewayMultipartPart(t *testing.T) {
 	e, provider, b, path := mutationAPIFixture(t)
-	response := e.do(t, "POST", path+"/multipart-uploads", api.CreateObjectMultipartUploadRequest{Key: "parts/key", SizeBytes: 3}, nil)
+	response := e.Do(t, "POST", path+"/multipart-uploads", api.CreateObjectMultipartUploadRequest{Key: "parts/key", SizeBytes: 3}, nil)
 	var upload api.ObjectMultipartUpload
 	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &upload) != nil {
 		t.Fatalf("create = %d %s", response.Code, response.Body.String())
 	}
-	callsBefore := len(provider.accessed)
-	response = e.do(t, "POST", path+"/multipart-uploads/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{}, nil)
+	callsBefore := len((*provider.Accessed()))
+	response = e.Do(t, "POST", path+"/multipart-uploads/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{}, nil)
 	var grant api.ObjectSignedRequest
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &grant) != nil || len(provider.accessed) != callsBefore {
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &grant) != nil || len((*provider.Accessed())) != callsBefore {
 		t.Fatalf("part signing contacted upstream: %d %s", response.Code, response.Body.String())
 	}
 	calls := 0
@@ -184,7 +186,7 @@ func TestObjectUploadGrantAPIAndGatewayMultipartPart(t *testing.T) {
 	if out.Code != 200 || out.Header().Get("ETag") != "part-etag" || calls != 1 {
 		t.Fatalf("part = %d %s", out.Code, out.Body.String())
 	}
-	if _, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, uuid.NewString()); err != nil {
+	if _, err := (*e.Store()).AcquireObjectBucketWriteFence(context.Background(), b, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
 	out = httptest.NewRecorder()

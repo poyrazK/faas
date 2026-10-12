@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 669
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -32,7 +33,7 @@ type httpUploadFixture struct {
 	op                       state.Operation
 	inv                      state.Invocation
 	proof                    api.OperationRuntimeProof
-	server                   *server
+	server                   *apidserver.Server
 	runtime, customer, owner *api.Client
 }
 
@@ -96,8 +97,8 @@ func newHTTPUploadFixture(t *testing.T, kind string) httpUploadFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Operation()).WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func newHTTPUploadFixture(t *testing.T, kind string) httpUploadFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := httptest.NewServer(srv.handler())
+	host := httptest.NewServer(srv.Handler())
 	t.Cleanup(host.Close)
 	key, hash, _ := api.GenerateAPIKey()
 	if _, err := store.CreateAPIKey(ctx, account.ID, hash, "owner", api.ScopesAdminOnly); err != nil {
@@ -205,7 +206,7 @@ func TestOperationHTTPDirectUploadConcurrentCopies(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newHTTPUploadFixture(t, kind)
-			backend := &competingDirectStorage{StorageBackend: f.server.operation.ArtifactStorage, ready: make(chan struct{})}
+			backend := &competingDirectStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage, ready: make(chan struct{})}
 			f.server.WithOperationArtifactStorage(backend)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -267,21 +268,21 @@ func TestOperationHTTPDirectUploadCancellationFence(t *testing.T) {
 					}
 				}
 				if stage == "copied" {
-					f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: cancel})
+					f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: (*f.server.Operation()).ArtifactStorage, after: cancel})
 				}
 				body := io.NopCloser(strings.NewReader(directJobCSV))
 				if stage == "receiving" {
 					body = io.NopCloser(&cancelDirectRead{Reader: body, cancel: cancel})
 				}
 				a := state.OperationExecutionAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.inv.InstanceID, InvocationID: f.inv.ID, Attempt: f.proof.Attempt, Capability: f.proof.Capability}
-				_, err := f.server.operation.RetainOperationUpload(t.Context(), f.store.(state.OperationArtifactStore), f.current(t), a, directJobDeclaration(), body, func() error { return nil })
+				_, err := (*f.server.Operation()).RetainOperationUpload(t.Context(), f.store.(state.OperationArtifactStore), f.current(t), a, directJobDeclaration(), body, func() error { return nil })
 				if !errors.Is(err, state.ErrConflict) {
 					t.Fatal("cancelled upload committed", err)
 				}
 				if op := f.current(t); len(op.Artifacts) != 0 || op.ReportCount != 0 || len(op.ArtifactStorageKeys) != 0 {
 					t.Fatal("cancelled upload retained receipt")
 				}
-				if transfers, bytes := f.server.operation.ArtifactBudgetInUse(); bytes != 0 || transfers != 0 {
+				if transfers, bytes := (*f.server.Operation()).ArtifactBudgetInUse(); bytes != 0 || transfers != 0 {
 					t.Fatal("cancelled transfer leaked budget")
 				}
 			})
@@ -335,7 +336,7 @@ func TestOperationHTTPDirectUploadClaimLostAfterCopy(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newHTTPUploadFixture(t, kind)
-			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: func() {
+			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: (*f.server.Operation()).ArtifactStorage, after: func() {
 				reaper := f.store.(interface {
 					RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
 				})

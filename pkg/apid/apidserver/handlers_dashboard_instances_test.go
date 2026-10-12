@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardHandler_AppInstances(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -61,13 +62,13 @@ func TestDashboardHandler_AppInstances(t *testing.T) {
 	}
 	var hasActionCookie bool
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardInstanceCSRFCookie {
+		if c.Name == apidserver.DashboardInstanceCSRFCookie {
 			hasActionCookie = true
 			break
 		}
 	}
 	if !hasActionCookie {
-		t.Fatalf("GET instances: missing %s cookie", dashboardInstanceCSRFCookie)
+		t.Fatalf("GET instances: missing %s cookie", apidserver.DashboardInstanceCSRFCookie)
 	}
 }
 
@@ -84,7 +85,7 @@ func TestParseAppInstancesPath(t *testing.T) {
 		{path: "/instances", ok: false},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			got, ok := parseAppInstancesPath(tc.path)
+			got, ok := apidserver.ParseAppInstancesPath(tc.path)
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("parseAppInstancesPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 			}
@@ -93,7 +94,7 @@ func TestParseAppInstancesPath(t *testing.T) {
 }
 
 func TestDashboardInstanceAction_ParkRequiresNamedCSRF(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -106,18 +107,18 @@ func TestDashboardInstanceAction_ParkRequiresNamedCSRF(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	bad := dashboardPOST(t, h, cookie, "/dashboard/apps/park-action/instances/park", nil)
+	bad := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/park-action/instances/park", nil)
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", bad.Code, bad.Body.String())
 	}
 
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardInstanceAction, acct.ID, dashboardInstanceCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardInstanceAction, acct.ID, apidserver.DashboardInstanceCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	good := dashboardPOST(t, h, cookie, "/dashboard/apps/park-action/instances/park",
+	good := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/park-action/instances/park",
 		map[string]string{middleware.FormFieldName: token},
-		&http.Cookie{Name: dashboardInstanceCSRFCookie, Value: token})
+		&http.Cookie{Name: apidserver.DashboardInstanceCSRFCookie, Value: token})
 	if good.Code != http.StatusSeeOther {
 		t.Fatalf("valid csrf status = %d, want 303\nbody = %s", good.Code, good.Body.String())
 	}

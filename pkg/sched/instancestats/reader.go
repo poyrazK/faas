@@ -427,10 +427,14 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 		if row.InstanceID == "" || !freshSample(row.SampledAt, now) {
 			continue
 		}
-		out[row.InstanceID] = sched.InstanceActivity{
+		activity := sched.InstanceActivity{
 			Inflight:    row.InflightRequests,
 			LastRequest: row.LastRequestAt,
 		}
+		if row.RSSMB > 0 {
+			activity.ResidentMB = int(row.RSSMB)
+		}
+		out[row.InstanceID] = activity
 	}
 	return out
 }

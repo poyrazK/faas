@@ -1,5 +1,5 @@
 // adr: 664
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -64,8 +66,8 @@ func TestJobOperationRuntimeBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := http.Header{api.OperationJobRunHeader: {op.JobRunID}, api.OperationJobInstanceHeader: {instanceID}, api.OperationJobCapabilityHeader: {env["GREGALE_CUSTOMER_OPERATION_JOB_CAPABILITY"]}, api.OperationGenerationHeader: {"1"}, api.OperationAttemptHeader: {"1"}}
-	server := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	handler := server.handler()
+	server := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	handler := server.Handler()
 	for _, tc := range []struct {
 		name, kind, body string
 		headers          func(http.Header)

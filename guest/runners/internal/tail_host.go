@@ -75,7 +75,7 @@ const TailWriteTimeout = 250 * time.Millisecond
 // tail with no wait. err is set by the shim if the registration
 // itself failed before the runner saw it.
 //
-// Exported so the per-runner drainTailHost shim can declare a
+// Exported so the runner core (internal.Serve) can declare a
 // matching closure receiver without re-deriving the JSON tags.
 // The wire shape is the only contract — the runner's tail host
 // matches by json.Unmarshal in ReadPipe (see below).
@@ -329,7 +329,7 @@ func (h *TailHost) recordFailure(reason string) {
 }
 
 // DrainForResponse is the runner-side entry point that the
-// per-runner drainTailHost shims call. It encapsulates the
+// runner core (internal.Serve) calls. It encapsulates the
 // 5x near-identical logic that used to live in each runner's
 // tail_host_integration.go: feature-gate on WaitUntilSec/TailPipePath,
 // build a TailHost, ReadPipe the JSONL, register each line as a
@@ -338,11 +338,9 @@ func (h *TailHost) recordFailure(reason string) {
 // 0x04 DGRAM), drain, and append failures to the response's
 // TailErrors slice.
 //
-// The runner shim shrinks to a one-liner:
+// internal.Serve calls it once per response:
 //
-//	func drainTailHost(ctx context.Context, env envelope, resp *response) {
-//	    internal.DrainForResponse(ctx, "go124", env.WaitUntilSec, env.TailPipePath, &resp.TailErrors)
-//	}
+//	DrainForResponse(ctx, cfg.Runtime, env.WaitUntilSec, env.TailPipePath, &resp.TailErrors)
 //
 // tailCapMax is sourced from pkg/api.TailCapMax by the caller —
 // this helper is layered above the per-plan quota so it stays

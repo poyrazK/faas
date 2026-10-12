@@ -14,7 +14,7 @@
 // The tests drive auditEventResponse directly (it is an
 // unexported helper, so whitebox-only — package main).
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,7 +42,7 @@ func TestAuditEventResponse_ProjectsDataSeverity(t *testing.T) {
 		Subject: &subject,
 		Data:    dataJSON,
 	}
-	resp := auditEventResponse(e)
+	resp := apidserver.AuditEventResponse(e)
 	if resp.Severity != "high" {
 		t.Errorf("Severity = %q, want %q", resp.Severity, "high")
 	}
@@ -66,7 +68,7 @@ func TestAuditEventResponse_EmptySeverityForNonStatelessKinds(t *testing.T) {
 		Kind:  "auth.login",
 		Data:  dataJSON,
 	}
-	resp := auditEventResponse(e)
+	resp := apidserver.AuditEventResponse(e)
 	if resp.Severity != "" {
 		t.Errorf("Severity = %q, want \"\" (non-stateless kinds must render no Severity)", resp.Severity)
 	}
@@ -100,7 +102,7 @@ func TestAuditEventResponse_PrePR427RowsRenderEmpty(t *testing.T) {
 		Kind:  "stateless.advisory",
 		Data:  dataJSON,
 	}
-	resp := auditEventResponse(e)
+	resp := apidserver.AuditEventResponse(e)
 	if resp.Severity != "" {
 		t.Errorf("Severity = %q, want \"\" (pre-PR-427 row must not error or guess)", resp.Severity)
 	}
@@ -125,7 +127,7 @@ func TestAuditEventResponse_AllSeveritiesProject(t *testing.T) {
 				ID: 1, At: time.Now(), Actor: "apid",
 				Kind: "stateless.advisory", Data: dataJSON,
 			}
-			resp := auditEventResponse(e)
+			resp := apidserver.AuditEventResponse(e)
 			if resp.Severity != sev {
 				t.Errorf("Severity = %q, want %q", resp.Severity, sev)
 			}

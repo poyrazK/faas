@@ -1,5 +1,5 @@
 // adr: 233
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,28 +9,29 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestProjectEnvironmentPoliciesRejectTemplatedPath(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	if _, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	const body = `{"rules":[{"kind":"headers","match_path":"/users/{id}","priority":100,"enabled":true,"action":{"response_headers":[{"name":"X-Environment","value":"staging","action":"set"}]}}]}`
-	req, rec := projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/policies", "shop", []byte(body))
+	req, rec := apidserver.ProjectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/policies", "shop", []byte(body))
 	req.SetPathValue("environment", "staging")
 	req.SetPathValue("workload", app.Slug)
-	srv.updateProjectEnvironmentPolicies(rec, req, acct)
+	srv.UpdateProjectEnvironmentPolicies(rec, req, acct)
 	if rec.Code < 400 || !strings.Contains(rec.Body.String(), `\"/users/?*\"`) {
 		t.Fatalf("templated environment policy path: status=%d body=%s; want a rejection naming the glob", rec.Code, rec.Body.String())
 	}
 }
 
 func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	if _, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
 	}); err != nil {
@@ -38,10 +39,10 @@ func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 	}
 	const path = "/v1/projects/shop/environments/staging/workloads/shop-api/policies"
 	const body = `{"rules":[{"kind":"headers","match_path":"/","priority":100,"enabled":true,"action":{"response_headers":[{"name":"X-Environment","value":"staging","action":"set"}]}}]}`
-	req, rec := projectRequest(http.MethodPut, path, "shop", []byte(body))
+	req, rec := apidserver.ProjectRequest(http.MethodPut, path, "shop", []byte(body))
 	req.SetPathValue("environment", "staging")
 	req.SetPathValue("workload", app.Slug)
-	srv.updateProjectEnvironmentPolicies(rec, req, acct)
+	srv.UpdateProjectEnvironmentPolicies(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("write status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -52,9 +53,9 @@ func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 	if policy.Ownership != "environment" || len(policy.Rules) != 1 || policy.Rules[0].Kind != "headers" {
 		t.Fatalf("policy response = %+v", policy)
 	}
-	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/state", "shop", nil)
+	req, rec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/state", "shop", nil)
 	req.SetPathValue("environment", "staging")
-	srv.getProjectEnvironmentState(rec, req, acct)
+	srv.GetProjectEnvironmentState(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("state status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -65,9 +66,9 @@ func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 	if len(snapshot.Workloads) != 1 || snapshot.Workloads[0].Policies.Ownership != "environment" || len(snapshot.Workloads[0].Policies.Rules) != 1 {
 		t.Fatalf("state policies = %+v", snapshot.Workloads)
 	}
-	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/diff?from=production", "shop", nil)
+	req, rec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/diff?from=production", "shop", nil)
 	req.SetPathValue("environment", "staging")
-	srv.diffProjectEnvironment(rec, req, acct)
+	srv.DiffProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("diff status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -84,10 +85,10 @@ func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 		`{"rules":[{"kind":"route","match_path":"/","priority":100,"enabled":true,"action":{"target_app_slug":"shop-api"}}]}`,
 		`{"rules":[{"kind":"cors","match_path":"/","priority":100,"enabled":true,"action":{"cors_preset_id":"00000000-0000-0000-0000-000000000001"}}]}`,
 	} {
-		req, rec = projectRequest(http.MethodPut, path, "shop", []byte(invalid))
+		req, rec = apidserver.ProjectRequest(http.MethodPut, path, "shop", []byte(invalid))
 		req.SetPathValue("environment", "staging")
 		req.SetPathValue("workload", app.Slug)
-		srv.updateProjectEnvironmentPolicies(rec, req, acct)
+		srv.UpdateProjectEnvironmentPolicies(rec, req, acct)
 		if rec.Code < 400 || rec.Code >= 500 {
 			t.Fatalf("invalid policy status=%d body=%s", rec.Code, rec.Body.String())
 		}

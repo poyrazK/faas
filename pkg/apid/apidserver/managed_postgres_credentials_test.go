@@ -1,5 +1,5 @@
 // adr: 650 — sealed Data API bindings retain credential custody and recovery.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -27,7 +28,7 @@ func testManagedPostgresCredentialSinkSealsURL(t *testing.T, access managedpostg
 		t.Fatal(err)
 	}
 	store := state.NewMemStore()
-	sink, err := newAppSecretCredentialSink(
+	sink, err := apidserver.NewAppSecretCredentialSink(
 		store,
 		func() *age.X25519Recipient { return identity.Recipient() },
 		func() []byte { return []byte("0123456789abcdef0123456789abcdef") },
@@ -97,7 +98,7 @@ func TestManagedPostgresCredentialSinkDeleteRecoversDuringPartialRotation(t *tes
 		t.Fatal(err)
 	}
 	store := state.NewMemStore()
-	sink, err := newAppSecretCredentialSink(
+	sink, err := apidserver.NewAppSecretCredentialSink(
 		store,
 		func() *age.X25519Recipient { return identity.Recipient() },
 		func() []byte { return []byte("0123456789abcdef0123456789abcdef") },
@@ -139,7 +140,7 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 	}
 	// Migration tools always connect directly, even when pooling is available.
 	material.Endpoints = append(material.Endpoints, managedpostgres.Endpoint{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 6432})
-	migrationURL, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, material)
+	migrationURL, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialMigration, material)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +150,11 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 	}
 	pooledOnly := material
 	pooledOnly.Endpoints = material.Endpoints[2:]
-	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, pooledOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialMigration, pooledOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("pooled-only migration accepted: %v", err)
 	}
 	material.Endpoints = material.Endpoints[:2]
-	value, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
+	value, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 		if expectedHost == "pool.example.test" {
 			material.Endpoints = append(material.Endpoints, managedpostgres.Endpoint{Role: managedpostgres.EndpointPooled, Host: expectedHost, Port: 6432})
 		}
-		value, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
+		value, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
 		if err != nil {
 			t.Fatal("read-only role requires no replica", err)
 		}
@@ -183,18 +184,18 @@ func TestManagedPostgresConnectionURLFailsClosedOnUnrepresentableTrustOrHost(t *
 		RootCertificatePEM: "-----BEGIN CERTIFICATE-----\nsecret\n-----END CERTIFICATE-----",
 		Endpoints:          []managedpostgres.Endpoint{{Role: managedpostgres.EndpointPooled, Host: "db.example.test", Port: 5432}},
 	}
-	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialReadWrite, material); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialReadWrite, material); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("root certificate was silently discarded: %v", err)
 	}
 	material.RootCertificatePEM = ""
 	material.Endpoints[0].Host = "db.example.test@attacker.example"
-	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialReadWrite, material); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, err := apidserver.ManagedPostgresConnectionURL(managedpostgres.CredentialReadWrite, material); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("host injection accepted: %v", err)
 	}
 }
 
 func TestManagedPostgresCredentialSinkFailsClosedWithoutSealKeys(t *testing.T) {
-	sink, err := newAppSecretCredentialSink(state.NewMemStore(), func() *age.X25519Recipient { return nil }, func() []byte { return nil })
+	sink, err := apidserver.NewAppSecretCredentialSink(state.NewMemStore(), func() *age.X25519Recipient { return nil }, func() []byte { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +216,7 @@ func TestManagedPostgresCredentialSealerDoesNotPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := state.NewMemStore()
-	sink, err := newAppSecretCredentialSink(store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("0123456789abcdef0123456789abcdef") })
+	sink, err := apidserver.NewAppSecretCredentialSink(store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("0123456789abcdef0123456789abcdef") })
 	if err != nil {
 		t.Fatal(err)
 	}

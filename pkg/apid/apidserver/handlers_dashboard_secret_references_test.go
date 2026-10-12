@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,12 +19,12 @@ func secretReferenceDashboardPost(t *testing.T, h http.Handler, session *http.Co
 	if len(section) != 2 {
 		t.Fatal("reference editor missing")
 	}
-	form.Set("csrf_token", dashboardInputToken(section[1]))
+	form.Set("csrf_token", apidserver.DashboardInputToken(section[1]))
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(session)
 	if csrf {
-		cookie := findDashboardCookie(get.Result().Cookies(), dashboardSecretCSRFCookie)
+		cookie := apidserver.FindDashboardCookie(get.Result().Cookies(), apidserver.DashboardSecretCSRFCookie)
 		if cookie == nil {
 			t.Fatal("missing secret CSRF cookie")
 		}
@@ -34,7 +36,7 @@ func secretReferenceDashboardPost(t *testing.T, h http.Handler, session *http.Co
 }
 
 func TestSecretReferenceDashboardShortCatalogNamesAreWritable(t *testing.T) {
-	h, session, store, _ := newAuthedDashboardServerFull(t)
+	h, session, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +50,7 @@ func TestSecretReferenceDashboardShortCatalogNamesAreWritable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page := cookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=__all__", nil)
+	page := apidserver.CookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=__all__", nil)
 	if page.Code != 200 {
 		t.Fatalf("page: %d", page.Code)
 	}
@@ -72,13 +74,13 @@ func TestSecretReferenceDashboardShortCatalogNamesAreWritable(t *testing.T) {
 }
 
 func TestSecretReferenceDashboardSessionFormsAndAuthority(t *testing.T) {
-	h, session, store, mgr := newAuthedDashboardServerFull(t)
+	h, session, store, mgr := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	project, app := seedPublicSecretReferences(t, store, acct)
-	get := cookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=production", nil)
+	get := apidserver.CookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=production", nil)
 	if get.Code != 200 || strings.Contains(get.Body.String(), "sealed-production") {
 		t.Fatalf("page: %d", get.Code)
 	}
@@ -94,7 +96,7 @@ func TestSecretReferenceDashboardSessionFormsAndAuthority(t *testing.T) {
 	if err != nil || refs["DATABASE_URL"] != "secret:DATABASE" {
 		t.Fatalf("saved reference: %+v %v", refs, err)
 	}
-	page := cookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=production", nil)
+	page := apidserver.CookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=production", nil)
 	if !strings.Contains(page.Body.String(), "secret:DATABASE") || !strings.Contains(page.Body.String(), "Removing a reference preserves its secret") {
 		t.Fatal("names or deletion semantics missing")
 	}
@@ -109,8 +111,8 @@ func TestSecretReferenceDashboardSessionFormsAndAuthority(t *testing.T) {
 	if _, err := store.CreateSession(t.Context(), sid, acct.ID, "192.0.2.30", "reference-test"); err != nil {
 		t.Fatal(err)
 	}
-	pending := reissueWithMFAFlag(t, mgr, sid, acct.ID, true)
-	if rec := secretReferenceDashboardPost(t, h, pending, page, path, form, true); rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), dashboardMFAPath) {
+	pending := apidserver.ReissueWithMFAFlag(t, mgr, sid, acct.ID, true)
+	if rec := secretReferenceDashboardPost(t, h, pending, page, path, form, true); rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), apidserver.DashboardMFAPath) {
 		t.Fatalf("pending MFA: %d %s", rec.Code, rec.Body.String())
 	}
 	_ = ownPublicSecretReference(t, store, acct, project, app)

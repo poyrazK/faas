@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestIdempotentReplayCannotBeSniffedAsHTML(t *testing.T) {
 	body := []byte(`{"value":"<script>alert(1)</script>"}`)
 	w := httptest.NewRecorder()
-	replayIdempotent(w, http.StatusCreated, body)
+	apidserver.ReplayIdempotent(w, http.StatusCreated, body)
 	if w.Code != http.StatusCreated || w.Body.String() != string(body) {
 		t.Fatalf("replay changed status or cached body: %d %s", w.Code, w.Body.String())
 	}
@@ -31,22 +32,22 @@ func TestIdempotentReplayCannotBeSniffedAsHTML(t *testing.T) {
 // executed the operation twice. The key is now reserved first: the
 // concurrent retry gets 409, and a retry after completion replays.
 func TestIdempotent_ConcurrentRetryRunsOnce(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var runs atomic.Int32
 	release := make(chan struct{})
 	entered := make(chan struct{})
-	h := e.s.idempotent(func(w http.ResponseWriter, _ *http.Request, _ state.Account) {
+	h := (*e.S()).Idempotent(func(w http.ResponseWriter, _ *http.Request, _ state.Account) {
 		if runs.Add(1) == 1 {
 			close(entered)
 			<-release
 		}
-		writeJSON(w, http.StatusCreated, map[string]string{"id": "dep-1"})
+		apidserver.WriteJSON(w, http.StatusCreated, map[string]string{"id": "dep-1"})
 	})
 	call := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/apps/a/deployments", nil)
 		req.Header.Set("Idempotency-Key", "ci-retry")
 		rec := httptest.NewRecorder()
-		h(rec, req, e.acct)
+		h(rec, req, (*e.Acct()))
 		return rec
 	}
 
@@ -73,17 +74,17 @@ func TestIdempotent_ConcurrentRetryRunsOnce(t *testing.T) {
 // so reusing one on another endpoint replayed that endpoint's response and
 // the new operation silently never ran.
 func TestIdempotent_KeyIsScopedToEndpoint(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var runs atomic.Int32
-	h := e.s.idempotent(func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+	h := (*e.S()).Idempotent(func(w http.ResponseWriter, r *http.Request, _ state.Account) {
 		runs.Add(1)
-		writeJSON(w, http.StatusCreated, map[string]string{"path": r.URL.Path})
+		apidserver.WriteJSON(w, http.StatusCreated, map[string]string{"path": r.URL.Path})
 	})
 	for _, path := range []string{"/v1/apps/a/deployments", "/v1/apps/b/deployments", "/v1/apps/a/secrets"} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		req.Header.Set("Idempotency-Key", "commit-abc123")
 		rec := httptest.NewRecorder()
-		h(rec, req, e.acct)
+		h(rec, req, (*e.Acct()))
 		if rec.Header().Get("Idempotent-Replayed") == "true" {
 			t.Fatalf("POST %s replayed another endpoint's response: %s", path, rec.Body)
 		}
@@ -119,32 +120,32 @@ func TestIdempotent_AbandonedReservationIsTakenOver(t *testing.T) {
 // the customer paid; the same held for the email-verification 403 and the
 // hourly deploy limit's 429.
 func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
 	do := func(body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/v1/apps/idem-gate/deployments", strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Authorization", "Bearer "+(*env.Key()))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Idempotency-Key", "gregale-deploy-same-content")
-		env.h.ServeHTTP(rec, r)
+		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
 	create := httptest.NewRecorder()
 	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","runtime":"node22"}`))
-	cr.Header.Set("Authorization", "Bearer "+env.key)
+	cr.Header.Set("Authorization", "Bearer "+(*env.Key()))
 	cr.Header.Set("Content-Type", "application/json")
-	env.h.ServeHTTP(create, cr)
+	(*env.H()).ServeHTTP(create, cr)
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create app = %d %s", create.Code, create.Body)
 	}
-	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+	if err := (*env.Store()).MarkDunningStep(t.Context(), (*env.Acct()).ID, state.AccountActive, state.AccountPastDue); err != nil {
 		t.Fatal(err)
 	}
 	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`
 	if rec := do(deploy); rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("past_due deploy = %d, want 402", rec.Code)
 	}
-	if err := env.store.UpdateAccountStatus(t.Context(), env.acct.ID, state.AccountActive); err != nil {
+	if err := (*env.Store()).UpdateAccountStatus(t.Context(), (*env.Acct()).ID, state.AccountActive); err != nil {
 		t.Fatal(err)
 	}
 	rec := do(deploy)
@@ -161,7 +162,7 @@ func TestIdempotencyReplayable(t *testing.T) {
 		200: true, 201: true, 202: true, 400: true, 404: true, 409: true, 422: true, 500: true,
 		401: false, 402: false, 403: false, 429: false, 503: false,
 	} {
-		if got := idempotencyReplayable(status); got != want {
+		if got := apidserver.IdempotencyReplayable(status); got != want {
 			t.Errorf("idempotencyReplayable(%d) = %v, want %v", status, got, want)
 		}
 	}
@@ -169,16 +170,16 @@ func TestIdempotencyReplayable(t *testing.T) {
 
 func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
 	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged} {
-		if idempotencyResponseReplayable(http.StatusConflict, []byte(`{"code":"`+code+`"}`)) {
+		if apidserver.IdempotencyResponseReplayable(http.StatusConflict, []byte(`{"code":"`+code+`"}`)) {
 			t.Errorf("binding refusal %s would freeze the retry key", code)
 		}
 	}
 	for _, body := range []string{`{"code":"conflict"}`, `{"code":"canary_step_conflict"}`, `not-json`} {
-		if !idempotencyResponseReplayable(http.StatusConflict, []byte(body)) {
+		if !apidserver.IdempotencyResponseReplayable(http.StatusConflict, []byte(body)) {
 			t.Errorf("unrelated conflict lost replay behavior: %s", body)
 		}
 	}
-	if !idempotencyResponseReplayable(http.StatusOK, []byte(`{"code":"bindings_check_failed"}`)) {
+	if !apidserver.IdempotencyResponseReplayable(http.StatusOK, []byte(`{"code":"bindings_check_failed"}`)) {
 		t.Fatal("successful responses must remain replayable")
 	}
 }
@@ -190,16 +191,16 @@ func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
 // A failed, cancelled or superseded deployment now runs again; one still in
 // progress is replayed, so a network retry still cannot deploy twice.
 func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Authorization", "Bearer "+(*env.Key()))
 		r.Header.Set("Content-Type", "application/json")
 		if method == http.MethodPost && strings.HasSuffix(path, "/deployments") {
 			r.Header.Set("Idempotency-Key", "gregale-deploy-same-content")
 		}
-		env.h.ServeHTTP(rec, r)
+		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
 	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","runtime":"node22"}`); rec.Code != http.StatusCreated {
@@ -226,7 +227,7 @@ func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
 
 	for i, status := range []state.DeploymentStatus{state.DeployFailed, state.DeployCancelled, state.DeploySuperseded} {
 		prevID := firstID
-		if err := env.store.UpdateDeploymentStatus(t.Context(), prevID, status, "builder lost"); err != nil {
+		if err := (*env.Store()).UpdateDeploymentStatus(t.Context(), prevID, status, "builder lost"); err != nil {
 			t.Fatal(err)
 		}
 		rerun := do(http.MethodPost, "/v1/apps/idem-fail/deployments", deploy)

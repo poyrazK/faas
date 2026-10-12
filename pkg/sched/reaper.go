@@ -711,7 +711,55 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 	if residentMB <= EvictionThresholdMB {
 		return nil
 	}
+	// Greedily evict until resident drops to the threshold.
+	var evict []string
+	remaining := residentMB
+	for _, in := range evictionCandidates(now, instances) {
+		if remaining <= EvictionThresholdMB {
+			break
+		}
+		evict = append(evict, in.Instance)
+		remaining -= in.admissionMB()
+	}
+	return evict
+}
 
+// SelectMemoryEvictions is RAM-pressure eviction under measured admission
+// (ADR-909): reservations may then exceed a node's ceiling, so pressure is
+// the node's measured memory, not its reservations. On every node whose
+// usedMB exceeds its ceiling it returns instances to evict, in
+// SelectEvictions' order, until the node is back under
+// MeasuredEvictionTargetPercent of the ceiling. Each eviction frees the
+// instance's measured memory, or its reservation when unmeasured.
+func SelectMemoryEvictions(now time.Time, instances []InstanceInfo, usedMB, ceilingMB, residentMB map[string]int) []string {
+	remaining := make(map[string]int, len(usedMB))
+	for node, used := range usedMB {
+		if ceiling := ceilingMB[node]; ceiling > 0 && used > ceiling {
+			remaining[node] = used
+		}
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	var evict []string
+	for _, in := range evictionCandidates(now, instances) {
+		used, pressured := remaining[in.NodeID]
+		if !pressured || used <= ceilingMB[in.NodeID]*api.MeasuredEvictionTargetPercent/100 {
+			continue
+		}
+		evict = append(evict, in.Instance)
+		freed, ok := residentMB[in.Instance]
+		if !ok || freed <= 0 {
+			freed = in.admissionMB()
+		}
+		remaining[in.NodeID] = used - freed
+	}
+	return evict
+}
+
+// evictionCandidates returns the instances RAM-pressure eviction may park, in
+// eviction order.
+func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo {
 	// Candidates: running instances old enough to evict.
 	var cands []InstanceInfo
 	for _, in := range instances {
@@ -756,16 +804,5 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 		}
 		return cands[a].Instance < cands[b].Instance
 	})
-
-	// Greedily evict until resident drops to the threshold.
-	var evict []string
-	remaining := residentMB
-	for _, in := range cands {
-		if remaining <= EvictionThresholdMB {
-			break
-		}
-		evict = append(evict, in.Instance)
-		remaining -= in.admissionMB()
-	}
-	return evict
+	return cands
 }

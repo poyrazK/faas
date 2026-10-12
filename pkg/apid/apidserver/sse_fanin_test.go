@@ -4,7 +4,7 @@
 // silently break the dashboard's "live updates" UX because no public
 // test exercises the path. The fake subscribe seam lets us feed
 // synthetic notifications without a live Postgres.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 )
@@ -61,7 +62,7 @@ func TestSSEFanIn_RepublishesToBroadcaster(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		sseFanIn(ctx, log, nil, bc, subscribe)
+		apidserver.SseFanIn(ctx, log, nil, bc, subscribe)
 		close(done)
 	}()
 
@@ -104,7 +105,7 @@ func TestSSEFanIn_NilBroadcasterReturns(t *testing.T) {
 		t.Fatal("subscribe should not be called when broadcaster is nil")
 		return nil, nil
 	}
-	sseFanIn(ctx, log, nil, nil, subscribe)
+	apidserver.SseFanIn(ctx, log, nil, nil, subscribe)
 	// No assertion needed — reaching here without panic or
 	// subscribe call is the contract.
 }
@@ -121,7 +122,7 @@ func TestSSEFanIn_SubscribeErrorLogsAndReturns(t *testing.T) {
 	subscribe := func(ctx context.Context, _ *slog.Logger) (<-chan db.Notification, error) {
 		return nil, errFakeSubscribe
 	}
-	sseFanIn(ctx, log, nil, bc, subscribe)
+	apidserver.SseFanIn(ctx, log, nil, bc, subscribe)
 }
 
 // errFakeSubscribe is a sentinel used to assert the fan-in exits on
@@ -149,7 +150,7 @@ func TestSSEChannels_Contract(t *testing.T) {
 		db.NotifyAPIRouteDiscovered:     true,
 	}
 	got := map[string]bool{}
-	for _, ch := range sseChannels {
+	for _, ch := range *apidserver.SseChannels {
 		got[ch] = true
 	}
 	for ch := range want {

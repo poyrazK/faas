@@ -51,7 +51,7 @@ type responseLike struct {
 // accidentally always emits 0 is caught.
 //
 // PR 2 is the envelope shape only — there is no production code
-// reading the field yet. The runner's invokeHandler still constructs
+// reading the field yet. The runner core (internal.Serve) still constructs
 // envelope{} with WaitUntilSec left at 0; the test asserts the field
 // is present and decode-correct on the wire so PR 3 can wire
 // reader-side code with confidence.

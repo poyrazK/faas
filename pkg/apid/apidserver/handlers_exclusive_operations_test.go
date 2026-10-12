@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,23 +10,24 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestExclusiveOperationAPIAdmissionReceiptAndIdempotency(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	deployment := mustSeedDeployment(t, e, "exclusive-api")
-	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	deployment := apidserver.MustSeedDeployment(t, e, "exclusive-api")
+	if err := (*e.Store()).MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.AppByID(t.Context(), deployment.AppID)
+	app, err := (*e.Store()).AppByID(t.Context(), deployment.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := exclusivework.Policy{Name: "crm-sync", Scope: "account", MemberAppIDs: []string{app.ID},
 		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60}
-	saved := e.do(t, http.MethodPut, "/v1/account/operation-policies/crm-sync", policy, nil)
+	saved := e.Do(t, http.MethodPut, "/v1/account/operation-policies/crm-sync", policy, nil)
 	if saved.Code != http.StatusOK {
 		t.Fatalf("save policy: %d %s", saved.Code, saved.Body)
 	}
@@ -34,7 +35,7 @@ func TestExclusiveOperationAPIAdmissionReceiptAndIdempotency(t *testing.T) {
 		Invocation: api.InvokeRequest{Method: http.MethodPost, Path: "/sync", Payload: json.RawMessage(`{"mode":"incremental"}`)}}
 	post := func() *httptest.ResponseRecorder {
 		t.Helper()
-		return e.do(t, http.MethodPost, "/v1/apps/exclusive-api/operations", request,
+		return e.Do(t, http.MethodPost, "/v1/apps/exclusive-api/operations", request,
 			map[string]string{"Idempotency-Key": "sync-acme-2026-09-30"})
 	}
 	first := post()
@@ -53,7 +54,7 @@ func TestExclusiveOperationAPIAdmissionReceiptAndIdempotency(t *testing.T) {
 	if replay.Code != http.StatusAccepted || json.Unmarshal(replay.Body.Bytes(), &replayed) != nil || replayed.ID != accepted.ID {
 		t.Fatalf("idempotency replay: %d %s", replay.Code, replay.Body)
 	}
-	read := e.do(t, http.MethodGet, "/v1/operations/"+accepted.ID, nil, nil)
+	read := e.Do(t, http.MethodGet, "/v1/operations/"+accepted.ID, nil, nil)
 	if read.Code != http.StatusOK || read.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("read operation: %d %s", read.Code, read.Body)
 	}
@@ -65,29 +66,29 @@ func TestExclusiveOperationAPIAdmissionReceiptAndIdempotency(t *testing.T) {
 	if err := json.Unmarshal(read.Body.Bytes(), &receipt); err != nil || receipt.State != "pending" || receipt.PolicyRevision != 1 {
 		t.Fatalf("receipt=%+v decode error=%v", receipt, err)
 	}
-	cancel := e.do(t, http.MethodPost, "/v1/operations/"+accepted.ID+"/cancel", nil, nil)
+	cancel := e.Do(t, http.MethodPost, "/v1/operations/"+accepted.ID+"/cancel", nil, nil)
 	if cancel.Code != http.StatusNoContent {
 		t.Fatalf("cancel operation: %d %s", cancel.Code, cancel.Body)
 	}
 }
 
 func TestExclusiveJobOperationAPIQueuesValidatedRunAndReturnsJobReceipt(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	jobName := seedJob(t, e, "exclusive-job-api", "registry.example/importer:v1")
-	job, err := e.store.JobGetByName(t.Context(), e.acct.ID, jobName)
+	e := apidserver.Setup(t, api.PlanPro)
+	jobName := apidserver.SeedJob(t, e, "exclusive-job-api", "registry.example/importer:v1")
+	job, err := (*e.Store()).JobGetByName(t.Context(), (*e.Acct()).ID, jobName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := exclusivework.Policy{Name: "job-import", Scope: "account", MemberJobIDs: []string{job.ID},
 		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60}
-	if saved := e.do(t, http.MethodPut, "/v1/account/operation-policies/job-import", policy, nil); saved.Code != http.StatusOK {
+	if saved := e.Do(t, http.MethodPut, "/v1/account/operation-policies/job-import", policy, nil); saved.Code != http.StatusOK {
 		t.Fatalf("save Job policy: %d %s", saved.Code, saved.Body)
 	}
 	request := api.ExclusiveJobOperationRequest{Policy: "job-import", Key: json.RawMessage(`"customer:acme:crm-import"`),
 		Run: api.CreateJobRunRequest{Tasks: 1, EnvOverrides: map[string]string{"SYNC_MODE": "incremental"}}}
 	post := func() *httptest.ResponseRecorder {
 		t.Helper()
-		return e.do(t, http.MethodPost, "/v1/jobs/"+jobName+"/operations", request,
+		return e.Do(t, http.MethodPost, "/v1/jobs/"+jobName+"/operations", request,
 			map[string]string{"Idempotency-Key": "crm-import-2026-10-01"})
 	}
 	first := post()
@@ -100,37 +101,37 @@ func TestExclusiveJobOperationAPIQueuesValidatedRunAndReturnsJobReceipt(t *testi
 	if replay.Code != http.StatusAccepted || json.Unmarshal(replay.Body.Bytes(), &replayed) != nil || replayed.ID != accepted.ID {
 		t.Fatalf("managed Job idempotency replay: %d %s", replay.Code, replay.Body)
 	}
-	receipt := e.do(t, http.MethodGet, accepted.StatusURL, nil, nil)
+	receipt := e.Do(t, http.MethodGet, accepted.StatusURL, nil, nil)
 	if receipt.Code != http.StatusOK || !strings.Contains(receipt.Body.String(), `"job_id":"`+job.ID+`"`) || strings.Contains(receipt.Body.String(), `"app_id"`) {
 		t.Fatalf("managed Job operation receipt: %d %s", receipt.Code, receipt.Body)
 	}
-	runs, err := e.store.JobRunListByJob(t.Context(), job.ID, 10, 0)
+	runs, err := (*e.Store()).JobRunListByJob(t.Context(), job.ID, 10, 0)
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("accepted request created a JobRun before ownership dispatch: runs=%d err=%v", len(runs), err)
 	}
 }
 
 func TestExclusiveAppTaskOperationQueuesValidatedTaskUntilOwnershipDispatch(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
-	deployment := mustSeedDeployment(t, e, "exclusive-task-api")
-	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	deployment := apidserver.MustSeedDeployment(t, e, "exclusive-task-api")
+	if err := (*e.Store()).MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.AppByID(t.Context(), deployment.AppID)
+	app, err := (*e.Store()).AppByID(t.Context(), deployment.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := exclusivework.Policy{Name: "exclusive-maintenance", Scope: "account", MemberAppIDs: []string{app.ID},
 		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60}
-	if saved := e.do(t, http.MethodPut, "/v1/account/operation-policies/exclusive-maintenance", policy, nil); saved.Code != http.StatusOK {
+	if saved := e.Do(t, http.MethodPut, "/v1/account/operation-policies/exclusive-maintenance", policy, nil); saved.Code != http.StatusOK {
 		t.Fatalf("save AppTask policy: %d %s", saved.Code, saved.Body)
 	}
 	request := api.ExclusiveAppTaskOperationRequest{Policy: "exclusive-maintenance", Key: json.RawMessage(`"maintenance:acme"`),
 		Task: api.CreateAppTaskRequest{Command: []string{"/bin/sh", "-c", "maintenance"}, TimeoutSeconds: 30}}
 	post := func() *httptest.ResponseRecorder {
 		t.Helper()
-		return e.do(t, http.MethodPost, "/v1/apps/exclusive-task-api/operations/tasks", request,
+		return e.Do(t, http.MethodPost, "/v1/apps/exclusive-task-api/operations/tasks", request,
 			map[string]string{"Idempotency-Key": "maintenance-2026-10-01"})
 	}
 	first := post()
@@ -143,64 +144,64 @@ func TestExclusiveAppTaskOperationQueuesValidatedTaskUntilOwnershipDispatch(t *t
 	if replay.Code != http.StatusAccepted || json.Unmarshal(replay.Body.Bytes(), &replayed) != nil || replayed.ID != accepted.ID {
 		t.Fatalf("managed AppTask idempotency replay: %d %s", replay.Code, replay.Body)
 	}
-	receipt := e.do(t, http.MethodGet, accepted.StatusURL, nil, nil)
+	receipt := e.Do(t, http.MethodGet, accepted.StatusURL, nil, nil)
 	if receipt.Code != http.StatusOK || !strings.Contains(receipt.Body.String(), `"app_id":"`+app.ID+`"`) || strings.Contains(receipt.Body.String(), `"job_id"`) {
 		t.Fatalf("managed AppTask operation receipt: %d %s", receipt.Code, receipt.Body)
 	}
-	tasks, err := e.store.ListAppTasks(t.Context(), e.acct.ID, app.ID, 10, 0)
+	tasks, err := (*e.Store()).ListAppTasks(t.Context(), (*e.Acct()).ID, app.ID, 10, 0)
 	if err != nil || len(tasks) != 0 {
 		t.Fatalf("accepted operation created AppTask before ownership dispatch: tasks=%d err=%v", len(tasks), err)
 	}
 }
 
 func TestExclusiveTriggerBindingAPIResolvesAccountOwnedCron(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	deployment := mustSeedDeployment(t, e, "exclusive-trigger-binding")
-	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	deployment := apidserver.MustSeedDeployment(t, e, "exclusive-trigger-binding")
+	if err := (*e.Store()).MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.AppByID(t.Context(), deployment.AppID)
+	app, err := (*e.Store()).AppByID(t.Context(), deployment.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+	if _, err := (*e.Store()).UpsertExclusiveWorkPolicy(t.Context(), (*e.Acct()).ID, exclusivework.Policy{
 		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{app.ID}, Contention: "queue",
 		LeaseSeconds: 5, MaxAttemptSeconds: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cron, err := e.store.CreateCronWithOptions(t.Context(), app.ID, "0 * * * *", "/sync", true, state.CronOptions{Timezone: "UTC"})
+	cron, err := (*e.Store()).CreateCronWithOptions(t.Context(), app.ID, "0 * * * *", "/sync", true, state.CronOptions{Timezone: "UTC"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/account/operation-trigger-bindings/cron/" + cron.ID
 	request := api.ExclusiveTriggerBindingRequest{Policy: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`), EquivalenceKey: "sync"}
-	saved := e.do(t, http.MethodPut, path, request, nil)
+	saved := e.Do(t, http.MethodPut, path, request, nil)
 	var binding api.ExclusiveTriggerBindingRecord
 	if saved.Code != http.StatusOK || json.Unmarshal(saved.Body.Bytes(), &binding) != nil || binding.AppID != app.ID || binding.TriggerID != cron.ID {
 		t.Fatalf("bind cron: %d %s", saved.Code, saved.Body)
 	}
-	read := e.do(t, http.MethodGet, path, nil, nil)
+	read := e.Do(t, http.MethodGet, path, nil, nil)
 	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), `"policy":"crm-sync"`) {
 		t.Fatalf("read binding: %d %s", read.Code, read.Body)
 	}
-	deleted := e.do(t, http.MethodDelete, path, nil, nil)
+	deleted := e.Do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete binding: %d %s", deleted.Code, deleted.Body)
 	}
 }
 
 func TestExclusiveTriggerBindingAPIResolvesRecurringJobSchedule(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	job, err := e.store.JobCreateScheduledIfUnderQuota(t.Context(), state.Job{
-		AccountID: e.acct.ID, Name: "nightly-import", Kind: "recurring", ImageRef: "ghcr.io/acme/import:v1",
+	e := apidserver.Setup(t, api.PlanPro)
+	job, err := (*e.Store()).JobCreateScheduledIfUnderQuota(t.Context(), state.Job{
+		AccountID: (*e.Acct()).ID, Name: "nightly-import", Kind: "recurring", ImageRef: "ghcr.io/acme/import:v1",
 		Command: []string{"/app/import"}, RAMMB: 256, TaskTimeoutS: 60, MaxParallelism: 1,
 		CronSchedule: "0 2 * * *", CronTimezone: "UTC",
 	}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+	if _, err := (*e.Store()).UpsertExclusiveWorkPolicy(t.Context(), (*e.Acct()).ID, exclusivework.Policy{
 		Name: "nightly-import", Scope: "account", MemberJobIDs: []string{job.ID},
 		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60,
 	}); err != nil {
@@ -208,63 +209,63 @@ func TestExclusiveTriggerBindingAPIResolvesRecurringJobSchedule(t *testing.T) {
 	}
 	path := "/v1/account/operation-trigger-bindings/job_schedule/" + job.ID
 	request := api.ExclusiveTriggerBindingRequest{Policy: "nightly-import", Key: json.RawMessage(`"nightly-import"`)}
-	saved := e.do(t, http.MethodPut, path, request, nil)
+	saved := e.Do(t, http.MethodPut, path, request, nil)
 	var binding api.ExclusiveTriggerBindingRecord
 	if saved.Code != http.StatusOK || json.Unmarshal(saved.Body.Bytes(), &binding) != nil || binding.JobID != job.ID || binding.AppID != "" {
 		t.Fatalf("bind Job schedule: %d %s", saved.Code, saved.Body)
 	}
-	read := e.do(t, http.MethodGet, path, nil, nil)
+	read := e.Do(t, http.MethodGet, path, nil, nil)
 	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), `"job_id":"`+job.ID+`"`) || strings.Contains(read.Body.String(), `"app_id"`) {
 		t.Fatalf("read Job schedule binding: %d %s", read.Code, read.Body)
 	}
-	deleted := e.do(t, http.MethodDelete, path, nil, nil)
+	deleted := e.Do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete Job schedule binding: %d %s", deleted.Code, deleted.Body)
 	}
 }
 
 func TestPlatformTenantSelfExclusiveOperationRequiresLinkedAppAndReturnsScopedURL(t *testing.T) {
-	withTenantSurfacesEnabled(t)
-	e := setup(t, api.PlanPro)
+	apidserver.WithTenantSurfacesEnabled(t)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	linkedDeployment := mustSeedDeployment(t, e, "tenant-exclusive-linked")
-	unlinkedDeployment := mustSeedDeployment(t, e, "tenant-exclusive-unlinked")
+	linkedDeployment := apidserver.MustSeedDeployment(t, e, "tenant-exclusive-linked")
+	unlinkedDeployment := apidserver.MustSeedDeployment(t, e, "tenant-exclusive-unlinked")
 	for _, deployment := range []state.Deployment{linkedDeployment, unlinkedDeployment} {
-		if err := e.store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		if err := (*e.Store()).MarkDeploymentLive(ctx, deployment.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	linked, err := e.store.AppByID(ctx, linkedDeployment.AppID)
+	linked, err := (*e.Store()).AppByID(ctx, linkedDeployment.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlinked, err := e.store.AppByID(ctx, unlinkedDeployment.AppID)
+	unlinked, err := (*e.Store()).AppByID(ctx, unlinkedDeployment.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "exclusive-customer", "Exclusive customer", 20)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "exclusive-customer", "Exclusive customer", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := api.MustLimitsFor(e.acct.Plan)
-	surface, err := e.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
-		AccountID: e.acct.ID, AppID: linked.ID, Name: "exclusive-surface",
+	limits := api.MustLimitsFor((*e.Acct()).Plan)
+	surface, err := (*e.Store()).CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: (*e.Acct()).ID, AppID: linked.ID, Name: "exclusive-surface",
 	}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
+	if err := (*e.Store()).UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surface.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenant.ID, surface.ID); err != nil {
 		t.Fatal(err)
 	}
 	policy := exclusivework.Policy{Name: "crm-sync", Scope: "platform_tenant", MemberAppIDs: []string{linked.ID, unlinked.ID},
 		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60}
-	if rec := e.do(t, http.MethodPut, "/v1/account/operation-policies/crm-sync", policy, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodPut, "/v1/account/operation-policies/crm-sync", policy, nil); rec.Code != http.StatusOK {
 		t.Fatalf("save tenant policy: %d %s", rec.Code, rec.Body)
 	}
-	created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+	created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 		api.CreatePlatformTenantAccessTokenRequest{Name: "operation submitter", Scopes: []string{api.ScopePlatformTenantInvocationsManage, api.ScopePlatformTenantInvocationsRead}}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create tenant token: %d %s", created.Code, created.Body)
@@ -284,7 +285,7 @@ func TestPlatformTenantSelfExclusiveOperationRequiresLinkedAppAndReturnsScopedUR
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		req.Header.Set("Idempotency-Key", "tenant-sync-once")
 		recorder := httptest.NewRecorder()
-		e.h.ServeHTTP(recorder, req)
+		(*e.H()).ServeHTTP(recorder, req)
 		return recorder
 	}
 	acceptedRec := post("tenant-exclusive-linked")
@@ -306,7 +307,7 @@ func TestPlatformTenantSelfExclusiveOperationRequiresLinkedAppAndReturnsScopedUR
 	readReq := httptest.NewRequest(http.MethodGet, wantURL, nil)
 	readReq.Header.Set("Authorization", "Bearer "+token.Token)
 	readRec := httptest.NewRecorder()
-	e.h.ServeHTTP(readRec, readReq)
+	(*e.H()).ServeHTTP(readRec, readReq)
 	if readRec.Code != http.StatusOK || !strings.Contains(readRec.Body.String(), tenant.ID) {
 		t.Fatalf("tenant read: %d %s", readRec.Code, readRec.Body)
 	}

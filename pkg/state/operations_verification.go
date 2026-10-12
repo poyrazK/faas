@@ -114,8 +114,19 @@ func (m *MemStore) projectResolutionVerificationsLocked(page *api.OperationMiles
 	attachResolutionHistoryVerifications(page.WorkflowStateHistory, all)
 	attachResolutionHistoryVerifications(page.WorkflowInstance.Transitions, all)
 	noteResolutionVerificationAttention(page.WorkflowInstance)
+	page.WorkflowInstance.ReadinessVerifications = all
+	observations := m.workflowBottleneckHistoryLocked(account, tenant, opts.AppID, opts.Scope, api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}, opts.Workflow, opts.WorkflowInstanceID, now)
+	current := page.WorkflowInstance.State
+	steps := []api.OperationWorkflowSpec(nil)
+	available := false
+	if op, ok := m.operationMemoryLocked().operations[current.OperationID]; ok {
+		if definition, found := m.operationMemoryLocked().definitions[op.DefinitionID]; found {
+			steps = definition.Spec.WorkflowSteps
+			available = true
+		}
+	}
+	page.WorkflowInstance.ConditionReporting = workflowTransitionReporting(*current, observations, steps, available, now)
 	if !opts.ReadinessOnly {
-		observations := m.workflowBottleneckHistoryLocked(account, tenant, opts.AppID, opts.Scope, api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}, opts.Workflow, opts.WorkflowInstanceID, now)
 		if op, ok := m.operationMemoryLocked().operations[page.WorkflowInstance.State.OperationID]; ok {
 			page.WorkflowInstance.State.SLA = workflowStateSLA(*page.WorkflowInstance.State, observations, workflowStateSLABudget(m.operationMemoryLocked().definitions[op.DefinitionID].Spec, *page.WorkflowInstance.State), workflowStateSLAWarning(m.operationMemoryLocked().definitions[op.DefinitionID].Spec, *page.WorkflowInstance.State), now)
 			noteWorkflowSLAAttention(page.WorkflowInstance)

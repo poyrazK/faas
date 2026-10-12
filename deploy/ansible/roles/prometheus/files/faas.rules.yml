@@ -1442,28 +1442,39 @@ groups:
   # headroom. clamp_min(...) guards against /0 when a route has zero
   # recent traffic — the small 0.001 floor lets the ratio formula
   # produce a numeric value rather than a NaN.
+  #
+  # The 3d baselines live in faas_anomaly_baseline_3d below. They used to
+  # be `avg_over_time(<rate over raw series>[3d:5m])` subqueries in this
+  # 30s group, recomputing 864 rate() steps over the raw counters twice a
+  # minute: on production-us the group took 15s of every 30s and, with
+  # the account alerts repeating the same subquery inline, made
+  # Prometheus the largest CPU consumer on the control plane (hunt #9,
+  # H9-132). A three-day average moves imperceptibly in two minutes.
   # ────────────────────────────────────────────────────────────────────
+  - name: faas_anomaly_baseline_3d
+    # 2m keeps every baseline sample inside the 5m instant-vector
+    # lookback the ratio rules read it with, even if one evaluation is
+    # skipped.
+    interval: 2m
+    rules:
+      - record: faas_apid_request_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_apid_request_rate_5m:by_route[3d])
+
+      - record: faas_apid_error_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_apid_error_rate_5m:by_route[3d])
+
+      # Reads the raw counter: faas_apid_request_rate_5m:by_account is
+      # recorded only since this group existed, so averaging it would
+      # start every account's baseline from minutes of history.
+      - record: faas_apid_request_rate_3d_baseline:by_account
+        expr: avg_over_time(sum by (account_id) (rate(apid_request_total[5m]))[3d:5m])
+
+      - record: faas_gateway_request_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_gateway_request_rate_5m:by_route[3d])
+
   - name: faas_anomaly_baseline
     interval: 30s
     rules:
-      - record: faas_apid_request_rate_3d_baseline:by_route
-        expr: avg_over_time( sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])) [3d:5m] )
-
-      - record: faas_apid_error_rate_3d_baseline:by_route
-        expr: |
-          avg_over_time(
-              (
-                  (
-                      sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
-                  )
-                  /
-                  clamp_min(
-                      sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
-                      1
-                  )
-              )[3d:5m]
-          )
-
       - record: faas_apid_request_rate_5m:by_route
         expr: sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m]))
 
@@ -1497,16 +1508,14 @@ groups:
       # every alert evaluation. Bounded by the accountLabelSet admission
       # primitive (10 000 + "__other__") — the per-account fan-out is
       # O(active customers), not unbounded.
+      - record: faas_apid_request_rate_5m:by_account
+        expr: sum by (account_id) (rate(apid_request_total[5m]))
+
       - record: faas_apid_anomaly_score:by_account
         expr: |
-          sum by (account_id) (rate(apid_request_total[5m]))
+          faas_apid_request_rate_5m:by_account
           /
-          clamp_min(
-            avg_over_time(
-              sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-            ),
-            0.001
-          )
+          clamp_min(faas_apid_request_rate_3d_baseline:by_account, 0.001)
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-093 — per-route observability (gatewayd-internal)
@@ -1525,11 +1534,6 @@ groups:
       # opted-in app. Off-apps still emit the pre-ADR-042
       # {app, code} / {app, class} series; the recording
       # rules below simply have zero data points to aggregate.
-      - record: faas_gateway_request_rate_3d_baseline:by_route
-        expr: |
-          avg_over_time(
-            sum by (app, route) (rate(gateway_requests_by_route_total[5m]))[3d:5m]
-          )
       - record: faas_gateway_request_rate_5m:by_route
         expr: sum by (app, route) (rate(gateway_requests_by_route_total[5m]))
       - record: faas_gateway_request_rate_ratio:by_route
@@ -2424,16 +2428,7 @@ groups:
 
       - alert: FaasTrafficSpikeAccount
         expr: |
-          (
-            sum by (account_id) (rate(apid_request_total[5m]))
-            /
-            clamp_min(
-              avg_over_time(
-                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-              ),
-              0.001
-            )
-          ) > 10
+          faas_apid_anomaly_score:by_account > 10
         for: 15m
         labels:
           severity: warn
@@ -2448,18 +2443,9 @@ groups:
 
       - alert: FaasTrafficDropAccount
         expr: |
-          (
-            sum by (account_id) (rate(apid_request_total[5m]))
-            /
-            clamp_min(
-              avg_over_time(
-                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-              ),
-              0.001
-            )
-          ) < 0.1
+          faas_apid_anomaly_score:by_account < 0.1
           and on (account_id)
-          sum by (account_id) (rate(apid_request_total[5m])) > 0.1
+          faas_apid_request_rate_5m:by_account > 0.1
         for: 30m
         labels:
           severity: warn

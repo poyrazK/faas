@@ -17,7 +17,7 @@
 //
 // Plus a missing-state and missing-code branch as the cheap 400
 // guards against malformed queries.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -51,7 +52,7 @@ type oauthCodeCallbackFake struct {
 	installID       string
 	defaultBranch   string
 	exchangeErr     error
-	installState    InstallState
+	installState    apidserver.InstallState
 	installStateErr error
 
 	gotAccountID string
@@ -63,7 +64,7 @@ type oauthCodeCallbackFake struct {
 
 // GithubdClient surface, with the methods we don't use falling
 // through to not-ready problems so accidental calls fail loudly.
-func (f *oauthCodeCallbackFake) GetInstallState(context.Context, string) (InstallState, string, string, error) {
+func (f *oauthCodeCallbackFake) GetInstallState(context.Context, string) (apidserver.InstallState, string, string, error) {
 	f.stateCalls++
 	return f.installState, "", "", f.installStateErr
 }
@@ -74,38 +75,38 @@ func (f *oauthCodeCallbackFake) ExchangeOAuthCode(_ context.Context, accountID, 
 	f.gotCalls++
 	return f.installID, f.defaultBranch, f.exchangeErr
 }
-func (f *oauthCodeCallbackFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
-	return nil, errGithubdNotReady
+func (f *oauthCodeCallbackFake) ListInstallableRepos(context.Context, string, int64) ([]apidserver.Repo, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
 }
 func (f *oauthCodeCallbackFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
-	return "", errGithubdNotReady
+	return "", (*apidserver.ErrGithubdNotReady)
 }
 func (f *oauthCodeCallbackFake) UnbindAppRepo(context.Context, string, string) error {
-	return errGithubdNotReady
+	return (*apidserver.ErrGithubdNotReady)
 }
-func (f *oauthCodeCallbackFake) GetAppBinding(context.Context, string, string) (AppBinding, error) {
-	return AppBinding{}, errGithubdNotReady
+func (f *oauthCodeCallbackFake) GetAppBinding(context.Context, string, string) (apidserver.AppBinding, error) {
+	return apidserver.AppBinding{}, (*apidserver.ErrGithubdNotReady)
 }
 func (f *oauthCodeCallbackFake) CreateDeploymentFromPush(context.Context, string, string, string, string) (string, string, error) {
-	return "", "", errGithubdNotReady
+	return "", "", (*apidserver.ErrGithubdNotReady)
 }
-func (f *oauthCodeCallbackFake) WriteCheck(context.Context, string, string, CheckPhase, string, string) error {
-	return errGithubdNotReady
+func (f *oauthCodeCallbackFake) WriteCheck(context.Context, string, string, apidserver.CheckPhase, string, string) error {
+	return (*apidserver.ErrGithubdNotReady)
 }
 func (f *oauthCodeCallbackFake) VerifyInstallation(context.Context, int64, string) (bool, string, string, error) {
-	return false, "", "", errGithubdNotReady
+	return false, "", "", (*apidserver.ErrGithubdNotReady)
 }
 
 // MintInstallationToken is unused by the OAuth code-callback test.
 // Returns the not-ready problem (DEPLOY-PROV-4 / ADR-092, issue #739).
 func (f *oauthCodeCallbackFake) MintInstallationToken(context.Context, string, int64) (string, time.Time, error) {
-	return "", time.Time{}, errGithubdNotReady
+	return "", time.Time{}, (*apidserver.ErrGithubdNotReady)
 }
 
 // StreamSourceRef is unused by the OAuth code-callback test.
 // Returns the not-ready problem (DEPLOY-PROV-4 / ADR-092, issue #739).
-func (f *oauthCodeCallbackFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*StreamSourceRefResult, error) {
-	return nil, errGithubdNotReady
+func (f *oauthCodeCallbackFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*apidserver.StreamSourceRefResult, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
 }
 func (f *oauthCodeCallbackFake) Close() error { return nil }
 
@@ -132,17 +133,17 @@ func newOAuthCodeCallbackServer(t *testing.T, gh *oauthCodeCallbackFake) (http.H
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	cookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
-	return srv.handler(), mgr, acct.ID, &http.Cookie{Name: sessionCookie, Value: cookie}
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
+	return srv.Handler(), mgr, acct.ID, &http.Cookie{Name: apidserver.SessionCookie, Value: cookie}
 }
 
 // TestRenderOAuthCodeCallback_HappyPath pins the success flow: a
@@ -157,7 +158,7 @@ func TestRenderOAuthCodeCallback_HappyPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: oauthCodeStateCookie, Value: stateToken, Path: oauthCodeCallbackPath})
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {
@@ -185,7 +186,7 @@ func TestRenderOAuthCodeCallback_HappyPath(t *testing.T) {
 	// Single-use: the handler clears the state cookie on success.
 	cleared := false
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == oauthCodeStateCookie && c.MaxAge < 0 {
+		if c.Name == apidserver.OauthCodeStateCookie && c.MaxAge < 0 {
 			cleared = true
 		}
 	}
@@ -206,7 +207,7 @@ func TestRenderOAuthCodeCallback_StateMismatch(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state=querystatetoken", nil)
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: oauthCodeStateCookie, Value: "cookiestatetoken", Path: oauthCodeCallbackPath})
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: "cookiestatetoken", Path: apidserver.OauthCodeCallbackPath})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusForbidden {
@@ -233,7 +234,7 @@ func TestRenderOAuthCodeCallback_GithubdErrorPropagates(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: oauthCodeStateCookie, Value: stateToken, Path: oauthCodeCallbackPath})
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusBadGateway {
@@ -262,7 +263,7 @@ func TestRenderOAuthCodeCallback_MissingInstallationResumesInstallFlow(t *testin
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: oauthCodeStateCookie, Value: stateToken, Path: oauthCodeCallbackPath})
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {
@@ -292,16 +293,16 @@ func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
 	for _, tc := range []struct {
 		name        string
-		localState  InstallState
+		localState  apidserver.InstallState
 		lookupErr   error
 		exchangeErr error
 	}{
 		{name: "existing GitHub installation unknown to Gregale"},
-		{name: "existing GitHub installation locally missing", localState: InstallStateNotInstalled},
-		{name: "installed", localState: InstallStateInstalled},
-		{name: "bound", localState: InstallStateBound},
+		{name: "existing GitHub installation locally missing", localState: apidserver.InstallStateNotInstalled},
+		{name: "installed", localState: apidserver.InstallStateInstalled},
+		{name: "bound", localState: apidserver.InstallStateBound},
 		{name: "local lookup unavailable", lookupErr: errors.New("install store unavailable")},
-		{name: "no GitHub installation", exchangeErr: errors.New("githubd: " + githubNoAppInstallError)},
+		{name: "no GitHub installation", exchangeErr: errors.New("githubd: " + apidserver.GithubNoAppInstallError)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gh := &oauthCodeCallbackFake{
@@ -331,7 +332,7 @@ func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T
 				t.Fatalf("incorrect OAuth configuration: %s", loc)
 			}
 			stateToken := loc.Query().Get("state")
-			stateCookie := findCookie(rec.Result().Cookies(), oauthCodeStateCookie)
+			stateCookie := findCookie(rec.Result().Cookies(), apidserver.OauthCodeStateCookie)
 			if stateToken == "" || stateCookie == nil || stateCookie.Value != stateToken || !stateCookie.HttpOnly {
 				t.Fatal("OAuth state must match the HttpOnly cookie")
 			}
@@ -342,7 +343,7 @@ func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T
 			callback := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code&state="+stateToken, nil)
 			callback.AddCookie(sessionCookie)
 			callback.AddCookie(stateCookie)
-			callback.AddCookie(findCookie(rec.Result().Cookies(), githubConnectReturnCookie))
+			callback.AddCookie(findCookie(rec.Result().Cookies(), apidserver.GithubConnectReturnCookie))
 			result := httptest.NewRecorder()
 			srv.ServeHTTP(result, callback)
 			if result.Code != http.StatusFound || gh.gotCalls != 1 || gh.gotAccountID != accountID || gh.gotState != stateToken {
@@ -356,7 +357,7 @@ func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T
 				freshState := redirect.Query().Get("state")
 				var freshCookie *http.Cookie
 				for _, cookie := range result.Result().Cookies() {
-					if cookie.Name == oauthCodeStateCookie && cookie.MaxAge > 0 {
+					if cookie.Name == apidserver.OauthCodeStateCookie && cookie.MaxAge > 0 {
 						freshCookie = cookie
 					}
 				}
@@ -416,13 +417,13 @@ func TestRedirectToGitHubAuthorization_PublicConsoleCallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", tc.override)
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
-			srv := newServerWithDeps(state.NewMemStore(), log, "gregale.dev", noopNotifier{}, "", noopMailer{}, nil, nil, nil, 15*time.Minute, "")
+			srv := apidserver.NewServerWithDeps(state.NewMemStore(), log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, nil, nil, nil, 15*time.Minute, "")
 			if tc.consoleBase != "" {
 				srv.WithCLIAuthURLBase(tc.consoleBase)
 			}
 			r := httptest.NewRequest(http.MethodPost, tc.requestURL, nil)
 			rec := httptest.NewRecorder()
-			if !srv.redirectToGitHubAuthorization(rec, r, 0) || rec.Code != http.StatusFound {
+			if !srv.RedirectToGitHubAuthorization(rec, r, 0) || rec.Code != http.StatusFound {
 				t.Fatalf("authorization: status = %d, body = %s", rec.Code, rec.Body.String())
 			}
 			loc, err := url.Parse(rec.Header().Get("Location"))
@@ -441,7 +442,7 @@ func TestRedirectToGitHubAuthorization_PublicConsoleCallback(t *testing.T) {
 
 func TestGithubAppInstallURL_RejectsNonHTTPSConfiguration(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "http://github.com/apps/test-app/installations/new")
-	if _, err := githubAppInstallURL("state"); err == nil {
+	if _, err := apidserver.GithubAppInstallURL("state"); err == nil {
 		t.Fatal("githubAppInstallURL accepted non-HTTPS configuration")
 	}
 }
@@ -483,7 +484,7 @@ func TestRenderOAuthCodeCallback_MissingCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?state="+stateToken, nil)
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: oauthCodeStateCookie, Value: stateToken, Path: oauthCodeCallbackPath})
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusBadRequest {
@@ -524,7 +525,7 @@ func browserConnectCSRF(t *testing.T, srv http.Handler, sessionCookie *http.Cook
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode connect csrf: %v", err)
 	}
-	cookie := findCookie(rec.Result().Cookies(), githubConnectCSRFCookie)
+	cookie := findCookie(rec.Result().Cookies(), apidserver.GithubConnectCSRFCookie)
 	if cookie == nil || !cookie.HttpOnly || cookie.Value != payload.CSRFToken || payload.CSRFToken == "" {
 		t.Fatalf("connect csrf cookie must be HttpOnly and match the response: %#v", cookie)
 	}

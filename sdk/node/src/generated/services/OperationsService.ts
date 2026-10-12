@@ -43,13 +43,30 @@ import type { OperationWorkflowActionPreviewResponse } from '../models/Operation
 import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkflowArtifactResponse.js';
 import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
 import type { OperationWorkflowAttentionSummary } from '../models/OperationWorkflowAttentionSummary.js';
+import type { OperationWorkflowCase } from '../models/OperationWorkflowCase.js';
 import type { OperationWorkflowControlResponse } from '../models/OperationWorkflowControlResponse.js';
+import type { OperationWorkflowCoordinationTimeline } from '../models/OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkflowOutcomesResponse.js';
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowPlaybookProgress } from '../models/OperationWorkflowPlaybookProgress.js';
+import type { OperationWorkflowPlaybookProgressStartRequest } from '../models/OperationWorkflowPlaybookProgressStartRequest.js';
+import type { OperationWorkflowPlaybookProgressUpdateRequest } from '../models/OperationWorkflowPlaybookProgressUpdateRequest.js';
+import type { OperationWorkflowPlaybookReviewRequest } from '../models/OperationWorkflowPlaybookReviewRequest.js';
+import type { OperationWorkflowReadinessComparisonRequest } from '../models/OperationWorkflowReadinessComparisonRequest.js';
+import type { OperationWorkflowReadinessComparisonResponse } from '../models/OperationWorkflowReadinessComparisonResponse.js';
+import type { OperationWorkflowReadinessCoordinationRequest } from '../models/OperationWorkflowReadinessCoordinationRequest.js';
+import type { OperationWorkflowReadinessFollowUpsResponse } from '../models/OperationWorkflowReadinessFollowUpsResponse.js';
+import type { OperationWorkflowReadinessInboxResponse } from '../models/OperationWorkflowReadinessInboxResponse.js';
+import type { OperationWorkflowReadinessNotification } from '../models/OperationWorkflowReadinessNotification.js';
+import type { OperationWorkflowReadinessNotificationCheck } from '../models/OperationWorkflowReadinessNotificationCheck.js';
+import type { OperationWorkflowReadinessQueueResponse } from '../models/OperationWorkflowReadinessQueueResponse.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
+import type { OperationWorkflowReadinessSubscription } from '../models/OperationWorkflowReadinessSubscription.js';
+import type { OperationWorkflowReadinessSubscriptionRequest } from '../models/OperationWorkflowReadinessSubscriptionRequest.js';
+import type { OperationWorkflowReadinessSubscriptionsResponse } from '../models/OperationWorkflowReadinessSubscriptionsResponse.js';
 import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
 import type { OperationWorkflowStateReportResponse } from '../models/OperationWorkflowStateReportResponse.js';
 import type { OperationWorkflowStateValidationRequest } from '../models/OperationWorkflowStateValidationRequest.js';
@@ -737,7 +754,7 @@ export class OperationsService {
   }
   /**
    * List ranked contributors to a workflow performance group.
-   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
    * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
    * @throws ApiError
    */
@@ -748,6 +765,8 @@ export class OperationsService {
     cohort,
     dimension,
     tenantId,
+    baselineToken,
+    gapStatus,
     contractVersion,
     state,
     operation,
@@ -755,6 +774,17 @@ export class OperationsService {
     owner,
     unassigned,
     cohortToken,
+    kind,
+    decisionCode,
+    ruleId,
+    ruleVersion,
+    groupId,
+    pathId,
+    conditionId,
+    conditionDescription,
+    conditionEvidenceStatus,
+    conditionResult,
+    outcomeCode,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -775,11 +805,19 @@ export class OperationsService {
     /**
      * Overall measure or exact breakdown dimension.
      */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner',
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
      */
     tenantId?: string,
+    /**
+     * Saved account performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
+     */
+    baselineToken?: string,
+    /**
+     * Exact account returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
+     */
+    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
     /**
      * Required for state and blocker dimensions.
      */
@@ -808,6 +846,50 @@ export class OperationsService {
      * Opaque selector-bound cohort token from the summary or a previous contributor response.
      */
     cohortToken?: string,
+    /**
+     * Decision outcome group kind.
+     */
+    kind?: 'decision' | 'path',
+    /**
+     * Exact reported decision code for decision outcome dimensions.
+     */
+    decisionCode?: string,
+    /**
+     * Exact rule ID for decision outcome dimensions.
+     */
+    ruleId?: string,
+    /**
+     * Exact rule version for decision outcome dimensions.
+     */
+    ruleVersion?: string,
+    /**
+     * Exact selected prerequisite group for path outcome dimensions.
+     */
+    groupId?: string,
+    /**
+     * Exact selected path for path outcome dimensions.
+     */
+    pathId?: string,
+    /**
+     * Exact reported condition ID for account condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the account returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Account active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+     */
+    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
+    /**
+     * Exact observed condition result for the account condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
+     * Exact latest reported outcome for decision outcome dimensions.
+     */
+    outcomeCode?: string,
   }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -821,6 +903,8 @@ export class OperationsService {
         'tenant_id': tenantId,
         'cohort': cohort,
         'dimension': dimension,
+        'baseline_token': baselineToken,
+        'gap_status': gapStatus,
         'contract_version': contractVersion,
         'state': state,
         'operation': operation,
@@ -828,6 +912,17 @@ export class OperationsService {
         'owner': owner,
         'unassigned': unassigned,
         'cohort_token': cohortToken,
+        'kind': kind,
+        'decision_code': decisionCode,
+        'rule_id': ruleId,
+        'rule_version': ruleVersion,
+        'group_id': groupId,
+        'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_evidence_status': conditionEvidenceStatus,
+        'condition_result': conditionResult,
+        'outcome_code': outcomeCode,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -844,7 +939,7 @@ export class OperationsService {
   }
   /**
    * List ranked performance contributors for the authenticated customer.
-   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
    * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors within the authenticated customer's selected group.
    * @throws ApiError
    */
@@ -854,6 +949,8 @@ export class OperationsService {
     workflow,
     cohort,
     dimension,
+    baselineToken,
+    gapStatus,
     contractVersion,
     state,
     operation,
@@ -861,6 +958,17 @@ export class OperationsService {
     owner,
     unassigned,
     cohortToken,
+    kind,
+    decisionCode,
+    ruleId,
+    ruleVersion,
+    groupId,
+    pathId,
+    conditionId,
+    conditionDescription,
+    conditionEvidenceStatus,
+    conditionResult,
+    outcomeCode,
   }: {
     /**
      * App selected within the authenticated customer's milestone feed.
@@ -881,7 +989,15 @@ export class OperationsService {
     /**
      * Customer cohort duration measure or exact breakdown dimension.
      */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner',
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
+    /**
+     * Saved authenticated customer performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
+     */
+    baselineToken?: string,
+    /**
+     * Exact authenticated customer returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
+     */
+    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
     /**
      * Contract version required when selecting a customer state or blocker group.
      */
@@ -910,6 +1026,50 @@ export class OperationsService {
      * Customer selector-bound cohort token from a prior summary or contributor response.
      */
     cohortToken?: string,
+    /**
+     * Decision outcome group kind. Scoped to the authenticated customer.
+     */
+    kind?: 'decision' | 'path',
+    /**
+     * Exact reported decision code for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    decisionCode?: string,
+    /**
+     * Exact rule ID for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    ruleId?: string,
+    /**
+     * Exact rule version for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    ruleVersion?: string,
+    /**
+     * Exact selected prerequisite group for path outcome dimensions. Scoped to the authenticated customer.
+     */
+    groupId?: string,
+    /**
+     * Exact selected path for path outcome dimensions. Scoped to the authenticated customer.
+     */
+    pathId?: string,
+    /**
+     * Exact reported condition ID for customer condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the customer returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Customer active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+     */
+    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
+    /**
+     * Exact observed condition result for the customer condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
+     * Exact latest reported outcome for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    outcomeCode?: string,
   }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -920,6 +1080,8 @@ export class OperationsService {
         'workflow': workflow,
         'cohort': cohort,
         'dimension': dimension,
+        'baseline_token': baselineToken,
+        'gap_status': gapStatus,
         'contract_version': contractVersion,
         'state': state,
         'operation': operation,
@@ -927,6 +1089,17 @@ export class OperationsService {
         'owner': owner,
         'unassigned': unassigned,
         'cohort_token': cohortToken,
+        'kind': kind,
+        'decision_code': decisionCode,
+        'rule_id': ruleId,
+        'rule_version': ruleVersion,
+        'group_id': groupId,
+        'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_evidence_status': conditionEvidenceStatus,
+        'condition_result': conditionResult,
+        'outcome_code': outcomeCode,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -952,6 +1125,7 @@ export class OperationsService {
     scope,
     workflow,
     tenantId,
+    baselineToken,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -969,6 +1143,10 @@ export class OperationsService {
      * Optional account-owned customer selector on an operator milestone timeline.
      */
     tenantId?: string,
+    /**
+     * Account optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -980,6 +1158,7 @@ export class OperationsService {
         'scope': scope,
         'workflow': workflow,
         'tenant_id': tenantId,
+        'baseline_token': baselineToken,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -1003,6 +1182,7 @@ export class OperationsService {
     appId,
     scope,
     workflow,
+    baselineToken,
   }: {
     /**
      * App selected within the authenticated customer's milestone feed.
@@ -1016,6 +1196,10 @@ export class OperationsService {
      * Business workflow to compare within the authenticated customer app and environment.
      */
     workflow: string,
+    /**
+     * Customer optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1024,6 +1208,7 @@ export class OperationsService {
         'app_id': appId,
         'scope': scope,
         'workflow': workflow,
+        'baseline_token': baselineToken,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -1332,6 +1517,57 @@ export class OperationsService {
     });
   }
   /**
+   * Compare account transition readiness with a saved queue snapshot.
+   * Requires account read scope and MFA; customer selectors stay within account ownership.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Account readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static compareAccountWorkflowReadiness({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/compare',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+      },
+    });
+  }
+  /**
    * Customer transition readiness — Check reported requirements for a proposed workflow transition.
    * Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
    * @returns OperationWorkflowReadinessResponse Customer transition readiness — Observed transition readiness including reasons and advisories.
@@ -1352,6 +1588,49 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Compare customer transition readiness with a saved queue snapshot.
+   * Requires platform-tenant Operations read scope; ownership comes from authentication and overrides are rejected.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Customer readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static comparePlatformTenantSelfWorkflowReadiness({
+    requestBody,
+  }: {
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/compare',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
       },
     });
   }
@@ -1460,6 +1739,88 @@ export class OperationsService {
         'tenant_id': tenantId,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List account transition readiness across ongoing business workflows.
+   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Account transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessQueue({
+    slug,
+    scope,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    tenantId,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Account readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Account readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Account readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Account readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Account readiness queue. Optional customer UUID within the authenticated account.
+     */
+    tenantId?: string,
+    /**
+     * Account readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Account readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/queue',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'tenant_id': tenantId,
+        'requirement': requirement,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -1694,6 +2055,80 @@ export class OperationsService {
         'reason': reason,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List customer transition readiness across ongoing business workflows.
+   * Requires platform-tenant operations read scope. Customer ownership derives from authentication. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Customer transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessQueue({
+    scope,
+    appId,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Customer readiness queue. Explicit application UUID within the authenticated account.
+     */
+    appId: string,
+    /**
+     * Customer readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Customer readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Customer readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Customer readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Customer readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Customer readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/queue',
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'app_id': appId,
+        'requirement': requirement,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -4280,6 +4715,1654 @@ export class OperationsService {
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account create WorkflowReadinessSubscription
+   * Account durable readiness subscription create operation. Observations are bounded and advisory; execution remains application-owned. Requires account deploy-write scope and MFA.
+   * @returns OperationWorkflowReadinessSubscription Account Create readiness subscription result.
+   * @throws ApiError
+   */
+  public static createAccountWorkflowReadinessSubscription({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * CreateAccountWorkflowReadinessSubscription. Application slug.
+     */
+    slug: string,
+    /**
+     * Account subscription selectors; bounded to 4096 bytes.
+     */
+    requestBody: OperationWorkflowReadinessSubscriptionRequest,
+  }): CancelablePromise<OperationWorkflowReadinessSubscription> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account list WorkflowReadinessSubscriptions
+   * Account durable readiness subscription list operation. Observations are bounded and advisory; execution remains application-owned. Requires account read scope and MFA.
+   * @returns OperationWorkflowReadinessSubscriptionsResponse Account List readiness subscription result.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessSubscriptions({
+    slug,
+    scope,
+    tenantId,
+  }: {
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Application slug.
+     */
+    slug: string,
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListAccountWorkflowReadinessSubscriptions. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessSubscriptionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account delete WorkflowReadinessSubscription
+   * Account durable readiness subscription delete operation. Observations are bounded and advisory; execution remains application-owned. Requires account deploy-write scope and MFA.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAccountWorkflowReadinessSubscription({
+    slug,
+    id,
+    scope,
+    tenantId,
+  }: {
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Application slug.
+     */
+    slug: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Subscription UUID.
+     */
+    id: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Application environment scope.
+     */
+    scope: string,
+    /**
+     * DeleteAccountWorkflowReadinessSubscription. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Account get WorkflowReadinessInbox
+   * Account durable readiness subscription get operation. Observations are bounded and advisory; execution remains application-owned. Requires account read scope and MFA.
+   * @returns OperationWorkflowReadinessInboxResponse Account Get readiness inbox page.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowReadinessInbox({
+    slug,
+    id,
+    scope,
+    tenantId,
+    afterSequence,
+    limit,
+  }: {
+    /**
+     * GetAccountWorkflowReadinessInbox. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Subscription UUID.
+     */
+    id: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Application environment scope.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Optional account customer selector.
+     */
+    tenantId?: string,
+    /**
+     * GetAccountWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+     */
+    afterSequence?: number,
+    /**
+     * GetAccountWorkflowReadinessInbox. Page size; defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessInboxResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'after_sequence': afterSequence,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer create WorkflowReadinessSubscription
+   * Customer durable readiness subscription create operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations manage scope.
+   * @returns OperationWorkflowReadinessSubscription Customer Create readiness subscription result.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfWorkflowReadinessSubscription({
+    requestBody,
+  }: {
+    /**
+     * Customer subscription selectors; bounded to 4096 bytes.
+     */
+    requestBody: (OperationWorkflowReadinessSubscriptionRequest & Record<string, any>),
+  }): CancelablePromise<OperationWorkflowReadinessSubscription> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer list WorkflowReadinessSubscriptions
+   * Customer durable readiness subscription list operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations read scope.
+   * @returns OperationWorkflowReadinessSubscriptionsResponse Customer List readiness subscription result.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessSubscriptions({
+    scope,
+    appId,
+  }: {
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessSubscriptions. Application UUID.
+     */
+    appId: string,
+  }): CancelablePromise<OperationWorkflowReadinessSubscriptionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions',
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer delete WorkflowReadinessSubscription
+   * Customer durable readiness subscription delete operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations manage scope.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantSelfWorkflowReadinessSubscription({
+    id,
+    scope,
+    appId,
+  }: {
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Subscription UUID.
+     */
+    id: string,
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Application environment scope.
+     */
+    scope: string,
+    /**
+     * DeletePlatformTenantSelfWorkflowReadinessSubscription. Application UUID.
+     */
+    appId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}',
+      path: {
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Customer get WorkflowReadinessInbox
+   * Customer durable readiness subscription get operation. Observations are bounded and advisory; execution remains application-owned. Requires platform-tenant Operations read scope.
+   * @returns OperationWorkflowReadinessInboxResponse Customer Get readiness inbox page.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowReadinessInbox({
+    id,
+    scope,
+    appId,
+    afterSequence,
+    limit,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Subscription UUID.
+     */
+    id: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Application environment scope.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Application UUID.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Last consumed sequence; defaults to zero.
+     */
+    afterSequence?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowReadinessInbox. Page size; defaults to 20.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessInboxResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications',
+      path: {
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+        'after_sequence': afterSequence,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check Account readiness notification
+   * CheckAccountWorkflowReadinessNotification. Recheck retained application evidence; does not execute actions.
+   * @returns OperationWorkflowReadinessNotificationCheck CheckAccountWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static checkAccountWorkflowReadinessNotification({
+    slug,
+    id,
+    scope,
+    sequence,
+    tenantId,
+  }: {
+    /**
+     * CheckAccountWorkflowReadinessNotification. Application slug.
+     */
+    slug: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    /**
+     * CheckAccountWorkflowReadinessNotification. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessNotificationCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update Account readiness notification
+   * UpdateAccountWorkflowReadinessNotification. Replace shared inbox coordination with a matching revision. Requires account deploy-write and MFA or customer operations manage. Actor derives from authentication. Revision zero addresses an untouched notification.
+   * @returns OperationWorkflowReadinessNotification UpdateAccountWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static updateAccountWorkflowReadinessNotification({
+    slug,
+    id,
+    scope,
+    sequence,
+    requestBody,
+    tenantId,
+  }: {
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Application slug.
+     */
+    slug: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    requestBody: OperationWorkflowReadinessCoordinationRequest,
+    /**
+     * UpdateAccountWorkflowReadinessNotification. Optional account customer selector.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowReadinessNotification> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check PlatformTenantSelf readiness notification
+   * CheckPlatformTenantSelfWorkflowReadinessNotification. Recheck retained application evidence; does not execute actions.
+   * @returns OperationWorkflowReadinessNotificationCheck CheckPlatformTenantSelfWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static checkPlatformTenantSelfWorkflowReadinessNotification({
+    id,
+    scope,
+    appId,
+    sequence,
+  }: {
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+     */
+    appId: string,
+    /**
+     * CheckPlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+  }): CancelablePromise<OperationWorkflowReadinessNotificationCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update PlatformTenantSelf readiness notification
+   * UpdatePlatformTenantSelfWorkflowReadinessNotification. Replace shared inbox coordination with a matching revision. Requires account deploy-write and MFA or customer operations manage. Actor derives from authentication. Revision zero addresses an untouched notification.
+   * @returns OperationWorkflowReadinessNotification UpdatePlatformTenantSelfWorkflowReadinessNotification. Result.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantSelfWorkflowReadinessNotification({
+    id,
+    scope,
+    appId,
+    sequence,
+    requestBody,
+  }: {
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Subscription UUID.
+     */
+    id: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Application environment scope.
+     */
+    scope: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Application UUID.
+     */
+    appId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowReadinessNotification. Retained subscription-local notification sequence.
+     */
+    sequence: number,
+    requestBody: OperationWorkflowReadinessCoordinationRequest,
+  }): CancelablePromise<OperationWorkflowReadinessNotification> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
+      path: {
+        'id': id,
+        'sequence': sequence,
+      },
+      query: {
+        'scope': scope,
+        'app_id': appId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List Account readiness follow-up work queue
+   * ListAccountWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions for an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may move; refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+   * @returns OperationWorkflowReadinessFollowUpsResponse ListAccountWorkflowReadinessFollowUps. Retained follow-up page.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessFollowUps({
+    slug,
+    scope,
+    tenantId,
+    owner,
+    workflow,
+    due,
+    offset,
+    limit,
+    reminderOnly,
+  }: {
+    /**
+     * ListAccountWorkflowReadinessFollowUps. Application slug.
+     */
+    slug: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.tenant_id. Optional customer selector matches notification evidence or a customer-specific subscription, including broader account watches.
+     */
+    tenantId?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
+     */
+    owner?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation failures have no workflow.
+     */
+    workflow?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+     */
+    due?: 'all' | 'overdue' | 'upcoming',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to zero.
+     */
+    offset?: number,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+     */
+    limit?: number,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
+     */
+    reminderOnly?: boolean,
+  }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/follow-ups',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'owner': owner,
+        'workflow': workflow,
+        'due': due,
+        'offset': offset,
+        'limit': limit,
+        'reminder_only': reminderOnly,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List PlatformTenantSelf readiness follow-up work queue
+   * ListPlatformTenantSelfWorkflowReadinessFollowUps. Read retained pending follow-ups across subscriptions for an explicit application and environment. Due-time ordering puts overdue first. Pages are live and may move; refresh after edits. Account reads require read scope and MFA; customer reads require Operations read.
+   * @returns OperationWorkflowReadinessFollowUpsResponse ListPlatformTenantSelfWorkflowReadinessFollowUps. Retained follow-up page.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessFollowUps({
+    scope,
+    appId,
+    owner,
+    workflow,
+    due,
+    offset,
+    limit,
+    reminderOnly,
+  }: {
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
+     */
+    scope: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application UUID.
+     */
+    appId: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
+     */
+    owner?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.workflow. Exact workflow name; global evaluation failures have no workflow.
+     */
+    workflow?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.due. Defaults to all pending follow-ups.
+     */
+    due?: 'all' | 'overdue' | 'upcoming',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.offset. Live zero-based offset, defaults to zero.
+     */
+    offset?: number,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
+     */
+    limit?: number,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
+     */
+    reminderOnly?: boolean,
+  }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/follow-ups',
+      query: {
+        'scope': scope,
+        'app_id': appId,
+        'owner': owner,
+        'workflow': workflow,
+        'due': due,
+        'offset': offset,
+        'limit': limit,
+        'reminder_only': reminderOnly,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read account workflow coordination timeline
+   * GetAccountWorkflowCoordinationTimeline. Read a bounded chronological projection from current retained readiness inboxes for an exact subject and workflow instance. Observation clocks are server times; latest snapshots do not reconstruct every past edit. This is not a complete audit trail and does not authorize execution. Sources are read independently and live offset pages may move. Account access requires read scope and MFA; customer access requires Operations read.
+   * @returns OperationWorkflowCoordinationTimeline GetAccountWorkflowCoordinationTimeline. Retained workflow coordination timeline with source coverage and limitations.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowCoordinationTimeline({
+    slug,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    tenantId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetAccountWorkflowCoordinationTimeline.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.tenant_id. Exact customer identity. Omission selects account-owned workflows only, not all customers.
+     */
+    tenantId?: string,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh after edits or retention changes.
+     */
+    offset?: number,
+    /**
+     * GetAccountWorkflowCoordinationTimeline.limit. Maximum events per page.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCoordinationTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/timeline',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read customer workflow coordination timeline
+   * GetPlatformTenantSelfWorkflowCoordinationTimeline. Read a bounded chronological projection from current retained readiness inboxes for an exact subject and workflow instance. Observation clocks are server times; latest snapshots do not reconstruct every past edit. This is not a complete audit trail and does not authorize execution. Sources are read independently and live offset pages may move. Account access requires read scope and MFA; customer access requires Operations read.
+   * @returns OperationWorkflowCoordinationTimeline GetPlatformTenantSelfWorkflowCoordinationTimeline. Retained workflow coordination timeline with source coverage and limitations.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowCoordinationTimeline({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.offset. Live zero-based event offset. Refresh after edits or retention changes.
+     */
+    offset?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowCoordinationTimeline.limit. Maximum events per page.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCoordinationTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/timeline',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read account workflow case overview
+   * GetAccountWorkflowCase. Combine retained current application state, blockers, dependencies, verification and readiness with exact matching open follow-ups, advisory next steps and a retained coordination timeline. Evidence and coordination are independently read. Missing or stale reports cannot establish readiness or business success. The application retains outcome interpretation, authorization and execution. Account reads require an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+   * @returns OperationWorkflowCase GetAccountWorkflowCase. Current evidence and retained coordination for one exact business workflow case.
+   * @throws ApiError
+   */
+  public static getAccountWorkflowCase({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetAccountWorkflowCase.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * GetAccountWorkflowCase.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetAccountWorkflowCase.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * GetAccountWorkflowCase.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetAccountWorkflowCase.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetAccountWorkflowCase.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetAccountWorkflowCase.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetAccountWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups return their own bounded overview.
+     */
+    offset?: number,
+    /**
+     * GetAccountWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum 100.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCase> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/case',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read customer workflow case overview
+   * GetPlatformTenantSelfWorkflowCase. Combine retained current application state, blockers, dependencies, verification and readiness with exact matching open follow-ups, advisory next steps and a retained coordination timeline. Evidence and coordination are independently read. Missing or stale reports cannot establish readiness or business success. The application retains outcome interpretation, authorization and execution. Account reads require an explicit customer selector, read scope and MFA; customer identity derives from authentication.
+   * @returns OperationWorkflowCase GetPlatformTenantSelfWorkflowCase. Current evidence and retained coordination for one exact business workflow case.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowCase({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    offset,
+    limit = 20,
+  }: {
+    /**
+     * GetPlatformTenantSelfWorkflowCase.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.offset. Live event offset for the nested timeline only; follow-ups return their own bounded overview.
+     */
+    offset?: number,
+    /**
+     * GetPlatformTenantSelfWorkflowCase.limit. Nested timeline page size; defaults to 20 with maximum 100.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowCase> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/case',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+        'offset': offset,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start pinned workflow playbook progress
+   * StartAccountWorkflowPlaybookProgress. Start from a currently matched fresh application playbook. Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the existing checklist. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress StartAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static startAccountWorkflowPlaybookProgress({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    requestBody,
+  }: {
+    /**
+     * StartAccountWorkflowPlaybookProgress.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * StartAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    requestBody: OperationWorkflowPlaybookProgressStartRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update pinned workflow playbook progress
+   * UpdateAccountWorkflowPlaybookProgress. Replace one frozen checklist item using the expected revision. Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return 409. Existing guidance is never upgraded. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress UpdateAccountWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static updateAccountWorkflowPlaybookProgress({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * UpdateAccountWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookProgressUpdateRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start customer pinned workflow playbook progress
+   * StartPlatformTenantSelfWorkflowPlaybookProgress. Start from a currently matched fresh application playbook. Pin exact rule, workflow version and immutable reporting definition. Repeated starts return the existing checklist. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress StartPlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static startPlatformTenantSelfWorkflowPlaybookProgress({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    requestBody,
+  }: {
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * StartPlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    requestBody: OperationWorkflowPlaybookProgressStartRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update customer pinned workflow playbook progress
+   * UpdatePlatformTenantSelfWorkflowPlaybookProgress. Replace one frozen checklist item using the expected revision. Record authenticated reviewer, note and scoped operation or milestone evidence. Conflicts return 409. Existing guidance is never upgraded. Requires account write scope and MFA or customer operations-manage scope. Customer identity derives from authentication. Checklist completion does not establish readiness, authorize execution or report business success. At most 100 records per exact case; the latest 64 review changes per record are retained.
+   * @returns OperationWorkflowPlaybookProgress UpdatePlatformTenantSelfWorkflowPlaybookProgress. Durable pinned checklist after the accepted start or review.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantSelfWorkflowPlaybookProgress({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * UpdatePlatformTenantSelfWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookProgressUpdateRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}',
+      path: {
+        'id': id,
+      },
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Record account playbook review decision
+   * ReviewAccountWorkflowPlaybookProgress. Record continue, retire or replace with a required human reason and expected source revision. Retire and replace permanently close source coordination. Replacement requires an already-started active applicable target in the same exact case, its expected revision, and an atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed. Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from authentication. Applicability is observed before the write, not transactionally locked application evidence.
+   * @returns OperationWorkflowPlaybookProgress ReviewAccountWorkflowPlaybookProgress. Source checklist with the committed durable decision and updated shared revision.
+   * @throws ApiError
+   */
+  public static reviewAccountWorkflowPlaybookProgress({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ReviewAccountWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookReviewRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Record customer playbook review decision
+   * ReviewPlatformTenantSelfWorkflowPlaybookProgress. Record continue, retire or replace with a required human reason and expected source revision. Retire and replace permanently close source coordination. Replacement requires an already-started active applicable target in the same exact case, its expected revision, and an atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed. Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from authentication. Applicability is observed before the write, not transactionally locked application evidence.
+   * @returns OperationWorkflowPlaybookProgress ReviewPlatformTenantSelfWorkflowPlaybookProgress. Source checklist with the committed durable decision and updated shared revision.
+   * @throws ApiError
+   */
+  public static reviewPlatformTenantSelfWorkflowPlaybookProgress({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ReviewPlatformTenantSelfWorkflowPlaybookProgress.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookReviewRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookProgress> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews',
+      path: {
+        'id': id,
+      },
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

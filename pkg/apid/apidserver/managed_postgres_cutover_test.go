@@ -1,5 +1,5 @@
 // adr: 465 — authenticated cutover transport preserves staging and tenant boundaries.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,17 +13,19 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func cutoverAPIFixture(t *testing.T) (sourceRefTestEnv, *managedpostgres.CutoverService, api.PrepareManagedPostgresCutoverRequest) {
+func cutoverAPIFixture(t *testing.T) (apidserver.SourceRefTestEnv, *managedpostgres.CutoverService, api.PrepareManagedPostgresCutoverRequest) {
 	t.Helper()
 	ctx := context.Background()
-	env := newSourceRefTestServer(t, api.PlanPro, "cutover-api", 7777)
-	store, _, sourceID := configureSourceRefManagedPostgres(t, env)
-	source, err := store.Get(ctx, env.acctID, sourceID)
+	env := apidserver.NewSourceRefTestServer(t, api.PlanPro, "cutover-api", 7777)
+	store, _, sourceID := apidserver.ConfigureSourceRefManagedPostgres(t, env)
+	source, err := store.Get(ctx, (*env.AcctID()), sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +42,7 @@ func cutoverAPIFixture(t *testing.T) (sourceRefTestEnv, *managedpostgres.Cutover
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err = store.Claim(ctx, env.acctID, target.ID, "restore", managedpostgres.StateProvisioning, now, now.Add(time.Minute))
+	target, err = store.Claim(ctx, (*env.AcctID()), target.ID, "restore", managedpostgres.StateProvisioning, now, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func cutoverAPIFixture(t *testing.T) (sourceRefTestEnv, *managedpostgres.Cutover
 		if access == managedpostgres.CredentialMigration {
 			key = "MIGRATION_DATABASE_URL"
 		}
-		_, err = env.srv.managedPostgresBindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: env.acctID, AppID: env.appID, DatabaseID: source.ID, Scope: "default", EnvironmentKey: key, Access: access})
+		_, err = (*(*env.Srv()).ManagedPostgresBindings()).Create(ctx, managedpostgres.CreateBindingRequest{AccountID: (*env.AcctID()), AppID: (*env.AppID()), DatabaseID: source.ID, Scope: "default", EnvironmentKey: key, Access: access})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,29 +67,29 @@ func cutoverAPIFixture(t *testing.T) (sourceRefTestEnv, *managedpostgres.Cutover
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink, err := newAppSecretCredentialSink(env.store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("test-key") })
+	sink, err := apidserver.NewAppSecretCredentialSink((*env.Store()), func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("test-key") })
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink.identities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	sink.probe = func(_ context.Context, _ string, _ managedpostgres.CredentialAccess, major int) error {
+	(*sink.Identities()) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	(*sink.Probe()) = func(_ context.Context, _ string, _ managedpostgres.CredentialAccess, major int) error {
 		if major != 17 {
 			t.Fatal(major)
 		}
 		return nil
 	}
-	service, err := managedpostgres.NewCutoverService(env.srv.managedPostgresBindings, store, sink)
+	service, err := managedpostgres.NewCutoverService((*(*env.Srv()).ManagedPostgresBindings()), store, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env.srv.managedPostgresCutovers = service
-	return env, service, api.PrepareManagedPostgresCutoverRequest{SourceDatabaseID: source.ID, TargetDatabaseID: target.ID, AppID: env.appID, Scope: "default"}
+	(*(*env.Srv()).ManagedPostgresCutovers()) = service
+	return env, service, api.PrepareManagedPostgresCutoverRequest{SourceDatabaseID: source.ID, TargetDatabaseID: target.ID, AppID: (*env.AppID()), Scope: "default"}
 }
-func cutoverAPIGet(env sourceRefTestEnv, id string) *httptest.ResponseRecorder {
+func cutoverAPIGet(env apidserver.SourceRefTestEnv, id string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/v1/postgres/cutovers/"+id, nil)
-	req.Header.Set("Authorization", "Bearer "+env.key)
+	req.Header.Set("Authorization", "Bearer "+(*env.Key()))
 	w := httptest.NewRecorder()
-	env.h.ServeHTTP(w, req)
+	(*env.H()).ServeHTTP(w, req)
 	return w
 }
 func decodeCutoverAPI(t *testing.T, w *httptest.ResponseRecorder, status int) api.ManagedPostgresCutover {
@@ -112,20 +114,20 @@ func decodeCutoverAPI(t *testing.T, w *httptest.ResponseRecorder, status int) ap
 func TestManagedPostgresCutoverAPIStagesVerifiesAndCancels(t *testing.T) {
 	env, service, req := cutoverAPIFixture(t)
 	ctx := context.Background()
-	c := decodeCutoverAPI(t, env.postWithIdempotency(t, "/v1/postgres/cutovers", req, "cutover-preparation"), http.StatusAccepted)
-	repeat := decodeCutoverAPI(t, env.postWithIdempotency(t, "/v1/postgres/cutovers", req, "cutover-preparation"), http.StatusAccepted)
+	c := decodeCutoverAPI(t, env.PostWithIdempotency(t, "/v1/postgres/cutovers", req, "cutover-preparation"), http.StatusAccepted)
+	repeat := decodeCutoverAPI(t, env.PostWithIdempotency(t, "/v1/postgres/cutovers", req, "cutover-preparation"), http.StatusAccepted)
 	if c.ID != repeat.ID || c.State != "preparing" || len(c.Members) != 2 || c.VerificationFresh {
 		t.Fatal("bad preparation")
 	}
-	if w := env.post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil); w.Code != http.StatusConflict {
+	if w := env.Post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil); w.Code != http.StatusConflict {
 		t.Fatal("unprepared target verified", w.Code)
 	}
 	invalid := map[string]any{"source_database_id": req.SourceDatabaseID, "target_database_id": req.TargetDatabaseID, "app_id": req.AppID, "scope": req.Scope, "unknown": true}
-	if w := env.post(t, "/v1/postgres/cutovers", invalid); w.Code != http.StatusBadRequest {
+	if w := env.Post(t, "/v1/postgres/cutovers", invalid); w.Code != http.StatusBadRequest {
 		t.Fatal("unknown field accepted", w.Code)
 	}
 	for range 2 {
-		if _, err := service.Reconcile(ctx, env.acctID, c.ID); err != nil {
+		if _, err := service.Reconcile(ctx, (*env.AcctID()), c.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -133,11 +135,11 @@ func TestManagedPostgresCutoverAPIStagesVerifiesAndCancels(t *testing.T) {
 	if c.State != "prepared" {
 		t.Fatal(c.State)
 	}
-	c = decodeCutoverAPI(t, env.post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil), http.StatusAccepted)
+	c = decodeCutoverAPI(t, env.Post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil), http.StatusAccepted)
 	if c.State != "verifying" {
 		t.Fatal(c.State)
 	}
-	if _, err := service.Reconcile(ctx, env.acctID, c.ID); err != nil {
+	if _, err := service.Reconcile(ctx, (*env.AcctID()), c.ID); err != nil {
 		t.Fatal(err)
 	}
 	c = decodeCutoverAPI(t, cutoverAPIGet(env, c.ID), http.StatusOK)
@@ -148,16 +150,16 @@ func TestManagedPostgresCutoverAPIStagesVerifiesAndCancels(t *testing.T) {
 		if m.VerifiedAt == "" {
 			t.Fatal("member timestamp absent")
 		}
-		if _, err := env.store.GetAppSecretInScope(ctx, env.acctID, env.appID, "default", m.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
+		if _, err := (*env.Store()).GetAppSecretInScope(ctx, (*env.AcctID()), (*env.AppID()), "default", m.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("target secret was published", err)
 		}
 	}
-	c = decodeCutoverAPI(t, env.post(t, "/v1/postgres/cutovers/"+c.ID+"/cancel", nil), http.StatusAccepted)
+	c = decodeCutoverAPI(t, env.Post(t, "/v1/postgres/cutovers/"+c.ID+"/cancel", nil), http.StatusAccepted)
 	if c.VerificationFresh || c.VerifiedAt != "" || c.State != "cancelling" {
 		t.Fatal("cancellation kept evidence")
 	}
 	for range 2 {
-		if _, err := service.Reconcile(ctx, env.acctID, c.ID); err != nil {
+		if _, err := service.Reconcile(ctx, (*env.AcctID()), c.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -167,21 +169,21 @@ func TestManagedPostgresCutoverAPIStagesVerifiesAndCancels(t *testing.T) {
 }
 func TestManagedPostgresCutoverAPIScopeAndTenant(t *testing.T) {
 	env, _, req := cutoverAPIFixture(t)
-	c := decodeCutoverAPI(t, env.post(t, "/v1/postgres/cutovers", req), http.StatusAccepted)
+	c := decodeCutoverAPI(t, env.Post(t, "/v1/postgres/cutovers", req), http.StatusAccepted)
 	ctx := context.Background()
 	key, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = env.store.CreateAPIKey(ctx, env.acctID, hash, "read-cutover", []string{api.ScopeManagedPostgresRead}); err != nil {
+	if _, err = (*env.Store()).CreateAPIKey(ctx, (*env.AcctID()), hash, "read-cutover", []string{api.ScopeManagedPostgresRead}); err != nil {
 		t.Fatal(err)
 	}
-	env.key = key
-	if w := env.post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil); w.Code != http.StatusForbidden {
+	(*env.Key()) = key
+	if w := env.Post(t, "/v1/postgres/cutovers/"+c.ID+"/verify", nil); w.Code != http.StatusForbidden {
 		t.Fatal("read key mutated cutover", w.Code)
 	}
 	decodeCutoverAPI(t, cutoverAPIGet(env, c.ID), http.StatusOK)
-	other, err := env.store.CreateAccount(ctx, "other-cutover@test.invalid", api.PlanPro)
+	other, err := (*env.Store()).CreateAccount(ctx, "other-cutover@test.invalid", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,17 +191,17 @@ func TestManagedPostgresCutoverAPIScopeAndTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = env.store.CreateAPIKey(ctx, other.ID, hash, "other", api.ScopesAdminOnly); err != nil {
+	if _, err = (*env.Store()).CreateAPIKey(ctx, other.ID, hash, "other", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	env.key = key
+	(*env.Key()) = key
 	if w := cutoverAPIGet(env, c.ID); w.Code != http.StatusNotFound {
 		t.Fatal("cross-tenant read", w.Code)
 	}
-	if w := env.post(t, "/v1/postgres/cutovers/"+c.ID+"/cancel", nil); w.Code != http.StatusNotFound {
+	if w := env.Post(t, "/v1/postgres/cutovers/"+c.ID+"/cancel", nil); w.Code != http.StatusNotFound {
 		t.Fatal("cross-tenant cancel", w.Code)
 	}
-	if w := env.post(t, "/v1/postgres/cutovers", req); w.Code != http.StatusNotFound {
+	if w := env.Post(t, "/v1/postgres/cutovers", req); w.Code != http.StatusNotFound {
 		t.Fatal("cross-tenant app", w.Code)
 	}
 	if w := cutoverAPIGet(env, "invalid-uuid"); w.Code != http.StatusBadRequest {
@@ -209,16 +211,16 @@ func TestManagedPostgresCutoverAPIScopeAndTenant(t *testing.T) {
 func TestManagedPostgresCredentialVerifierRejectsEnvelopeDrift(t *testing.T) {
 	env, _, _ := cutoverAPIFixture(t)
 	identity, _ := age.GenerateX25519Identity()
-	sink, _ := newAppSecretCredentialSink(env.store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("test-key") })
-	sink.identities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	sink, _ := apidserver.NewAppSecretCredentialSink((*env.Store()), func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("test-key") })
+	(*sink.Identities()) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
 	calls := 0
-	sink.probe = func(_ context.Context, _ string, _ managedpostgres.CredentialAccess, _ int) error {
+	(*sink.Probe()) = func(_ context.Context, _ string, _ managedpostgres.CredentialAccess, _ int) error {
 		calls++
 		return nil
 	}
 	binding := managedpostgres.Binding{ID: uuid.NewString(), DatabaseID: "target", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite, CredentialGeneration: 1}
 	target := managedpostgres.Database{ID: "target", Spec: managedpostgres.Spec{PostgresMajor: 17}}
-	material, err := (sourceRefManagedPostgresProvider{}).IssueCredentials(context.Background(), managedpostgres.CredentialRequest{Access: managedpostgres.CredentialReadWrite, IdentityKey: "staged"})
+	material, err := (apidserver.SourceRefManagedPostgresProvider{}).IssueCredentials(context.Background(), managedpostgres.CredentialRequest{Access: managedpostgres.CredentialReadWrite, IdentityKey: "staged"})
 	if err != nil {
 		t.Fatal(err)
 	}

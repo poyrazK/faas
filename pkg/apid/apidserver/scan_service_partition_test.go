@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // scan_service_partition_test.go — unit tests for the ADR-124
 // blast-radius partition (computeAffectedPartition). The preview-
@@ -23,6 +23,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -66,7 +67,7 @@ func TestComputeAffectedPartition_RemovedProjectScoped(t *testing.T) {
 	apps := fixtureApps()
 	scanWl := fixtureScanWl()
 
-	got := computeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
 
 	wantRemoved := []string{"orphan"}
 	if !reflect.DeepEqual(got.Removed, wantRemoved) {
@@ -105,14 +106,14 @@ func TestComputeAffectedPartition_RemovedHonorsExclude(t *testing.T) {
 	scanWl := []reposcan.Workload{}
 
 	// Without exclude: orphan is in Removed.
-	noExcl := computeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
+	noExcl := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
 	if !reflect.DeepEqual(noExcl.Removed, []string{"orphan"}) {
 		t.Fatalf("baseline (no exclude): got %#v, want [orphan]", noExcl.Removed)
 	}
 
 	// With exclude=orphan: orphan must NOT be in Removed.
 	exclude := map[string]bool{"orphan": true}
-	withExcl := computeAffectedPartition(scanWl, scanWl, apps, exclude, projectID)
+	withExcl := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, exclude, projectID)
 	if len(withExcl.Removed) != 0 {
 		t.Fatalf("operator --exclude ignored: got Removed=%#v, want []", withExcl.Removed)
 	}
@@ -130,7 +131,7 @@ func TestComputeAffectedPartition_RemovedSkipsScanKeyMatches(t *testing.T) {
 	}
 	scanWl := []reposcan.Workload{{Name: "matched", RootDir: "apps"}}
 
-	got := computeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
 
 	// Matched key → WillDeploy (action=update), not Removed.
 	if len(got.Removed) != 0 {
@@ -147,7 +148,7 @@ func TestComputeAffectedPartition_DirectoryMoveIsUpdate(t *testing.T) {
 		ID: "api-id", Slug: "api", WorkloadName: "api", RootDir: "services/api", ProjectID: projectID,
 	}}
 	scan := []reposcan.Workload{{Name: "api", RootDir: "apps/api"}}
-	got := computeAffectedPartition(scan, scan, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(scan, scan, apps, nil, projectID)
 	if len(got.WillDeploy) != 1 || got.WillDeploy[0].Action != "update" || got.WillDeploy[0].ID != "api-id" ||
 		got.WillDeploy[0].ExistingRootDir != "services/api" || len(got.Removed) != 0 {
 		t.Fatalf("directory move partition = %#v", got)
@@ -162,7 +163,7 @@ func TestComputeAffectedPartition_OnlyDoesNotRemoveUnselectedWorkload(t *testing
 	}
 	all := []reposcan.Workload{{Name: "api", RootDir: "services/api"}, {Name: "worker", RootDir: "services/worker"}}
 	selected := all[:1]
-	got := computeAffectedPartition(selected, all, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(selected, all, apps, nil, projectID)
 	if len(got.Removed) != 0 || len(got.WillDeploy) != 1 || got.WillDeploy[0].Slug != "api" {
 		t.Fatalf("--only partition = %#v", got)
 	}
@@ -178,7 +179,7 @@ func TestComputeAffectedPartition_BrandNewProjectSkipsRemoved(t *testing.T) {
 	scanWl := fixtureScanWl()
 
 	// projectID="" → brand-new project, no apps in scope.
-	got := computeAffectedPartition(scanWl, scanWl, apps, nil, "")
+	got := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, "")
 
 	if len(got.Removed) != 0 {
 		t.Fatalf("brand-new project produced Removed: got %#v, want []", got.Removed)
@@ -203,7 +204,7 @@ func TestComputeAffectedPartition_RemovedIsStableOrdered(t *testing.T) {
 	}
 	scanWl := []reposcan.Workload{}
 
-	got := computeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
 
 	want := []string{"alpha", "beta", "delta", "mu", "zeta"}
 	if !reflect.DeepEqual(got.Removed, want) {
@@ -217,7 +218,7 @@ func TestComputeAffectedPartition_RemovedIsStableOrdered(t *testing.T) {
 	for i, a := range apps {
 		reverse[len(apps)-1-i] = a
 	}
-	got2 := computeAffectedPartition(scanWl, scanWl, reverse, nil, projectID)
+	got2 := apidserver.ComputeAffectedPartition(scanWl, scanWl, reverse, nil, projectID)
 	if !reflect.DeepEqual(got2.Removed, want) {
 		t.Fatalf("Removed order depends on input order:\n  got:  %#v\n  want: %#v", got2.Removed, want)
 	}
@@ -234,7 +235,7 @@ func TestComputeAffectedPartition_UnaffectedStaysAccountScoped(t *testing.T) {
 	apps := fixtureApps() // includes app-cross in otherProjectID
 	scanWl := fixtureScanWl()
 
-	got := computeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
+	got := apidserver.ComputeAffectedPartition(scanWl, scanWl, apps, nil, projectID)
 
 	// Removed is project-scoped: only `orphan` (in projectID).
 	if !reflect.DeepEqual(got.Removed, []string{"orphan"}) {

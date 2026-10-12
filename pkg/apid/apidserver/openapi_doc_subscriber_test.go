@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Tests for the openapi_doc_subscriber.go (ADR-126 / issue #975
 // item #2) — the pg_notify → SpecCache.InvalidateByApp bridge.
@@ -18,13 +18,14 @@ package apidserver
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
 // TestAppIDFromPayload_OpenAPIImport verifies the
 // NotifyAppOpenAPIDocChanged branch decodes the app_id field.
 func TestAppIDFromPayload_OpenAPIImport(t *testing.T) {
-	got := appIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{"app_id":"app-123","op":"replaced"}`)
+	got := apidserver.AppIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{"app_id":"app-123","op":"replaced"}`)
 	if got != "app-123" {
 		t.Errorf("got=%q, want app-123", got)
 	}
@@ -35,7 +36,7 @@ func TestAppIDFromPayload_OpenAPIImport(t *testing.T) {
 // rule_id + op fields are ignored — only app_id matters for
 // the cache flush).
 func TestAppIDFromPayload_EdgeRuleChanged(t *testing.T) {
-	got := appIDFromPayload(db.NotifyEdgeRuleChanged, `{"app_id":"app-456","rule_id":"rule-7","op":"created"}`)
+	got := apidserver.AppIDFromPayload(db.NotifyEdgeRuleChanged, `{"app_id":"app-456","rule_id":"rule-7","op":"created"}`)
 	if got != "app-456" {
 		t.Errorf("got=%q, want app-456", got)
 	}
@@ -46,7 +47,7 @@ func TestAppIDFromPayload_EdgeRuleChanged(t *testing.T) {
 // payload. The cache state stays valid; a missed flush falls
 // off the LRU via TTL.
 func TestAppIDFromPayload_MalformedOpenAPIImport(t *testing.T) {
-	if got := appIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{not json`); got != "" {
+	if got := apidserver.AppIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{not json`); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
 }
@@ -55,7 +56,7 @@ func TestAppIDFromPayload_MalformedOpenAPIImport(t *testing.T) {
 // decoder returns "" on a malformed NotifyEdgeRuleChanged
 // payload.
 func TestAppIDFromPayload_MalformedEdgeRuleChanged(t *testing.T) {
-	if got := appIDFromPayload(db.NotifyEdgeRuleChanged, `{"app_id":}`); got != "" {
+	if got := apidserver.AppIDFromPayload(db.NotifyEdgeRuleChanged, `{"app_id":}`); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
 }
@@ -65,10 +66,10 @@ func TestAppIDFromPayload_MalformedEdgeRuleChanged(t *testing.T) {
 // (the production rule is: app_id is required for the cache
 // flush, so a missing app_id is a no-op).
 func TestAppIDFromPayload_EmptyAppID(t *testing.T) {
-	if got := appIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{"op":"replaced"}`); got != "" {
+	if got := apidserver.AppIDFromPayload(db.NotifyAppOpenAPIDocChanged, `{"op":"replaced"}`); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
-	if got := appIDFromPayload(db.NotifyEdgeRuleChanged, `{"rule_id":"rule-1","op":"deleted"}`); got != "" {
+	if got := apidserver.AppIDFromPayload(db.NotifyEdgeRuleChanged, `{"rule_id":"rule-1","op":"deleted"}`); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
 }
@@ -79,7 +80,7 @@ func TestAppIDFromPayload_EmptyAppID(t *testing.T) {
 // but not yet wired into appIDFromPayload produces a log
 // warning and a no-op rather than a panic.
 func TestAppIDFromPayload_UnknownChannel(t *testing.T) {
-	if got := appIDFromPayload("app_changed", `{"app_id":"app-1","op":"updated"}`); got != "" {
+	if got := apidserver.AppIDFromPayload("app_changed", `{"app_id":"app-1","op":"updated"}`); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
 }
@@ -89,7 +90,7 @@ func TestAppIDFromPayload_UnknownChannel(t *testing.T) {
 // empty payloads via the `n.Payload == ""` short-circuit, but
 // the decoder's behaviour is the floor guarantee).
 func TestAppIDFromPayload_EmptyPayload(t *testing.T) {
-	if got := appIDFromPayload(db.NotifyAppOpenAPIDocChanged, ""); got != "" {
+	if got := apidserver.AppIDFromPayload(db.NotifyAppOpenAPIDocChanged, ""); got != "" {
 		t.Errorf("got=%q, want empty", got)
 	}
 }

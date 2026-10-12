@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,16 +10,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestUploadAppendStorageFailureDoesNotAcknowledgeMissingBytes(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "durable-upload"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "durable-upload"}, nil)
 	session := startSession(t, e, "durable-upload", 8)
-	row, err := e.store.GetUploadSession(context.Background(), session.UploadID)
+	row, err := (*e.Store()).GetUploadSession(context.Background(), session.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestUploadAppendStorageFailureDoesNotAcknowledgeMissingBytes(t *testing.T) 
 	if rec := appendChunk(t, e, session.UploadID, 0, []byte("abcd")); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("failed storage append = %d: %s", rec.Code, rec.Body.String())
 	}
-	row, err = e.store.GetUploadSession(context.Background(), session.UploadID)
+	row, err = (*e.Store()).GetUploadSession(context.Background(), session.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +56,8 @@ func TestUploadAppendStorageFailureDoesNotAcknowledgeMissingBytes(t *testing.T) 
 
 func TestUploadAppendRejectsBytesPastDeclaredSize(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "bounded-upload"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "bounded-upload"}, nil)
 	session := startSession(t, e, "bounded-upload", 4)
 	if rec := appendChunk(t, e, session.UploadID, 0, []byte("abc")); rec.Code != http.StatusOK {
 		t.Fatalf("first append = %d: %s", rec.Code, rec.Body.String())
@@ -64,7 +65,7 @@ func TestUploadAppendRejectsBytesPastDeclaredSize(t *testing.T) {
 	if rec := appendChunk(t, e, session.UploadID, 3, []byte("de")); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized final append = %d: %s, want 413", rec.Code, rec.Body.String())
 	}
-	row, err := e.store.GetUploadSession(context.Background(), session.UploadID)
+	row, err := (*e.Store()).GetUploadSession(context.Background(), session.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,20 +97,20 @@ func (s *uploadAppendFaultStore) AppendUploadBytes(ctx context.Context, in sqlc.
 
 func TestUploadAppendPersistsBytesBeforeOffsetCAS(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "ordered-upload"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "ordered-upload"}, nil)
 	session := startSession(t, e, "ordered-upload", 4)
-	row, err := e.store.GetUploadSession(context.Background(), session.UploadID)
+	row, err := (*e.Store()).GetUploadSession(context.Background(), session.UploadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fault := &uploadAppendFaultStore{Store: e.store, fail: true, beforeAppend: func() {
+	fault := &uploadAppendFaultStore{Store: (*e.Store()), fail: true, beforeAppend: func() {
 		data, readErr := os.ReadFile(row.PartPath)
 		if readErr != nil || string(data) != "abcd" {
 			t.Errorf("offset CAS reached before spool write: bytes=%q, error=%v", data, readErr)
 		}
 	}}
-	e.s.store = fault
+	(*(*e.S()).Store()) = fault
 	if rec := appendChunk(t, e, session.UploadID, 0, []byte("abcd")); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("injected CAS failure = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -122,16 +123,16 @@ func TestUploadAppendPersistsBytesBeforeOffsetCAS(t *testing.T) {
 func TestUploadStartRejectedOptionsDoNotLeakSpool(t *testing.T) {
 	spool := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
-	e := setup(t, api.PlanFree)
-	e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "invalid-upload"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "invalid-upload"}, nil)
 	// This valid JSON fits the request limit, but HTML escaping when the
 	// options are re-encoded exceeds the persisted-options limit.
 	body := `{"app_slug":"invalid-upload","total_size":4,"deploy_options":{"reason":"` + strings.Repeat("<", 200000) + `"}}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/uploads", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("oversized options = %d: %s", rec.Code, rec.Body.String())
 	}

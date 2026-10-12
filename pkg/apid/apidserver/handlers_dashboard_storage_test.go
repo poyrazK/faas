@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,7 +26,7 @@ func TestParseAppStoragePath(t *testing.T) {
 		{path: "/storage", ok: false},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			got, ok := parseAppStoragePath(tc.path)
+			got, ok := apidserver.ParseAppStoragePath(tc.path)
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("parseAppStoragePath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 			}
@@ -33,7 +35,7 @@ func TestParseAppStoragePath(t *testing.T) {
 }
 
 func TestDashboardHandler_StorageFixture(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -77,18 +79,18 @@ func TestDashboardHandler_StorageFixture(t *testing.T) {
 	} else {
 		found := false
 		for _, c := range csrf {
-			if c.Name == dashboardStorageCSRFCookie && c.Value != "" {
+			if c.Name == apidserver.DashboardStorageCSRFCookie && c.Value != "" {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("storage response missing %s cookie: %v", dashboardStorageCSRFCookie, csrf)
+			t.Fatalf("storage response missing %s cookie: %v", apidserver.DashboardStorageCSRFCookie, csrf)
 		}
 	}
 }
 
 func TestDashboardStorageCreateRequiresNamedCSRF(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -96,7 +98,7 @@ func TestDashboardStorageCreateRequiresNamedCSRF(t *testing.T) {
 	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "storage-csrf", Status: state.AppActive}); err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/storage-csrf/storage/buckets", map[string]string{"name": "assets"})
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/storage-csrf/storage/buckets", map[string]string{"name": "assets"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("csrf status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
 	}

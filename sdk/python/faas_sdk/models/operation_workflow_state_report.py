@@ -16,8 +16,10 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_blocker import OperationWorkflowBlocker
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+    from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
 
 
 T = TypeVar("T", bound="OperationWorkflowStateReport")
@@ -36,6 +38,11 @@ class OperationWorkflowStateReport:
     state: str
     revision: int
     occurred_at: datetime.datetime
+    change_reason: OperationWorkflowChangeReason | Unset = UNSET
+    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+   """
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
     """Full replacement snapshot of direct prerequisite references."""
     dependencies_only: bool | Unset = UNSET
@@ -79,6 +86,17 @@ class OperationWorkflowStateReport:
         revision = self.revision
 
         occurred_at = self.occurred_at.isoformat()
+
+        change_reason: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.change_reason, Unset):
+            change_reason = self.change_reason.to_dict()
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -144,6 +162,10 @@ class OperationWorkflowStateReport:
                 "occurred_at": occurred_at,
             }
         )
+        if change_reason is not UNSET:
+            field_dict["change_reason"] = change_reason
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if dependencies_only is not UNSET:
@@ -177,8 +199,10 @@ class OperationWorkflowStateReport:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_blocker import OperationWorkflowBlocker
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+        from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -192,6 +216,22 @@ class OperationWorkflowStateReport:
         revision = d.pop("revision")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        _change_reason = d.pop("change_reason", UNSET)
+        change_reason: OperationWorkflowChangeReason | Unset
+        if isinstance(_change_reason, Unset):
+            change_reason = UNSET
+        else:
+            change_reason = OperationWorkflowChangeReason.from_dict(_change_reason)
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -271,6 +311,8 @@ class OperationWorkflowStateReport:
             state=state,
             revision=revision,
             occurred_at=occurred_at,
+            change_reason=change_reason,
+            selected_paths=selected_paths,
             depends_on=depends_on,
             dependencies_only=dependencies_only,
             outcome_code=outcome_code,

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -26,7 +27,7 @@ func TestParseAppWebhooksPath(t *testing.T) {
 		{name: "missing slug", path: "/webhooks", ok: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseAppWebhooksPath(tc.path)
+			got, ok := apidserver.ParseAppWebhooksPath(tc.path)
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("parseAppWebhooksPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 			}
@@ -35,7 +36,7 @@ func TestParseAppWebhooksPath(t *testing.T) {
 }
 
 func TestDashboardHandler_AppWebhooks(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -81,8 +82,8 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "redacted-from-page") {
 		t.Error("delivery payload leaked into dashboard page")
 	}
-	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardWebhooksCSRFCookie); cookie == nil || cookie.Value == "" {
-		t.Fatalf("GET webhooks: missing %s cookie", dashboardWebhooksCSRFCookie)
+	if cookie := apidserver.FindDashboardCookie(rec.Result().Cookies(), apidserver.DashboardWebhooksCSRFCookie); cookie == nil || cookie.Value == "" {
+		t.Fatalf("GET webhooks: missing %s cookie", apidserver.DashboardWebhooksCSRFCookie)
 	}
 	tracked, err := store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
 		WebhookID: webhook.ID, AppID: app.ID, AccountID: acct.ID,
@@ -169,7 +170,7 @@ func TestDashboardHandler_AppWebhooks(t *testing.T) {
 }
 
 func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -180,7 +181,7 @@ func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
 	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "hooks-create", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive}); err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/hooks-create/webhooks", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/hooks-create/webhooks", map[string]string{
 		"target_url": "https://example.com/events", "webhook_secret": "secret", "enabled": "true",
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -192,9 +193,9 @@ func TestDashboardAppWebhookCreateRequiresNamedCSRF(t *testing.T) {
 }
 
 func TestDashboardAppWebhookRotateInstallsSuppliedSecret(t *testing.T) {
-	teardown := withTestRecipient(t)
+	teardown := apidserver.WithTestRecipient(t)
 	t.Cleanup(teardown)
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -213,14 +214,14 @@ func TestDashboardAppWebhookRotateInstallsSuppliedSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardWebhooksAction, acct.ID, dashboardWebhooksCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardWebhooksAction, acct.ID, apidserver.DashboardWebhooksCSRFCookie)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/hooks-rotate/webhooks/"+hook.ID+"/rotate-secret", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/hooks-rotate/webhooks/"+hook.ID+"/rotate-secret", map[string]string{
 		middleware.FormFieldName: token,
 		"webhook_secret":         "known-dashboard-replacement",
-	}, &http.Cookie{Name: dashboardWebhooksCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardWebhooksCSRFCookie, Value: token})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303: %s", rec.Code, rec.Body.String())
 	}

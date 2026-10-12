@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
     from ..models.operation_workflow_planned_decision import OperationWorkflowPlannedDecision
     from ..models.operation_workflow_planned_effect import OperationWorkflowPlannedEffect
     from ..models.operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
@@ -32,6 +33,7 @@ class CheckAccountWorkflowReadinessBody:
     to_state: str
     tenant_id: UUID
     """For this proposed transition, required in account mode only."""
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     effects: list[OperationWorkflowPlannedEffect] | Unset = UNSET
     invariants: list[OperationWorkflowPlannedInvariant] | Unset = UNSET
     decisions: list[OperationWorkflowPlannedDecision] | Unset = UNSET
@@ -62,6 +64,13 @@ class CheckAccountWorkflowReadinessBody:
         to_state = self.to_state
 
         tenant_id = str(self.tenant_id)
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         effects: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.effects, Unset):
@@ -110,6 +119,8 @@ class CheckAccountWorkflowReadinessBody:
                 "tenant_id": tenant_id,
             }
         )
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if effects is not UNSET:
             field_dict["effects"] = effects
         if invariants is not UNSET:
@@ -130,6 +141,7 @@ class CheckAccountWorkflowReadinessBody:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
         from ..models.operation_workflow_planned_decision import OperationWorkflowPlannedDecision
         from ..models.operation_workflow_planned_effect import OperationWorkflowPlannedEffect
         from ..models.operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
@@ -150,6 +162,15 @@ class CheckAccountWorkflowReadinessBody:
         to_state = d.pop("to_state")
 
         tenant_id = UUID(d.pop("tenant_id"))
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _effects = d.pop("effects", UNSET)
         effects: list[OperationWorkflowPlannedEffect] | Unset = UNSET
@@ -200,6 +221,7 @@ class CheckAccountWorkflowReadinessBody:
             from_state=from_state,
             to_state=to_state,
             tenant_id=tenant_id,
+            selected_paths=selected_paths,
             effects=effects,
             invariants=invariants,
             decisions=decisions,

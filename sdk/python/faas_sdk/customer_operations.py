@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from ._operation_contract import (
     OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES,
@@ -26,9 +26,13 @@ from ._operation_contract import (
     OPERATION_SUBJECT_ID_BYTES,
     OPERATION_WORKFLOW_STATE_BATCH_BYTES,
     OPERATION_WORKFLOW_STATE_REPORTS,
+    OPERATION_WORKFLOW_PATH_SELECTIONS,
 )
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .models.operation_workflow_path_selection import OperationWorkflowPathSelection
+from .models.operation_business_condition_result import OperationBusinessConditionResult
+from .models.operation_workflow_change_reason import OperationWorkflowChangeReason
 from .models.operation_workflow_state_report import OperationWorkflowStateReport
 from .models.operation_workflow_dependency import OperationWorkflowDependency
 from .models.operation_workflow_blocker import OperationWorkflowBlocker
@@ -393,8 +397,56 @@ class CustomerOperationTransaction:
     def workflow_state(self, workflow: str, instance_id: str, state: str) -> None:
         self._queue_workflow_state(workflow, instance_id, state, None)
 
-    def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str) -> None:
+    def workflow_change_reason(self, milestone: str) -> None:
+        """Attach a queued decision to the most recent workflow update."""
+        self._check_open("Change reasons")
+        facts = [f for f in self._milestones if f.name == milestone]
+        if len(facts) != 1 or not self._workflow_states:
+            raise ValueError("queue one decision and a workflow update before its reason")
+        fact, prior = facts[0], self._workflow_states[-1]
+        if prior.change_reason is not UNSET:
+            raise ValueError("a change reason is already attached to this report")
+        if prior.from_state is UNSET or not prior.from_state:
+            raise ValueError("initial snapshots cannot carry change reasons")
+        payload = fact.payload
+        if not isinstance(payload, dict) or payload.get("kind") != "gregale.business-decision.v1":
+            raise ValueError("change reason requires a business decision")
+        reason = _canonical_workflow_change_reason(OperationWorkflowChangeReason.from_dict({"milestone_id":str(fact.id),"decision":payload["decision"]}))
+        if reason.decision.workflow != prior.workflow or reason.decision.instance_id != prior.instance_id:
+            raise ValueError("change reason requires a matching workflow decision")
+        evidence = [] if prior.evidence_milestones is UNSET else list(prior.evidence_milestones)
+        if not any(e.id == fact.id for e in evidence):
+            evidence.append(OperationWorkflowEvidenceMilestone(id=fact.id,name=fact.name))
+        self._workflow_states[-1] = evolve(prior,change_reason=reason,evidence_milestones=evidence)
+        if len(_json_bytes({"workflow_states":[r.to_dict() for r in self._workflow_states]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES:
+            self._workflow_states[-1] = prior
+            raise ValueError("workflow state batch exceeds its byte limit")
+
+    def workflow_path_decision(self, group: str, path: str, milestone: str) -> OperationWorkflowPathSelection:
+        """Link a chosen path to exactly one decision queued in this transaction."""
+        self._check_open("Path decisions")
+        facts = [f for f in self._milestones if f.name == milestone]
+        if len(facts) != 1:
+            raise ValueError("path decision requires exactly one queued milestone")
+        fact = facts[0]
+        payload = fact.payload
+        if not isinstance(payload, dict) or payload.get("kind") != "gregale.business-decision.v1" or not isinstance(payload.get("decision"), dict):
+            raise ValueError("path reference requires a business decision milestone")
+        decision = OperationBusinessDecision(**payload["decision"])
+        decision.to_payload()
+        return _canonical_workflow_paths([OperationWorkflowPathSelection(
+            group_id=group, path_id=path, decision_milestone_id=fact.id,
+            decision_code=decision.code, decision_description=decision.description,
+            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version, decision_conditions=([OperationBusinessConditionResult.from_dict(c) for c in decision.to_payload()["decision"].get("conditions", [])] or UNSET))])[0]
+
+    def workflow_transition(self, workflow: str, instance_id: str, from_state: str, to_state: str, *, selected_paths: Sequence[OperationWorkflowPathSelection] = ()) -> None:
+        selected = _canonical_workflow_paths(selected_paths)
         self._queue_workflow_state(workflow, instance_id, to_state, from_state)
+        report = self._workflow_states[-1]
+        report.selected_paths = selected
+        if len(_json_bytes({"workflow_states": [item.to_dict() for item in self._workflow_states]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES:
+            self._workflow_states.pop()
+            raise ValueError("workflow state batch exceeds its byte limit")
 
     async def guarded_workflow_transition(
         self, proposal: OperationWorkflowReadinessRequest,
@@ -416,18 +468,18 @@ class CustomerOperationTransaction:
             invariants=[OperationWorkflowPlannedInvariant(name,OperationBusinessInvariant(**payload["invariant"]).canonical()) for name,payload in facts if isinstance(payload,dict) and payload.get("kind")=="gregale.business-invariant.v1"]
             effects=[OperationWorkflowPlannedEffect(name,OperationBusinessEffect(**payload["effect"])) for name,payload in facts if isinstance(payload,dict) and payload.get("kind")=="gregale.business-effect.v1"]
             for planned in effects: planned.effect.to_payload()
-            request = evolve(proposal, subject=evolve(proposal.subject), effects=effects, invariants=invariants, decisions=decisions, milestones=list(dict.fromkeys(name for name, _ in facts)))
+            request = evolve(proposal, selected_paths=_canonical_workflow_paths([] if proposal.selected_paths is UNSET else proposal.selected_paths), subject=evolve(proposal.subject), effects=effects, invariants=invariants, decisions=decisions, milestones=list(dict.fromkeys(name for name, _ in facts)))
             prior_facts, prior_states = self._milestones, self._workflow_states
             prior_fact_count, prior_state_count = len(prior_facts), len(prior_states)
             self._milestones, self._workflow_states = list(prior_facts), list(prior_states)
             try:
                 for name, payload in facts:
                     self.milestone(name, payload)
-                self.workflow_transition(request.workflow, request.instance_id, request.from_state, request.to_state)
+                self.workflow_transition(request.workflow, request.instance_id, request.from_state, request.to_state, selected_paths=request.selected_paths)
                 staged_facts, staged_states = self._milestones, self._workflow_states
             finally:
                 self._milestones, self._workflow_states = prior_facts, prior_states
-            response = await check(request)
+            response = await check(evolve(request, decisions=[evolve(p) for p in request.decisions], milestones=list(request.milestones), selected_paths=_canonical_workflow_paths(request.selected_paths)))
             self._check_open("Readiness guards")
             if len(self._milestones) != prior_fact_count or len(self._workflow_states) != prior_state_count:
                 raise ValueError("Do not queue evidence concurrently with a readiness guard")
@@ -449,10 +501,119 @@ class CustomerOperationTransaction:
                 or response.instance_id != request.instance_id or r.transition.operation != request.operation
                 or r.transition.from_ != request.from_state or r.transition.to != request.to_state):
                 raise ValueError("Readiness response does not match proposed transition")
-            if (not r.ready or not r.declared or r.state_revision != request.state_revision
+            freshness_rules = [] if r.transition.retained_milestone_freshness is UNSET else r.transition.retained_milestone_freshness
+            def usable(e):
+                f = e.freshness
+                return (e.status == "verified" and e.evidence is not UNSET and e.invalidation is UNSET
+                    and (f is UNSET or (f.max_age_seconds > 0 and f.expires_at is not UNSET
+                        and f.expires_at > f.evaluated_at and f.age_seconds is not UNSET and f.age_seconds >= 0
+                        and f.remaining_seconds is not UNSET and 0 < f.remaining_seconds <= f.max_age_seconds))
+                    and all(rule.prerequisite.operation != e.requirement.operation
+                        or rule.prerequisite.milestone != e.requirement.milestone
+                        or (f is not UNSET and f.max_age_seconds == rule.max_age_seconds
+                            and f.evaluated_at == response.evaluated_at) for rule in freshness_rules))
+            retained = [] if r.retained_milestones is UNSET else r.retained_milestones
+            required_retained = [] if r.transition.required_retained_milestones is UNSET else r.transition.required_retained_milestones
+            retained_missing = any(not any(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
+                and usable(e) for e in retained) for p in required_retained)
+            def evaluate_facts(expected, facts, all_required):
+                complete = bool(expected) and len(facts) == len(expected) and all(
+                    sum(e.requirement.operation == p.operation and e.requirement.milestone == p.milestone
+                        for e in facts) == 1 for p in expected)
+                valid = all(usable(e) for e in facts) if all_required else any(usable(e) for e in facts)
+                return complete, valid
+            expected_groups = [] if r.transition.retained_milestone_groups is UNSET else r.transition.retained_milestone_groups
+            groups = [] if r.retained_milestone_groups is UNSET else r.retained_milestone_groups
+            selected = {p.group_id: p.path_id for p in request.selected_paths}
+            for selection in request.selected_paths:
+                if not any(group.id == selection.group_id and group.paths is not UNSET
+                    and any(path.id == selection.path_id for path in group.paths) for group in expected_groups):
+                    raise ValueError("Selected path is not declared for this transition")
+            for group in expected_groups:
+                if group.paths is not UNSET and group.paths and group.id not in selected:
+                    raise ValueError(f"Guarded transitions require a selected path for compound group {group.id}")
+            groups_missing = len(groups) != len(expected_groups)
+            for expected in expected_groups:
+                matches = [group for group in groups if group.id == expected.id]
+                if len(matches) != 1:
+                    groups_missing = True
+                    continue
+                group = matches[0]
+                if not group.satisfied or ("" if group.selected_path_id is UNSET else group.selected_path_id) != selected.get(expected.id, ""):
+                    groups_missing = True
+                choices = [] if expected.any_of is UNSET else expected.any_of
+                paths = [] if expected.paths is UNSET else expected.paths
+                alternatives = [] if group.alternatives is UNSET else group.alternatives
+                results = [] if group.paths is UNSET else group.paths
+                if not paths:
+                    complete, valid = evaluate_facts(choices, alternatives, False)
+                    if len(choices) < 2 or results or not complete or not valid:
+                        groups_missing = True
+                    continue
+                if choices or len(paths) < 2 or alternatives or len(results) != len(paths):
+                    groups_missing = True
+                satisfied = False
+                for expected_path in paths:
+                    matches = [path for path in results if path.id == expected_path.id]
+                    if len(matches) != 1:
+                        groups_missing = True
+                        continue
+                    path = matches[0]
+                    complete, valid = evaluate_facts(expected_path.all_of, path.requirements, True)
+                    if expected_path.decision is UNSET:
+                        if path.decision is not UNSET:
+                            groups_missing = True
+                    else:
+                        rule, d = expected_path.decision, path.decision
+                        if d is UNSET or any(getattr(d.requirement, key) != getattr(rule, key) for key in ("milestone", "code", "rule_id", "rule_version")):
+                            groups_missing = True
+                            continue
+                        planned = next((p.decision for p in request.decisions if p.milestone == rule.milestone), None)
+                        matches_rule = (planned is not None and rule.milestone in request.milestones
+                            and planned.workflow == request.workflow and planned.instance_id == request.instance_id
+                            and planned.code == rule.code and planned.rule_id == rule.rule_id and planned.rule_version == rule.rule_version)
+                        selection = next((p for p in request.selected_paths if p.group_id == expected.id and p.path_id == path.id), None)
+                        if selection is not None and selection.decision_milestone_id is not UNSET:
+                            matches_rule = matches_rule and selection.decision_code == rule.code and selection.decision_rule_id == rule.rule_id and selection.decision_rule_version == rule.rule_version
+                        if ((d.reported is not UNSET) != (planned is not None)
+                            or planned is not None and any(getattr(d.reported, key, None) != getattr(planned, key) for key in ("workflow", "instance_id", "code", "description", "rule_id", "rule_version"))
+                            or planned is not None and (d.reported is UNSET or d.reported.to_dict().get("conditions", []) != planned.to_dict().get("conditions", []))
+                            or d.satisfied != matches_rule):
+                            groups_missing = True
+                        valid = valid and matches_rule
+                    if not complete or path.satisfied != valid:
+                        groups_missing = True
+                    if path.id == selected.get(expected.id):
+                        satisfied = satisfied or valid
+                if not satisfied:
+                    groups_missing = True
+            if (groups_missing or retained_missing or not r.ready or not r.declared or r.state_revision != request.state_revision
                 or r.contract_version != request.contract_version or r.reasons or r.blockers
-                or r.unmet_dependencies or r.missing_milestones or (r.missing_policies is not UNSET and r.missing_policies) or (r.missing_dependency_workflows is not UNSET and r.missing_dependency_workflows) or (r.unmet_invariants is not UNSET and r.unmet_invariants) or (r.unmet_effects is not UNSET and r.unmet_effects)):
+                or (r.retained_milestones is not UNSET and any(not usable(e) for e in r.retained_milestones)) or r.unmet_dependencies or r.missing_milestones or (r.missing_policies is not UNSET and r.missing_policies) or (r.missing_dependency_workflows is not UNSET and r.missing_dependency_workflows) or (r.unmet_invariants is not UNSET and r.unmet_invariants) or (r.unmet_effects is not UNSET and r.unmet_effects)):
                 raise CustomerOperationReadinessError(response)
+            linked_choices = _canonical_workflow_paths(request.selected_paths)
+            for group in expected_groups:
+                for path in ([] if group.paths is UNSET else group.paths):
+                    if path.decision is UNSET:
+                        continue
+                    for i, selection in enumerate(linked_choices):
+                        if selection.group_id != group.id or selection.path_id != path.id:
+                            continue
+                        matches = [f for f in staged_facts if f.name == path.decision.milestone]
+                        if len(matches) != 1:
+                            raise ValueError("path decision requires exactly one staged fact")
+                        fact = matches[0]
+                        decision = OperationBusinessDecision(**fact.payload["decision"])
+                        linked = _canonical_workflow_paths([OperationWorkflowPathSelection(
+                            group_id=group.id, path_id=path.id, decision_milestone_id=fact.id,
+                            decision_code=decision.code, decision_description=decision.description,
+                            decision_rule_id=decision.rule_id, decision_rule_version=decision.rule_version, decision_conditions=([OperationBusinessConditionResult.from_dict(c) for c in decision.to_payload()["decision"].get("conditions", [])] or UNSET))])[0]
+                        if selection.decision_milestone_id is not UNSET and selection.to_dict() != linked.to_dict():
+                            raise ValueError("path decision reference differs from staged evidence")
+                        linked_choices[i] = linked
+            staged_states[-1].selected_paths = linked_choices
+            if len(_json_bytes({"workflow_states": [item.to_dict() for item in staged_states]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES:
+                raise ValueError("workflow state batch exceeds its byte limit")
             self._milestones, self._workflow_states = staged_facts, staged_states
             return response
         except BaseException as error:
@@ -765,8 +926,8 @@ async def _save_workflow_states(
 
         await cursor.execute(
             "INSERT INTO public.gregale_customer_operation_workflow_states "
-            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only) "
-            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+            "(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at,blockers,blockers_only,blocker_resolutions,deadline_at,deadline_only,outcome_code,outcome_description,outcome_only,depends_on,dependencies_only,selected_paths,change_reason) "
+            "VALUES (%s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s::jsonb,%s::timestamptz,%s::jsonb,%s,%s::jsonb,%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb,%s::jsonb)",
             (
                 request.operation_id,
                 str(saved_report.id),
@@ -788,6 +949,8 @@ async def _save_workflow_states(
                 saved_report.outcome_only is True,
                 _json_bytes(report_data["depends_on"]).decode("utf-8"),
                 saved_report.dependencies_only is True,
+                _json_bytes([p.to_dict() for p in _canonical_workflow_paths([] if saved_report.selected_paths is UNSET else saved_report.selected_paths)]).decode("utf-8"),
+                _json_bytes(None if saved_report.change_reason is UNSET else _canonical_workflow_change_reason(saved_report.change_reason).to_dict()).decode("utf-8"),
             ),
         )
         await cursor.execute(
@@ -927,3 +1090,42 @@ def _canonical_workflow_dependencies(value: list[OperationWorkflowDependency]) -
         if code is not UNSET and (not isinstance(code,str) or code and not _STATE.fullmatch(code)): raise ValueError("invalid required outcome")
         result.append(OperationWorkflowDependency(subject_type=d.subject_type,subject_id=d.subject_id,workflow=d.workflow,instance_id=d.instance_id,required_outcome_code=code if code else UNSET))
     return sorted(result,key=lambda d:(d.subject_type,d.subject_id,d.workflow,d.instance_id))
+
+
+def _canonical_workflow_paths(input: Sequence[OperationWorkflowPathSelection]) -> list[OperationWorkflowPathSelection]:
+    if len(input) > OPERATION_WORKFLOW_PATH_SELECTIONS:
+        raise ValueError("too many selected workflow paths")
+    result = []
+    seen = set()
+    for p in input:
+        if (not isinstance(p, OperationWorkflowPathSelection) or not isinstance(p.group_id, str)
+            or not _STATE.fullmatch(p.group_id) or not isinstance(p.path_id, str)
+            or not _STATE.fullmatch(p.path_id) or p.group_id in seen):
+            raise ValueError("selected paths require valid IDs and unique groups")
+        seen.add(p.group_id)
+        if p.decision_conditions is not UNSET and p.decision_milestone_id is UNSET:
+            raise ValueError("Condition results require a decision milestone")
+        fields = (p.decision_code, p.decision_description, p.decision_rule_id, p.decision_rule_version)
+        if p.decision_milestone_id is UNSET:
+            if any(f is not UNSET for f in fields):
+                raise ValueError("path explanation requires a decision milestone")
+        else:
+            if not isinstance(p.decision_milestone_id, UUID) or p.decision_milestone_id.int == 0:
+                raise ValueError("path decision requires a canonical UUID")
+            OperationBusinessDecision(workflow="path", instance_id="path", code=p.decision_code,
+                description=p.decision_description, rule_id=p.decision_rule_id,
+                rule_version=p.decision_rule_version, conditions=None if p.decision_conditions is UNSET else [c.to_dict() for c in p.decision_conditions]).to_payload()
+        copy = OperationWorkflowPathSelection.from_dict(p.to_dict())
+        if copy.decision_conditions is not UNSET:
+            copy.decision_conditions = sorted(copy.decision_conditions, key=lambda c: c.id) or UNSET
+        result.append(copy)
+    return sorted(result, key=lambda p: p.group_id)
+
+def _canonical_workflow_change_reason(input):
+    if input is UNSET or input is None:
+        return UNSET
+    if not isinstance(input, OperationWorkflowChangeReason) or not isinstance(input.milestone_id, UUID) or input.milestone_id.int == 0:
+        raise ValueError("change reason requires a canonical fact UUID")
+    value = input.to_dict()
+    value["decision"] = OperationBusinessDecision(**value["decision"]).to_payload()["decision"]
+    return OperationWorkflowChangeReason.from_dict(value)

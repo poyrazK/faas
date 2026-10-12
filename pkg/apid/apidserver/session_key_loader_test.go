@@ -23,7 +23,7 @@
 // the fix ships together so a future regression on either side
 // gets caught).
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/hex"
@@ -33,6 +33,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 const testHexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -71,7 +73,7 @@ func TestSessionManager_PATH_ReadFileFails(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr != nil {
 		t.Errorf("readfail contract: want nil manager (fail-closed), got %+v", mgr)
 	}
@@ -99,7 +101,7 @@ func TestSessionManager_PATH_Shape(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr == nil {
 		t.Fatalf("path-shaped contract: want manager, got nil warning=%q", warning)
 	}
@@ -119,7 +121,7 @@ func TestSessionManager_CONTENT_Shape(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr == nil {
 		t.Fatalf("content-shaped contract: want manager, got nil warning=%q", warning)
 	}
@@ -145,7 +147,7 @@ func TestSessionManager_PATH_DoesNotExist_FailsClosed(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr != nil {
 		t.Errorf("ghost-path contract: want nil manager (fail-closed), got %+v", mgr)
 	}
@@ -159,7 +161,7 @@ func TestSessionManager_PATH_DoesNotExist_FailsClosed(t *testing.T) {
 // so dev boxes without /etc/faas/secrets/session.key boot.
 func TestSessionManager_Empty_FallsBackEphemeral(t *testing.T) {
 	getenv := func(string) string { return "" }
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr == nil {
 		t.Fatalf("empty contract: want ephemeral manager, got nil warning=%q", warning)
 	}
@@ -181,7 +183,7 @@ func TestSessionManager_WrongByteLength_FailsClosed(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr != nil {
 		t.Errorf("short-hex contract: want nil manager (fail-closed), got %+v", mgr)
 	}
@@ -206,7 +208,7 @@ func TestSessionManager_PATH_NoNewlineBytes(t *testing.T) {
 		}
 		return ""
 	}
-	mgr, warning := loadSessionManager(getenv, newTestLogger())
+	mgr, warning := apidserver.LoadSessionManager(getenv, newTestLogger())
 	if mgr == nil {
 		t.Fatalf("path-no-newline contract: want manager, got nil warning=%q", warning)
 	}

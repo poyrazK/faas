@@ -1,20 +1,22 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestStatusMetricsExposeBoundedEvaluationRollupAndMutationSignals(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics := newStatusMetrics(registry, "apid")
-	metrics.observeEvaluation("fresh")
-	metrics.observeEvaluation("unexpected")
-	metrics.markRollupSuccess(time.Unix(1_789_000_000, 0))
-	metrics.observeMutation("incident", "create", "ok")
-	metrics.observeMutation("invented", "invented", "invented")
+	metrics := apidserver.NewStatusMetrics(registry, "apid")
+	metrics.ObserveEvaluation("fresh")
+	metrics.ObserveEvaluation("unexpected")
+	metrics.MarkRollupSuccess(time.Unix(1_789_000_000, 0))
+	metrics.ObserveMutation("incident", "create", "ok")
+	metrics.ObserveMutation("invented", "invented", "invented")
 
 	families, err := registry.Gather()
 	if err != nil {
