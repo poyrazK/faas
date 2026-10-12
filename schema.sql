@@ -1804,7 +1804,7 @@ CREATE FUNCTION public.application_standard_native_base_deadline(artifact jsonb,
     AS $$
 DECLARE p base_image_producers%ROWTYPE; s base_image_scans%ROWTYPE;
 BEGIN
- IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
   RAISE EXCEPTION 'native base approval is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
  END IF;
  SELECT b.* INTO p FROM base_image_producer_current c JOIN base_image_producers b ON b.id=c.producer_id
@@ -1833,7 +1833,7 @@ CREATE FUNCTION public.application_standard_native_base_producer_current(artifac
     AS $$
 DECLARE p base_image_producers%ROWTYPE;
 BEGIN
- IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
   RAISE EXCEPTION 'native runtime base is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
  END IF;
  SELECT b.* INTO p FROM base_image_producer_current c JOIN base_image_producers b ON b.id=c.producer_id
@@ -2884,7 +2884,7 @@ BEGIN
  IF NOT FOUND OR p.input_hash IS DISTINCT FROM root_producer->>'base_input_hash' THEN
   RAISE EXCEPTION 'runtime base producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
- IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || p.storage_key,0)) THEN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || p.storage_key,0)) THEN
   RAISE EXCEPTION 'runtime base producer is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
  END IF;
  SELECT producer_id INTO selected FROM base_image_producer_current WHERE storage_key=p.storage_key FOR SHARE NOWAIT;

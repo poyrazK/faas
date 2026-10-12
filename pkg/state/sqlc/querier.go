@@ -3667,6 +3667,7 @@ type Querier interface {
 	TryLockApplicationStandardApprovalQuotas(ctx context.Context, db DBTX, accountIds []pgtype.UUID) (bool, error)
 	TryLockApplicationStandardLogConsumer(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error)
 	TryLockBaseImageProducerKey(ctx context.Context, db DBTX, storageKey string) (bool, error)
+	TryLockBaseImageProducerKeyShared(ctx context.Context, db DBTX, storageKey string) (bool, error)
 	UDPListenerByAppAndName(ctx context.Context, db DBTX, arg UDPListenerByAppAndNameParams) (AppUdpListener, error)
 	UDPListenerByID(ctx context.Context, db DBTX, id string) (AppUdpListener, error)
 	UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error)

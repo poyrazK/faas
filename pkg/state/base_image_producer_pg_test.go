@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -30,6 +31,45 @@ func TestPgBaseProducerRefusals(t *testing.T) {
 	}
 	baseProducerRefusals(t, NewPgStore(pool))
 }
+
+func TestPgBaseProducerSharedReadFence(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	s := NewPgStore(pool)
+	base, err := s.PublishBaseImageProducer(t.Context(), baseProducerFixture(t, "base/shared-read.ext4", "content"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readers := make([]pgx.Tx, 2)
+	for i := range readers {
+		readers[i], err = pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer readers[i].Rollback(t.Context())
+		if err := lockBaseImageProducerKeysShared(t.Context(), readers[i], base.Input.Artifact.StorageKey); err != nil {
+			t.Fatalf("shared base reader %d did not coexist: %v", i, err)
+		}
+	}
+	replacement := base.Input
+	replacement.ID = uuid.NewString()
+	bounded, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := s.PublishBaseImageProducer(bounded, replacement); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+		t.Fatalf("base publication bypassed active shared readers: %v", err)
+	}
+	for _, tx := range readers {
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.PublishBaseImageProducer(t.Context(), replacement); err != nil {
+		t.Fatalf("base publication did not proceed after readers finished: %v", err)
+	}
+}
+
 func TestPgBaseProducerFencesAndGuards(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

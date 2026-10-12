@@ -46,6 +46,21 @@ func lockBaseImageProducerKeys(ctx context.Context, tx pgx.Tx, keys ...string) e
 	}
 	return nil
 }
+
+func lockBaseImageProducerKeysShared(ctx context.Context, tx pgx.Tx, keys ...string) error {
+	slices.Sort(keys)
+	for _, key := range slices.Compact(keys) {
+		ok, err := sqlc.New().TryLockBaseImageProducerKeyShared(ctx, tx, key)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrApplicationStandardReviewBusy
+		}
+	}
+	return nil
+}
+
 func (s *PgStore) PublishBaseImageProducer(ctx context.Context, input BaseImageProducerInput) (BaseImageProducer, error) {
 	in, hash, err := prepareBaseImageProducer(input)
 	if err != nil {

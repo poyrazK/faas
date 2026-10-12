@@ -51,7 +51,7 @@ func lockRegistryRootfsBase(ctx context.Context, tx pgx.Tx, in DeploymentRegistr
 	if err != nil {
 		return err
 	}
-	if err := lockBaseImageProducerKeys(ctx, tx, base.Input.Artifact.StorageKey); err != nil {
+	if err := lockBaseImageProducerKeysShared(ctx, tx, base.Input.Artifact.StorageKey); err != nil {
 		return err
 	}
 	current, err := q.GetCurrentBaseImageProducer(ctx, tx, base.Input.Artifact.StorageKey)

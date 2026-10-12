@@ -75822,6 +75822,17 @@ func (q *Queries) TryLockBaseImageProducerKey(ctx context.Context, db DBTX, stor
 	return pg_try_advisory_xact_lock, err
 }
 
+const tryLockBaseImageProducerKeyShared = `-- name: TryLockBaseImageProducerKeyShared :one
+SELECT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || $1::text,0))
+`
+
+func (q *Queries) TryLockBaseImageProducerKeyShared(ctx context.Context, db DBTX, storageKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockBaseImageProducerKeyShared, storageKey)
+	var pg_try_advisory_xact_lock_shared bool
+	err := row.Scan(&pg_try_advisory_xact_lock_shared)
+	return pg_try_advisory_xact_lock_shared, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2

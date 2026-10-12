@@ -239,7 +239,10 @@ func standardLogReceiptWaitForOutcome(t *testing.T, ctx context.Context, m *appL
 		m.healthMu.Lock()
 		h := m.health[id]
 		m.healthMu.Unlock()
-		if code == http.StatusNoContent && h.DeliveredTotal > 0 || code != http.StatusNoContent && h.FailedTotal > 0 {
+		// 5xx responses retry for the production retry window. The first
+		// retry is the observable failure signal here; waiting for terminal
+		// delivery failure would take ten minutes by design.
+		if code == http.StatusNoContent && h.DeliveredTotal > 0 || code != http.StatusNoContent && h.RetriesTotal > 0 {
 			return
 		}
 		select {

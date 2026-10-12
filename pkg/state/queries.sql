@@ -9971,6 +9971,9 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
 -- name: TryLockBaseImageProducerKey :one
 SELECT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || sqlc.arg(storage_key)::text,0));
 
+-- name: TryLockBaseImageProducerKeyShared :one
+SELECT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || sqlc.arg(storage_key)::text,0));
+
 -- name: AuthorizeBaseImageProducerInsert :exec
 SELECT set_config('gregale.base_producer_insert',sqlc.arg(id)::text,true);
 
