@@ -28866,30 +28866,26 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - &id001
-        name: namespace
+      - name: namespace
         in: query
         required: true
         description: Exact entity namespace selecting the scope.
         schema:
           type: string
-      - &id002
-        name: key
+      - name: key
         in: query
         required: true
         description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
           registry.
         schema:
           type: string
-      - &id003
-        name: environment
+      - name: environment
         in: query
         required: false
         description: Registered environment, defaulting to production.
         schema:
           type: string
-      - &id004
-        name: platform_tenant_id
+      - name: platform_tenant_id
         in: query
         required: false
         description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
@@ -28995,10 +28991,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       - name: cursor
         in: query
         description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
@@ -29054,10 +29071,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29108,10 +29146,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29158,14 +29217,14 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                migration_id: &id005
+                migration_id:
                   type: string
                   description: Fresh operation identity; replay must retain this identity and the exact request.
                   format: uuid
                 expected_migration_id:
                   type: string
                   description: Prior migration identity, or empty for an initial migration.
-                expected_revision: &id006
+                expected_revision:
                   type: integer
                   description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
                   minimum: 0
@@ -29185,10 +29244,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29235,8 +29315,14 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                migration_id: *id005
-                expected_revision: *id006
+                migration_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
               required:
               - migration_id
               - expected_revision
@@ -29253,10 +29339,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29307,10 +29414,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29356,14 +29484,26 @@ paths:
             schema:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
-              properties: &id007
-                operation_id: *id005
-                expected_revision: *id006
+              properties:
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
                 expected_migration_id:
                   type: string
                   description: Observed completed migration identity.
-                expected_migration_revision: *id006
-                migration_id: *id005
+                expected_migration_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
+                migration_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
                 limits:
                   type: object
                   description: Proposed tenant admission caps; all fields are required.
@@ -29413,10 +29553,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29462,7 +29623,56 @@ paths:
             schema:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
-              properties: *id007
+              properties:
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
+                expected_migration_id:
+                  type: string
+                  description: Observed completed migration identity.
+                expected_migration_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
+                migration_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                limits:
+                  type: object
+                  description: Proposed tenant admission caps; all fields are required.
+                  properties:
+                    connections:
+                      type: integer
+                      description: Approved connections cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    grants_per_minute:
+                      type: integer
+                      description: Approved grants per minute cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    invocations_per_minute:
+                      type: integer
+                      description: Approved invocations per minute cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    retained_bytes:
+                      type: integer
+                      description: Approved retained bytes cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                    entity_bytes:
+                      type: integer
+                      description: Approved entity bytes cap; server validates bounds and monotonic increases.
+                      minimum: 1
+                  required:
+                  - connections
+                  - grants_per_minute
+                  - invocations_per_minute
+                  - retained_bytes
+                  - entity_bytes
               required:
               - operation_id
               - expected_revision
@@ -29482,10 +29692,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       - name: cursor
         in: query
         description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
@@ -29541,10 +29772,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29591,8 +29843,11 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                operation_id: *id005
-                expected_revision: &id008
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
                   type: string
                   description: Exact opaque revision returned by inspection; never convert it to a number.
                   minLength: 1
@@ -29612,10 +29867,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29666,10 +29942,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29716,8 +30013,14 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                operation_id: *id005
-                expected_revision: *id008
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: string
+                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  minLength: 1
               required:
               - operation_id
               - expected_revision
@@ -29734,10 +30037,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29784,8 +30108,14 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                operation_id: *id005
-                expected_revision: *id006
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
                 restart_cleanup:
                   type: boolean
                   description: Restart bounded listing passes while preserving the existing epoch fence.
@@ -29806,10 +30136,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29860,10 +30211,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29910,12 +30282,18 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                operation_id: *id005
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
                 expected_version:
                   type: integer
                   description: Exact entity version observed in the retirement preview.
                   minimum: 0
-                expected_recovery_revision: *id008
+                expected_recovery_revision:
+                  type: string
+                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  minLength: 1
               required:
               - operation_id
               - expected_version
@@ -29933,10 +30311,31 @@ paths:
         contract.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '200':
           description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
@@ -29983,8 +30382,14 @@ paths:
               type: object
               description: Preview mutation input with server-side size, scope and revision validation.
               properties:
-                operation_id: *id005
-                expected_revision: *id006
+                operation_id:
+                  type: string
+                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  format: uuid
+                expected_revision:
+                  type: integer
+                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  minimum: 0
                 restart_cleanup:
                   type: boolean
                   description: Restart verified retirement cleanup after an uncertain outcome.
@@ -30157,10 +30562,31 @@ paths:
         helper handles framing, replay and generation fences.
       parameters:
       - $ref: '#/components/parameters/Slug'
-      - *id001
-      - *id002
-      - *id003
-      - *id004
+      - name: namespace
+        in: query
+        required: true
+        description: Exact entity namespace selecting the scope.
+        schema:
+          type: string
+      - name: key
+        in: query
+        required: true
+        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
+          registry.
+        schema:
+          type: string
+      - name: environment
+        in: query
+        required: false
+        description: Registered environment, defaulting to production.
+        schema:
+          type: string
+      - name: platform_tenant_id
+        in: query
+        required: false
+        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        schema:
+          type: string
       responses:
         '101':
           description: WebSocket upgrade; subsequent frames follow the documented durable-session protocol.
