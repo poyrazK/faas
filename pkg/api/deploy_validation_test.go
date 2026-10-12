@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,51 @@ func TestValidFunctionRuntime(t *testing.T) {
 	for _, runtime := range []string{"", "node", "Node22", "python311", "go124_alpine"} {
 		if ValidFunctionRuntime(runtime) {
 			t.Errorf("ValidFunctionRuntime(%q) = true", runtime)
+		}
+	}
+}
+
+// ADR-987: binary is a function runtime built from a Dockerfile that runs on
+// go124's base and runner; every other runtime is its own base.
+func TestFunctionBinaryRuntime(t *testing.T) {
+	if !ValidFunctionRuntime(FunctionRuntimeBinary) {
+		t.Fatal("binary is not an accepted function runtime")
+	}
+	if got := FunctionBaseRuntime(FunctionRuntimeBinary); got != "go124" {
+		t.Fatalf("FunctionBaseRuntime(binary) = %q, want go124", got)
+	}
+	for _, runtime := range FunctionRuntimes {
+		if runtime != FunctionRuntimeBinary && FunctionBaseRuntime(runtime) != runtime {
+			t.Errorf("FunctionBaseRuntime(%q) = %q, want itself", runtime, FunctionBaseRuntime(runtime))
+		}
+		if FunctionRuntimeBuildsFromDockerfile(runtime) != (runtime == FunctionRuntimeBinary) {
+			t.Errorf("FunctionRuntimeBuildsFromDockerfile(%q) = %v", runtime, FunctionRuntimeBuildsFromDockerfile(runtime))
+		}
+	}
+}
+
+// adr: 987
+func TestFunctionDockerfileProblem(t *testing.T) {
+	for _, tc := range []struct {
+		runtime       string
+		hasDockerfile bool
+		wantTitle     string
+	}{
+		{FunctionRuntimeBinary, true, ""},
+		{FunctionRuntimeBinary, false, "Dockerfile required"},
+		{"go124", false, ""},
+		{"node22", true, "Dockerfile functions unsupported"},
+	} {
+		prob := FunctionDockerfileProblem(tc.runtime, tc.hasDockerfile)
+		got := ""
+		if prob != nil {
+			got = prob.Title
+			if prob.Status != http.StatusBadRequest {
+				t.Errorf("%s dockerfile=%v: status %d, want 400", tc.runtime, tc.hasDockerfile, prob.Status)
+			}
+		}
+		if got != tc.wantTitle {
+			t.Errorf("%s dockerfile=%v: problem %q, want %q", tc.runtime, tc.hasDockerfile, got, tc.wantTitle)
 		}
 	}
 }

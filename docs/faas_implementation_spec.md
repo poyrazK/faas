@@ -84,7 +84,7 @@ Cloudflare, public network, and client distance remain separate end-to-end costs
 
 **Deploy path:** `apid` accepts source (≤ 100 MB) or OCI reference → `builderd` runs the build in an ephemeral builder microVM → OCI image → `imaged` converts it to a per-app **app layer** over a shared read-only base (two-drive scheme, §4.6) + injects `guest-init` → boots once, waits ready, pauses, snapshots → app state = `PARKED`. First deploy of an app is also its first snapshot.
 
-**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
+**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine, plus `binary`, which runs one static executable built from the customer's Dockerfile on the go124 runner, ADR-987) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
 
 ---
 
@@ -413,7 +413,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Auth: API keys (`fp_live_…`, SHA-256 stored), per-user; sessions for the dashboard later. Every key scoped to an account. **Tenancy** lands in IAM-6 (ADR-061, issue #190); the tenant is the `orgs` row, APIs are path-scoped under `/v1/orgs/{slug}/...`, and cookie sessions stay account-bound. See ADR-061 for the wire-shape contract.
 - Resources (all JSON; full endpoint table in Appendix A): accounts, apps, deployments, builds, instances (read-only), usage, plans, custom_domains.
 - Deploy inputs (three, ADR-004): `POST /v1/apps/{app}/deployments` with (a) tarball upload `source` (≤ 100 MB Free/Hobby, ≤ 250 MB Pro/Scale — reject larger with `413` and a docs link), (b) `dockerfile: true` flag if tarball root has one, or (c) `image: registry.gregale.dev/...@sha256:...` reference.
-- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
+- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine | binary`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`); a `binary` tarball contains a root `Dockerfile` whose image names one static executable inside `/app` (ADR-987). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
 - Validation enforces plan quotas *before* work happens: deployed-sandbox count, RAM size ≤ plan cap, concurrency setting ≤ plan cap.
 - Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h.
 - Never talks to vmmd/builderd directly — writes rows, notifies via `pg_notify`; owners poll/listen.
@@ -426,7 +426,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **Admission (wake or build):** grant iff
   `resident_ram_mb + request_mb + 8 ≤ 0.85 × 56_000` **and** plan concurrent count not exceeded **and** vCPU slots (160) not exhausted. Builds request from the same guard but are also capped by the build semaphore (§9). Denial → `gatewayd-internal` serves `503 capacity` (alert fires long before customers see this; see §12).
 - **`AdmitInstance` RPC (issue #168):** `gatewayd-internal` can ask schedd to admit ONE additional instance for an app, bypassing the Phase-1 fast-path shortcut. The cap is enforced atomically by the same ledger as `Wake`; the response carries an `at_capacity` typed result so the gateway can distinguish "we refused because you're already at cap" (no FAILED row written) from a real failure (RAM headroom, chooser, store). The gRPC surface is additive — see ADR-018 update.
-- **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s (app-configurable down to 10 s, not above plan default × 2).
+- **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s; functions 30 s on every plan (ADR-974). Configurable down to 10 s, not above plan default × 2.
 - **Aggressive reaper (ADR-038, issue #171):** every 10 s, *alongside* the idle reaper, a fast-cooldown path parks the surplus above `max(min_instances, desired + 1)` where `desired = ceil(windowed_rps / autoscale_target_rps)` from a per-app 5 × 1 s rolling RPS mirror (`pkg/sched/recentload/`). The `+1` is a hysteresis buffer so a brief RPS wobble doesn't wake-then-park. Scope: apps with `max_concurrency > 1` and `autoscale_target_rps > 0`; single-instance apps and apps without an autoscale target stay on the idle reaper only. Per-tick cap of 8 parks per app to prevent a single tick from blocking the reaper for `8 × ~150 ms ≈ 1.2 s` during a sudden scale-down storm. Default ON; `FAAS_REAPER_AGGRESSIVE=false` (schedd.toml `reaper_aggressive = false`) disables in-place — the mirror, metric, and audit row stay live so diagnosis continues. G7 (OpenConns > 0) and `MinInstanceAge` (30 s) protections still apply. Acceptance: 5-instance burst → 0 rps parks back to ≤ `min_instances + 1` within 30 s (three 10 s ticks). Audit row `events.kind='reaper_scale_down'` is emitted once per app per tick that parks ≥ 1 instance with `{app, desired, parked[], reason: "traffic_dropped", now}` in `data jsonb`.
 - **Eviction (RAM pressure > 80 % of the 85 % target):** park instances LRU by last request; never evict an instance younger than 30 s; Scale plan evicted last.
 - **Free-tier disk reaper:** free apps with zero requests for 14 days → snapshot + rootfs moved to object storage, state `EVICTED_COLD` (redeploy = one click, re-flatten from stored image). This is the founding doc's ceiling-protection policy (§9.7 there).
@@ -812,7 +812,7 @@ create table apps (
   account_id uuid not null references accounts(id),
   slug text unique not null,                    -- {slug}.gregale.dev
   type text not null default 'app',             -- app|function
-  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine when function
+  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine|binary when function
   ram_mb int not null,                          -- ≤ plan cap
   idle_timeout_s int,
   max_concurrency int not null default 1,       -- ≤ plan cap

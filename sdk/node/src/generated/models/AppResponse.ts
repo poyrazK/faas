@@ -35,7 +35,7 @@ export type AppResponse = {
   /**
    * Runtime for `type: function` apps. Omit for `type: app` (the default).
    */
-  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
+  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
   ram_mb: number;
   /**
    * Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the canonical plan RAM/vCPU pair.

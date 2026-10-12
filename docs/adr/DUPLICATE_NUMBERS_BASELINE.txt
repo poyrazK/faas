@@ -120,7 +120,5 @@
 971
 972
 
-# Existing collision inherited from main at d9357718d (2026-10-11).
-
-# Existing ADR-981 collision inherited from main at 45a0b575a (2026-10-12).
+# Existing collision inherited from merged main at 45a0b575a (2026-10-12).
 981

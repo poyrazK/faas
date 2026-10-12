@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -60,6 +60,7 @@ var Names = []string{
 	"function-go",
 	"function-node24",
 	"function-python313",
+	"function-rust",
 	"event-worker",
 	"queue-worker",
 	"s3-uploader",
@@ -161,8 +162,9 @@ var generatedTemplateCopies = map[string]map[string]string{
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
 	"data-api-starter": {
-		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
-		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
+		"migrations/rpc-runtime/types.mjs":       "data-api/types.mjs",
+		"migrations/rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
+		"migrations/rpc-runtime/config.mjs":      "data-api/config.mjs",
 	},
 }
 
@@ -395,7 +397,7 @@ func NameIsValid(name string) bool {
 // order. Recognised categories:
 //
 //	"hello"              — first-touch smoke tests (3)
-//	"function"           — generic runtimes the customer customises (6)
+//	"function"           — generic runtimes the customer customises (7)
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (7)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
@@ -409,7 +411,7 @@ func CategoryFor(name string) string {
 	switch name {
 	case "hello-node", "hello-python", "hello-go":
 		return "hello"
-	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example":
+	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example":
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"

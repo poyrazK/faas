@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -46,7 +48,7 @@ func TestDataAPIRefreshCommandHelper(t *testing.T) {
 }
 
 func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
-	for _, failure := range []string{"", "migration", "client", "authorization", "resume", "ownership", "drift", "legacy-runtime"} {
+	for _, failure := range []string{"", "migration", "client", "authorization", "resume", "ownership", "drift", "legacy-runtime", "check", "setup", "missing-check", "phase-change", "hosted-success", "hosted-failure", "hosted-invalid", "hosted-custom-token"} {
 		t.Run(failure, func(t *testing.T) {
 			resetJSONOut(t)
 			path, config := dataAPISyncTestConfig(t)
@@ -64,10 +66,29 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 			step := func(phase string) dataAPISyncCommand {
 				return dataAPISyncCommand{Directory: root, Command: []string{executable, "-test.run=^TestDataAPIRefreshCommandHelper$", "--", phase}}
 			}
-			config.Coordination = &dataAPISyncCoordination{Pause: step("pause"), Resume: step("resume"), Authorization: step("authorization"), Baseline: "baseline.json"}
+			setup := step("setup")
+			config.Coordination = &dataAPISyncCoordination{SetupCheck: &setup, Pause: step("pause"), Resume: step("resume"), Authorization: step("authorization"), Baseline: "baseline.json"}
+			if failure == "missing-check" {
+				config.Coordination.SetupCheck = nil
+			}
+			if strings.HasPrefix(failure, "hosted-") {
+				collection, identities := dataAPIHostedReplayFixture(t, root)
+				config.Coordination.Authorization = dataAPISyncCommand{}
+				config.Coordination.AuthorizationReplay = &dataAPIHostedReplayConfig{Collection: collection, Identities: identities, Scenarios: []string{"isolation"}}
+				if failure == "hosted-custom-token" {
+					config.Coordination.TokenEnv = "GREGALE_CUSTOM_REFRESH_TOKEN"
+					t.Setenv("GREGALE_CUSTOM_REFRESH_TOKEN", strings.Repeat("a", 64))
+				}
+				if failure == "hosted-invalid" {
+					config.Coordination.AuthorizationReplay.Scenarios = []string{"missing"}
+				}
+			}
 			writeDataAPISyncTestConfig(t, path, config)
 			t.Setenv("GREGALE_REFRESH_HELPER", "1")
 			t.Setenv("GREGALE_DATA_API_REFRESH_TOKEN", strings.Repeat("a", 64))
+			if failure == "hosted-custom-token" {
+				t.Setenv("GREGALE_DATA_API_REFRESH_TOKEN", "invalid-unused-standard-token")
+			}
 			t.Setenv("GREGALE_REFRESH_EXPECTED", parsed.Fingerprint)
 			if failure == "migration" {
 				t.Setenv("GREGALE_DATA_API_SYNC_MIGRATION_FAIL", "1")
@@ -75,7 +96,7 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 			if failure == "client" {
 				t.Setenv("GREGALE_DATA_API_SYNC_CHECK_FAIL", "1")
 			}
-			if failure == "authorization" || failure == "resume" {
+			if failure == "authorization" || failure == "resume" || failure == "setup" {
 				t.Setenv("GREGALE_REFRESH_FAIL", failure)
 			}
 			types := strings.ReplaceAll(dataAPISyncTestTypes, strings.Repeat("a", 64), parsed.Fingerprint)
@@ -84,7 +105,8 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 				config.Check = step("client")
 				writeDataAPISyncTestConfig(t, path, config)
 			}
-			resumed, checks := false, 0
+			resumed, checks, restarts, contractReads := false, 0, 0, 0
+			var hostedFixed atomic.Bool
 			health := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") == "Bearer owner-test-token" {
 					t.Error("owner key sent to app")
@@ -93,8 +115,29 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 					writeJSONTest(w, map[string]bool{"ready": true})
 					return
 				}
-				if r.Header.Get("Authorization") != "Bearer application.test.token" {
+				if strings.HasPrefix(failure, "hosted-") && r.URL.Path == "/openapi.json" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if strings.HasPrefix(failure, "hosted-") && strings.Contains(r.URL.Path, "/rest/v1/") {
+					if r.Header.Get("X-Gregale-Refresh-Token") != strings.Repeat("a", 64) || !strings.HasPrefix(r.URL.Path, "/__gregale/contract/"+parsed.Fingerprint+"/rest/v1/") {
+						t.Error("hosted verification lost ownership or candidate pin")
+					}
+					if r.Header.Get("Authorization") == "Bearer "+dataAPIReplayJWT("alice") || (failure == "hosted-failure" && !hostedFixed.Load()) {
+						writeJSONTest(w, []map[string]int{{"id": 1}})
+					} else {
+						writeJSONTest(w, []map[string]int{})
+					}
+					return
+				}
+				if r.Header.Get("Authorization") != "Bearer application.test.token" && r.Header.Get("Authorization") != "Bearer "+dataAPIReplayJWT("alice") && r.Header.Get("Authorization") != "Bearer "+dataAPIReplayJWT("bob") {
 					t.Error("application JWT missing")
+				}
+				if failure == "phase-change" {
+					contractReads++
+				}
+				if failure == "phase-change" && contractReads > 1 {
+					_ = os.WriteFile(filepath.Join(root, "paused"), nil, 0600)
 				}
 				_, e := os.Stat(filepath.Join(root, "paused"))
 				paused := e == nil
@@ -115,12 +158,19 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 					}
 				}
 				protocol := 1
-				if failure == "legacy-runtime" && paused {
+				if failure == "legacy-runtime" {
 					protocol = 0
 				}
 				writeJSONTest(w, map[string]any{"version": 1, "ready": true, "fingerprint": fp, "refresh_protocol": protocol, "refresh_paused": paused, "refresh_verified": owns, "refresh_fingerprint": parsed.Fingerprint})
 			}))
 			defer health.Close()
+			if strings.HasPrefix(failure, "hosted-") {
+				certificate := filepath.Join(root, "ca.pem")
+				if err := os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: health.Certificate().Raw}), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("NODE_EXTRA_CA_CERTS", certificate)
+			}
 			transport := http.DefaultTransport
 			http.DefaultTransport = health.Client().Transport
 			defer func() { http.DefaultTransport = transport }()
@@ -129,6 +179,7 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 				case "GET /v1/apps/notes":
 					writeJSONTest(w, api.AppResponse{Slug: "notes", URL: health.URL})
 				case "POST /v1/apps/notes/restart":
+					restarts++
 					if _, e := os.Stat(filepath.Join(root, "paused")); e != nil {
 						t.Error("refresh without pause")
 					}
@@ -152,11 +203,31 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "owner-test-token")
 			_, stderr, restore := swapIO(t)
 			defer restore()
-			code := run([]string{"--json", "data-api", "sync", "notes", "--config", path})
-			if (code == 0) != (failure == "") || resumed != (failure == "") {
+			args := []string{"--json", "data-api", "sync", "notes", "--config", path}
+			if failure == "check" || failure == "missing-check" {
+				args = append(args, "--check")
+			}
+			code := run(args)
+			if (code == 0) != (failure == "" || failure == "check" || failure == "hosted-success" || failure == "hosted-custom-token") || resumed != (failure == "" || failure == "hosted-success" || failure == "hosted-custom-token") {
 				t.Fatalf("exit=%d resumed=%v error=%s", code, resumed, stderr())
 			}
-			if failure != "" {
+			if failure == "check" || failure == "setup" || failure == "missing-check" || failure == "legacy-runtime" || failure == "phase-change" || failure == "hosted-invalid" {
+				for _, phase := range []string{"pause", "migrate", "permissions", "client", "authorization", "resume"} {
+					if _, err := os.Stat(filepath.Join(root, phase+"-ran")); !os.IsNotExist(err) {
+						t.Fatalf("preflight ran %s", phase)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(root, "schema/migration.json")); !os.IsNotExist(err) {
+					t.Fatal("preflight ran migrations")
+				}
+				if restarts != 0 {
+					t.Fatal("preflight restarted the app")
+				}
+				content, err := os.ReadFile(filepath.Join(root, "web/database.types.ts"))
+				if err != nil || string(content) != "original types" {
+					t.Fatal("preflight overwrote types")
+				}
+			} else if failure != "" && failure != "hosted-success" && failure != "hosted-custom-token" {
 				if _, e := os.Stat(filepath.Join(root, "paused")); e != nil {
 					t.Fatal("failure released barrier")
 				}
@@ -164,13 +235,27 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 					t.Fatal("refresh credential leaked")
 				}
 			}
-			if failure == "authorization" || failure == "migration" {
+			if failure == "authorization" || failure == "migration" || failure == "hosted-failure" {
 				t.Setenv("GREGALE_DATA_API_REFRESH_TOKEN", strings.Repeat("b", 64))
 				if code := run([]string{"data-api", "sync", "notes", "--config", path, "--resume-only"}); code == 0 {
 					t.Fatal("foreign token recovered a pause")
 				}
 				t.Setenv("GREGALE_DATA_API_REFRESH_TOKEN", strings.Repeat("a", 64))
 				t.Setenv("GREGALE_REFRESH_FAIL", "")
+				if failure == "hosted-failure" {
+					hostedFixed.Store(true)
+					t.Setenv("GREGALE_DATA_API_SYNC_MIGRATION_FAIL", "1")
+				}
+				beforeRestarts := restarts
+				if code := run([]string{"data-api", "sync", "notes", "--config", path, "--resume-only", "--check"}); code != 0 {
+					t.Fatalf("recovery preflight: %s", stderr())
+				}
+				if restarts != beforeRestarts || resumed {
+					t.Fatal("recovery preflight changed runtime or released pause")
+				}
+				if _, err := os.Stat(filepath.Join(root, "paused")); err != nil {
+					t.Fatal("recovery preflight changed barrier")
+				}
 				if code := run([]string{"data-api", "sync", "notes", "--config", path, "--resume-only"}); code != 0 {
 					t.Fatalf("recovery: %s", stderr())
 				}

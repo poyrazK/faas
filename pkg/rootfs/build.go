@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -975,9 +976,22 @@ func NormalizeFunctionHandlerFrom(staging, sourcePath, handlerPath string) error
 	if err != nil {
 		return fmt.Errorf("rootfs: read function handler source %q: %w", sourcePath, err)
 	}
+	// The adapter imports the customer's file where it lives, so a handler in
+	// a shared source tree keeps its relative imports (ADR-985).
+	handlerRel, err := filepath.Rel(filepath.Dir(target), source)
+	if err != nil {
+		return fmt.Errorf("rootfs: locate function handler source %q: %w", sourcePath, err)
+	}
+	handlerRel = filepath.ToSlash(handlerRel)
 	if filepath.Ext(target) == ".js" && isNodeFunctionSource(string(data)) {
-		if err := os.WriteFile(target, []byte(nodeFunctionAdapter), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(nodeFunctionAdapterFor(handlerRel)), 0o644); err != nil {
 			return fmt.Errorf("rootfs: write node function adapter %s: %w", target, err)
+		}
+		return nil
+	}
+	if filepath.Ext(target) == ".py" && isPythonFunctionSource(string(data)) {
+		if err := os.WriteFile(target, []byte(pythonFunctionAdapterFor(handlerRel)), 0o644); err != nil {
+			return fmt.Errorf("rootfs: write python function adapter %s: %w", target, err)
 		}
 		return nil
 	}
@@ -1283,6 +1297,31 @@ for line in sys.stdin:
     real_stdout.write(json.dumps(envelope) + "\n")
     real_stdout.flush()
 `
+
+const (
+	nodeAdapterHandlerImport   = `const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");`
+	pythonAdapterHandlerImport = `handler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faas-handler.py")`
+)
+
+// nodeFunctionAdapterFor returns the Node adapter importing handlerRel, a
+// slash path relative to the adapter's directory. The default handler.js
+// yields the historical adapter byte for byte.
+func nodeFunctionAdapterFor(handlerRel string) string {
+	if handlerRel == "handler.js" {
+		return nodeFunctionAdapter
+	}
+	return strings.Replace(nodeFunctionAdapter, nodeAdapterHandlerImport,
+		"const handlerFile = path.join(path.dirname(process.argv[1]), "+strconv.Quote(handlerRel)+");", 1)
+}
+
+// pythonFunctionAdapterFor returns the Python adapter loading handlerRel in
+// place and putting its directory on sys.path, so sibling imports in a
+// shared source tree keep working.
+func pythonFunctionAdapterFor(handlerRel string) string {
+	return strings.Replace(pythonFunctionAdapter, pythonAdapterHandlerImport,
+		"handler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "+strconv.Quote(handlerRel)+")\n"+
+			"sys.path.insert(0, os.path.dirname(handler_path))", 1)
+}
 
 func wrapPythonFunctionHandler(target string, source []byte) error {
 	impl := filepath.Join(filepath.Dir(target), ".faas-handler.py")

@@ -1187,7 +1187,7 @@ type App struct {
 	// internal apps are reachable only through authenticated service routing.
 	Visibility     api.AppVisibility
 	Type           AppType
-	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
+	Runtime        string // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB          int
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default

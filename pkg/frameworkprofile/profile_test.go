@@ -19,6 +19,7 @@ func TestProfileForFunctionRuntime(t *testing.T) {
 		{runtime: "python313", framework: "python"},
 		{runtime: "go124", framework: "go"},
 		{runtime: "go124-alpine", framework: "go"},
+		{runtime: "binary", framework: "docker"},
 	} {
 		t.Run(tt.runtime, func(t *testing.T) {
 			profile, ok := ProfileForFunctionRuntime(tt.runtime)
