@@ -280,6 +280,15 @@ resource_journal_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"),
 		)
+		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
+			for _, path := range []string{images, publications} {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatalf("e2etest: create native ownership root: %v", err)
+				}
+			}
+			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+		}
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}

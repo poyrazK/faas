@@ -4,7 +4,10 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -18,16 +21,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // TestEnvironmentGitOpsNativeMetal follows one reviewed image through the
 // real apid, imaged, schedd, vmmd, guest and gateway processes. It is opt-in
 // because the qualification dispatcher is deliberately disabled in production
-// until this acceptance path is proven. Native process recovery is separate
-// from this serving graph and remains unqualified with restart quarantine.
-// Run it with a private /srv/fc/jail mount in a disposable mount namespace.
+// until this acceptance path is proven. Run it with private jail and network
+// mounts in a disposable namespace.
 func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") != "1" {
 		t.Skip("isolated native GitOps acceptance only")
@@ -44,9 +49,16 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	}
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
+	// Keep the fixture independent of external DNS while exercising the
+	// production fallback for a validated, already-published local base.
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/acceptance-base:unreachable")
+	storageRoot := filepath.Join(t.TempDir(), "storage")
+	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
+	stageNativeAcceptanceBase(t, storageRoot)
+	builderImage, _ := e2etest.ImageOnlyBuilderBaseImage("onebox-faas/builder-base")
+	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImage))
 	image, _ := e2etest.HelloImage("library/gitops-hello", helloBody)
 	imageRef := registry.AddImage("library/gitops-hello", image)
-	storageRoot := filepath.Join(t.TempDir(), "storage")
 	fcVersion, err := fcvm.DetectFirecrackerVersion(t.Context())
 	if err != nil {
 		t.Fatalf("detect Firecracker version: %v", err)
@@ -95,7 +107,7 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 		t.Fatal(err)
 	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api",
-		WorkloadName: "api", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive,
+		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive,
 		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30}})
 	if err != nil {
 		t.Fatal(err)
@@ -155,11 +167,96 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 			}
 			return
 		}
+		latest, err := store.LatestDeployment(ctx, app.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			t.Fatal(err)
+		}
+		if err == nil && latest.Status == state.DeployFailed {
+			t.Fatalf("reviewed image deployment failed: code=%s error=%s", latest.ErrorCode, latest.Error)
+		}
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
 		}
 	}
 	runs, _ := store.ListEnvironmentGitOpsRuns(context.Background(), account.ID, source.ID, 3)
-	t.Fatalf("native GitOps revision did not reach serving before timeout: runs=%+v", runs)
+	for _, run := range runs {
+		t.Logf("GitOps run: status=%s error_code=%s", run.Status, run.ErrorCode)
+	}
+	t.Fatal("native GitOps revision did not reach serving before timeout")
+}
+
+// A full-rootfs deployment still boots guest-init from drive0. Patch the
+// accepted host base through the production copy-and-verify path so the
+// private image contains the exact guest-init binary used by this test.
+// Never mutate the host's shared /srv/fc tree during acceptance.
+func stageNativeAcceptanceBase(t *testing.T, storageRoot string) {
+	t.Helper()
+	source := strings.TrimSpace(os.Getenv("FAAS_TEST_MINIMAL_BASE_PATH"))
+	if source == "" {
+		t.Fatal("FAAS_TEST_MINIMAL_BASE_PATH must name a validated generic base ext4")
+	}
+	guestInitPath := strings.TrimSpace(os.Getenv("FAAS_GUEST_INIT"))
+	guestInit, err := os.Open(guestInitPath)
+	if err != nil {
+		t.Fatalf("open native acceptance guest-init: %v", err)
+	}
+	guestHash := sha256.New()
+	_, hashErr := io.Copy(guestHash, guestInit)
+	closeErr := guestInit.Close()
+	if hashErr != nil || closeErr != nil {
+		t.Fatalf("hash native acceptance guest-init: read=%v close=%v", hashErr, closeErr)
+	}
+	guestDigest := hex.EncodeToString(guestHash.Sum(nil))
+	key := sched.BaseKeyForArch("", "amd64")
+	backend, err := storage.NewLocalStorageBackend(storageRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rootfs.NewBuilder(wire.ExecRunner{}).PatchBaseGuestInit(t.Context(), rootfs.BasePatchInput{
+		SourceImage: source, GuestInitPath: guestInitPath, GuestInitSHA256: guestDigest,
+		Storage: backend, StorageKey: key,
+	}); err != nil {
+		t.Fatalf("patch private native acceptance base: %v", err)
+	}
+	dest := filepath.Join(storageRoot, filepath.FromSlash(key))
+	sourceDigest, err := os.ReadFile(source + ".digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(sourceDigest)), "\n")
+	updated := false
+	for i, line := range lines {
+		if strings.HasPrefix(line, "guest-init-sha256=") {
+			lines[i] = "guest-init-sha256=" + guestDigest
+			updated = true
+		}
+	}
+	if !updated {
+		t.Fatal("native acceptance base digest sidecar has no guest-init provenance")
+	}
+	if err := os.WriteFile(dest+".digest", []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	image, err := os.Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentHash := sha256.New()
+	size, hashErr := io.Copy(contentHash, image)
+	closeErr = image.Close()
+	if hashErr != nil || closeErr != nil {
+		t.Fatalf("hash private native acceptance base: read=%v close=%v", hashErr, closeErr)
+	}
+	content, err := json.Marshal(struct {
+		Version int    `json:"version"`
+		SHA256  string `json:"sha256"`
+		Size    int64  `json:"size"`
+	}{Version: 1, SHA256: "sha256:" + hex.EncodeToString(contentHash.Sum(nil)), Size: size})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest+".content", content, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
