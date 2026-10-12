@@ -10103,3 +10103,6 @@ const OperationWorkflowPlaybookReviewsMax = 32
 // Checklist watches are durable within a readiness subscription; polling rotates a bounded sample.
 const OperationWorkflowPlaybookEvidenceWatchesPerSubscriptionMax = 20
 const OperationWorkflowPlaybookEvidenceWatchesPerPassMax = 5
+
+// Application playbook outcome waits use the existing ten-year business observation bound.
+const OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds = OperationWorkflowFreshnessMaxSeconds

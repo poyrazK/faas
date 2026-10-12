@@ -17,6 +17,12 @@ if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
     from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+    from ..models.operation_workflow_playbook_outcome_deadline_policy import (
+        OperationWorkflowPlaybookOutcomeDeadlinePolicy,
+    )
+    from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+        OperationWorkflowReadinessOutcomeEscalationReference,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookEvidenceWatch")
@@ -69,6 +75,19 @@ class OperationWorkflowPlaybookEvidenceWatch:
     items: list[OperationWorkflowPlaybookEvidenceCheck]
     """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
     checklist reviews."""
+    outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
+    expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an
+    external destination."""
+    deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.deadline_at. Exact pinned checklist outcome deadline."""
+    deadline_checked_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.deadline_checked_at. First successful due observation, or achieved
+    due enrollment observation; retained across configuration edits. Prevents retrospective deadline notices after
+    observed fulfillment."""
+    escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
+    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire."""
     outcome_state_revision: int | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for
     the pinned expectation; retained report regressions cannot establish a new result. Preserved across
@@ -122,6 +141,22 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        outcome_deadline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_deadline, Unset):
+            outcome_deadline = self.outcome_deadline.to_dict()
+
+        deadline_at: str | Unset = UNSET
+        if not isinstance(self.deadline_at, Unset):
+            deadline_at = self.deadline_at.isoformat()
+
+        deadline_checked_at: str | Unset = UNSET
+        if not isinstance(self.deadline_checked_at, Unset):
+            deadline_checked_at = self.deadline_checked_at.isoformat()
+
+        escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation, Unset):
+            escalation = self.escalation.to_dict()
+
         outcome_state_revision = self.outcome_state_revision
 
         business_outcome: dict[str, Any] | Unset = UNSET
@@ -157,6 +192,14 @@ class OperationWorkflowPlaybookEvidenceWatch:
                 "items": items,
             }
         )
+        if outcome_deadline is not UNSET:
+            field_dict["outcome_deadline"] = outcome_deadline
+        if deadline_at is not UNSET:
+            field_dict["deadline_at"] = deadline_at
+        if deadline_checked_at is not UNSET:
+            field_dict["deadline_checked_at"] = deadline_checked_at
+        if escalation is not UNSET:
+            field_dict["escalation"] = escalation
         if outcome_state_revision is not UNSET:
             field_dict["outcome_state_revision"] = outcome_state_revision
         if business_outcome is not UNSET:
@@ -173,6 +216,12 @@ class OperationWorkflowPlaybookEvidenceWatch:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+        from ..models.operation_workflow_playbook_outcome_deadline_policy import (
+            OperationWorkflowPlaybookOutcomeDeadlinePolicy,
+        )
+        from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+            OperationWorkflowReadinessOutcomeEscalationReference,
+        )
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -214,6 +263,34 @@ class OperationWorkflowPlaybookEvidenceWatch:
 
             items.append(items_item)
 
+        _outcome_deadline = d.pop("outcome_deadline", UNSET)
+        outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset
+        if isinstance(_outcome_deadline, Unset):
+            outcome_deadline = UNSET
+        else:
+            outcome_deadline = OperationWorkflowPlaybookOutcomeDeadlinePolicy.from_dict(_outcome_deadline)
+
+        _deadline_at = d.pop("deadline_at", UNSET)
+        deadline_at: datetime.datetime | Unset
+        if isinstance(_deadline_at, Unset):
+            deadline_at = UNSET
+        else:
+            deadline_at = datetime.datetime.fromisoformat(_deadline_at)
+
+        _deadline_checked_at = d.pop("deadline_checked_at", UNSET)
+        deadline_checked_at: datetime.datetime | Unset
+        if isinstance(_deadline_checked_at, Unset):
+            deadline_checked_at = UNSET
+        else:
+            deadline_checked_at = datetime.datetime.fromisoformat(_deadline_checked_at)
+
+        _escalation = d.pop("escalation", UNSET)
+        escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset
+        if isinstance(_escalation, Unset):
+            escalation = UNSET
+        else:
+            escalation = OperationWorkflowReadinessOutcomeEscalationReference.from_dict(_escalation)
+
         outcome_state_revision = d.pop("outcome_state_revision", UNSET)
 
         _business_outcome = d.pop("business_outcome", UNSET)
@@ -250,6 +327,10 @@ class OperationWorkflowPlaybookEvidenceWatch:
             updated_by=updated_by,
             evaluated_at=evaluated_at,
             items=items,
+            outcome_deadline=outcome_deadline,
+            deadline_at=deadline_at,
+            deadline_checked_at=deadline_checked_at,
+            escalation=escalation,
             outcome_state_revision=outcome_state_revision,
             business_outcome=business_outcome,
             stop_reason=stop_reason,

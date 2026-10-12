@@ -3,12 +3,21 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
 import type { OperationWorkflowPlaybookEvidenceChange } from './OperationWorkflowPlaybookEvidenceChange.js';
 import type { OperationWorkflowPlaybookOutcomeChange } from './OperationWorkflowPlaybookOutcomeChange.js';
 /**
  * OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceEvent = {
+  /**
+   * OperationWorkflowPlaybookEvidenceEvent.deadline_at. Original expected-result deadline when configured.
+   */
+  deadline_at?: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceEvent.business_outcome. Immutable delivery-time result, including an unmet deadline observation. Mutable escalation evidence is stored separately.
+   */
+  business_outcome?: OperationWorkflowPlaybookBusinessOutcome;
   /**
    * OperationWorkflowPlaybookEvidenceEvent.outcome_change. Optional grouped business-result change; requirement changes may be empty for an outcome-only notification.
    */

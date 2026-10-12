@@ -42,6 +42,13 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 		if r.ExpectedOutcomeCode != "" && ValidateOperationWorkflowStateName(r.ExpectedOutcomeCode) != nil {
 			return nil, fmt.Errorf("workflow playbook expected outcome code is invalid")
 		}
+		if r.OutcomeDeadline != nil {
+			policy := *r.OutcomeDeadline
+			if r.ExpectedOutcomeCode == "" || policy.AfterSeconds < 1 || policy.AfterSeconds > OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds || policy.FollowUpAfterSeconds < 1 || policy.FollowUpAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || !text(policy.Note, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
+				return nil, fmt.Errorf("workflow playbook outcome deadline policy is invalid")
+			}
+			r.OutcomeDeadline = &policy
+		}
 		seen[r.ID] = true
 		r.RequiredEvidence = append([]string(nil), r.RequiredEvidence...)
 		slices.Sort(r.RequiredEvidence)

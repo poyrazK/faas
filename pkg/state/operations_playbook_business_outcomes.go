@@ -22,7 +22,7 @@ func projectWorkflowPlaybookBusinessOutcomes(out *api.OperationWorkflowCase) {
 			evidence.Status = "unknown"
 			evidence.Explanation = "The pinned playbook is invalid; its business expectation cannot be evaluated."
 		}
-		p.BusinessOutcome = &api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence}
+		p.BusinessOutcome = &api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence, DeadlineAt: p.OutcomeDeadlineAt, DeadlineReached: p.OutcomeDeadlineAt != nil && !out.EvidenceCheckedAt.Before(*p.OutcomeDeadlineAt)}
 	}
 	out.Limitations = append(out.Limitations, "Playbook business results follow the frozen expected terminal outcome in the exact workflow contract. They neither close human checklists nor establish that playbook work caused an application outcome.")
 }

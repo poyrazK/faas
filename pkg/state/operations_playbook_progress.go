@@ -99,6 +99,10 @@ func startWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookPr
 	if matched.Playbook.ExpectedOutcomeCode != "" && overview.Instance != nil && overview.Instance.State != nil {
 		r.Progress.StartStateRevision = overview.Instance.State.Revision
 	}
+	if matched.Playbook.OutcomeDeadline != nil {
+		due := now.Add(time.Duration(matched.Playbook.OutcomeDeadline.AfterSeconds) * time.Second)
+		r.Progress.OutcomeDeadlineAt = &due
+	}
 	for _, label := range matched.Playbook.RequiredEvidence {
 		r.Progress.Items = append(r.Progress.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
 	}

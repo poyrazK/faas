@@ -192,7 +192,19 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 					break
 				}
 			}
-			notifications = append(notifications, applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)...)
+			published, accepted := applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)
+			notifications = append(notifications, published...)
+			if accepted {
+				for _, watch := range r.Subscription.PlaybookEvidenceWatches {
+					if watch.ID != u.Playbook.Watch.ID {
+						continue
+					}
+					if err = syncPlaybookOutcomeEscalationTx(ctx, tx, q, id, watch); err != nil {
+						return err
+					}
+					break
+				}
+			}
 			continue
 		}
 		payload, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: id, Sequence: u.Sequence})

@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookEvidenceRequirement } from './OperationWorkflowPlaybookEvidenceRequirement.js';
+import type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
 /**
  * OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists and links are never executed by Gregale.
  */
 export type OperationWorkflowPlaybook = {
+  /**
+   * OperationWorkflowPlaybook.outcome_deadline. Optional application attention policy requiring expected_outcome_code. Frozen with guidance; deadline starts at checklist creation, not watch enrollment.
+   */
+  outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy;
   /**
    * OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with guidance; does not infer causation or close coordination.
    */

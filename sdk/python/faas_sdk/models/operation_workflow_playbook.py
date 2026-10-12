@@ -13,6 +13,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence_requirement import OperationWorkflowPlaybookEvidenceRequirement
+    from ..models.operation_workflow_playbook_outcome_deadline_policy import (
+        OperationWorkflowPlaybookOutcomeDeadlinePolicy,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybook")
@@ -38,6 +41,10 @@ class OperationWorkflowPlaybook:
     summary: str
     """OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or surrounding
     whitespace."""
+    outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
+    expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an
+    external destination."""
     expected_outcome_code: str | Unset = UNSET
     """OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with
     guidance; does not infer causation or close coordination."""
@@ -67,6 +74,10 @@ class OperationWorkflowPlaybook:
         match_code = self.match_code
 
         summary = self.summary
+
+        outcome_deadline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_deadline, Unset):
+            outcome_deadline = self.outcome_deadline.to_dict()
 
         expected_outcome_code = self.expected_outcome_code
 
@@ -98,6 +109,8 @@ class OperationWorkflowPlaybook:
                 "summary": summary,
             }
         )
+        if outcome_deadline is not UNSET:
+            field_dict["outcome_deadline"] = outcome_deadline
         if expected_outcome_code is not UNSET:
             field_dict["expected_outcome_code"] = expected_outcome_code
         if owner is not UNSET:
@@ -118,6 +131,9 @@ class OperationWorkflowPlaybook:
         from ..models.operation_workflow_playbook_evidence_requirement import (
             OperationWorkflowPlaybookEvidenceRequirement,
         )
+        from ..models.operation_workflow_playbook_outcome_deadline_policy import (
+            OperationWorkflowPlaybookOutcomeDeadlinePolicy,
+        )
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -129,6 +145,13 @@ class OperationWorkflowPlaybook:
         match_code = d.pop("match_code")
 
         summary = d.pop("summary")
+
+        _outcome_deadline = d.pop("outcome_deadline", UNSET)
+        outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset
+        if isinstance(_outcome_deadline, Unset):
+            outcome_deadline = UNSET
+        else:
+            outcome_deadline = OperationWorkflowPlaybookOutcomeDeadlinePolicy.from_dict(_outcome_deadline)
 
         expected_outcome_code = d.pop("expected_outcome_code", UNSET)
 
@@ -157,6 +180,7 @@ class OperationWorkflowPlaybook:
             match_kind=match_kind,
             match_code=match_code,
             summary=summary,
+            outcome_deadline=outcome_deadline,
             expected_outcome_code=expected_outcome_code,
             owner=owner,
             evidence_requirements=evidence_requirements,

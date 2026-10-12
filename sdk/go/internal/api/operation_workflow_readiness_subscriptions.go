@@ -38,6 +38,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation        `json:"playbook_escalation,omitempty"`
 	PlaybookEvidence     *OperationWorkflowPlaybookEvidenceEvent            `json:"playbook_evidence,omitempty"`
 	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent `json:"escalation_response,omitempty"`
 	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation       `json:"outcome_escalation,omitempty"`
@@ -114,6 +115,7 @@ type OperationWorkflowReadinessFollowUpOptions struct {
 	Limit        int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
+	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation  `json:"playbook_escalation,omitempty"`
 	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation `json:"outcome_escalation,omitempty"`
 	Reminder             *OperationWorkflowReadinessDueReminder       `json:"reminder,omitempty"`
 	SubscriptionID       string                                       `json:"subscription_id"`

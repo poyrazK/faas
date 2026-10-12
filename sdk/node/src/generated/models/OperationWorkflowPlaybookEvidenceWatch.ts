@@ -5,10 +5,28 @@
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
+import type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
+import type { OperationWorkflowReadinessOutcomeEscalationReference } from './OperationWorkflowReadinessOutcomeEscalationReference.js';
 /**
  * OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceWatch = {
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.outcome_deadline. Frozen application assignment policy, independent of the ordinary notification owner.
+   */
+  outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.deadline_at. Exact pinned checklist outcome deadline.
+   */
+  deadline_at?: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.deadline_checked_at. First successful due observation, or achieved due enrollment observation; retained across configuration edits. Prevents retrospective deadline notices after observed fulfillment.
+   */
+  deadline_checked_at?: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.escalation. Once-delivered assigned follow-up reference. Pruned rows are not recreated by polling.
+   */
+  escalation?: OperationWorkflowReadinessOutcomeEscalationReference;
   /**
    * OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for the pinned expectation; retained report regressions cannot establish a new result. Preserved across configuration edits and unavailable observations.
    */

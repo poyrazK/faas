@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
+    from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
     from ..models.operation_workflow_readiness_business_outcome_event import (
         OperationWorkflowReadinessBusinessOutcomeEvent,
     )
@@ -50,6 +51,10 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
+    current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
+    completion remain human coordination."""
     playbook_evidence: OperationWorkflowPlaybookEvidenceEvent | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations
     preserve human reviews and application business authority."""
@@ -93,6 +98,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        playbook_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_escalation, Unset):
+            playbook_escalation = self.playbook_escalation.to_dict()
 
         playbook_evidence: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_evidence, Unset):
@@ -145,6 +154,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if playbook_escalation is not UNSET:
+            field_dict["playbook_escalation"] = playbook_escalation
         if playbook_evidence is not UNSET:
             field_dict["playbook_evidence"] = playbook_evidence
         if escalation_response is not UNSET:
@@ -171,6 +182,7 @@ class OperationWorkflowReadinessNotification:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
+        from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
         from ..models.operation_workflow_readiness_business_outcome_event import (
             OperationWorkflowReadinessBusinessOutcomeEvent,
         )
@@ -197,6 +209,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _playbook_escalation = d.pop("playbook_escalation", UNSET)
+        playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset
+        if isinstance(_playbook_escalation, Unset):
+            playbook_escalation = UNSET
+        else:
+            playbook_escalation = OperationWorkflowPlaybookOutcomeEscalation.from_dict(_playbook_escalation)
 
         _playbook_evidence = d.pop("playbook_evidence", UNSET)
         playbook_evidence: OperationWorkflowPlaybookEvidenceEvent | Unset
@@ -274,6 +293,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            playbook_escalation=playbook_escalation,
             playbook_evidence=playbook_evidence,
             escalation_response=escalation_response,
             outcome_escalation=outcome_escalation,

@@ -146,7 +146,22 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 				p := row.Progress
 				progress = &p
 			}
-			notifications = append(notifications, applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)...)
+			published, accepted := applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)
+			notifications = append(notifications, published...)
+			if accepted {
+				for _, watch := range r.Subscription.PlaybookEvidenceWatches {
+					if watch.ID != u.Playbook.Watch.ID {
+						continue
+					}
+					for j, n := range data.readinessInbox[r.Subscription.ID] {
+						if updated, ok := syncPlaybookOutcomeEscalation(n, watch); ok {
+							data.readinessInbox[r.Subscription.ID][j] = updated
+							break
+						}
+					}
+					break
+				}
+			}
 			continue
 		}
 		for i, n := range data.readinessInbox[r.Subscription.ID] {

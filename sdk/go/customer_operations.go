@@ -336,3 +336,6 @@ type OperationWorkflowPlaybookEvidenceEvent = api.OperationWorkflowPlaybookEvide
 
 type OperationWorkflowPlaybookBusinessOutcome = api.OperationWorkflowPlaybookBusinessOutcome
 type OperationWorkflowPlaybookOutcomeChange = api.OperationWorkflowPlaybookOutcomeChange
+
+type OperationWorkflowPlaybookOutcomeDeadlinePolicy = api.OperationWorkflowPlaybookOutcomeDeadlinePolicy
+type OperationWorkflowPlaybookOutcomeEscalation = api.OperationWorkflowPlaybookOutcomeEscalation

@@ -13,6 +13,10 @@ import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlayboo
  */
 export type OperationWorkflowPlaybookProgress = {
   /**
+   * OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned application wait duration; human edits and watch enrollment do not reschedule it.
+   */
+  outcome_deadline_at?: string;
+  /**
    * OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook with an expected outcome starts; earlier reports cannot establish its business result.
    */
   start_state_revision?: number;

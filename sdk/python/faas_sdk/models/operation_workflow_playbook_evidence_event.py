@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
     from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
     from ..models.operation_workflow_playbook_outcome_change import OperationWorkflowPlaybookOutcomeChange
 
@@ -48,6 +49,12 @@ class OperationWorkflowPlaybookEvidenceEvent:
     changes: list[OperationWorkflowPlaybookEvidenceChange]
     """OperationWorkflowPlaybookEvidenceEvent.changes. Grouped changes in requirement status or diagnostic reason;
     excludes observation clocks and report counters."""
+    deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceEvent.deadline_at. Original expected-result deadline when configured."""
+    business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
+    changes the expected outcome."""
     outcome_change: OperationWorkflowPlaybookOutcomeChange | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeChange. Saved before/after playbook result observation, separate from
     checklist review and business causation."""
@@ -79,6 +86,14 @@ class OperationWorkflowPlaybookEvidenceEvent:
             changes_item = changes_item_data.to_dict()
             changes.append(changes_item)
 
+        deadline_at: str | Unset = UNSET
+        if not isinstance(self.deadline_at, Unset):
+            deadline_at = self.deadline_at.isoformat()
+
+        business_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome, Unset):
+            business_outcome = self.business_outcome.to_dict()
+
         outcome_change: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_change, Unset):
             outcome_change = self.outcome_change.to_dict()
@@ -103,6 +118,10 @@ class OperationWorkflowPlaybookEvidenceEvent:
                 "changes": changes,
             }
         )
+        if deadline_at is not UNSET:
+            field_dict["deadline_at"] = deadline_at
+        if business_outcome is not UNSET:
+            field_dict["business_outcome"] = business_outcome
         if outcome_change is not UNSET:
             field_dict["outcome_change"] = outcome_change
         if platform_tenant_id is not UNSET:
@@ -113,6 +132,7 @@ class OperationWorkflowPlaybookEvidenceEvent:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
         from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
         from ..models.operation_workflow_playbook_outcome_change import OperationWorkflowPlaybookOutcomeChange
 
@@ -142,6 +162,20 @@ class OperationWorkflowPlaybookEvidenceEvent:
 
             changes.append(changes_item)
 
+        _deadline_at = d.pop("deadline_at", UNSET)
+        deadline_at: datetime.datetime | Unset
+        if isinstance(_deadline_at, Unset):
+            deadline_at = UNSET
+        else:
+            deadline_at = datetime.datetime.fromisoformat(_deadline_at)
+
+        _business_outcome = d.pop("business_outcome", UNSET)
+        business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset
+        if isinstance(_business_outcome, Unset):
+            business_outcome = UNSET
+        else:
+            business_outcome = OperationWorkflowPlaybookBusinessOutcome.from_dict(_business_outcome)
+
         _outcome_change = d.pop("outcome_change", UNSET)
         outcome_change: OperationWorkflowPlaybookOutcomeChange | Unset
         if isinstance(_outcome_change, Unset):
@@ -167,6 +201,8 @@ class OperationWorkflowPlaybookEvidenceEvent:
             playbook_version=playbook_version,
             checked_at=checked_at,
             changes=changes,
+            deadline_at=deadline_at,
+            business_outcome=business_outcome,
             outcome_change=outcome_change,
             platform_tenant_id=platform_tenant_id,
         )

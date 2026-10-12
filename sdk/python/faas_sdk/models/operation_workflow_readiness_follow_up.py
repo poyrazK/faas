@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
@@ -48,6 +49,10 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
+    current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
+    completion remain human coordination."""
     outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
     """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
     human coordination. First observed application success is retained as a flag; it never automatically
@@ -99,6 +104,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        playbook_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_escalation, Unset):
+            playbook_escalation = self.playbook_escalation.to_dict()
+
         outcome_escalation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_escalation, Unset):
             outcome_escalation = self.outcome_escalation.to_dict()
@@ -144,6 +153,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if playbook_escalation is not UNSET:
+            field_dict["playbook_escalation"] = playbook_escalation
         if outcome_escalation is not UNSET:
             field_dict["outcome_escalation"] = outcome_escalation
         if subscription_tenant_id is not UNSET:
@@ -170,6 +181,7 @@ class OperationWorkflowReadinessFollowUp:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
@@ -192,6 +204,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _playbook_escalation = d.pop("playbook_escalation", UNSET)
+        playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset
+        if isinstance(_playbook_escalation, Unset):
+            playbook_escalation = UNSET
+        else:
+            playbook_escalation = OperationWorkflowPlaybookOutcomeEscalation.from_dict(_playbook_escalation)
 
         _outcome_escalation = d.pop("outcome_escalation", UNSET)
         outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset
@@ -248,6 +267,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            playbook_escalation=playbook_escalation,
             outcome_escalation=outcome_escalation,
             subscription_tenant_id=subscription_tenant_id,
             platform_tenant_id=platform_tenant_id,

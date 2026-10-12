@@ -267,6 +267,9 @@
   if(notification.playbook_evidence){const event=notification.playbook_evidence;
    text(parent,'Playbook observation changed · '+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
    text(parent,'Checklist '+event.progress_id+' · Checked '+new Date(event.checked_at).toLocaleString());
+   if(event.deadline_at)text(parent,'Pinned expected-result deadline: '+new Date(event.deadline_at).toLocaleString());
+   if(event.business_outcome&&!event.outcome_change)text(parent,'Expected '+event.business_outcome.evidence.expected_outcome_code+' · Observed '+event.business_outcome.status.replace(/_/g,' ')+' · '+event.business_outcome.evidence.explanation);
+
    if(event.outcome_change){const change=event.outcome_change,current=change.after;text(parent,'Business result: '+change.before_status.replace(/_/g,' ')+' → '+current.status.replace(/_/g,' '));text(parent,'Expected: '+current.evidence.expected_outcome_code+' · Reported: '+(current.evidence.reported_outcome_code||'none'));text(parent,current.evidence.explanation);text(parent,'Checklist completion and this application result are separate observations.');}
 
    for(const change of event.changes){text(parent,change.after.requirement.label+': '+change.before_status+' → '+change.after.status+' · '+change.after.reason.replace(/_/g,' '));if(change.after.review_suggested)text(parent,'Review suggested for this completed checklist item.');}
@@ -297,6 +300,14 @@
   if(outcome.reporting_operation_id){const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(outcome.reporting_operation_id)+'?scope='+encodeURIComponent(scope);a.textContent='Business outcome reporting Operation';parent.append(a,document.createElement('br'));}
   if(outcome.report_id)text(parent,'Outcome report: '+outcome.report_id);
  };
+ window.renderPlaybookEscalation = (parent,escalation,scope) => {
+  if(!escalation)return;const result=escalation.current;
+  text(parent,'Assigned playbook outcome follow-up · Deadline '+new Date(escalation.deadline_at).toLocaleString()+' · Checklist '+escalation.progress_id);
+  text(parent,'Current business result: '+result.status.replace(/_/g,' ')+' · '+result.evidence.explanation);
+  window.renderReadinessBusinessOutcome(parent,result.evidence,scope,'Latest playbook escalation evidence');
+  if(escalation.success_observed_at)text(parent,'Expected application result first observed '+new Date(escalation.success_observed_at).toLocaleString()+'. Its escalation history and human completion are preserved.');
+  text(parent,'This is an observation after a deadline, not proof of business failure or historical timeliness. Acknowledgment and completion remain manual.');
+ };
  window.renderReadinessEscalation = (parent, escalation, scope) => {
   if(!escalation)return;
   text(parent,'Assigned business outcome escalation · source notification '+escalation.source_sequence);
@@ -309,6 +320,7 @@
  };
  window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
+  window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   const missed=notification.escalation_response;
   if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));text(parent,missed.source.workflow+' / '+missed.source.instance_id+' · '+missed.source.subject.type+': '+missed.source.subject.id);}
   const watch=notification.business_outcome_watch;
@@ -545,6 +557,7 @@
   const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
   const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
   if(window.renderReadinessEscalation)window.renderReadinessEscalation(li,row.outcome_escalation,row.scope);
+  if(window.renderPlaybookEscalation)window.renderPlaybookEscalation(li,row.playbook_escalation,row.scope);
   if(row.reminder)text(li,'Due reminder published '+new Date(row.reminder.created_at).toLocaleString());
   text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
   text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));
@@ -704,6 +717,8 @@
    const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
    section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
    mountPlaybookEvidenceWatch(section,p);
+   if(p.outcome_deadline_at&&p.playbook.outcome_deadline){const policy=p.playbook.outcome_deadline;section.append(node('p','Expected-result deadline: '+clock(p.outcome_deadline_at)+' · Assigned team: '+policy.owner+' · Follow-up due '+policy.follow_up_after_seconds+' seconds after delivery.'));section.append(node('p','Enable monitoring to deliver one follow-up when the deadline is reached without the expected result. The deadline stays pinned to this checklist’s start.'));}
+
    if(p.business_outcome){const result=p.business_outcome,evidence=result.evidence;section.append(node('p','Business result: '+result.status.replace(/_/g,' ')+' · Expected: '+evidence.expected_outcome_code+' · Reported: '+(evidence.reported_outcome_code||'none')),node('p',evidence.explanation),node('p','Observed '+clock(evidence.checked_at)+' · '+result.reason.replace(/_/g,' ')));if(evidence.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(evidence.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Business-result reporting operation');link.href=url.href;section.append(link);}section.append(node('p','This application result does not close the checklist or establish that the playbook caused it.'));}
 
    const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
@@ -782,6 +797,7 @@
   caseView.append(node('h4','Retained open follow-ups'),node('p',result.follow_up_count+' open · '+result.overdue_follow_up_count+' overdue'));
   for(const row of result.follow_ups||[]) {
    const details=[row.overdue?'Overdue':'Scheduled',row.coordination.owner||'Unassigned',clock(row.coordination.follow_up_at),row.coordination.status];
+   if(row.playbook_escalation)details.push('Assigned playbook deadline follow-up · Current result: '+row.playbook_escalation.current.status.replace(/_/g,' '));
    if(row.outcome_escalation){details.push('Assigned outcome escalation');if(row.outcome_escalation.response)details.push('Acknowledgment target: '+row.outcome_escalation.response.status);}
    const p=node('p',details.join(' · '));const url=safeURL(root.dataset.queueUrl);url.searchParams.set('scope',result.timeline.scope);if(row.subscription_tenant_id)url.searchParams.set('tenant_id',row.subscription_tenant_id);url.hash='readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;
    const link=node('a',' Open source inbox');link.href=url.href;p.append(link);caseView.append(p);if(row.coordination.note)caseView.append(node('p',row.coordination.note));

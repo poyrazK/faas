@@ -83,17 +83,18 @@ type OperationWorkflowPlaybookEvidenceCheck struct {
 }
 
 type OperationWorkflowPlaybook struct {
-	ExpectedOutcomeCode  string                                         `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
-	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
-	ID                   string                                         `json:"id" yaml:"id" toml:"id"`
-	Version              int                                            `json:"version" yaml:"version" toml:"version"`
-	MatchKind            string                                         `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
-	MatchCode            string                                         `json:"match_code" yaml:"match_code" toml:"match_code"`
-	Summary              string                                         `json:"summary" yaml:"summary" toml:"summary"`
-	Owner                string                                         `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
-	RequiredEvidence     []string                                       `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
-	RunbookURL           string                                         `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
-	ActionURL            string                                         `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
+	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy `json:"outcome_deadline,omitempty" yaml:"outcome_deadline,omitempty" toml:"outcome_deadline"`
+	ExpectedOutcomeCode  string                                          `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
+	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement  `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
+	ID                   string                                          `json:"id" yaml:"id" toml:"id"`
+	Version              int                                             `json:"version" yaml:"version" toml:"version"`
+	MatchKind            string                                          `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
+	MatchCode            string                                          `json:"match_code" yaml:"match_code" toml:"match_code"`
+	Summary              string                                          `json:"summary" yaml:"summary" toml:"summary"`
+	Owner                string                                          `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
+	RequiredEvidence     []string                                        `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
+	RunbookURL           string                                          `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
+	ActionURL            string                                          `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
 }
 type OperationWorkflowPlaybookGuidance struct {
 	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
@@ -140,6 +141,7 @@ type OperationWorkflowPlaybookProgressChange struct {
 	Actor     string                                `json:"actor"`
 }
 type OperationWorkflowPlaybookProgress struct {
+	OutcomeDeadlineAt   *time.Time                                `json:"outcome_deadline_at,omitempty"`
 	StartStateRevision  int64                                     `json:"start_state_revision,omitempty"`
 	BusinessOutcome     *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
 	Disposition         string                                    `json:"disposition,omitempty"`
@@ -212,27 +214,31 @@ type OperationWorkflowPlaybookEvidenceWatchRequest struct {
 
 // Watch revisions fence configuration changes; polling does not advance them.
 type OperationWorkflowPlaybookEvidenceWatch struct {
-	OutcomeStateRevision int64                                     `json:"outcome_state_revision,omitempty"`
-	BusinessOutcome      *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
-	ID                   string                                    `json:"id"`
-	ProgressID           string                                    `json:"progress_id"`
-	SubscriptionID       string                                    `json:"subscription_id"`
-	Revision             int64                                     `json:"revision"`
-	Status               string                                    `json:"status"`
-	StopReason           string                                    `json:"stop_reason,omitempty"`
-	Owner                string                                    `json:"owner"`
-	PlatformTenantID     string                                    `json:"platform_tenant_id,omitempty"`
-	Subject              OperationSubject                          `json:"subject"`
-	Workflow             string                                    `json:"workflow"`
-	InstanceID           string                                    `json:"instance_id"`
-	ContractVersion      int                                       `json:"contract_version"`
-	PlaybookID           string                                    `json:"playbook_id"`
-	PlaybookVersion      int                                       `json:"playbook_version"`
-	CreatedAt            time.Time                                 `json:"created_at"`
-	UpdatedAt            time.Time                                 `json:"updated_at"`
-	UpdatedBy            string                                    `json:"updated_by"`
-	EvaluatedAt          time.Time                                 `json:"evaluated_at"`
-	Items                []OperationWorkflowPlaybookEvidenceCheck  `json:"items"`
+	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy       `json:"outcome_deadline,omitempty"`
+	DeadlineAt           *time.Time                                            `json:"deadline_at,omitempty"`
+	DeadlineCheckedAt    *time.Time                                            `json:"deadline_checked_at,omitempty"`
+	Escalation           *OperationWorkflowReadinessOutcomeEscalationReference `json:"escalation,omitempty"`
+	OutcomeStateRevision int64                                                 `json:"outcome_state_revision,omitempty"`
+	BusinessOutcome      *OperationWorkflowPlaybookBusinessOutcome             `json:"business_outcome,omitempty"`
+	ID                   string                                                `json:"id"`
+	ProgressID           string                                                `json:"progress_id"`
+	SubscriptionID       string                                                `json:"subscription_id"`
+	Revision             int64                                                 `json:"revision"`
+	Status               string                                                `json:"status"`
+	StopReason           string                                                `json:"stop_reason,omitempty"`
+	Owner                string                                                `json:"owner"`
+	PlatformTenantID     string                                                `json:"platform_tenant_id,omitempty"`
+	Subject              OperationSubject                                      `json:"subject"`
+	Workflow             string                                                `json:"workflow"`
+	InstanceID           string                                                `json:"instance_id"`
+	ContractVersion      int                                                   `json:"contract_version"`
+	PlaybookID           string                                                `json:"playbook_id"`
+	PlaybookVersion      int                                                   `json:"playbook_version"`
+	CreatedAt            time.Time                                             `json:"created_at"`
+	UpdatedAt            time.Time                                             `json:"updated_at"`
+	UpdatedBy            string                                                `json:"updated_by"`
+	EvaluatedAt          time.Time                                             `json:"evaluated_at"`
+	Items                []OperationWorkflowPlaybookEvidenceCheck              `json:"items"`
 }
 type OperationWorkflowPlaybookEvidenceChange struct {
 	BeforeStatus string                                 `json:"before_status"`
@@ -240,6 +246,8 @@ type OperationWorkflowPlaybookEvidenceChange struct {
 	After        OperationWorkflowPlaybookEvidenceCheck `json:"after"`
 }
 type OperationWorkflowPlaybookEvidenceEvent struct {
+	DeadlineAt       *time.Time                                `json:"deadline_at,omitempty"`
+	BusinessOutcome  *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
 	OutcomeChange    *OperationWorkflowPlaybookOutcomeChange   `json:"outcome_change,omitempty"`
 	WatchID          string                                    `json:"watch_id"`
 	ProgressID       string                                    `json:"progress_id"`
@@ -256,13 +264,32 @@ type OperationWorkflowPlaybookEvidenceEvent struct {
 
 // Business results are observed separately from human progress and do not establish causation.
 type OperationWorkflowPlaybookBusinessOutcome struct {
-	Status   string                                    `json:"status"`
-	Reason   string                                    `json:"reason"`
-	Evidence OperationWorkflowReadinessBusinessOutcome `json:"evidence"`
+	DeadlineAt      *time.Time                                `json:"deadline_at,omitempty"`
+	DeadlineReached bool                                      `json:"deadline_reached,omitempty"`
+	Status          string                                    `json:"status"`
+	Reason          string                                    `json:"reason"`
+	Evidence        OperationWorkflowReadinessBusinessOutcome `json:"evidence"`
 }
 type OperationWorkflowPlaybookOutcomeChange struct {
 	BeforeStatus              string                                   `json:"before_status"`
 	BeforeReason              string                                   `json:"before_reason"`
 	BeforeReportedOutcomeCode string                                   `json:"before_reported_outcome_code,omitempty"`
 	After                     OperationWorkflowPlaybookBusinessOutcome `json:"after"`
+}
+
+// Outcome deadlines are attention policies, not business failure assertions or execution instructions.
+type OperationWorkflowPlaybookOutcomeDeadlinePolicy struct {
+	AfterSeconds         int64  `json:"after_seconds" yaml:"after_seconds" toml:"after_seconds"`
+	Owner                string `json:"owner" yaml:"owner" toml:"owner"`
+	FollowUpAfterSeconds int64  `json:"follow_up_after_seconds" yaml:"follow_up_after_seconds" toml:"follow_up_after_seconds"`
+	Note                 string `json:"note,omitempty" yaml:"note,omitempty" toml:"note"`
+}
+
+// Current evidence may refresh; delivery evidence and human coordination remain immutable to the worker.
+type OperationWorkflowPlaybookOutcomeEscalation struct {
+	WatchID           string                                   `json:"watch_id"`
+	ProgressID        string                                   `json:"progress_id"`
+	DeadlineAt        time.Time                                `json:"deadline_at"`
+	Current           OperationWorkflowPlaybookBusinessOutcome `json:"current"`
+	SuccessObservedAt *time.Time                               `json:"success_observed_at,omitempty"`
 }

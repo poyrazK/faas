@@ -66,6 +66,9 @@ class OperationWorkflowPlaybookProgress:
     history_truncated: bool
     """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
     history."""
+    outcome_deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned
+    application wait duration; human edits and watch enrollment do not reschedule it."""
     start_state_revision: int | Unset = UNSET
     """OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook
     with an expected outcome starts; earlier reports cannot establish its business result."""
@@ -127,6 +130,10 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = self.history_truncated
 
+        outcome_deadline_at: str | Unset = UNSET
+        if not isinstance(self.outcome_deadline_at, Unset):
+            outcome_deadline_at = self.outcome_deadline_at.isoformat()
+
         start_state_revision = self.start_state_revision
 
         business_outcome: dict[str, Any] | Unset = UNSET
@@ -181,6 +188,8 @@ class OperationWorkflowPlaybookProgress:
                 "history_truncated": history_truncated,
             }
         )
+        if outcome_deadline_at is not UNSET:
+            field_dict["outcome_deadline_at"] = outcome_deadline_at
         if start_state_revision is not UNSET:
             field_dict["start_state_revision"] = start_state_revision
         if business_outcome is not UNSET:
@@ -248,6 +257,13 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = d.pop("history_truncated")
 
+        _outcome_deadline_at = d.pop("outcome_deadline_at", UNSET)
+        outcome_deadline_at: datetime.datetime | Unset
+        if isinstance(_outcome_deadline_at, Unset):
+            outcome_deadline_at = UNSET
+        else:
+            outcome_deadline_at = datetime.datetime.fromisoformat(_outcome_deadline_at)
+
         start_state_revision = d.pop("start_state_revision", UNSET)
 
         _business_outcome = d.pop("business_outcome", UNSET)
@@ -313,6 +329,7 @@ class OperationWorkflowPlaybookProgress:
             updated_at=updated_at,
             history=history,
             history_truncated=history_truncated,
+            outcome_deadline_at=outcome_deadline_at,
             start_state_revision=start_state_revision,
             business_outcome=business_outcome,
             disposition=disposition,

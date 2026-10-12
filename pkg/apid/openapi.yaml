@@ -79181,6 +79181,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        playbook_escalation:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeEscalation'
+          description: OperationWorkflowReadinessNotification.playbook_escalation. Live evidence of an assigned playbook deadline follow-up, separate from human coordination and immutable delivery evidence.
         playbook_evidence:
           $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceEvent'
           description: OperationWorkflowReadinessNotification.playbook_evidence. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
@@ -79225,6 +79228,7 @@ components:
           - escalation_response_overdue
           - playbook_evidence_changed
           - playbook_outcome_changed
+          - playbook_outcome_deadline_reached
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -80268,6 +80272,9 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        playbook_escalation:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeEscalation'
+          description: OperationWorkflowReadinessFollowUp.playbook_escalation. Live evidence of an assigned playbook deadline follow-up, separate from human coordination and immutable delivery evidence.
         outcome_escalation:
           $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalation'
         subscription_id:
@@ -80913,6 +80920,20 @@ components:
         - evaluated_at
         - items
       properties:
+        outcome_deadline:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeDeadlinePolicy'
+          description: OperationWorkflowPlaybookEvidenceWatch.outcome_deadline. Frozen application assignment policy, independent of the ordinary notification owner.
+        deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceWatch.deadline_at. Exact pinned checklist outcome deadline.
+        deadline_checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceWatch.deadline_checked_at. First successful due observation, or achieved due enrollment observation; retained across configuration edits. Prevents retrospective deadline notices after observed fulfillment.
+        escalation:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
+          description: OperationWorkflowPlaybookEvidenceWatch.escalation. Once-delivered assigned follow-up reference. Pruned rows are not recreated by polling.
         outcome_state_revision:
           type: integer
           format: int64
@@ -81060,6 +81081,13 @@ components:
         - checked_at
         - changes
       properties:
+        deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceEvent.deadline_at. Original expected-result deadline when configured.
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+          description: OperationWorkflowPlaybookEvidenceEvent.business_outcome. Immutable delivery-time result, including an unmet deadline observation. Mutable escalation evidence is stored separately.
         outcome_change:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeChange'
           description: OperationWorkflowPlaybookEvidenceEvent.outcome_change. Optional grouped business-result change; requirement changes may be empty for an outcome-only notification.
@@ -81125,6 +81153,13 @@ components:
       description: OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
       required: [status, reason, evidence]
       properties:
+        deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured.
+        deadline_reached:
+          type: boolean
+          description: OperationWorkflowPlaybookBusinessOutcome.deadline_reached. The observation clock is at or past the deadline; does not establish failure or historical timeliness.
         status:
           type: string
           enum: [pending, achieved, different_outcome, unavailable]
@@ -81154,6 +81189,58 @@ components:
         after:
           $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
           description: OperationWorkflowPlaybookOutcomeChange.after. New exact-case result and reporting evidence.
+    OperationWorkflowPlaybookOutcomeDeadlinePolicy:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an external destination.
+      required: [after_seconds, owner, follow_up_after_seconds]
+      properties:
+        after_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 315360000
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.after_seconds. Expected wait from checklist creation, bounded to ten years.
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.owner. Required responsible team label with no surrounding whitespace or control characters.
+        follow_up_after_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 604800
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.follow_up_after_seconds. Assigned follow-up delay from actual notice delivery, independently bounded to one week.
+        note:
+          type: string
+          maxLength: 1024
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.note. Optional initial plain-text follow-up note; subsequent human notes are preserved.
+    OperationWorkflowPlaybookOutcomeEscalation:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and completion remain human coordination.
+      required: [watch_id, progress_id, deadline_at, current]
+      properties:
+        watch_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookOutcomeEscalation.watch_id. Exact durable watch identity for fenced evidence refresh.
+        progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookOutcomeEscalation.progress_id. Exact pinned checklist that originally missed its observed deadline.
+        deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookOutcomeEscalation.deadline_at. Original outcome deadline, unchanged after delivery.
+        current:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+          description: OperationWorkflowPlaybookOutcomeEscalation.current. Latest accepted watch evidence, independently of the original notice and human disposition.
+        success_observed_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation, retained through corrections or evidence loss; does not prove when the business result occurred.
     OperationWorkflowPlaybookEvidenceRequirement:
       type: object
       additionalProperties: false
@@ -81248,6 +81335,9 @@ components:
         and links are never executed by Gregale.
       required: [id, version, summary, match_kind, match_code]
       properties:
+        outcome_deadline:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeDeadlinePolicy'
+          description: OperationWorkflowPlaybook.outcome_deadline. Optional application attention policy requiring expected_outcome_code. Frozen with guidance; deadline starts at checklist creation, not watch enrollment.
         expected_outcome_code:
           type: string
           minLength: 1
@@ -81527,6 +81617,10 @@ components:
       - history
       - history_truncated
       properties:
+        outcome_deadline_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned application wait duration; human edits and watch enrollment do not reschedule it.
         start_state_revision:
           type: integer
           format: int64

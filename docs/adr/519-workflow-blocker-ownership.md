@@ -1650,3 +1650,32 @@ Dashboard, timeline, OpenAPI and all SDKs expose expectations, current business
 results and grouped changes. Existing playbooks and readiness outcome behavior
 remain compatible; no migration, application action or automatic checklist closure
 is introduced.
+
+## Pinned playbook outcome deadlines and durable assigned attention
+
+Application deadline policies require a frozen expected outcome, positive bounded
+wait, required team label and positive one-week-bounded follow-up delay. Optional
+notes use existing limits. Canonicalization validates and copies policy pointers;
+checklist start freezes its due time from creation. Legacy omission preserves
+existing fingerprints and behavior.
+
+Existing opt-in watches observe the first successful due check. Unmet expected
+results create one assigned unread notice, with follow-up time from actual delivery
+and a durable reference. Achieved due observations suppress retrospective notices.
+Configuration preserves due markers/references and applies the retained-revision
+guard before recording achieved fulfillment. A distinct explicitly enrolled watch
+has its own delivery semantics; inbox pruning never recreates an existing reference.
+
+The accepted watch update and assigned publication are fenced atomically by
+subscription leases, exact case identity, active disposition and observed progress
+revision. Retained assigned rows are locked for current-evidence refresh. Both
+stores preserve human coordination fields and immutable delivery observations;
+first observed late success remains historical through subsequent corrections.
+Rejected stale polls cannot refresh escalation evidence. Existing follow-up
+projection, reminder, acknowledgment/completion and case attribution are reused,
+with the additional evidence payload mirrored in memory and SQL.
+
+Deadlines represent observed need for attention, not inferred business failure,
+historical timeliness, causation or execution authority. No new storage table,
+migration or worker is introduced. Dashboard, OpenAPI and SDKs expose the frozen
+policy, pinned clock, one-time marker/reference and separate live evidence.

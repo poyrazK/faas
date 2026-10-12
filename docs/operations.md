@@ -3225,3 +3225,66 @@ human completion closes the other, and neither establishes that playbook work
 caused the application's outcome. Legacy playbooks omit the expectation and keep
 their existing behavior. No migration, external delivery or business action is
 introduced.
+
+### Declare a playbook business deadline and assigned follow-up
+
+Add an optional `outcome_deadline` policy to a playbook that already declares an
+`expected_outcome_code`:
+
+```yaml
+expected_outcome_code: payment-confirmed
+outcome_deadline:
+  after_seconds: 1800
+  owner: payments
+  follow_up_after_seconds: 900
+  note: Review the payment result and retained application evidence.
+```
+
+Durations are whole seconds. The expected wait is 1 second to ten years; the
+assigned follow-up delay is 1 second to one week. Owner is a required existing-style
+team label (at most 256 bytes); note is optional plain text (at most 1024 bytes).
+The policy enters the immutable rule fingerprint. Canonicalization copies the
+policy so callers cannot mutate pinned guidance through their input pointer.
+YAML/TOML and all SDKs expose the same fields.
+
+Starting a checklist freezes `outcome_deadline_at` as its creation time plus
+`after_seconds`. Deployment changes, item edits, coordination reviews, watch
+configuration and enrollment do not reschedule it. Case results expose the due
+clock and whether the current observation is at/past it; this does not prove when
+an application result historically arrived or declare business failure.
+
+Enable the existing opt-in checklist watch to receive deadline attention. The
+first successful due poll records `deadline_checked_at`. If the expected result
+is not currently observed as achieved, it publishes one
+`playbook_outcome_deadline_reached` notice per watch. Pending, different-outcome
+and unavailable evidence can require review; source read failures retain previous
+observations and defer the check. The notice is unread and assigned to the frozen
+policy owner, with the policy note and follow-up time equal to actual delivery
+plus `follow_up_after_seconds`. This owner is independent of the ordinary watch
+notification owner. Simultaneous evidence/result changes share the same notice.
+
+An achieved result at the first due poll suppresses deadline escalation, including
+later evidence loss. An already-achieved due enrollment/configuration observation
+also records fulfillment after the retained-revision guard. A later unmet
+observation is not retroactively declared a missed deadline. Disabled monitoring
+sends nothing; re-enabling retains any previous due marker and escalation reference.
+A new watch in another inbox or after a reclaimed stopped slot has its own identity
+and first due check. There is no global escalation deduplication across explicit
+inbox destinations.
+
+Late result observations refresh `playbook_escalation.current` on the retained
+assigned notification and keep its first `success_observed_at` flag, even through
+later corrections/evidence loss. Its original `playbook_evidence.business_outcome`
+and deadline are delivery evidence. Human owner, note, acknowledgment, reminders,
+follow-up time, coordination revision and completion snapshots remain untouched.
+The existing inbox/follow-up controls and reminder worker handle this assigned
+work. Completion references retain exact-case customer/subject validation.
+
+Deadline checks, baseline updates, assigned notice creation and retained evidence
+refresh use the existing subscription lease and shared checklist-writer fences.
+Retirement/replacement before publication stops monitoring; human revision drift
+defers it. An escalation reference survives latest-100 inbox pruning; a pruned row
+is not recreated and its lost evidence/history cannot be reconstructed. Refresh
+ends when the watch stops or subscription is deleted. Dashboard, follow-up queues
+and all SDKs show the deadline and separate current evidence/human coordination.
+No migration, additional worker, external delivery or application action is added.

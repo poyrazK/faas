@@ -8,6 +8,14 @@ import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkf
  */
 export type OperationWorkflowPlaybookBusinessOutcome = {
   /**
+   * OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured.
+   */
+  deadline_at?: string;
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.deadline_reached. The observation clock is at or past the deadline; does not establish failure or historical timeliness.
+   */
+  deadline_reached?: boolean;
+  /**
    * OperationWorkflowPlaybookBusinessOutcome.status. Only a fresh comparable explicit terminal outcome establishes achieved or different outcome. Missing state, stale reports, missing terminal outcome and contract changes are unavailable.
    */
   status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable';
