@@ -381,6 +381,7 @@ func cmdAddPostgres(args []string) int {
 	if err != nil {
 		return printErr("Managed PostgreSQL database is not ready", err)
 	}
+	bindingIsNew := postgresBindingIsNew(ctx, client, database.ID, app.ID, strings.TrimSpace(*scope), strings.TrimSpace(*environmentKey))
 	bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", app.ID, database.ID, *scope, *environmentKey))
 	binding, err := client.CreateManagedPostgresBinding(bindingCtx, database.ID, api.CreateManagedPostgresBindingRequest{
 		AppID: app.ID, Scope: strings.TrimSpace(*scope), EnvironmentKey: strings.TrimSpace(*environmentKey), Access: *access,
@@ -404,6 +405,9 @@ func cmdAddPostgres(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Using managed PostgreSQL database %s.\n", database.Name)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
+	if bindingIsNew {
+		printPostgresBindingDelivery(osStdout, appName, binding.EnvironmentKey, binding.Access)
+	}
 	return 0
 }
 

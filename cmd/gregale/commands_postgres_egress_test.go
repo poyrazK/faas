@@ -83,3 +83,45 @@ func TestDeployManifestPostgresBindingsOpensEgress(t *testing.T) {
 		t.Fatalf("egress updates = %+v, want one opening 5432", fake.updates)
 	}
 }
+
+type fakePostgresBindingLister struct {
+	list api.ManagedPostgresBindingList
+	err  error
+}
+
+func (f fakePostgresBindingLister) ListManagedPostgresBindings(context.Context, string) (api.ManagedPostgresBindingList, error) {
+	return f.list, f.err
+}
+
+// TestPostgresBindingDeliveryGuidance pins H9-P111: a new binding stayed
+// absent from the running instance until `app restart`, and a migration
+// binding never reached serving instances, with nothing saying either.
+func TestPostgresBindingDeliveryGuidance(t *testing.T) {
+	existing := fakePostgresBindingLister{list: api.ManagedPostgresBindingList{Items: []api.ManagedPostgresBinding{
+		{AppID: "app-1", Scope: "default", EnvironmentKey: "DATABASE_URL", State: "ready"},
+		{AppID: "app-1", Scope: "default", EnvironmentKey: "OLD_URL", State: "deleted"},
+	}}}
+	for name, tc := range map[string]struct {
+		client postgresBindingLister
+		key    string
+		want   bool
+	}{
+		"existing key":       {existing, "DATABASE_URL", false},
+		"new key":            {existing, "READ_DATABASE_URL", true},
+		"deleted key reused": {existing, "OLD_URL", true},
+		"list unavailable":   {fakePostgresBindingLister{err: errors.New("down")}, "DATABASE_URL", true},
+	} {
+		if got := postgresBindingIsNew(context.Background(), tc.client, "db-1", "app-1", "default", tc.key); got != tc.want {
+			t.Errorf("%s: new = %v, want %v", name, got, tc.want)
+		}
+	}
+	var runtime, migration bytes.Buffer
+	printPostgresBindingDelivery(&runtime, "api", "DATABASE_URL", "read_write")
+	printPostgresBindingDelivery(&migration, "api", "MIGRATION_DATABASE_URL", "migration")
+	if !strings.Contains(runtime.String(), "gregale app api restart") {
+		t.Errorf("runtime guidance = %q", runtime.String())
+	}
+	if !strings.Contains(migration.String(), "release task") || strings.Contains(migration.String(), "restart") {
+		t.Errorf("migration guidance = %q", migration.String())
+	}
+}

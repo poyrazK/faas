@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -37,4 +39,36 @@ func ensurePostgresEgress(ctx context.Context, client postgresEgressClient, app 
 		return
 	}
 	PrintOK(osStderr, "Opened outbound TCP %d for app %s so it can reach the database (undo: gregale app %s egress-ports remove %d).", managedPostgresPort, app.Slug, app.Slug, managedPostgresPort)
+}
+
+type postgresBindingLister interface {
+	ListManagedPostgresBindings(context.Context, string) (api.ManagedPostgresBindingList, error)
+}
+
+// postgresBindingIsNew reports whether the app has no live binding for the
+// scope and key on the database yet. An unreadable list counts as new, so
+// the delivery guidance errs toward being shown.
+func postgresBindingIsNew(ctx context.Context, client postgresBindingLister, databaseID, appID, scope, key string) bool {
+	list, err := client.ListManagedPostgresBindings(ctx, databaseID)
+	if err != nil {
+		return true
+	}
+	for _, binding := range list.Items {
+		if binding.AppID == appID && binding.Scope == scope && binding.EnvironmentKey == key && binding.State != "deleted" {
+			return false
+		}
+	}
+	return true
+}
+
+// printPostgresBindingDelivery says when a new binding reaches the app. On
+// production-us an attached key stayed absent from the running instance
+// until `app restart`, and a migration binding never appeared there at all,
+// with nothing saying either (hunt #9, H9-P111).
+func printPostgresBindingDelivery(w io.Writer, appSlug, key, access string) {
+	if access == "migration" {
+		_, _ = fmt.Fprintf(w, "%s is delivered only to the release task (release.command); serving instances never receive migration credentials.\n", key)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Running instances keep their current environment; %s applies when the app next starts. Run `gregale app %s restart` to apply it now.\n", key, appSlug)
 }

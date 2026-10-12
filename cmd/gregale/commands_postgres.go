@@ -102,6 +102,7 @@ func cmdPostgresAttach(args []string) int {
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
+	bindingIsNew := postgresBindingIsNew(context.Background(), client, database.ID, app.ID, *scope, *environmentKey)
 	binding, err := client.CreateManagedPostgresBinding(context.Background(), database.ID, api.CreateManagedPostgresBindingRequest{
 		AppID: app.ID, Scope: *scope, EnvironmentKey: *environmentKey, Access: *access,
 	})
@@ -115,6 +116,9 @@ func cmdPostgresAttach(args []string) int {
 	renderPostgresBinding(osStdout, binding)
 	if binding.State == "ready" {
 		_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s.\n", database.Name, app.Slug, binding.EnvironmentKey)
+		if bindingIsNew {
+			printPostgresBindingDelivery(osStdout, app.Slug, binding.EnvironmentKey, binding.Access)
+		}
 	}
 	return 0
 }
