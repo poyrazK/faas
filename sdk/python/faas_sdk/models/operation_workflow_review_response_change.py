@@ -40,6 +40,9 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    decision_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window;
+    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
     decision: OperationWorkflowReviewResponseDecision | Unset = UNSET
     """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
     remains application-owned."""
@@ -62,6 +65,8 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        decision_review_after_seconds = self.decision_review_after_seconds
 
         decision: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision, Unset):
@@ -88,6 +93,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if decision_review_after_seconds is not UNSET:
+            field_dict["decision_review_after_seconds"] = decision_review_after_seconds
         if decision is not UNSET:
             field_dict["decision"] = decision
         if fallback_owner is not UNSET:
@@ -113,6 +120,8 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        decision_review_after_seconds = d.pop("decision_review_after_seconds", UNSET)
 
         _decision = d.pop("decision", UNSET)
         decision: OperationWorkflowReviewResponseDecision | Unset
@@ -143,6 +152,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            decision_review_after_seconds=decision_review_after_seconds,
             decision=decision,
             fallback_owner=fallback_owner,
             reason=reason,

@@ -79363,6 +79363,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_decision_review_overdue
           - review_response_decision_review_required
           - review_response_recovered
           - review_response_blocked
@@ -80471,6 +80472,10 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        attention_due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged.
         review_response:
           $ref: '#/components/schemas/OperationWorkflowReviewResponse'
           description: OperationWorkflowReadinessFollowUp.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
@@ -80658,6 +80663,14 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the response review window; legacy flags are backfilled.
+        deadline_notified_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.deadline_notified_at. One-time overdue alert marker; acknowledgment and ordinary edits do not fulfill revalidation.
         decision_at:
           type: string
           format: date-time
@@ -80727,6 +80740,12 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        decision_review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponseRequest.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
         decision:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionRequest'
           description: OperationWorkflowReviewResponseRequest.decision. Explicit human decision with reviewed condition and accountable reason.
@@ -80911,6 +80930,12 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        decision_review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponse.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
         decision_review:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionReview'
           description: OperationWorkflowReviewResponse.decision_review. Latched review requirement after the condition captured by an explicit decision changed.
@@ -80990,6 +81015,12 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        decision_review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
         decision:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseDecision'
           description: OperationWorkflowReviewResponseChange.decision. Explicit human decision with reviewed condition and accountable reason.

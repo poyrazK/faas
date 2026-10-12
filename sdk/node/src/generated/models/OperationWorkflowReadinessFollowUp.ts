@@ -15,6 +15,10 @@ import type { OperationWorkflowReviewResponse } from './OperationWorkflowReviewR
  */
 export type OperationWorkflowReadinessFollowUp = {
   /**
+   * OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged.
+   */
+  attention_due_at?: string;
+  /**
    * OperationWorkflowReadinessFollowUp.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
    */
   review_response?: OperationWorkflowReviewResponse;

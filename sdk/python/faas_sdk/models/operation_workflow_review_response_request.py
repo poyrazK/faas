@@ -38,6 +38,9 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    decision_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReviewResponseRequest.decision_review_after_seconds. Future decision revalidation window;
+    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
     decision: OperationWorkflowReviewResponseDecisionRequest | Unset = UNSET
     """Explicit advisory continue, revise or pause decision on an existing active response. Saving re-observes
     scoped sources and checks the reviewed health digest again under the notification lock."""
@@ -59,6 +62,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        decision_review_after_seconds = self.decision_review_after_seconds
 
         decision: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision, Unset):
@@ -86,6 +91,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if decision_review_after_seconds is not UNSET:
+            field_dict["decision_review_after_seconds"] = decision_review_after_seconds
         if decision is not UNSET:
             field_dict["decision"] = decision
         if fallback_owner is not UNSET:
@@ -110,6 +117,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        decision_review_after_seconds = d.pop("decision_review_after_seconds", UNSET)
 
         _decision = d.pop("decision", UNSET)
         decision: OperationWorkflowReviewResponseDecisionRequest | Unset
@@ -140,6 +149,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            decision_review_after_seconds=decision_review_after_seconds,
             decision=decision,
             fallback_owner=fallback_owner,
             check_in_at=check_in_at,

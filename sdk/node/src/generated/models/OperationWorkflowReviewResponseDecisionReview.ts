@@ -8,6 +8,14 @@ import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
   /**
+   * OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the response review window; legacy flags are backfilled.
+   */
+  due_at?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.deadline_notified_at. One-time overdue alert marker; acknowledgment and ordinary edits do not fulfill revalidation.
+   */
+  deadline_notified_at?: string;
+  /**
    * OperationWorkflowReviewResponseDecisionReview.decision_at. Time of the decision that needs revalidation.
    */
   decision_at: string;

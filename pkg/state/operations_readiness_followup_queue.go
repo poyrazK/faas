@@ -54,11 +54,12 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 		if (opts.ImpactPriority != "" || opts.ImpactKind != "" || opts.ImpactCode != "") && (impact == nil || opts.ImpactPriority != "" && impact.Priority != opts.ImpactPriority || opts.ImpactKind != "" && impact.Kind != opts.ImpactKind || opts.ImpactCode != "" && impact.Code != opts.ImpactCode) {
 			continue
 		}
-		row.Overdue = !row.Coordination.FollowUpAt.After(out.EvaluatedAt)
+		row.AttentionDueAt = readinessFollowUpAttentionDue(row)
+		row.Overdue = !row.AttentionDueAt.After(out.EvaluatedAt)
 		if opts.Due == "overdue" && !row.Overdue || opts.Due == "upcoming" && row.Overdue {
 			continue
 		}
-		activeReminder := row.Reminder != nil && row.Reminder.DueAt.Equal(*row.Coordination.FollowUpAt) && row.Overdue
+		activeReminder := row.Reminder != nil && row.Reminder.DueAt.Equal(*row.Coordination.FollowUpAt) && !row.Coordination.FollowUpAt.After(out.EvaluatedAt)
 		if !activeReminder {
 			row.Reminder = nil
 		}
@@ -88,8 +89,8 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 				return ap > bp
 			}
 		}
-		if !a.Coordination.FollowUpAt.Equal(*b.Coordination.FollowUpAt) {
-			return a.Coordination.FollowUpAt.Before(*b.Coordination.FollowUpAt)
+		if !a.AttentionDueAt.Equal(*b.AttentionDueAt) {
+			return a.AttentionDueAt.Before(*b.AttentionDueAt)
 		}
 		if a.SubscriptionID != b.SubscriptionID {
 			return a.SubscriptionID < b.SubscriptionID
@@ -153,4 +154,16 @@ func readinessFollowUpImpactPriority(row api.OperationWorkflowReadinessFollowUp)
 		return 1
 	}
 	return 0
+}
+
+// Queue urgency may precede a response's human check-in; keep coordination unchanged.
+func readinessFollowUpAttentionDue(row api.OperationWorkflowReadinessFollowUp) *time.Time {
+	due := row.Coordination.FollowUpAt
+	if row.ReviewResponse != nil && row.ReviewResponse.Status == "active" && row.ReviewResponse.DecisionReview != nil {
+		review := pinnedDecisionReview(row.ReviewResponse)
+		if review.DueAt != nil && (due == nil || review.DueAt.Before(*due)) {
+			due = review.DueAt
+		}
+	}
+	return due
 }

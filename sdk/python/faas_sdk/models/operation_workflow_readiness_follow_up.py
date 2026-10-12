@@ -52,6 +52,9 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    attention_due_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision
+    revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged."""
     review_response: OperationWorkflowReviewResponse | Unset = UNSET
     """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
     fence, independent of business workflow success."""
@@ -116,6 +119,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        attention_due_at: str | Unset = UNSET
+        if not isinstance(self.attention_due_at, Unset):
+            attention_due_at = self.attention_due_at.isoformat()
+
         review_response: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review_response, Unset):
             review_response = self.review_response.to_dict()
@@ -177,6 +184,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if attention_due_at is not UNSET:
+            field_dict["attention_due_at"] = attention_due_at
         if review_response is not UNSET:
             field_dict["review_response"] = review_response
         if business_impact is not UNSET:
@@ -237,6 +246,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _attention_due_at = d.pop("attention_due_at", UNSET)
+        attention_due_at: datetime.datetime | Unset
+        if isinstance(_attention_due_at, Unset):
+            attention_due_at = UNSET
+        else:
+            attention_due_at = datetime.datetime.fromisoformat(_attention_due_at)
 
         _review_response = d.pop("review_response", UNSET)
         review_response: OperationWorkflowReviewResponse | Unset
@@ -321,6 +337,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            attention_due_at=attention_due_at,
             review_response=review_response,
             business_impact=business_impact,
             playbook_step=playbook_step,

@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -15,6 +16,8 @@ func applyReviewResponseDecisionReview(r *readinessSubscriptionRecord, n api.Ope
 		return n, nil, true
 	}
 	review := api.OperationWorkflowReviewResponseDecisionReview{DecisionAt: response.Decision.At, RequiredAt: response.Health.CheckedAt, Changes: reviewResponseDecisionChanges(response.Decision.Health, *response.Health), Health: *response.Health}
+	due := review.RequiredAt.Add(time.Duration(effectiveDecisionReviewWindow(response)) * time.Second)
+	review.DueAt = &due
 	updated := *response
 	updated.DecisionReview = &review
 	n.ReviewResponse = &updated

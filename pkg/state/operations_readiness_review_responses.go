@@ -25,6 +25,9 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if input.FallbackOwner != nil && *input.FallbackOwner != "" && (!text(*input.FallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.FallbackOwner == input.Owner) {
 		return nil, ErrInvalidArgument
 	}
+	if input.DecisionReviewAfterSeconds != nil && (*input.DecisionReviewAfterSeconds < 60 || *input.DecisionReviewAfterSeconds > 604800) {
+		return nil, ErrInvalidArgument
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if input.CheckInAt != nil {
 		normalized := input.CheckInAt.UTC().Truncate(time.Microsecond)
@@ -49,7 +52,13 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if alert.Coordination == nil || alert.Coordination.Revision != req.Revision || alert.Coordination.Completion != nil {
 		return nil, ErrConflict
 	}
-	response := &api.OperationWorkflowReviewResponse{Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
+	response := &api.OperationWorkflowReviewResponse{DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
+	if alert.ReviewResponse != nil {
+		response.DecisionReviewAfterSeconds = effectiveDecisionReviewWindow(alert.ReviewResponse)
+	}
+	if input.DecisionReviewAfterSeconds != nil {
+		response.DecisionReviewAfterSeconds = *input.DecisionReviewAfterSeconds
+	}
 	if input.CheckInAt != nil {
 		check := input.CheckInAt.UTC().Truncate(time.Microsecond)
 		response.CheckInAt = &check

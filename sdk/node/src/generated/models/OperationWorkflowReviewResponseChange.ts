@@ -8,6 +8,10 @@ import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflo
  */
 export type OperationWorkflowReviewResponseChange = {
   /**
+   * OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
+   */
+  decision_review_after_seconds?: number;
+  /**
    * OperationWorkflowReviewResponseChange.decision. Explicit human decision with reviewed condition and accountable reason.
    */
   decision?: OperationWorkflowReviewResponseDecision;
