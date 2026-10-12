@@ -256,6 +256,7 @@ type OperationWorkflowPlaybookEvidenceWatchRequest struct {
 
 // Watch revisions fence configuration changes; polling does not advance them.
 type OperationWorkflowPlaybookEvidenceWatch struct {
+	DependencyStates     []OperationWorkflowPlaybookDependencyState            `json:"dependency_states,omitempty"`
 	StepAssignments      []OperationWorkflowPlaybookStepAssignmentReference    `json:"step_assignments,omitempty"`
 	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy       `json:"outcome_deadline,omitempty"`
 	DeadlineAt           *time.Time                                            `json:"deadline_at,omitempty"`
@@ -431,4 +432,18 @@ type OperationWorkflowPlaybookStepReadiness struct {
 	Status          string   `json:"status"`
 	WaitingFor      []string `json:"waiting_for"`
 	ReviewSuggested bool     `json:"review_suggested"`
+}
+
+type OperationWorkflowPlaybookDependencyState struct {
+	OutcomeCode string                                 `json:"outcome_code"`
+	ItemIndex   int                                    `json:"item_index"`
+	Label       string                                 `json:"label"`
+	Status      string                                 `json:"status"`
+	Owner       string                                 `json:"owner"`
+	Readiness   OperationWorkflowPlaybookStepReadiness `json:"readiness"`
+}
+type OperationWorkflowPlaybookDependencyRegression struct {
+	CheckedAt             time.Time                                  `json:"checked_at"`
+	ReopenedPrerequisites []OperationWorkflowPlaybookDependencyState `json:"reopened_prerequisites"`
+	AffectedSteps         []OperationWorkflowPlaybookDependencyState `json:"affected_steps"`
 }

@@ -265,7 +265,7 @@
  };
  window.renderReadinessVerification = (parent, notification, scope) => {
   if(notification.playbook_evidence){const event=notification.playbook_evidence;
-   text(parent,(notification.kind==='escalation_response_overdue' ? 'Playbook acknowledgment target missed · ' : 'Playbook observation changed · ')+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
+   text(parent,(notification.dependency_regression ? 'Playbook dependency regression · ' : notification.kind==='escalation_response_overdue' ? 'Playbook acknowledgment target missed · ' : 'Playbook observation changed · ')+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
    text(parent,'Checklist '+event.progress_id+' · Checked '+new Date(event.checked_at).toLocaleString());
    if(event.deadline_at)text(parent,'Pinned expected-result deadline: '+new Date(event.deadline_at).toLocaleString());
    if(event.business_outcome)window.renderPlaybookOutcomeGuidance(parent,event.business_outcome);
@@ -342,6 +342,8 @@
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   window.renderPlaybookStepAssignment(parent,notification.playbook_step);
+  if(notification.dependency_regression){const event=notification.dependency_regression;text(parent,'Dependency regression observed '+new Date(event.checked_at).toLocaleString());for(const step of event.reopened_prerequisites)text(parent,'Reopened prerequisite · '+step.outcome_code+' · '+step.label);for(const step of event.affected_steps){text(parent,'Affected step · '+step.outcome_code+' · '+step.label+' · waiting for '+step.readiness.waiting_for.join(', '));if(step.readiness.review_suggested)text(parent,'Completed step needs review; its original review is preserved.');}text(parent,'Reviews, deadlines and existing queue assignments are unchanged.');}
+
   const missed=notification.escalation_response;
   if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));const source=missed.source || missed.playbook;if(source)text(parent,source.workflow+' / '+source.instance_id+' · '+source.subject.type+': '+source.subject.id);}
   if(notification.playbook_review){const review=notification.playbook_review;window.renderPlaybookOutcomeGuidance(parent,review.current);if(review.current.acceptance)text(parent,'Post-completion application acceptance: '+review.current.acceptance.replace(/_/g,' '));text(parent,'Post-completion review: '+review.status+' · until '+new Date(review.expires_at).toLocaleString()+' · owner '+(review.owner||'unassigned'));window.renderReadinessBusinessOutcome(parent,review.current.evidence,scope,'Latest post-completion business evidence');}

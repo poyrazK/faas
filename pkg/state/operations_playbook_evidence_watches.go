@@ -71,6 +71,7 @@ func configurePlaybookEvidenceWatch(ctx context.Context, store playbookEvidenceW
 	out = api.OperationWorkflowPlaybookEvidenceWatch{ID: uuid.NewString(), ProgressID: r.Progress.ID, SubscriptionID: req.SubscriptionID, Status: "active", Owner: req.Owner, Subject: api.OperationSubject{Type: r.SubjectType, ID: r.SubjectID}, Workflow: r.Workflow, InstanceID: r.InstanceID, ContractVersion: r.Progress.ContractVersion, PlaybookID: r.Progress.Playbook.ID, PlaybookVersion: r.Progress.Playbook.Version, CreatedAt: now, UpdatedAt: now, UpdatedBy: actor, EvaluatedAt: overview.EvidenceCheckedAt, Items: playbookEvidenceWatchItems(r.Progress), BusinessOutcome: r.Progress.BusinessOutcome, OutcomeDeadline: r.Progress.Playbook.OutcomeDeadline, DeadlineAt: r.Progress.OutcomeDeadlineAt}
 	guardPlaybookWatchOutcome(&out, out.BusinessOutcome, r.Progress.StartStateRevision)
 	// An already-observed achieved result at enrollment must not later become a retrospective missed deadline.
+	out.DependencyStates = observePlaybookDependencyStates(r.Progress)
 	if req.WatchID == "" && out.DeadlineAt != nil && out.BusinessOutcome != nil && out.BusinessOutcome.Status == "achieved" && !out.BusinessOutcome.Evidence.CheckedAt.Before(*out.DeadlineAt) {
 		at := out.BusinessOutcome.Evidence.CheckedAt
 		out.DeadlineCheckedAt = &at
@@ -120,6 +121,7 @@ func configurePlaybookEvidenceWatchRecord(r *readinessSubscriptionRecord, identi
 		w.Revision = old.Revision + 1
 		if !req.Enabled {
 			w.Status, w.StopReason = "stopped", "disabled"
+			w.DependencyStates = old.DependencyStates
 			w.Items = old.Items
 			w.BusinessOutcome = old.BusinessOutcome
 			w.OutcomeStateRevision = old.OutcomeStateRevision
@@ -209,6 +211,7 @@ func evaluatePlaybookEvidenceWatches(ctx context.Context, store readinessSubscri
 			if !workflowPlaybookProgressActive(p) {
 				break
 			}
+			u.Watch.DependencyStates = observePlaybookDependencyStates(p)
 			guardPlaybookWatchOutcome(&u.Watch, p.BusinessOutcome, p.StartStateRevision)
 			if w.BusinessOutcome != nil && u.Watch.BusinessOutcome != nil && playbookBusinessOutcomeKey(w.BusinessOutcome) != playbookBusinessOutcomeKey(u.Watch.BusinessOutcome) {
 				u.OutcomeChange = &api.OperationWorkflowPlaybookOutcomeChange{BeforeStatus: w.BusinessOutcome.Status, BeforeReason: w.BusinessOutcome.Reason, BeforeReportedOutcomeCode: w.BusinessOutcome.Evidence.ReportedOutcomeCode, After: *u.Watch.BusinessOutcome}
@@ -257,8 +260,11 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 	if p.Revision != u.ProgressRevision {
 		return nil, false
 	}
+	before := r.Subscription.PlaybookEvidenceWatches[index]
 	r.Subscription.PlaybookEvidenceWatches[index] = u.Watch
+	regressions := publishPlaybookDependencyRegressions(r, before, u.Watch, *p)
 	assigned := publishPlaybookStepAssignments(r, index, *p)
+	assigned = append(regressions, assigned...)
 	if len(u.Changes) == 0 && u.OutcomeChange == nil && !u.DeadlineUnmet {
 		return assigned, true
 	}

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_completion_review_event import (
         OperationWorkflowPlaybookCompletionReviewEvent,
     )
+    from ..models.operation_workflow_playbook_dependency_regression import OperationWorkflowPlaybookDependencyRegression
     from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
     from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
     from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
@@ -56,6 +57,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    dependency_regression: OperationWorkflowPlaybookDependencyRegression | Unset = UNSET
+    """OperationWorkflowPlaybookDependencyRegression. Durable sampled dependency regression grouped by affected
+    checklist owner. Existing queue assignments, reviews and clocks remain unchanged."""
     playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
     Polling preserves manual coordination and bounded ownership history."""
@@ -112,6 +116,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        dependency_regression: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dependency_regression, Unset):
+            dependency_regression = self.dependency_regression.to_dict()
 
         playbook_step: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_step, Unset):
@@ -180,6 +188,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if dependency_regression is not UNSET:
+            field_dict["dependency_regression"] = dependency_regression
         if playbook_step is not UNSET:
             field_dict["playbook_step"] = playbook_step
         if playbook_review is not UNSET:
@@ -217,6 +227,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_playbook_completion_review_event import (
             OperationWorkflowPlaybookCompletionReviewEvent,
         )
+        from ..models.operation_workflow_playbook_dependency_regression import (
+            OperationWorkflowPlaybookDependencyRegression,
+        )
         from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
         from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
         from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
@@ -246,6 +259,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _dependency_regression = d.pop("dependency_regression", UNSET)
+        dependency_regression: OperationWorkflowPlaybookDependencyRegression | Unset
+        if isinstance(_dependency_regression, Unset):
+            dependency_regression = UNSET
+        else:
+            dependency_regression = OperationWorkflowPlaybookDependencyRegression.from_dict(_dependency_regression)
 
         _playbook_step = d.pop("playbook_step", UNSET)
         playbook_step: OperationWorkflowPlaybookStepAssignment | Unset
@@ -351,6 +371,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            dependency_regression=dependency_regression,
             playbook_step=playbook_step,
             playbook_review=playbook_review,
             playbook_review_event=playbook_review_event,

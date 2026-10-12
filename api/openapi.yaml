@@ -79243,6 +79243,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        dependency_regression:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyRegression'
         playbook_step:
           $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignment'
         playbook_review:
@@ -79298,6 +79300,7 @@ components:
           - playbook_outcome_changed
           - playbook_outcome_deadline_reached
           - playbook_outcome_step_assigned
+          - playbook_dependency_regressed
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -81011,6 +81014,12 @@ components:
         - evaluated_at
         - items
       properties:
+        dependency_states:
+          type: array
+          maxItems: 272
+          description: OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency observations; enrollment and re-enrollment establish a silent baseline.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyState'
         step_assignments:
           type: array
           maxItems: 16
@@ -81390,6 +81399,54 @@ components:
         checklist_complete:
           type: boolean
           description: OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never proves application state or execution.
+    OperationWorkflowPlaybookDependencyState:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookDependencyState. One sampled human follow-up step observation, distinct from application reports and queue coordination.
+      required: [outcome_code, item_index, label, status, owner, readiness]
+      properties:
+        outcome_code:
+          type: string
+          description: OperationWorkflowPlaybookDependencyState.outcome_code. Exact pinned outcome list.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowPlaybookDependencyState.item_index. Local immutable step index.
+        label:
+          type: string
+          description: OperationWorkflowPlaybookDependencyState.label. Exact pinned step label.
+        status:
+          type: string
+          enum: [pending, completed]
+          description: OperationWorkflowPlaybookDependencyState.status. Observed human review status.
+        owner:
+          type: string
+          description: OperationWorkflowPlaybookDependencyState.owner. Current checklist step owner; inbox overrides remain separate.
+        readiness:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
+    OperationWorkflowPlaybookDependencyRegression:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookDependencyRegression. Durable sampled dependency regression grouped by affected checklist owner. Existing queue assignments, reviews and clocks remain unchanged.
+      required: [checked_at, reopened_prerequisites, affected_steps]
+      properties:
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookDependencyRegression.checked_at. Successful case observation before revision-fenced publication.
+        reopened_prerequisites:
+          type: array
+          maxItems: 272
+          description: OperationWorkflowPlaybookDependencyRegression.reopened_prerequisites. Relevant ancestors observed changing from completed to pending, including transitive causes.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyState'
+        affected_steps:
+          type: array
+          maxItems: 272
+          description: OperationWorkflowPlaybookDependencyRegression.affected_steps. Downstream steps newly waiting, gaining blockers, or affected by a newly reopened ancestor; completed reviews retain a review suggestion.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyState'
     OperationWorkflowPlaybookStepDependency:
       type: object
       additionalProperties: false

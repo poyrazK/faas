@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+    from ..models.operation_workflow_playbook_dependency_state import OperationWorkflowPlaybookDependencyState
     from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
     from ..models.operation_workflow_playbook_outcome_deadline_policy import (
         OperationWorkflowPlaybookOutcomeDeadlinePolicy,
@@ -78,6 +79,9 @@ class OperationWorkflowPlaybookEvidenceWatch:
     items: list[OperationWorkflowPlaybookEvidenceCheck]
     """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
     checklist reviews."""
+    dependency_states: list[OperationWorkflowPlaybookDependencyState] | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency
+    observations; enrollment and re-enrollment establish a silent baseline."""
     step_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and
     re-enable preserve deduplication even after inbox retention."""
@@ -147,6 +151,13 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        dependency_states: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.dependency_states, Unset):
+            dependency_states = []
+            for dependency_states_item_data in self.dependency_states:
+                dependency_states_item = dependency_states_item_data.to_dict()
+                dependency_states.append(dependency_states_item)
+
         step_assignments: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.step_assignments, Unset):
             step_assignments = []
@@ -205,6 +216,8 @@ class OperationWorkflowPlaybookEvidenceWatch:
                 "items": items,
             }
         )
+        if dependency_states is not UNSET:
+            field_dict["dependency_states"] = dependency_states
         if step_assignments is not UNSET:
             field_dict["step_assignments"] = step_assignments
         if outcome_deadline is not UNSET:
@@ -230,6 +243,7 @@ class OperationWorkflowPlaybookEvidenceWatch:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+        from ..models.operation_workflow_playbook_dependency_state import OperationWorkflowPlaybookDependencyState
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
         from ..models.operation_workflow_playbook_outcome_deadline_policy import (
             OperationWorkflowPlaybookOutcomeDeadlinePolicy,
@@ -280,6 +294,15 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = OperationWorkflowPlaybookEvidenceCheck.from_dict(items_item_data)
 
             items.append(items_item)
+
+        _dependency_states = d.pop("dependency_states", UNSET)
+        dependency_states: list[OperationWorkflowPlaybookDependencyState] | Unset = UNSET
+        if _dependency_states is not UNSET:
+            dependency_states = []
+            for dependency_states_item_data in _dependency_states:
+                dependency_states_item = OperationWorkflowPlaybookDependencyState.from_dict(dependency_states_item_data)
+
+                dependency_states.append(dependency_states_item)
 
         _step_assignments = d.pop("step_assignments", UNSET)
         step_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
@@ -356,6 +379,7 @@ class OperationWorkflowPlaybookEvidenceWatch:
             updated_by=updated_by,
             evaluated_at=evaluated_at,
             items=items,
+            dependency_states=dependency_states,
             step_assignments=step_assignments,
             outcome_deadline=outcome_deadline,
             deadline_at=deadline_at,

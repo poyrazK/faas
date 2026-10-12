@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
+import type { OperationWorkflowPlaybookDependencyState } from './OperationWorkflowPlaybookDependencyState.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
 import type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
 import type { OperationWorkflowPlaybookStepAssignmentReference } from './OperationWorkflowPlaybookStepAssignmentReference.js';
@@ -12,6 +13,10 @@ import type { OperationWorkflowReadinessOutcomeEscalationReference } from './Ope
  * OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceWatch = {
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency observations; enrollment and re-enrollment establish a silent baseline.
+   */
+  dependency_states?: Array<OperationWorkflowPlaybookDependencyState>;
   /**
    * OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and re-enable preserve deduplication even after inbox retention.
    */

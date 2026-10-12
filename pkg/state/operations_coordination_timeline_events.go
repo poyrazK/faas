@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -58,6 +59,13 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 				links(e, change.After.Evidence.OperationID)
 			}
 		}
+	}
+	if regression := n.DependencyRegression; regression != nil {
+		labels := []string{}
+		for _, step := range regression.AffectedSteps {
+			labels = append(labels, step.OutcomeCode+": "+step.Label)
+		}
+		e.Summary = "Follow-up dependency regression: " + strings.Join(labels, ", ")
 	}
 	if n.Change != nil {
 		links(e, n.Change.CurrentOperationID)

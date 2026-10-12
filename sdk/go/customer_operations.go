@@ -357,3 +357,6 @@ type OperationWorkflowPlaybookStepAssignment = api.OperationWorkflowPlaybookStep
 
 type OperationWorkflowPlaybookStepDependency = api.OperationWorkflowPlaybookStepDependency
 type OperationWorkflowPlaybookStepReadiness = api.OperationWorkflowPlaybookStepReadiness
+
+type OperationWorkflowPlaybookDependencyState = api.OperationWorkflowPlaybookDependencyState
+type OperationWorkflowPlaybookDependencyRegression = api.OperationWorkflowPlaybookDependencyRegression
