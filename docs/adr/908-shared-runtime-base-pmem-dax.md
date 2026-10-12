@@ -90,6 +90,23 @@ changes.
 - Hosts must keep the base file's page cache resident under memory pressure,
   or DAX faults turn into disk reads on every VM.
 
+## Upper bound: one memory file for many VMs (measured 2026-10-12)
+
+Six Node VMs restored at once with a cold page cache, n2 test node,
+Firecracker 1.17, two rounds in both orders:
+
+| memory files | host memory per VM | of which page cache, total | first byte p50 |
+|---|---|---|---|
+| one snapshot for all six | 52 MB | 227 MB | 1.4–2.1 s |
+| six snapshots of the same app | 239–240 MB | 1,322 MB | 10.8–10.9 s |
+
+Restoring from one memory file shares its page cache, so each further VM
+costs only its own anonymous memory. Within one app that is already how
+Gregale restores (ADR-009). Across apps it would take a shared runtime
+snapshot. That is the same cross-tenant page sharing as DAX above, so it
+needs the same decision. Reflinked extents (ADR-956) save disk only: XFS
+caches each file's pages separately, so they do not close this gap.
+
 ## Per-account implementation (2026-10-12)
 
 Option 2 is implemented behind vmmd's `pmem_base_dir` (or

@@ -132,6 +132,23 @@ wall p50/p90 ms), and the raw harness above:
   byte at p50 779 ms against File's 655 ms, and held 164 MB of host memory
   per VM against 6.7 MB. No variant beats File for local snapshots; the
   shared page cache is worth more than fewer faults.
+
+  Every variant at 6- and 12-way concurrent restore (cold page cache, one
+  snapshot, each VM then runs the CPU-bound request on the node's two
+  vCPUs), first byte p50 / CPU-bound request p50:
+
+  | handler | 6 VMs | 12 VMs | host memory per VM, 12 VMs |
+  |---|---|---|---|
+  | File (today) | 617 ms / 2.36 s | 999 ms / 4.82 s | under 10 MB |
+  | on demand, 4 KiB | 1.50 s / 15.1 s | none reached first byte in 30 s | — |
+  | on demand, zero pages mapped | 1.58 s / 14.9 s | none reached first byte in 30 s | — |
+  | 64 KiB fault-around | 888 ms / 3.62 s | 1.99 s / 8.31 s | 176 MB |
+  | 64 KiB fault-around, zero pages mapped | 877 ms / 3.66 s | 1.91 s / 8.72 s | 127 MB |
+  | 2 MiB fault-around | 733 ms / 2.16 s | 1.41 s / 4.53 s | 201 MB |
+  | eager copy of non-zero pages | 925 ms / 3.10 s | 3.60 s / 4.46 s | 222 MB |
+
+  File reaches first byte fastest at every concurrency. 2 MiB fault-around
+  runs the CPU-bound request 6–9% faster but holds 200 MB more per VM.
 - **2 MiB huge pages for guest memory** (`huge_pages: "2M"`): the File
   backend refuses to restore a hugetlbfs-backed snapshot. Through UFFD it
   restores to first byte in 78–82 ms, and the next CPU-bound request took
