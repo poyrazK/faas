@@ -2,13 +2,13 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-12
-- **Relates to:** ADR-988 (AI gateway), ADR-990 (price lists and cost limits), ADR-991 (hard caps, key pools, request log), ADR-977 (apid domain packages)
+- **Relates to:** ADR-988 (AI gateway), ADR-990 (price lists and cost limits), ADR-991 (hard caps, key pools, request log), ADR-982 (apid domain packages)
 - **Decision:** Extend the AI gateway with:
   - a built-in price catalog that prices the models an integration's own price list does not name;
   - per-end-user attribution and UTC-day token and cost limits, keyed by an app-supplied `X-Gregale-AI-User` header;
   - key-pool affinity: a call with a session or end user picks its key by rendezvous hash instead of round robin.
 
-  The AI gateway's apid endpoints move from `pkg/apid/apidserver` into `pkg/apid/outboundai` (ADR-977). `apidserver` keeps the routes and the release gate.
+  The AI gateway's apid endpoints move from `pkg/apid/apidserver` into `pkg/apid/outboundai` (ADR-982). `apidserver` keeps the routes and the release gate.
 - **Why:**
   - Cost limits and spend reporting only worked after a customer typed in a price list. Every competing gateway ships list prices, so without them "hard cost caps" were empty for most integrations.
   - Apps that serve their own users had no way to stop one user from spending the shared budget, or to see who spent it.

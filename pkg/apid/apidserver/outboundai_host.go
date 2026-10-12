@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// outboundAIHost adapts *server to outboundai.Host (ADR-977). It reads
+// outboundAIHost adapts *server to outboundai.Host (ADR-982). It reads
 // server fields at call time, so tests that swap s.store behave exactly as
 // before the lift.
 type outboundAIHost struct{ s *server }
