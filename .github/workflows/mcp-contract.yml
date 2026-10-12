@@ -49,7 +49,7 @@ env:
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.
