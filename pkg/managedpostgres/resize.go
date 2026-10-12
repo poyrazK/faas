@@ -129,7 +129,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		return ResizeOperation{}, ErrUnsupported
 	}
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
-		return ResizeOperation{}, ErrUnavailable
+		return ResizeOperation{}, ErrProvisioningClosed
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {

@@ -274,6 +274,10 @@ func cmdPostgresGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	id, err = postgresDatabaseID(context.Background(), client, id)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
 	result, err := client.GetManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
 		return printErr("Could not load managed PostgreSQL database", err)
@@ -293,6 +297,10 @@ func cmdPostgresDelete(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	id, err = postgresDatabaseID(context.Background(), client, id)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
 	}
 	result, err := client.DeleteManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
@@ -321,7 +329,11 @@ func cmdPostgresRestore(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.RestoreManagedPostgresDatabase(context.Background(), fs.Arg(0), api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime})
+	sourceID, err := postgresDatabaseID(context.Background(), client, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
+	result, err := client.RestoreManagedPostgresDatabase(context.Background(), sourceID, api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime})
 	if err != nil {
 		return printErr("Could not restore managed PostgreSQL database", err)
 	}
@@ -362,6 +374,10 @@ func cmdPostgresBindingsList(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	databaseID, err = postgresDatabaseID(context.Background(), client, databaseID)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
 	}
 	resp, err := client.ListManagedPostgresBindings(context.Background(), databaseID)
 	if err != nil {

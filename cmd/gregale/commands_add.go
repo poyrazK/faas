@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -372,7 +373,14 @@ func cmdAddPostgres(args []string) int {
 			StorageLimitBytes: *storage, RestoreWindowSeconds: *restoreWindow,
 		})
 		if err != nil {
-			return printErr("Could not create managed PostgreSQL database", err)
+			adopted, ok := adoptPostgresAfterUncertainError(ctx, client, err, func(items []api.ManagedPostgresDatabase) (api.ManagedPostgresDatabase, bool) {
+				found, ok, findErr := findAddPostgresDatabase(items, name)
+				return found, ok && findErr == nil
+			})
+			if !ok {
+				return printErr("Could not create managed PostgreSQL database", err)
+			}
+			database = adopted
 		}
 		databaseCreated = true
 	}
@@ -386,7 +394,11 @@ func cmdAddPostgres(args []string) int {
 		AppID: app.ID, Scope: strings.TrimSpace(*scope), EnvironmentKey: strings.TrimSpace(*environmentKey), Access: *access,
 	})
 	if err != nil {
-		return printErr("Could not attach managed PostgreSQL database", err)
+		adopted, ok := adoptPostgresBindingAfterUncertainError(ctx, client, err, database.ID, app.ID, strings.TrimSpace(*scope), strings.TrimSpace(*environmentKey))
+		if !ok {
+			return printErr("Could not attach managed PostgreSQL database", err)
+		}
+		binding = adopted
 	}
 	binding, err = waitForManagedPostgresBinding(ctx, client, binding, *waitTimeout)
 	if err != nil {
@@ -404,6 +416,47 @@ func cmdAddPostgres(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
 	return 0
+}
+
+// adoptPostgresAfterUncertainError recovers a create whose response was
+// lost. On production-us the first `add postgres` failed after 28 s with
+// "provider temporarily unavailable" while the database and its binding had
+// committed; the identical rerun succeeded at once (hunt #9, H9-P109). Only a
+// server-side or transport failure is uncertain; the request carried an
+// idempotency key and database names are unique per account, so a match in a
+// fresh catalog read is this request's database.
+func adoptPostgresAfterUncertainError(ctx context.Context, client managedPostgresCatalogClient, err error, match func([]api.ManagedPostgresDatabase) (api.ManagedPostgresDatabase, bool)) (api.ManagedPostgresDatabase, bool) {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Problem.Status < 500 {
+		return api.ManagedPostgresDatabase{}, false
+	}
+	catalog, listErr := client.ListManagedPostgresDatabases(ctx)
+	if listErr != nil {
+		return api.ManagedPostgresDatabase{}, false
+	}
+	return match(catalog.Items)
+}
+
+// adoptPostgresBindingAfterUncertainError is the binding counterpart: the
+// binding for one app, scope and key is unique, so after a server-side or
+// transport failure a live match is this request's binding.
+func adoptPostgresBindingAfterUncertainError(ctx context.Context, client interface {
+	ListManagedPostgresBindings(context.Context, string) (api.ManagedPostgresBindingList, error)
+}, err error, databaseID, appID, scope, key string) (api.ManagedPostgresBinding, bool) {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Problem.Status < 500 {
+		return api.ManagedPostgresBinding{}, false
+	}
+	list, listErr := client.ListManagedPostgresBindings(ctx, databaseID)
+	if listErr != nil {
+		return api.ManagedPostgresBinding{}, false
+	}
+	for _, binding := range list.Items {
+		if binding.AppID == appID && binding.Scope == scope && binding.EnvironmentKey == key && binding.State != "deleted" {
+			return binding, true
+		}
+	}
+	return api.ManagedPostgresBinding{}, false
 }
 
 func defaultManagedPostgresName(appSlug string) string {
