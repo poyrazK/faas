@@ -246,6 +246,15 @@ func TestEmbeddingsTranslation(t *testing.T) {
 	if err != nil || len(raw) != 8 || math.Float32frombits(binary.LittleEndian.Uint32(raw[4:])) != -1 {
 		t.Fatalf("base64 embedding = %q %v", vector, err)
 	}
+	// The response is built with encoding/json: a quote in the target model
+	// stays inside its string, and a malformed vector is a gateway error.
+	quoted := (&embeddingTranslator{model: `x"},"injected":{"`}).json(http.StatusOK, []byte(`{"embeddings":[{"values":[1]}]}`))
+	if parsed := decodeJSONMap(t, quoted); parsed["model"] != `x"},"injected":{"` || parsed["injected"] != nil {
+		t.Fatalf("quoted model = %s", quoted)
+	}
+	if bad := (&embeddingTranslator{model: "m"}).json(http.StatusOK, []byte(`{"embeddings":[{"values":"nope"}]}`)); !strings.Contains(string(bad), `"error"`) {
+		t.Fatalf("malformed vector = %s", bad)
+	}
 	for name, provider := range map[string]string{"anthropic": api.OutboundAIProviderAnthropic, "bedrock": api.OutboundAIProviderBedrock} {
 		if _, err := translateRouteRequest(Integration{AIProvider: provider}, "/v1/embeddings", "", body, "m"); !errors.Is(err, errTranslationUnsupported) {
 			t.Errorf("%s embeddings = %v", name, err)

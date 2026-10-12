@@ -1,14 +1,12 @@
 package outbound
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"math"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -153,43 +151,56 @@ func (t *embeddingTranslator) json(status int, body []byte) []byte {
 		vectors = append(vectors, prediction.Embeddings.Values)
 		tokens += max(prediction.Embeddings.Statistics.TokenCount, 0)
 	}
-	var out bytes.Buffer
-	out.WriteString(`{"object":"list","data":[`)
-	for index, vector := range vectors {
-		if index > 0 {
-			out.WriteByte(',')
-		}
-		out.WriteString(`{"object":"embedding","index":` + strconv.Itoa(index) + `,"embedding":`)
-		if !t.writeVector(&out, vector) {
+	data := make([]openAIEmbedding, 0, len(vectors))
+	for index, values := range vectors {
+		vector, ok := t.vector(values)
+		if !ok {
 			return openAIErrorBody(http.StatusBadGateway, nil)
 		}
-		out.WriteByte('}')
+		data = append(data, openAIEmbedding{Object: "embedding", Index: index, Embedding: vector})
 	}
-	model, _ := json.Marshal(t.model)
-	out.WriteString(`],"model":` + string(model) + `,"usage":{"prompt_tokens":` + strconv.FormatInt(tokens, 10) +
-		`,"total_tokens":` + strconv.FormatInt(tokens, 10) + `}}`)
-	return out.Bytes()
+	out, err := json.Marshal(openAIEmbeddingList{Object: "list", Data: data, Model: t.model,
+		Usage: openAIEmbeddingUsage{PromptTokens: tokens, TotalTokens: tokens}})
+	if err != nil {
+		return openAIErrorBody(http.StatusBadGateway, nil)
+	}
+	return out
 }
 
-func (t *embeddingTranslator) writeVector(out *bytes.Buffer, values json.RawMessage) bool {
-	if !t.base64 {
-		if len(bytes.TrimSpace(values)) == 0 {
-			return false
-		}
-		out.Write(values)
-		return true
-	}
+type openAIEmbeddingList struct {
+	Object string               `json:"object"`
+	Data   []openAIEmbedding    `json:"data"`
+	Model  string               `json:"model"`
+	Usage  openAIEmbeddingUsage `json:"usage"`
+}
+
+type openAIEmbedding struct {
+	Object    string          `json:"object"`
+	Index     int             `json:"index"`
+	Embedding json.RawMessage `json:"embedding"`
+}
+
+type openAIEmbeddingUsage struct {
+	PromptTokens int64 `json:"prompt_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
+// vector returns one embedding as the JSON value OpenAI sends: the
+// provider's number array unchanged, or a base64 string of float32s.
+func (t *embeddingTranslator) vector(values json.RawMessage) (json.RawMessage, bool) {
 	var floats []float64
 	if json.Unmarshal(values, &floats) != nil {
-		return false
+		return nil, false
+	}
+	if !t.base64 {
+		return values, true
 	}
 	packed := make([]byte, 4*len(floats))
 	for i, value := range floats {
 		binary.LittleEndian.PutUint32(packed[4*i:], math.Float32bits(float32(value)))
 	}
-	encoded, _ := json.Marshal(base64.StdEncoding.EncodeToString(packed))
-	out.Write(encoded)
-	return true
+	encoded, err := json.Marshal(base64.StdEncoding.EncodeToString(packed))
+	return encoded, err == nil
 }
 
 // Embeddings responses never stream.
