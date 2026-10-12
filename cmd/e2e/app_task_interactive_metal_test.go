@@ -201,11 +201,9 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		if _, status := attachInteractiveTask(t, h, key, task, task.Attach.Token, ""); status != http.StatusGone {
 			t.Fatalf("reattach status = %d, want 410", status)
 		}
-		readBody, readStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/shell-app/tasks/"+task.ID, nil)
-		var row api.AppTaskResponse
-		_ = json.Unmarshal(readBody, &row)
-		if readStatus != http.StatusOK || row.ExitCode == nil || *row.ExitCode != 7 || row.StdoutTail != "" {
-			t.Fatalf("stored task = %d %s", readStatus, readBody)
+		row, readBody := waitInteractiveTaskTerminal(t, h, key, "shell-app", task.ID)
+		if row.Status != api.AppTaskStatusFailed || row.ExitCode == nil || *row.ExitCode != 7 || row.StdoutTail != "" {
+			t.Fatalf("stored task = %s", readBody)
 		}
 	})
 
@@ -295,6 +293,25 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		}
 		session.send(api.AppTaskAttachStdinClose, nil)
 	})
+}
+
+// waitInteractiveTaskTerminal polls the stored task until schedd records its
+// result. The attached client sees the terminal frame first: schedd persists
+// the result only after vmmd has torn the task VM down.
+func waitInteractiveTaskTerminal(t *testing.T, h *e2etest.Harness, key, slug, id string) (api.AppTaskResponse, []byte) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		body, status := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/tasks/"+id, nil)
+		var row api.AppTaskResponse
+		if status == http.StatusOK && json.Unmarshal(body, &row) == nil && row.Status.Terminal() {
+			return row, body
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not reach a terminal state: %d %s", id, status, body)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func describeTerminal(terminal api.AppTaskAttachTerminalMessage) string {
