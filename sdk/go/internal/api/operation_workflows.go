@@ -129,16 +129,17 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
-	Readiness     *OperationWorkflowPlaybookStepReadiness `json:"readiness,omitempty"`
-	Owner         string                                  `json:"owner,omitempty"`
-	DueAt         *time.Time                              `json:"due_at,omitempty"`
-	EvidenceCheck *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
-	Label         string                                  `json:"label"`
-	Status        string                                  `json:"status"`
-	Note          string                                  `json:"note"`
-	Evidence      []OperationWorkflowPlaybookEvidence     `json:"evidence"`
-	ReviewedBy    string                                  `json:"reviewed_by,omitempty"`
-	ReviewedAt    *time.Time                              `json:"reviewed_at,omitempty"`
+	DependencyReviewRevision int64                                   `json:"dependency_review_revision,omitempty"`
+	Readiness                *OperationWorkflowPlaybookStepReadiness `json:"readiness,omitempty"`
+	Owner                    string                                  `json:"owner,omitempty"`
+	DueAt                    *time.Time                              `json:"due_at,omitempty"`
+	EvidenceCheck            *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
+	Label                    string                                  `json:"label"`
+	Status                   string                                  `json:"status"`
+	Note                     string                                  `json:"note"`
+	Evidence                 []OperationWorkflowPlaybookEvidence     `json:"evidence"`
+	ReviewedBy               string                                  `json:"reviewed_by,omitempty"`
+	ReviewedAt               *time.Time                              `json:"reviewed_at,omitempty"`
 }
 type OperationWorkflowPlaybookProgressChange struct {
 	OutcomeCode string                                `json:"outcome_code,omitempty"`

@@ -37,6 +37,10 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    dependency_review_revision: int | Unset = UNSET
+    """OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a
+    prerequisite; persists until an explicit step review confirms completed work with evidence or requests redo by
+    marking it pending. Prerequisite recovery alone does not clear this obligation."""
     readiness: OperationWorkflowPlaybookStepReadiness | Unset = UNSET
     """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
     authority."""
@@ -68,6 +72,8 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        dependency_review_revision = self.dependency_review_revision
+
         readiness: dict[str, Any] | Unset = UNSET
         if not isinstance(self.readiness, Unset):
             readiness = self.readiness.to_dict()
@@ -98,6 +104,8 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if dependency_review_revision is not UNSET:
+            field_dict["dependency_review_revision"] = dependency_review_revision
         if readiness is not UNSET:
             field_dict["readiness"] = readiness
         if owner is not UNSET:
@@ -132,6 +140,8 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = OperationWorkflowPlaybookEvidence.from_dict(evidence_item_data)
 
             evidence.append(evidence_item)
+
+        dependency_review_revision = d.pop("dependency_review_revision", UNSET)
 
         _readiness = d.pop("readiness", UNSET)
         readiness: OperationWorkflowPlaybookStepReadiness | Unset
@@ -170,6 +180,7 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            dependency_review_revision=dependency_review_revision,
             readiness=readiness,
             owner=owner,
             due_at=due_at,

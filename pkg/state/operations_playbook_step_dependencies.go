@@ -23,7 +23,7 @@ func playbookStepReadiness(p api.OperationWorkflowPlaybookProgress, code string,
 	}
 	completed := map[string]bool{}
 	for _, item := range items {
-		completed[item.Label] = item.Status == "completed"
+		completed[item.Label] = item.Status == "completed" && item.DependencyReviewRevision == 0
 	}
 	visiting := map[string]bool{}
 	memo := map[string]bool{}
@@ -56,6 +56,7 @@ func playbookStepReadiness(p api.OperationWorkflowPlaybookProgress, code string,
 		result.Status = "waiting"
 		result.ReviewSuggested = items[index].Status == "completed"
 	}
+	result.ReviewSuggested = result.ReviewSuggested || items[index].DependencyReviewRevision > 0
 	return result
 }
 func projectPlaybookStepReadiness(p *api.OperationWorkflowPlaybookProgress) {

@@ -81994,6 +81994,11 @@ components:
       - note
       - evidence
       properties:
+        dependency_review_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a prerequisite; persists until an explicit step review confirms completed work with evidence or requests redo by marking it pending. Prerequisite recovery alone does not clear this obligation.
         readiness:
           $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
           description: OperationWorkflowPlaybookProgressItem.readiness. Ephemeral human-step prerequisite check, separate from application transition readiness.

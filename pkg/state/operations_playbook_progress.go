@@ -225,16 +225,27 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	if req.Owner != nil {
 		owner = *req.Owner
 	}
+	reopened := followUpIndex >= 0 && (*items)[req.ItemIndex].Status == "completed" && req.Status == "pending"
 	item := api.OperationWorkflowPlaybookProgressItem{Owner: owner, DueAt: (*items)[req.ItemIndex].DueAt, Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
 	(*items)[req.ItemIndex] = item
 	p.Revision++
 	p.UpdatedAt = now
 	if followUpIndex >= 0 {
+		// Persist the obligation in the same revision-fenced write as the reopening.
+		// Recovery alone cannot validate work performed against the old prerequisites.
+		if reopened {
+			for i := range *items {
+				step := &(*items)[i]
+				if step.Status == "completed" && playbookStepDependsOn(*p, req.OutcomeCode, step.Label, item.Label) {
+					step.DependencyReviewRevision = p.Revision
+				}
+			}
+		}
 		activateReadyPlaybookStepDeadlines(p, followUpIndex, now)
 		follow := &p.OutcomeFollowUps[followUpIndex]
 		follow.CompletedCount = 0
 		for _, step := range follow.Items {
-			if step.Status == "completed" {
+			if step.Status == "completed" && step.DependencyReviewRevision == 0 {
 				follow.CompletedCount++
 			}
 		}
