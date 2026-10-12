@@ -386,7 +386,27 @@ func TestPGCloneCheckpointSourceCompensationAtomicFinishAndMigration(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A real downgrade first removes the newer capture-retirement journal.
+	roundTripTx := tx
+	defer func() { _ = roundTripTx.Rollback(context.WithoutCancel(t.Context())) }()
+	// Remove empty descendants in reverse dependency order, using their
+	// guarded DOWN paths rather than bypassing retained-evidence checks.
+	for _, filename := range []string{
+		"20261011232006413_clone_terminal_compensation_receipts.sql",
+		"20261011232006411_clone_deployment_cleanup_receipts.sql",
+		"20261011232006408_clone_environment_metadata_cleanups.sql",
+		"20261011232006400_clone_workload_configuration_cleanups.sql",
+		"20261011232006397_clone_configuration_cleanup_receipts.sql",
+		"20261011232006392_clone_checkpoint_workload_retirements.sql",
+	} {
+		child, err := migrations.FS.ReadFile(filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(t.Context(), strings.SplitN(string(child), "-- +goose Down", 2)[1]); err != nil {
+			t.Fatal("empty descendant downgrade", filename, err)
+		}
+	}
+	// Also remove the independent newer capture-retirement journals.
 	// Its FK deliberately protects the original source-compensation evidence.
 	catalogueRaw, err := migrations.FS.ReadFile("20261011232006385_clone_checkpoint_capture_catalogue_retirements.sql")
 	if err != nil {
