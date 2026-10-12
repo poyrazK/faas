@@ -47,7 +47,10 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
+	// RetryAfter preserves the response header for read-only retry policies.
+	RetryAfter        string              `json:"-"`
+	RetryAfterSeconds *int64              `json:"retry_after_seconds,omitempty"`
+	BindingsCheck     *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.

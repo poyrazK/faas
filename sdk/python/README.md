@@ -751,6 +751,164 @@ Preparation does not publish the file. Host-confirmed success with the typed
 result or explicit account success recovery publishes it. An approved Job
 retry clears old receipts; reconcile uncertain uploads before writing again.
 
+### Transactional event consumers
+
+After authenticating an internal subscription delivery, construct input with
+`event_consumer_request_from_headers(headers, raw_body, account_id, app_id)`.
+`with_event_consumer_transaction(connection, input, handler)` owns the synchronous
+psycopg transaction; `awith_event_consumer_transaction` supports async connections
+and callbacks. Exclusively lease an idle `autocommit=True` connection. Callbacks
+use only their supplied cursor and return UTF-8 JSON bytes/text. Acknowledge only
+after success using the returned `body`; `replayed` identifies saved results.
+
+Install exported `event_consumer_receipt_schema` explicitly and retain receipts
+across retries/replay. Changed content raises `EventConsumerConflictError` without
+running the callback. On `EventConsumerCommitUnknownError`, retry the same input.
+Do not control transaction lifecycle or perform external effects in the callback.
+See [synchronous and asynchronous examples](../../docs/event-consumer-transactions.md).
+
+Enqueue follow-up Commit work inside the event-consumer callback with `insert_commit_event(cursor, ...)` or awaited `ainsert_commit_event(cursor, ...)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
+
+For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).
+
+`await await_commit_subscriber(client, publication, subscription_id, timeout=300)`
+waits for one original application subscriber through an authenticated generated
+client. Only `result["status"] == "completed"` proves original execution success.
+See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publication-subscriber).
+
+`await aget_commit_delivery_report(client, source, limit=50, timeout=120)` samples
+recent original-subscriber outcomes. Check per-item evidence status and cursors;
+read failures raise `CommitDeliveryReportError` with the partial report. Counts
+cover sampled evidence only.
+
+Delivery reports accept `recipient_pages` (1–20, default 1) and `resume=saved_report`.
+Resume fixes selection/filter and merges recipients without duplicate counts.
+Omit selection/filter arguments when resuming; saved completed coverage is not
+refreshed. The saved dictionary is copied before reads.
+
+Use `aget_commit_delivery_report(client, source, refresh=saved_report,
+recipient_pages=5)` to reread a fixed selection. Fresh counts, observation times,
+and changes describe new evidence. Omit resume and selection/filter arguments.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.
+
+Use `aplan_commit_recovery(client, source, saved_report, recipient_pages=5)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.
+
+Use `aapply_commit_recovery(client, source, reviewed_plan, limit=50, recipient_pages=5)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply now submits the matching acceptance guard from a fresh server offer; older unguarded offers remain skipped. See the Commit documentation for limits and partial results.
+
+Selective routing replay accepts `expected_accepted_at`; a replaced acceptance returns 409 without requeuing the consumer. Refresh and review older plans before using guarded routing apply.
+
+Routing recovery offers include an `expected_generation` guard when available.
+Commit recovery apply skips changed generations as `generation_changed`, and
+missing guards as `generation_guard_unavailable`. Direct selective replay can
+supply the nonnegative generation together with `expected_accepted_at`; the
+server checks both and failed state atomically before requeue.
+
+Read-only recovery status accepts the reviewed plan and saved apply result.
+It retains each attempt alongside fresh delivery state and routing generation;
+unknown attempts remain unknown even if delivery advances. Missing evidence
+stays unresolved, and partial read failures retain output. The helper never
+submits replay or follows saved action URLs. See
+[the recovery-status guide](../../docs/gregale-commit.md#inspecting-recovery-results-without-replay).
+
+Use await aget_commit_recovery_status(client, source, plan, applied, limit=50, recipient_pages=5); CommitRecoveryStatusError.result retains partial output.
+
+Recovery status can resume saved output, preserving successful observations
+and their timestamps. Unread items are inspected before failed reads are
+retried. Selection snapshots bind resume to the original plan, apply result,
+publication acceptance and subscriber filter. Counts and remaining coverage
+are recomputed, and unknown attempts remain unknown.
+
+Pass resume=previous to aget_commit_recovery_status.
+
+Older status files without selection snapshots require a fresh status read. Resume keeps historical samples; omit resume to reread them.
+
+
+Refresh saved Commit recovery observations with `aget_commit_recovery_status(client, source, plan, applied, refresh=previous)`. Refresh clears current evidence and reports before/after changes against a compact saved baseline. Use resume to finish a bounded refresh pass; refresh and resume are mutually exclusive. Unknown apply attempts remain unknown. See [the Commit guide](../../docs/gregale-commit.md#refresh-saved-recovery-observations).
+
+
+Use `awatch_commit_recovery_status` for bounded recovery monitoring with detached progress callbacks. Partial passes resume before the next refresh. Queued attempts require matching terminal execution evidence; unknown attempts remain unknown. Timeout/read errors retain the last or partial status. See [monitoring usage](../../docs/gregale-commit.md#monitor-acknowledged-recovery-executions).
+
+
+Opt into transient recovery-watch read retries with `read_retries`. The total budget is 0..20, defaults to zero, and shares the overall timeout. Partial results reach progress callbacks before backoff; permanent errors stop immediately. See [retry behavior](../../docs/gregale-commit.md#retry-transient-monitoring-reads).
+
+
+Recovery watch results include `monitoring` with stop reason, started passes, consumed retries, elapsed milliseconds and conservative terminal coverage. Progress snapshots report running; final results and attached errors report the outcome. Counters restart on resume. See [structured outcomes](../../docs/gregale-commit.md#structured-monitoring-outcomes).
+
+
+Optionally require recent recovery evidence with `max_observation_age` (default disabled; 100ms..24h). Stale and missing/future-timestamp observations are reread within existing budgets before settlement. Monitoring includes freshness counts. See [freshness policy](../../docs/gregale-commit.md#require-recent-recovery-observations).
+
+Optional `diagnostics=True` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
+
+Exact routing lookup: `faas_sdk.api.events.get_event_recipient_blocker.asyncio_detailed(client=client, source=source, id=event_id, subscription_id=subscription_id, expected_accepted_at=accepted_at)`. Pass the original timestamp string to preserve fractional precision. `not_waiting` describes routing only.
+
+Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
+
+Recipient diagnostic monitoring batches up to 50 exact acceptance-guarded lookups per request. The read-only `/v1/events/recipient-blockers` endpoint returns ordered independent results and errors under a shared five-second deadline. Diagnostic read counts remain recipient counts; coverage does not imply handler completion.
+
+Use `diagnostics=True, max_diagnostic_age=30` for status or watch, or `adiagnose_commit_recovery_status(client, status, previous=previous, max_diagnostic_age=30)` for standalone diagnostics. Age is measured in seconds. Zero disables the policy; enabled ages range from 100ms to 24h. `diagnostics_progress.freshness` separates fresh, stale and unread samples and records the check time; `fresh_complete` is independent of historical coverage and delivery settlement. Stale samples refresh before fresh ones within the covered refresh pool. Saved counters and age policies are recomputed on resume.
+
+Repeated diagnostic samples expose `comparison`, compact `previous_observation`, and field-level `changes` with both observation timestamps. Comparisons require the same exact acceptance and increasing timestamps. Missing evidence resets the baseline; routing changes never imply handler completion. Checkpoints retain only the latest pair and recompute saved changes. `diagnostics_progress.compared` and `changed` count newly compared and changed recipients per pass, excluding retained samples. See [routing blocker change tracking](../../docs/gregale-commit.md#track-routing-blocker-changes).
+
+`awatch_commit_recovery_status` accepts `watch_diagnostics=True, max_diagnostic_age=30`. This enables diagnostics and waits for complete, fresh diagnostic coverage independently of delivery settlement. Monitoring exposes `watch_mode`, `diagnostic_coverage_complete` and stop reason `diagnostic_coverage_complete`. Age is rechecked after callbacks; the recorded check time defines completion. Resume retains existing coverage and cursors. Batch transport failures use the shared read retry budget; individual item failures rotate until timeout. Unavailable answers count as coverage, and coverage never proves handler success.
+
+Diagnostic watches expose `monitoring.diagnostic_estimate`: remaining initial samples, actual sampling rate, average samples per pass, estimated remaining passes/milliseconds, and a full-refresh span estimate. States distinguish insufficient timing, deferred receipt evidence, estimates, and already-covered selections. `refresh_exceeds_max_age` is advisory; forecasts never predict delivery success or fresh coverage completion. Performance measurements reset on resume while coverage/cursors persist. See [coverage estimates](../../docs/gregale-commit.md#estimate-diagnostic-coverage-time).
+
+### Inspect selected consumers
+
+Diagnostic progress includes `consumers`, sorted by subscription ID. Each summary counts relevant selected recipients, fresh/stale/unread coverage, validated sample statuses, fresh and stale waiting reasons separately, and newly compared/changed recipients in this pass. Waiting reasons expose paused subscriptions, circuits, ordering, capacity and other routing conditions without additional requests. Unsupported recipients are excluded. A valid unavailable or replaced answer counts as sampled coverage but contributes no waiting reason.
+
+`oldest_waiting` identifies the earliest accepted event among validated available samples, with its exact query, observation timestamp, freshness and waiting reason. Acceptance time is not the time a blocker started. Stale waiting reasons describe historical samples; these summaries are neither account-wide backlog totals nor delivery success. Saved totals are ignored and recomputed from validated rows at the progress freshness check time. CLI watch output includes these summaries when consumer evidence changes, without timestamp-only polling updates.
+
+### Detect persistent sampled blockers
+
+Enable watch stall detection with `--stall-threshold 30s --watch --diagnostics --max-diagnostic-age 10s` (both duration policies accept 100ms–24h; zero disables detection). Go watch options use `StallThreshold`, Node uses `stallThresholdMs`, and Python uses `stall_threshold` in seconds. Watch results include `monitoring.stall_threshold_ms` and `monitoring.consumer_stalls`, grouped by selected subscription. CLI alerts once per confirmed blocker episode and can alert again after confirmation breaks. Detection does not change watch completion, timeouts, retries or delivery actions. A coverage watch can complete before the stall threshold is reached.
+
+Each consumer has recipient counts for `insufficient_evidence`, `not_blocked`, `observing` and `stalled`, plus overlapping indicators `routing_changed` and `advancing` for the most recent confirmed pair. Advancing specifically means pending to processing, or available to enqueued; it does not prove handler success. Other routing changes can improve or worsen conditions. Blocker details contain the exact query, reason, first/last sample timestamps, sample count and `monitored_ms`: the monotonic span between distinct samples in this invocation, never the original blocker duration.
+
+At least two strictly increasing fresh samples of the same routing observation must span the threshold. Pauses, circuit/rate limits, ordering, capacity and retry backoff are eligible; ready and processing indicators are not blockers. Changes in routing state, target availability, capacity scope or exact ordering blocker reset the episode. Stale, future, unavailable, replaced, invalid and non-monotonic evidence interrupt confirmation; a gap exceeding the age limit also resets it. Retained samples cannot start an episode or extend its duration. Resume starts a new tracker and ignores checkpoint stall aggregates. Counts describe sampled selected recipients, not account-wide stalled consumers.
+
+### Consume blocker incident transitions
+
+Stall-enabled watch results include `monitoring.blocker_incidents` (currently confirmed incidents) and `monitoring.blocker_transitions` (events from the current pass). An incident opens when fresh samples reach the stall threshold. Its opaque ID stays fixed during that episode within this watch. Each transition has an increasing invocation-local sequence, incident ID, exact guarded query, original waiting reason, notification timestamp and optional compact routing evidence. Deduplicate repeated snapshots by incident ID and sequence. A newly confirmed episode receives a new ID. Without durable alerts, resume starts a new invocation and does not adopt saved incidents or replay their transitions.
+
+Transitions are `opened` / `persistent_blocker`, `resolved` / `routing_not_blocked`, or `confirmation_lost`. Resolution requires a newly sampled, strictly later, fresh observation without an evidence gap: either retained routing has ended (`not_waiting`) or the sampled waiting reason is no longer an eligible blocker. This includes terminal routing failures/filters and never proves handler success. Changed blockers or episode resets report `confirmation_lost` / `episode_reset`; stale, unavailable, invalid or replaced evidence reports `evidence_unavailable`, excessive sampling gaps report `sample_gap`, and missing selected evidence reports `selection_unavailable`. Missing evidence never implies resolution.
+
+Add `--alerts-json` to a stall-enabled CLI watch to emit one JSON transition per line on stderr and suppress routine watch progress text. The final status JSON remains on stdout; command errors retain their existing error reporting. The CLI deduplicates callback/final snapshot events and emits transitions discovered by final freshness checks. Without this flag, lifecycle alerts use readable text. Watch completion and deadlines are unchanged: a stopped watch may still have active confirmed incidents. Active state and current-pass events are bounded by the selected recipients; these results are not a durable incident history or a delivery success signal.
+
+### Resume pending incident notifications
+
+A stall-enabled CLI watch with `--checkpoint PATH` now enables a durable alert outbox. SDK watch options enable it with Go `DurableAlerts: true`, Node `durableAlerts: true`, or Python `durable_alerts=True`. SDK callers must persist progress and final snapshots themselves, before handing alerts to a consumer. `monitoring.alert_outbox` contains version 1, a notification session, its latest sequence, ordered `pending` transitions and saved `active` incidents. Consume `pending` when durable mode is enabled; `blocker_transitions` remains a per-pass view.
+
+Resume validates saved alerts against the same frozen publication/acceptance/subscription selection and reviewed attempts, checks episode lineage and bounded queue shape, and preserves pending IDs, sequences and the notification session. This extends the invocation-only lifecycle behavior above for durable notification streams. Previously active episodes emit `confirmation_lost` with reason `watch_resumed`; saved samples never restore live confirmation. New episodes require fresh samples and receive new IDs in the continued stream. Historical pending alerts remain historical notifications even when current evidence has disappeared.
+
+Printing or writing an alert is not acknowledgement from the consumer. After processing an alert, acknowledge its exact incident ID and transition sequence. CLI accepts an array such as `[{"incident_id":"0123456789abcdef0123456789abcdef-1","sequence":1}]` via `--ack-alerts PATH` with checkpoint and resume/refresh. The acknowledgement file is protected from checkpoint overwrite. SDKs accept initial `AlertAcknowledgements` / `alertAcknowledgements` / `alert_acknowledgements` and synchronous per-pass `OnAlertAcknowledgements` / `onAlertAcknowledgements` / `on_alert_acknowledgements` callbacks that return acknowledgement arrays after progress. Acknowledgements validate as a whole; duplicate pairs within a batch, wrong-stream IDs, future sequences and conflicting IDs for pending sequences fail without removing entries. Repeating an acknowledgement for an already removed sequence in this stream is an idempotent no-op. Callbacks should return promptly and acknowledge only completed consumer processing. Persist the next/final snapshot to commit removals; a crash before that save can replay acknowledged work.
+
+The CLI saves each snapshot before emitting alerts, including final-check transitions, and re-emits unacknowledged pending entries once per resumed invocation. This is at-least-once delivery of checkpointed notifications, not exactly-once processing; deduplicate by incident ID and sequence, and apply only transitions newer than the last sequence processed for that incident. Partial acknowledgements can replay an older transition after a newer one was processed. Resume the latest snapshot of a single checkpoint stream; SDK callers must serialize checkpoint ownership and writes. Notifications that were never checkpointed have no durability guarantee. Consumer acknowledgements are explicit; stderr success does not remove pending alerts.
+
+The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
+
+Use `faas_sdk.api.events.get_event_consumer_delivery_health.sync(...)` or its
+async counterpart with `slug`, `subscription_id`, and an authenticated `client`
+for a combined subscription delivery summary. Component timestamps represent
+independent reads. Inspect pending-sample truncation and execution retention
+coverage; the latest successful completion is a retained observation, not an
+all-time watermark.
+
+Subscription delivery health includes optional `capacity_waits`: complete effective capacity-reason counts
+for consumer/app/account scope, a pending total, explicit coverage/completeness,
+consumer binding, and a separate observation time. Counts cover all retained pending
+recipients independently of the bounded sample. A missing aggregate from an older
+server is unavailable evidence, not zero waits.
+
+Delivery health `waiting_reasons` provides a complete effective pending-reason
+partition, including zero entries, with its own pending total, completeness,
+coverage, observation time, and acceptance cutoff. Missing aggregates from older
+servers are unavailable evidence, not zero. The backlog consumer model also
+exposes `pending_waiting_reasons` for matching pending recipients before pagination.
+
 ## Inspect durable entity metadata
 
 The owner-only preview endpoint `GET /v1/apps/{slug}/entities/inspect` accepts

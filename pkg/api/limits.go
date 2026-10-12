@@ -226,6 +226,18 @@ const (
 	InspectWatchReadTimeout     = 30 * time.Second
 )
 
+// Commit recovery diagnostics sample a bounded number of subscriptions per pass (ADR-947).
+const CommitRecoveryDiagnosticsReadMax = 50
+
+// Reserve successful-sample refresh capacity when diagnostic retries compete (ADR-949).
+const CommitRecoveryDiagnosticsRefreshReserve = 1
+
+// Exact recipient blocker identity and timeout bounds (ADR-948).
+const (
+	EventRecipientBlockerIdentityMaxBytes = 256
+	EventRecipientBlockerReadTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100
@@ -10139,6 +10151,101 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// EventConsumerInbox bounds application-owned transactional consumer receipts.
+// The inbox schema generator packages these limits with the standalone SDK.
+const (
+	EventConsumerRequestMaxBytes  = 1 << 20
+	EventConsumerResultMaxBytes   = 1 << 20
+	EventConsumerIdentityMaxBytes = 4096
+)
+
+// Commit publication history bounds metadata-only reads.
+const CommitPublicationHistoryPageDefault = 50
+const CommitPublicationHistoryPageMax = 200
+
+const CommitPublicationHistoryCursorMaxBytes = 192
+
+// Commit delivery reports bound each invocation of recipient traversal.
+const CommitDeliveryReportPagesMax = 20
+const CommitDeliveryReportFileMaxBytes = 64 << 20
+
+// CommitRecoveryApplyMax bounds sequential reviewed recovery attempts per call.
+const CommitRecoveryApplyMax = 50
+
+// CommitRecoveryStatusMax bounds subscriber observations per read-only status call.
+const CommitRecoveryStatusMax = 50
+
+// Commit recovery monitoring bounds per-pass polling without changing read budgets.
+const (
+	CommitRecoveryWatchIntervalMin     = 100 * time.Millisecond
+	CommitRecoveryWatchIntervalMax     = time.Minute
+	CommitRecoveryWatchIntervalDefault = time.Second
+)
+
+// Total automatic transient retries across a recovery watch.
+const CommitRecoveryWatchReadRetriesMax = 20
+
+// Optional recovery evidence age bounds; zero disables freshness enforcement.
+const (
+	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
+	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
+)
+
+// Exact recipient batches bound storage work and request memory.
+const EventRecipientBlockerBatchMax = 50
+const EventRecipientBlockerBatchBodyMaxBytes = 65536
+
+// Optional diagnostic age policy uses the receipt observation age bounds.
+const CommitRecoveryDiagnosticAgeMin = CommitRecoveryWatchObservationAgeMin
+const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
+
+// Optional stall detection uses the diagnostic age duration bounds.
+const CommitRecoveryStallThresholdMin = CommitRecoveryDiagnosticAgeMin
+const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax
+
+// Durable alert queues reserve one terminal notification per active incident.
+const CommitRecoveryAlertQueueMax = 1024
+const CommitRecoveryAlertSequenceMax uint64 = 9007199254740991
+
+// EventConsumerDeliveryHealthSampleMax bounds the oldest pending blocker sample.
+const EventConsumerDeliveryHealthSampleMax = 50
+
+// Delivery health watches are local, bounded, read-only monitors.
+const (
+	EventDeliveryHealthWatchIntervalMin           = 100 * time.Millisecond
+	EventDeliveryHealthWatchIntervalMax           = time.Minute
+	EventDeliveryHealthWatchIntervalDefault       = 5 * time.Second
+	EventDeliveryHealthWatchTimeoutDefault        = 2 * time.Minute
+	EventDeliveryHealthWatchTimeoutMax            = 24 * time.Hour
+	EventDeliveryHealthWatchAgeMin                = 100 * time.Millisecond
+	EventDeliveryHealthWatchAgeMax                = 24 * time.Hour
+	EventDeliveryHealthWatchAgeDefault            = 30 * time.Second
+	EventDeliveryHealthWatchThresholdMin          = 100 * time.Millisecond
+	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
+	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
+)
+
+// EventDeliveryHealthAlertQueueMax bounds pending notifications plus closing reservations.
+const EventDeliveryHealthAlertQueueMax = 1024
+
+// EventDeliveryHealthAlertSequenceMax keeps notification identities exactly representable.
+const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991
+
+// EventDeliveryHealthAcknowledgementHistoryMax bounds exact acknowledgement retries.
+const EventDeliveryHealthAcknowledgementHistoryMax = 1024
+
+// EventDeliveryHealthSLO defaults require meaningful traffic and sustained breaches.
+const EventDeliveryHealthSLOMinimumSamplesDefault int64 = 10
+const EventDeliveryHealthSLOSustainDefault = time.Minute
+
+const EventDeliveryHealthSLOPercentageMin = 0.000001
+const EventDeliveryHealthSLOPercentageMax = 100.0
+
+// Event execution metadata outcomes are retained independently of invocation results.
+const EventExecutionLedgerRetention = 30 * 24 * time.Hour
+const EventExecutionLedgerPruneBatchDefault = 500
+const EventExecutionLedgerPruneBatchMax = 5000
 
 // Native recovery execution monitoring is advisory (ADR-1006).
 const (

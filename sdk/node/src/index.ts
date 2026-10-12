@@ -317,6 +317,21 @@ export type { OperationWorkflowUnmetEffect } from './generated/models/OperationW
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
 
+export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
+  withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
+  type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
+  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+
+export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
+
+export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem, type CommitDeliveryReportChange, type CommitDeliveryReportSubscriber, type CommitDeliveryReportRecovery } from './commit-delivery-report.js';
+
+export { planCommitRecovery, CommitRecoveryPlanError, type CommitRecoveryPlan, type CommitRecoveryPlanItem } from './commit-recovery-plan.js';
+
+export { applyCommitRecovery, CommitRecoveryApplyError, type CommitRecoveryApplyResult, type CommitRecoveryApplyItem } from './commit-recovery-apply.js';
+
+export { diagnoseCommitRecoveryStatus, type CommitRecoveryDiagnostics, type CommitRecoveryDiagnosticProgress, type CommitRecoveryDiagnosticEstimate, type CommitRecoveryDiagnosticConsumer, type CommitRecoveryConsumerStall, type CommitRecoveryBlockerIncident, type CommitRecoveryAlertOutbox, type CommitRecoveryAlertAcknowledgement, type CommitRecoveryBlockerTransition, type CommitRecoveryPersistentBlocker, type CommitRecoveryDiagnosticObservation, type CommitRecoveryDiagnosticRouting, type CommitRecoveryDiagnosticOrdering, type CommitRecoveryDiagnosticChange, watchCommitRecoveryStatus, commitRecoveryStatusSettled, getCommitRecoveryStatus, CommitRecoveryStatusError, type CommitRecoveryStatusResult, type CommitRecoveryStatusItem, type CommitRecoveryStatusSelection, type CommitRecoveryMonitoring, type CommitRecoveryStatusObservation, type CommitRecoveryStatusChange } from './commit-recovery-status.js';
+
 export type { OperationWorkflowChangeReason } from "./customer-operation-decisions.js";
 
 export type { OperationWorkflowOutcomeLink } from './customer-operations.js';

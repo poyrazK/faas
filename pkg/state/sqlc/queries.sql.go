@@ -6822,6 +6822,7 @@ FROM apps WHERE id=$6::text::uuid AND account_id=$1::text::uuid
 ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
 WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
  AND commit_sources.contract_version=excluded.contract_version AND commit_sources.allow_tenant_selection=excluded.allow_tenant_selection
+ AND commit_sources.destination='operation'
 RETURNING id::text, enabled
 `
 
@@ -6918,10 +6919,183 @@ func (q *Queries) CommitPolicyWouldInvalidateSource(ctx context.Context, db DBTX
 	return incompatible, err
 }
 
+const commitPublicationAcceptance = `-- name: CommitPublicationAcceptance :one
+SELECT id,created_at FROM event_fanout_outbox
+WHERE account_id=$1::text::uuid AND source=$2::text AND event_id=$3::text
+`
+
+type CommitPublicationAcceptanceParams struct {
+	AccountID string
+	Source    string
+	EventID   string
+}
+
+type CommitPublicationAcceptanceRow struct {
+	ID        int64
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CommitPublicationAcceptance(ctx context.Context, db DBTX, arg CommitPublicationAcceptanceParams) (CommitPublicationAcceptanceRow, error) {
+	row := db.QueryRow(ctx, commitPublicationAcceptance, arg.AccountID, arg.Source, arg.EventID)
+	var i CommitPublicationAcceptanceRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
+}
+
+const commitPublicationReceipt = `-- name: CommitPublicationReceipt :exec
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,schema_version,
+ publication_acceptance_id,publication_source,publication_event_id,accepted_at)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::text,$6::jsonb,$7::text,
+ $8::bigint,$9::text,$10::text,$11::timestamptz)
+`
+
+type CommitPublicationReceiptParams struct {
+	ID                 string
+	AccountID          string
+	SourceID           string
+	EventID            string
+	EventType          string
+	Payload            []byte
+	SchemaVersion      string
+	AcceptanceID       int64
+	PublicationSource  string
+	PublicationEventID string
+	AcceptedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) CommitPublicationReceipt(ctx context.Context, db DBTX, arg CommitPublicationReceiptParams) error {
+	_, err := db.Exec(ctx, commitPublicationReceipt,
+		arg.ID,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+		arg.SchemaVersion,
+		arg.AcceptanceID,
+		arg.PublicationSource,
+		arg.PublicationEventID,
+		arg.AcceptedAt,
+	)
+	return err
+}
+
+const commitPublicationReplay = `-- name: CommitPublicationReplay :one
+SELECT id::text,accepted_at,publication_acceptance_id,
+ publication_source,publication_event_id,
+ event_type=$1::text AND payload=$2::jsonb
+ AND schema_version=$3::text AND routing IS NULL AS matches
+FROM commit_receipts WHERE account_id=$4::text::uuid
+ AND source_id=$5::text::uuid AND event_id=$6::text::uuid
+`
+
+type CommitPublicationReplayParams struct {
+	EventType     string
+	Payload       []byte
+	SchemaVersion string
+	AccountID     string
+	SourceID      string
+	EventID       string
+}
+
+type CommitPublicationReplayRow struct {
+	ID                      string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+	Matches                 pgtype.Bool
+}
+
+func (q *Queries) CommitPublicationReplay(ctx context.Context, db DBTX, arg CommitPublicationReplayParams) (CommitPublicationReplayRow, error) {
+	row := db.QueryRow(ctx, commitPublicationReplay,
+		arg.EventType,
+		arg.Payload,
+		arg.SchemaVersion,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+	)
+	var i CommitPublicationReplayRow
+	err := row.Scan(
+		&i.ID,
+		&i.AcceptedAt,
+		&i.PublicationAcceptanceID,
+		&i.PublicationSource,
+		&i.PublicationEventID,
+		&i.Matches,
+	)
+	return i, err
+}
+
+const commitPublicationSchema = `-- name: CommitPublicationSchema :one
+SELECT EXISTS(SELECT 1 FROM event_schemas WHERE account_id=$1::text::uuid
+ AND source=$2::text AND event_type=$3::text) AS required,
+ (SELECT schema FROM event_schemas WHERE account_id=$1::text::uuid
+ AND source=$2::text AND event_type=$3::text AND version=$4::text) AS schema
+`
+
+type CommitPublicationSchemaParams struct {
+	AccountID string
+	Source    string
+	EventType string
+	Version   string
+}
+
+type CommitPublicationSchemaRow struct {
+	Required bool
+	Schema   []byte
+}
+
+func (q *Queries) CommitPublicationSchema(ctx context.Context, db DBTX, arg CommitPublicationSchemaParams) (CommitPublicationSchemaRow, error) {
+	row := db.QueryRow(ctx, commitPublicationSchema,
+		arg.AccountID,
+		arg.Source,
+		arg.EventType,
+		arg.Version,
+	)
+	var i CommitPublicationSchemaRow
+	err := row.Scan(&i.Required, &i.Schema)
+	return i, err
+}
+
+const commitPublicationSource = `-- name: CommitPublicationSource :one
+INSERT INTO commit_sources(account_id,app_id,name,destination,contract_version)
+SELECT $1::text::uuid,id,$2::text,'event',3
+FROM apps WHERE id=$3::text::uuid AND account_id=$1::text::uuid
+ AND status<>'deleted' AND NOT platform_tenant_required
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.destination='event'
+ AND commit_sources.contract_version=3 AND NOT commit_sources.allow_tenant_selection AND commit_sources.operation_policy IS NULL
+RETURNING id::text,enabled
+`
+
+type CommitPublicationSourceParams struct {
+	AccountID string
+	Name      string
+	AppID     string
+}
+
+type CommitPublicationSourceRow struct {
+	ID      string
+	Enabled bool
+}
+
+func (q *Queries) CommitPublicationSource(ctx context.Context, db DBTX, arg CommitPublicationSourceParams) (CommitPublicationSourceRow, error) {
+	row := db.QueryRow(ctx, commitPublicationSource, arg.AccountID, arg.Name, arg.AppID)
+	var i CommitPublicationSourceRow
+	err := row.Scan(&i.ID, &i.Enabled)
+	return i, err
+}
+
 const commitReceiptIdentity = `-- name: CommitReceiptIdentity :one
 SELECT id::text,source_id::text,event_id::text,
  COALESCE(invocation_id::text,'')::text AS invocation_id,
- COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at,
+ COALESCE(publication_acceptance_id,0)::bigint AS publication_acceptance_id,
+ COALESCE(publication_source,'')::text AS publication_source,
+ COALESCE(publication_event_id,'')::text AS publication_event_id
 FROM commit_receipts WHERE account_id=$1::text::uuid
  AND source_id=$2::text::uuid AND event_id=$3::text::uuid
 `
@@ -6933,12 +7107,15 @@ type CommitReceiptIdentityParams struct {
 }
 
 type CommitReceiptIdentityRow struct {
-	ID           string
-	SourceID     string
-	EventID      string
-	InvocationID string
-	OperationID  string
-	AcceptedAt   pgtype.Timestamptz
+	ID                      string
+	SourceID                string
+	EventID                 string
+	InvocationID            string
+	OperationID             string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID int64
+	PublicationSource       string
+	PublicationEventID      string
 }
 
 func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error) {
@@ -6951,6 +7128,9 @@ func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg Commit
 		&i.InvocationID,
 		&i.OperationID,
 		&i.AcceptedAt,
+		&i.PublicationAcceptanceID,
+		&i.PublicationSource,
+		&i.PublicationEventID,
 	)
 	return i, err
 }
@@ -6998,7 +7178,7 @@ func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, fr
 
 const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
- c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
+ c.contract_version, c.allow_tenant_selection, c.destination, a.platform_tenant_required
 FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=$1::text::uuid AND c.id=$2::text::uuid
 FOR UPDATE OF c FOR SHARE OF a
@@ -7015,6 +7195,7 @@ type CommitSourceForManagedAdmissionRow struct {
 	OperationPolicy        string
 	ContractVersion        int32
 	AllowTenantSelection   bool
+	Destination            string
 	PlatformTenantRequired bool
 }
 
@@ -7027,6 +7208,7 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 		&i.OperationPolicy,
 		&i.ContractVersion,
 		&i.AllowTenantSelection,
+		&i.Destination,
 		&i.PlatformTenantRequired,
 	)
 	return i, err
@@ -7034,7 +7216,7 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 
 const commitSourceIdentity = `-- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
 FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
@@ -7051,6 +7233,7 @@ type CommitSourceIdentityRow struct {
 	OperationPolicy      string
 	ContractVersion      int32
 	AllowTenantSelection bool
+	Destination          string
 	RelayStatus          string
 	LastCheckedAt        pgtype.Timestamptz
 	PendingEvents        pgtype.Int8
@@ -7069,6 +7252,7 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.OperationPolicy,
 		&i.ContractVersion,
 		&i.AllowTenantSelection,
+		&i.Destination,
 		&i.RelayStatus,
 		&i.LastCheckedAt,
 		&i.PendingEvents,
@@ -32405,6 +32589,72 @@ func (q *Queries) ListClonePostgresWriteFences(ctx context.Context, db DBTX, ope
 			&i.ReleasedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCommitPublications = `-- name: ListCommitPublications :many
+SELECT id::text,source_id::text,event_id::text,event_type,schema_version,accepted_at,
+ publication_acceptance_id,publication_source,publication_event_id
+FROM commit_receipts
+WHERE account_id=$1::text::uuid AND source_id=$2::text::uuid
+ AND publication_acceptance_id IS NOT NULL
+ AND (accepted_at,id) < ($3::timestamptz,$4::text::uuid)
+ORDER BY accepted_at DESC,id DESC LIMIT $5::int
+`
+
+type ListCommitPublicationsParams struct {
+	AccountID string
+	SourceID  string
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  string
+	PageLimit int32
+}
+
+type ListCommitPublicationsRow struct {
+	ID                      string
+	SourceID                string
+	EventID                 string
+	EventType               string
+	SchemaVersion           string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+}
+
+func (q *Queries) ListCommitPublications(ctx context.Context, db DBTX, arg ListCommitPublicationsParams) ([]ListCommitPublicationsRow, error) {
+	rows, err := db.Query(ctx, listCommitPublications,
+		arg.AccountID,
+		arg.SourceID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCommitPublicationsRow{}
+	for rows.Next() {
+		var i ListCommitPublicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.EventID,
+			&i.EventType,
+			&i.SchemaVersion,
+			&i.AcceptedAt,
+			&i.PublicationAcceptanceID,
+			&i.PublicationSource,
+			&i.PublicationEventID,
 		); err != nil {
 			return nil, err
 		}
