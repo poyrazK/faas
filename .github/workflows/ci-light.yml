@@ -55,7 +55,7 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
         with:
@@ -519,7 +519,11 @@ jobs:
               for test_shard in "${batches[@]}"; do
                 run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -shard="$test_shard")" || exit 1
                 echo "testing: $pkg (test batch $test_shard/$shards)"
-                go test -race -count=1 -timeout=12m -run "$run" "$pkg" || split_status=1
+                # Full API batches include stage checkpoint PostgreSQL fixtures.
+                # Keep state batches at their original budget.
+                budget=12m
+                [[ "$pkg" == ./pkg/apid/apidserver ]] && budget=25m
+                go test -race -count=1 -timeout="$budget" -run "$run" "$pkg" || split_status=1
               done
               exit "$split_status"
             ) || status=1

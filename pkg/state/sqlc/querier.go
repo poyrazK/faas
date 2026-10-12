@@ -278,7 +278,8 @@ type Querier interface {
 	CloneDeploymentCleanupHasRuntimeOwner(ctx context.Context, db DBTX, arg CloneDeploymentCleanupHasRuntimeOwnerParams) (bool, error)
 	CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error)
 	// Original clone journals and historical secret/runtime-change tombstones are
-	// retained evidence. All other known operational references must close first.
+	// retained evidence, as are production_lifecycle_reviews attached to retained
+	// deployments. All other known operational references must close first.
 	CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error)
 	CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -2838,6 +2839,7 @@ type Querier interface {
 	ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error)
 	ReadCloneDeploymentBorrowers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneDeploymentCleanup, error)
+	// Original clone native journals remain retained evidence; other owners block cleanup.
 	ReadCloneDeploymentSoftBorrowers(ctx context.Context, db DBTX, arg ReadCloneDeploymentSoftBorrowersParams) ([]byte, error)
 	ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneEnvironmentCleanup, error)
 	// Counts retained rows regardless of runtime status, TTL or tenant metadata.

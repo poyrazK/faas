@@ -16715,13 +16715,15 @@ SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=sqlc.arg(environment_i
 
 -- name: CloneEnvironmentCleanupHasScopeBorrowers :one
 -- Original clone journals and historical secret/runtime-change tombstones are
--- retained evidence. All other known operational references must close first.
+-- retained evidence, as are production_lifecycle_reviews attached to retained
+-- deployments. All other known operational references must close first.
 WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=sqlc.arg(project_id)::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_workflow_states p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM deployment_rollback_operations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
@@ -16761,7 +16763,30 @@ SELECT
 SELECT lock_clone_environment_cleanup_scope_borrowers();
 
 -- name: ReadCloneDeploymentBorrowers :one
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
+    'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'profile_deployment_checks_deployment_id_fkey', (SELECT count(*) FROM profile_deployment_checks WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'profile_periodic_monitors_deployment_id_fkey', (SELECT count(*) FROM profile_periodic_monitors WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'profile_route_alert_state_deployment_id_fkey', (SELECT count(*) FROM profile_route_alert_state WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'runtime_upgrade_gateway_drains_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE serving_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'runtime_upgrade_operations_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'runtime_upgrade_operations_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE serving_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'app_route_removal_policies_baseline_deployment_id_fkey', (SELECT count(*) FROM app_route_removal_policies WHERE baseline_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'route_removal_approvals_baseline_deployment_id_fkey', (SELECT count(*) FROM route_removal_approvals WHERE baseline_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'route_removal_approvals_candidate_deployment_id_fkey', (SELECT count(*) FROM route_removal_approvals WHERE candidate_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'route_lifecycle_approvals_baseline_deployment_id_fkey', (SELECT count(*) FROM route_lifecycle_approvals WHERE baseline_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'route_lifecycle_approvals_candidate_deployment_id_fkey', (SELECT count(*) FROM route_lifecycle_approvals WHERE candidate_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'production_lifecycle_reviews_deployment_id_fkey', (SELECT count(*) FROM production_lifecycle_reviews WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_dependency_gates WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_runtime_upgrade_baselines_serving_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE serving_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE serving_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_runtime_upgrade_targets_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_targets WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'workflow_code_pins_deployment_id_app_id_fkey', (SELECT count(*) FROM workflow_code_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'workflow_event_code_refs_deployment_id_app_id_fkey', (SELECT count(*) FROM workflow_event_code_refs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'workflow_runs_deployment_owner_fk', (SELECT count(*) FROM workflow_runs WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+) || jsonb_build_object(
     'alert_historical_rollback_claims_deployment_id_fkey', (SELECT count(*) FROM alert_historical_rollback_claims WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'app_error_requests_deployment_id_fkey', (SELECT count(*) FROM app_error_requests WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'app_errors_deployment_id_fkey', (SELECT count(*) FROM app_errors WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -16806,7 +16831,7 @@ SELECT jsonb_build_object(
     'snapshots_deployment_id_fkey', (SELECT count(*) FROM snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'platform_tenant_workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM platform_tenant_workflow_schedule_cursors WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
-)::jsonb AS borrowers;
+))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
 SELECT * FROM project_environment_clone_deployment_cleanups WHERE operation_id=$1;
@@ -16830,7 +16855,20 @@ SELECT EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployme
 SELECT EXISTS(SELECT 1 FROM deployments d JOIN project_environment_clone_workloads w ON w.target_deployment_id=d.id WHERE w.operation_id=$1)::boolean;
 
 -- name: ReadCloneDeploymentSoftBorrowers :one
+-- Original clone native journals remain retained evidence; other owners block cleanup.
 SELECT jsonb_build_object(
+ 'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'environment_workload_serving_queue_acks.deployment_id', (SELECT count(*) FROM environment_workload_serving_queue_acks WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'environment_workload_serving_routes.deployment_id', (SELECT count(*) FROM environment_workload_serving_routes WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'project_environment_clone_migration_adoptions.deployment_id', (SELECT count(*) FROM project_environment_clone_migration_adoptions WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text AND operation_id<>sqlc.arg(operation_id)::uuid),
+ 'project_environment_clone_migration_resumes.deployment_id', (SELECT count(*) FROM project_environment_clone_migration_resumes WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text AND operation_id<>sqlc.arg(operation_id)::uuid),
+ 'project_environment_clone_wake_dispatches.deployment_id', (SELECT count(*) FROM project_environment_clone_wake_dispatches WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text AND operation_id<>sqlc.arg(operation_id)::uuid),
+ 'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=sqlc.arg(deployment_id)::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=sqlc.arg(deployment_id)::uuid),

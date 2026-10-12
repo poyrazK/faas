@@ -103,7 +103,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set public_read=false where id=$1", target); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/20261011232006353_clone_checkpoint_object_credential_reservations.sql")
+	migration, err := os.ReadFile("../../../migrations/20261011232006353_clone_checkpoint_object_credential_reservations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 
 func TestPGCloneCheckpointObjectCredentialReservationMigration(t *testing.T) {
 	f, _, _ := checkpointObjectVerificationFixture(t)
-	migration, err := os.ReadFile("../../migrations/20261011232006353_clone_checkpoint_object_credential_reservations.sql")
+	migration, err := os.ReadFile("../../../migrations/20261011232006353_clone_checkpoint_object_credential_reservations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,14 +138,14 @@ func TestPGCloneCheckpointObjectCredentialReservationMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
-	publicationMigration, err := os.ReadFile("../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
+	publicationMigration, err := os.ReadFile("../../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(t.Context(), strings.Split(string(publicationMigration), "-- +goose Down")[1]); err != nil {
 		t.Fatal("dependent publication downgrade", err)
 	}
-	valuesMigration, err := os.ReadFile("../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
+	valuesMigration, err := os.ReadFile("../../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

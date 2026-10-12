@@ -157,7 +157,7 @@ SELECT $1::text::uuid,$2::text::uuid,frame||jsonb_build_object('instance_id',$1:
 FROM environment_qualification_executions WHERE instance_id=$5`, uuid.NewString(), uuid.NewString(), identity.deployment, identity.environment, ins.ID)
 				requireCloneSchedulerFence(t, err)
 			}
-			_, err = pool.Exec(ctx, "TRUNCATE environment_qualification_executions")
+			_, err = pool.Exec(ctx, "TRUNCATE environment_qualification_executions CASCADE")
 			var e *pgconn.PgError
 			if !errors.As(err, &e) || e.ConstraintName != "clone_checkpoint_execution_retained" {
 				t.Fatal("erased execution frames", err)

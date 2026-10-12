@@ -253,7 +253,7 @@ func TestPGCloneCheckpointObjectWithdrawalAbsentAndStateFence(t *testing.T) {
 }
 func TestPGCloneCheckpointObjectWithdrawalMigration(t *testing.T) {
 	f, store, plan := checkpointObjectWithdrawalFixture(t)
-	raw, err := os.ReadFile("../../migrations/20261011232006361_clone_checkpoint_object_withdrawals.sql")
+	raw, err := os.ReadFile("../../../migrations/20261011232006361_clone_checkpoint_object_withdrawals.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

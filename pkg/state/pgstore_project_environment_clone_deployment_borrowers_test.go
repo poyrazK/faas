@@ -56,6 +56,7 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer rows.Close() // Fatal inventory assertions must release the pool connection.
 			n := 0
 			for rows.Next() {
 				var name string
@@ -86,6 +87,7 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer softRows.Close()
 			var actual []string
 			for softRows.Next() {
 				var name string

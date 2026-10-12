@@ -129,6 +129,13 @@ func TestPgCloneWorkloadCleanupRejectsChangedEvidence(t *testing.T) {
 				return
 			case "artifact":
 				_, err = pool.Exec(t.Context(), "UPDATE deployments SET reason='replacement' WHERE id=$1", original.Plan.Workloads[0].TargetDeploymentID)
+				// The permanent deployment ownership guard rejects this mutation
+				// before it can invalidate the retained cleanup evidence.
+				requireCloneSchedulerFence(t, err)
+				if err = s.CleanupProjectEnvironmentCloneWorkloadsForLease(t.Context(), l); err != nil {
+					t.Fatal("rejected artifact write damaged cleanup replay", err)
+				}
+				return
 			}
 			if err != nil {
 				t.Fatal(err)

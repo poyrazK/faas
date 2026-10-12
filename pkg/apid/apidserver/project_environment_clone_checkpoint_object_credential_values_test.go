@@ -171,7 +171,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set name=$2 where id=$1", target, state.ProjectEnvironmentCloneObjectBucketName(f.lease.Operation, r.Inputs.Buckets[0].AppID, r.Inputs.Buckets[0].Source.ID)); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
+	migration, err := os.ReadFile("../../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 	if _, err = f.pool.Exec(t.Context(), "drop trigger expire_object_value_worker on project_environment_clone_checkpoint_object_values; drop function expire_object_value_worker()"); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
+	migration, err := os.ReadFile("../../../migrations/20261011232006356_clone_checkpoint_object_credential_values.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicationMigration, err := os.ReadFile("../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
+	publicationMigration, err := os.ReadFile("../../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

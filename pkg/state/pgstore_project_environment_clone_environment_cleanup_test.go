@@ -263,6 +263,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_webhooks.scope",
 		"custom_domains.environment_id",
 		"customer_operation_definitions.scope",
+		"customer_operation_workflow_states.scope",
 		"data_upstreams.deployment_scope",
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",
@@ -293,6 +294,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
+		"production_lifecycle_reviews.scope", // Retained historical deployment review evidence.
 		"project_environment_approvals.environment_slug",
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
@@ -388,7 +390,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "scope"} {
+	for _, borrower := range []string{"foreign_key", "scope", "workflow_state"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -399,6 +401,8 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		}
 		if borrower == "foreign_key" {
 			_, err = tx.Exec(ctx, "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('racing.example.com',$1,$2)", appID, native.Plan.EnvironmentID)
+		} else if borrower == "workflow_state" {
+			_, err = tx.Exec(ctx, "LOCK TABLE customer_operation_workflow_states IN ROW EXCLUSIVE MODE")
 		} else {
 			_, err = tx.Exec(ctx, "INSERT INTO github_deploy_branches(project_id,branch,scope) VALUES($1,'racing',$2)", l.Operation.ProjectID, l.Operation.TargetEnvironment)
 		}

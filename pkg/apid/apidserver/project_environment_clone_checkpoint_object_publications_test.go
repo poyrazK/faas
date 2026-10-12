@@ -228,7 +228,7 @@ func TestPGCloneCheckpointObjectPublicationRollback(t *testing.T) {
 }
 func TestPGCloneCheckpointObjectPublicationMigration(t *testing.T) {
 	f, store, d, plan, _ := checkpointObjectPublicationFixture(t)
-	raw, err := os.ReadFile("../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
+	raw, err := os.ReadFile("../../../migrations/20261011232006359_clone_checkpoint_object_publications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
