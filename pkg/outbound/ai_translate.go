@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,25 @@ import (
 // errTranslationUnsupported marks an OpenAI request the translation layer
 // cannot express for the target provider (ADR-991).
 var errTranslationUnsupported = errors.New("outbound AI translation: unsupported request")
+
+// translationRefusal is an unsupported request with a reason the caller
+// sees in the problem detail (ADR-993).
+type translationRefusal struct{ reason string }
+
+func (e translationRefusal) Error() string        { return "outbound AI translation: " + e.reason }
+func (e translationRefusal) Is(target error) bool { return target == errTranslationUnsupported }
+
+func refuseTranslation(reason string) error { return translationRefusal{reason: reason} }
+
+// translationRefusalDetail is the caller-facing reason of a translation
+// error, or a generic one.
+func translationRefusalDetail(err error) string {
+	var refusal translationRefusal
+	if errors.As(err, &refusal) {
+		return refusal.reason
+	}
+	return "The request cannot be translated for this route's targets"
+}
 
 // openAIChatRequest is the OpenAI chat-completions subset routes translate.
 type openAIChatRequest struct {
@@ -30,6 +50,57 @@ type openAIChatRequest struct {
 	StreamOptions       *openAIStreamUsage `json:"stream_options"`
 	N                   *int               `json:"n"`
 	User                string             `json:"user"`
+	ResponseFormat      json.RawMessage    `json:"response_format"`
+}
+
+// openAIResponseFormat is a chat request's response_format (ADR-993):
+// kind is "" or "text" for plain text, "json_object" or "json_schema".
+type openAIResponseFormat struct {
+	kind, name, description string
+	schema                  json.RawMessage
+}
+
+func parseOpenAIResponseFormat(raw json.RawMessage) (openAIResponseFormat, error) {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return openAIResponseFormat{}, nil
+	}
+	var format struct {
+		Type       string `json:"type"`
+		JSONSchema *struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Schema      json.RawMessage `json:"schema"`
+		} `json:"json_schema"`
+	}
+	if json.Unmarshal(raw, &format) != nil {
+		return openAIResponseFormat{}, refuseTranslation("response_format must be an object")
+	}
+	switch format.Type {
+	case "text", "json_object":
+		return openAIResponseFormat{kind: format.Type}, nil
+	case "json_schema":
+		if format.JSONSchema == nil || !isJSONObject(format.JSONSchema.Schema) {
+			return openAIResponseFormat{}, refuseTranslation("response_format json_schema needs json_schema.schema as an object")
+		}
+		name := format.JSONSchema.Name
+		if name == "" {
+			name = "response"
+		}
+		return openAIResponseFormat{kind: format.Type, name: name, description: format.JSONSchema.Description,
+			schema: format.JSONSchema.Schema}, nil
+	}
+	return openAIResponseFormat{}, refuseTranslation(fmt.Sprintf("response_format type %q is not supported", format.Type))
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
+}
+
+// errJSONObjectNeedsSchema refuses json_object for providers whose
+// structured output always needs a schema.
+func errJSONObjectNeedsSchema(provider string) error {
+	return refuseTranslation(provider + " targets need response_format json_schema; json_object has no schema to enforce")
 }
 
 type openAIStreamUsage struct {
@@ -78,9 +149,14 @@ type routeTranslation struct {
 	translator     aiResponseTranslator
 }
 
-// translateRouteRequest rewrites an OpenAI chat-completions body for one
-// target of an openai-format route.
-func translateRouteRequest(provider, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
+// translateRouteRequest rewrites an openai-format route's request for one
+// target: chat completions (ADR-991) or embeddings (ADR-993). providerPath
+// and the returned path are escaped paths.
+func translateRouteRequest(integration Integration, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
+	if strings.HasSuffix(providerPath, "/embeddings") {
+		return translateEmbeddingsRequest(integration, providerPath, rawQuery, body, model)
+	}
+	provider := integration.AIProvider
 	switch provider {
 	case api.OutboundAIProviderOpenAI:
 		if model != "" {
@@ -103,19 +179,27 @@ func translateRouteRequest(provider, providerPath, rawQuery string, body []byte,
 		return routeTranslation{}, errTranslationUnsupported
 	}
 	if request.N != nil && *request.N > 1 {
-		return routeTranslation{}, errTranslationUnsupported
+		return routeTranslation{}, refuseTranslation("n above 1 is not supported for translated targets")
+	}
+	format, err := parseOpenAIResponseFormat(request.ResponseFormat)
+	if err != nil {
+		return routeTranslation{}, err
 	}
 	includeUsage := request.StreamOptions != nil && request.StreamOptions.IncludeUsage
 	switch provider {
 	case api.OutboundAIProviderAnthropic:
-		translated, err := openAIToAnthropic(request, model)
+		fields, err := openAIToAnthropic(request, model, format)
 		if err != nil {
 			return routeTranslation{}, err
+		}
+		translated, err := json.Marshal(fields)
+		if err != nil {
+			return routeTranslation{}, errTranslationUnsupported
 		}
 		return routeTranslation{path: "/v1/messages", body: translated,
 			translator: newAnthropicTranslator(request.Stream, includeUsage)}, nil
 	case api.OutboundAIProviderGemini:
-		translated, err := openAIToGemini(request)
+		translated, err := openAIToGemini(request, format)
 		if err != nil {
 			return routeTranslation{}, err
 		}
@@ -125,8 +209,72 @@ func translateRouteRequest(provider, providerPath, rawQuery string, body []byte,
 		}
 		return routeTranslation{path: "/v1beta/models/" + url.PathEscape(model) + verb, rawQuery: query, body: translated,
 			translator: newGeminiTranslator(request.Stream, includeUsage, model)}, nil
+	case api.OutboundAIProviderVertex:
+		return translateVertexChat(integration, request, format, model, includeUsage)
+	case api.OutboundAIProviderBedrock:
+		return translateBedrockChat(request, format, model, includeUsage)
 	}
 	return routeTranslation{}, errTranslationUnsupported
+}
+
+// vertexPublisherModel splits a Vertex target model into its publisher and
+// model: an "anthropic/" or "google/" prefix names the publisher, and
+// otherwise a "claude" model is Anthropic's and anything else Google's.
+func vertexPublisherModel(model string) (publisher, name string) {
+	if rest, ok := strings.CutPrefix(model, "anthropic/"); ok {
+		return "anthropic", rest
+	}
+	if rest, ok := strings.CutPrefix(model, "google/"); ok {
+		return "google", rest
+	}
+	if strings.HasPrefix(model, "claude") {
+		return "anthropic", model
+	}
+	return "google", model
+}
+
+// translateVertexChat sends chat completions to Claude (rawPredict) or
+// Gemini (generateContent) on Vertex AI under the integration's one
+// project and location (ADR-993).
+func translateVertexChat(integration Integration, request openAIChatRequest, format openAIResponseFormat, model string,
+	includeUsage bool) (routeTranslation, error) {
+	base, ok := api.OutboundVertexBasePath(integration.AllowedPathPrefixes)
+	if !ok {
+		return routeTranslation{}, refuseTranslation("the Vertex integration's allowed path prefixes must name one /v1/projects/{project}/locations/{location}")
+	}
+	publisher, name := vertexPublisherModel(model)
+	if name == "" {
+		return routeTranslation{}, errTranslationUnsupported
+	}
+	modelPath := base + "/publishers/" + publisher + "/models/" + url.PathEscape(name)
+	if publisher == "anthropic" {
+		fields, err := openAIToAnthropic(request, name, format)
+		if err != nil {
+			return routeTranslation{}, err
+		}
+		// Vertex names the model in the path and the API version in the body.
+		delete(fields, "model")
+		fields["anthropic_version"] = api.OutboundVertexAnthropicVersion
+		translated, err := json.Marshal(fields)
+		if err != nil {
+			return routeTranslation{}, errTranslationUnsupported
+		}
+		verb := ":rawPredict"
+		if request.Stream {
+			verb = ":streamRawPredict"
+		}
+		return routeTranslation{path: modelPath + verb, body: translated, translator: newAnthropicTranslator(request.Stream, includeUsage)}, nil
+	}
+	translated, err := openAIToGemini(request, format)
+	if err != nil {
+		return routeTranslation{}, err
+	}
+	verb, query := ":generateContent", ""
+	if request.Stream {
+		verb, query = ":streamGenerateContent", "alt=sse"
+	}
+	return routeTranslation{path: modelPath + verb, rawQuery: query, body: translated,
+		translator: newGeminiTranslator(request.Stream, includeUsage, name)}, nil
 }
 
 // openAIContentParts reads a message content: a string, an array of parts
@@ -232,8 +380,8 @@ type anthropicMessage struct {
 	Content []anthropicBlock `json:"content"`
 }
 
-// openAIToAnthropic maps a chat-completions request to the Messages API.
-func openAIToAnthropic(request openAIChatRequest, model string) ([]byte, error) {
+// openAIToAnthropic maps a chat-completions request to Messages API fields.
+func openAIToAnthropic(request openAIChatRequest, model string, format openAIResponseFormat) (map[string]any, error) {
 	var system []string
 	var messages []anthropicMessage
 	appendBlocks := func(role string, blocks []anthropicBlock) {
@@ -311,7 +459,14 @@ func openAIToAnthropic(request openAIChatRequest, model string) ([]byte, error) 
 	if choice := anthropicToolChoice(request); choice != nil {
 		out["tool_choice"] = choice
 	}
-	return json.Marshal(out)
+	// ADR-993: structured output always takes a schema.
+	switch format.kind {
+	case "json_schema":
+		out["output_config"] = map[string]any{"format": map[string]any{"type": "json_schema", "schema": format.schema}}
+	case "json_object":
+		return nil, errJSONObjectNeedsSchema("Anthropic")
+	}
+	return out, nil
 }
 
 func anthropicContentBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
@@ -376,7 +531,7 @@ type geminiContent struct {
 }
 
 // openAIToGemini maps a chat-completions request to generateContent.
-func openAIToGemini(request openAIChatRequest) ([]byte, error) {
+func openAIToGemini(request openAIChatRequest, format openAIResponseFormat) ([]byte, error) {
 	var system []string
 	var contents []geminiContent
 	toolNames := map[string]string{}
@@ -440,6 +595,14 @@ func openAIToGemini(request openAIChatRequest) ([]byte, error) {
 	}
 	if stops := openAIStopSequences(request.Stop); len(stops) > 0 {
 		generation["stopSequences"] = stops
+	}
+	// ADR-993: JSON mode, with the caller's JSON Schema when it has one.
+	switch format.kind {
+	case "json_object":
+		generation["responseMimeType"] = "application/json"
+	case "json_schema":
+		generation["responseMimeType"] = "application/json"
+		generation["responseJsonSchema"] = format.schema
 	}
 	out := map[string]any{"contents": contents, "generationConfig": generation}
 	if len(system) > 0 {

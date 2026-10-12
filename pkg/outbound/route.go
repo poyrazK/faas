@@ -167,9 +167,9 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	translated := route.Format == api.OutboundAIRouteFormatOpenAI
-	if translated && (!replayable || r.Method != http.MethodPost || !strings.HasSuffix(providerPath, "/chat/completions")) {
+	if translated && (!replayable || r.Method != http.MethodPost || !openAIRoutePath(providerPath)) {
 		writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
-			"OpenAI-format routes accept buffered chat completions requests only", "")
+			"OpenAI-format routes accept buffered chat completions and embeddings requests only", "")
 		return
 	}
 	targets := route.Targets
@@ -184,8 +184,10 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 			translation, translateErr := h.translateRouteTarget(ctx, target, providerPath, r.URL.RawQuery, body)
 			if translateErr != nil {
 				h.Metrics.ObserveAITranslation("unknown", "unsupported")
-				writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
-					"The request cannot be translated for this route's targets", "")
+				problem := api.NewProblem(http.StatusBadRequest, "outbound_ai_translation_unsupported",
+					"The request cannot be translated for this route's targets", translationRefusalDetail(translateErr))
+				problem.Type = "https://gregale.dev/docs/errors/outbound_ai_translation_unsupported"
+				api.WriteProblem(w, problem)
 				return
 			}
 			attemptBody, attemptPath, attemptQuery, translator = translation.body, translation.path, translation.rawQuery, translation.translator
@@ -217,6 +219,12 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// openAIRoutePath reports whether an openai-format route can translate the
+// provider path: chat completions (ADR-991) or embeddings (ADR-993).
+func openAIRoutePath(providerPath string) bool {
+	return strings.HasSuffix(providerPath, "/chat/completions") || strings.HasSuffix(providerPath, "/embeddings")
+}
+
 // bufferRouteBody keeps a body of at most the AI buffer bound for replay
 // across targets. A larger body streams to the first target only.
 func bufferRouteBody(r *http.Request) ([]byte, bool, error) {
@@ -242,7 +250,7 @@ func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget
 	if err != nil {
 		return routeTranslation{path: providerPath, rawQuery: rawQuery, body: body}, nil //nolint:nilerr // the ordinary path reports the lookup failure and the route falls back past it.
 	}
-	translation, err := translateRouteRequest(integration.AIProvider, providerPath, rawQuery, body, target.Model)
+	translation, err := translateRouteRequest(integration, providerPath, rawQuery, body, target.Model)
 	if err != nil {
 		return routeTranslation{}, err
 	}
@@ -252,10 +260,18 @@ func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget
 	return translation, nil
 }
 
+// routeAttemptRequest addresses one target. providerPath is escaped, as the
+// caller sent it or as translation built it, so a model ID such as a Bedrock
+// ARN keeps its %2F instead of being escaped twice.
 func routeAttemptRequest(r *http.Request, integrationID, providerPath, rawQuery string, body []byte, replayable bool) *http.Request {
 	attempt := r.Clone(r.Context())
-	attempt.URL = &url.URL{Path: Prefix + integrationID + providerPath, RawQuery: rawQuery}
-	if escaped := Prefix + url.PathEscape(integrationID) + providerPath; escaped != attempt.URL.Path {
+	escaped := Prefix + url.PathEscape(integrationID) + providerPath
+	path, err := url.PathUnescape(escaped)
+	if err != nil {
+		path = escaped
+	}
+	attempt.URL = &url.URL{Path: path, RawQuery: rawQuery}
+	if escaped != path {
 		attempt.URL.RawPath = escaped
 	}
 	attempt.RequestURI = ""

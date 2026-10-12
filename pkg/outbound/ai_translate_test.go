@@ -43,7 +43,7 @@ func decodeJSONMap(t *testing.T, body []byte) map[string]any {
 }
 
 func TestOpenAIToAnthropicRequest(t *testing.T) {
-	translation, err := translateRouteRequest(api.OutboundAIProviderAnthropic, "/v1/chat/completions", "", []byte(translateChatBody), "claude-sonnet-4")
+	translation, err := translateRouteRequest(Integration{AIProvider: api.OutboundAIProviderAnthropic}, "/v1/chat/completions", "", []byte(translateChatBody), "claude-sonnet-4")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestOpenAIToAnthropicRequest(t *testing.T) {
 
 func TestOpenAIToGeminiRequest(t *testing.T) {
 	streaming := strings.Replace(translateChatBody, `"temperature": 0.5`, `"temperature": 0.5, "stream": true, "max_tokens": 50`, 1)
-	translation, err := translateRouteRequest(api.OutboundAIProviderGemini, "/v1/chat/completions", "", []byte(streaming), "gemini-2.5-flash")
+	translation, err := translateRouteRequest(Integration{AIProvider: api.OutboundAIProviderGemini}, "/v1/chat/completions", "", []byte(streaming), "gemini-2.5-flash")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,13 +105,13 @@ func TestTranslationRefusesWhatItCannotExpress(t *testing.T) {
 		"unknown role":      {api.OutboundAIProviderAnthropic, `{"messages":[{"role":"function","content":"x"}]}`, "c"},
 		"no model":          {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":"x"}]}`, ""},
 		"remote gemini img": {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, "g"},
-		"bedrock target":    {api.OutboundAIProviderBedrock, `{"messages":[{"role":"user","content":"x"}]}`, "b"},
+		"bedrock remote img": {api.OutboundAIProviderBedrock, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, "b"},
 	} {
-		if _, err := translateRouteRequest(tc.provider, "/v1/chat/completions", "", []byte(tc.body), tc.model); !errors.Is(err, errTranslationUnsupported) {
+		if _, err := translateRouteRequest(Integration{AIProvider: tc.provider}, "/v1/chat/completions", "", []byte(tc.body), tc.model); !errors.Is(err, errTranslationUnsupported) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
-	azure, err := translateRouteRequest(api.OutboundAIProviderAzureOpenAI, "/v1/chat/completions", "", []byte(`{"model":"gpt-4o","messages":[]}`), "prod-deployment")
+	azure, err := translateRouteRequest(Integration{AIProvider: api.OutboundAIProviderAzureOpenAI}, "/v1/chat/completions", "", []byte(`{"model":"gpt-4o","messages":[]}`), "prod-deployment")
 	if err != nil || azure.path != "/openai/v1/chat/completions" || !strings.Contains(string(azure.body), `"model":"prod-deployment"`) || azure.translator != nil {
 		t.Fatalf("azure target = %+v, %v", azure, err)
 	}

@@ -175,6 +175,31 @@ type aiEnvelope struct {
 	Message       *aiEnvelopeInner `json:"message"`
 	Response      *aiEnvelopeInner `json:"response"`
 	Bytes         []byte           `json:"bytes"`
+	// Predictions carries Vertex AI text-embedding token counts (ADR-993).
+	Predictions []struct {
+		Embeddings *struct {
+			Statistics *struct {
+				TokenCount *int64 `json:"token_count"`
+			} `json:"statistics"`
+		} `json:"embeddings"`
+	} `json:"predictions"`
+}
+
+// vertexPredictionTokens sums the token counts of Vertex AI embedding
+// predictions, or returns nil when none reports one.
+func vertexPredictionTokens(envelope aiEnvelope) *int64 {
+	var total int64
+	seen := false
+	for _, prediction := range envelope.Predictions {
+		if prediction.Embeddings != nil && prediction.Embeddings.Statistics != nil && prediction.Embeddings.Statistics.TokenCount != nil {
+			total += max(*prediction.Embeddings.Statistics.TokenCount, 0)
+			seen = true
+		}
+	}
+	if !seen {
+		return nil
+	}
+	return &total
 }
 
 // aiRawUsage keeps the largest value seen per provider field. Streaming
@@ -496,6 +521,9 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	o.raw.merge(envelope.Usage)
 	o.raw.merge(envelope.UsageMetadata)
 	o.raw.merge(envelope.Metrics)
+	if tokens := vertexPredictionTokens(envelope); tokens != nil {
+		o.raw.merge(&aiUsageFields{PromptTokenCount: tokens})
+	}
 	o.noteModel(envelope.Model)
 	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {

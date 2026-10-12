@@ -157,11 +157,36 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 
 // Route formats (ADR-991). A native route sends the caller's request to
 // targets of one provider. An openai route accepts OpenAI chat completions
-// and translates them for Anthropic and Gemini targets.
+// and embeddings and translates them for each target's provider (ADR-993).
 const (
 	OutboundAIRouteFormatNative = "native"
 	OutboundAIRouteFormatOpenAI = "openai"
 )
+
+// OutboundVertexAnthropicVersion is the anthropic_version a translated
+// Claude request on Vertex AI carries (ADR-993).
+const OutboundVertexAnthropicVersion = "vertex-2023-10-16"
+
+var outboundVertexBasePattern = regexp.MustCompile(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
+
+// OutboundVertexBasePath derives "/{version}/projects/{project}/locations/{location}"
+// from a Vertex integration's allowed path prefixes. Translated routes need
+// exactly one such base; prefixes naming none or several are refused.
+func OutboundVertexBasePath(prefixes []string) (string, bool) {
+	base := ""
+	for _, prefix := range prefixes {
+		match := outboundVertexBasePattern.FindStringSubmatch(prefix)
+		if match == nil {
+			continue
+		}
+		found := "/" + match[1] + "/projects/" + match[2] + "/locations/" + match[3]
+		if base != "" && base != found {
+			return "", false
+		}
+		base = found
+	}
+	return base, base != ""
+}
 
 // ValidOutboundAIRouteFormat accepts the empty value (native) and both formats.
 func ValidOutboundAIRouteFormat(format string) bool {
@@ -178,7 +203,8 @@ func OutboundAIRouteFormatTargetProvider(format, provider string) (allowed, need
 	switch provider {
 	case OutboundAIProviderOpenAI:
 		return true, false
-	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini:
+	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini,
+		OutboundAIProviderVertex, OutboundAIProviderBedrock:
 		return true, true
 	}
 	return false, false

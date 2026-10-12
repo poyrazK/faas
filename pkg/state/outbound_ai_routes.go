@@ -59,21 +59,37 @@ func normalizeOutboundAIRouteFormat(format string) (string, bool) {
 	return format, api.ValidOutboundAIRouteFormat(format)
 }
 
+// outboundAIRouteTarget is what route validation needs to know about one
+// target integration.
+type outboundAIRouteTarget struct {
+	provider string
+	// pathPrefixes are the integration's allowed path prefixes; a Vertex
+	// target of an openai route needs one project and location in them.
+	pathPrefixes []string
+}
+
 // outboundAIRouteTargetsAllowed checks that every target is a known AI
 // integration the route format can serve. A native route needs one wire
 // format; an openai route accepts translatable providers and needs a model
-// for every non-OpenAI target (ADR-991). providers maps integration ID to
-// its ai_provider.
-func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarget, providers map[string]string) bool {
+// for every non-OpenAI target (ADR-991), and a Vertex target whose prefixes
+// name one project and location (ADR-993). integrations maps integration ID
+// to its details.
+func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarget, integrations map[string]outboundAIRouteTarget) bool {
 	first := ""
 	for _, target := range targets {
-		provider, ok := providers[target.IntegrationID]
+		integration, ok := integrations[target.IntegrationID]
+		provider := integration.provider
 		if !ok || provider == "" {
 			return false
 		}
 		allowed, needsModel := api.OutboundAIRouteFormatTargetProvider(format, provider)
 		if !allowed || (needsModel && target.Model == "") {
 			return false
+		}
+		if format == api.OutboundAIRouteFormatOpenAI && provider == api.OutboundAIProviderVertex {
+			if _, ok := api.OutboundVertexBasePath(integration.pathPrefixes); !ok {
+				return false
+			}
 		}
 		if format != api.OutboundAIRouteFormatOpenAI && first != "" && provider != first {
 			return false
