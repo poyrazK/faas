@@ -171,7 +171,7 @@ func handle(h http.Handler, line []byte, out *frameWriter) {
 	defer func() {
 		if p := recover(); p != nil {
 			failure := errors.New("handler aborted")
-			if p != http.ErrAbortHandler {
+			if err, ok := p.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
 				fmt.Fprintf(os.Stderr, "function: handler panic: %v\n%s", p, debug.Stack())
 				failure = fmt.Errorf("%v", p)
 			}
