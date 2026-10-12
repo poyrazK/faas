@@ -11,8 +11,8 @@ T = TypeVar("T", bound="IssueGroupingFrame")
 
 @_attrs_define
 class IssueGroupingFrame:
-    """Canonical file and function used in identity, with a zero-based index into occurrence frames. Line numbers are
-    excluded.
+    """Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is
+    present, otherwise occurrence frames. Line numbers are excluded.
 
     """
 
