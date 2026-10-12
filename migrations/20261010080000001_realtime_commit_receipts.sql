@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_commit_receipts (
+CREATE TABLE IF NOT EXISTS managed_realtime_commit_receipts (
     source_id uuid NOT NULL REFERENCES commit_sources(id) ON DELETE CASCADE,
     event_id uuid NOT NULL,
     content_hash bytea NOT NULL CHECK (octet_length(content_hash)=32),

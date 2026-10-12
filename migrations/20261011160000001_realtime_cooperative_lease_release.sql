@@ -1,11 +1,25 @@
 -- +goose Up
-ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN release_count bigint NOT NULL DEFAULT 0 CHECK (release_count>=0);
-ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT managed_realtime_worker_credentials_last_operation_check;
+ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN IF NOT EXISTS release_count bigint NOT NULL DEFAULT 0 CHECK (release_count>=0);
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('managed_realtime_worker_credentials') AND conname='managed_realtime_worker_credentials_permissions_check' AND position('''release''' in pg_get_constraintdef(oid))>0) OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('managed_realtime_worker_credentials') AND conname='managed_realtime_worker_credentials_last_operation_check' AND position('''release''' in pg_get_constraintdef(oid))>0) THEN
+ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT IF EXISTS managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT IF EXISTS managed_realtime_worker_credentials_last_operation_check;
 ALTER TABLE managed_realtime_worker_credentials
  ADD CONSTRAINT managed_realtime_worker_credentials_permissions_check CHECK (cardinality(permissions) BETWEEN 1 AND 14 AND permissions <@ ARRAY['status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume','drain','heartbeat','release']::text[]),
  ADD CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK (last_operation IS NULL OR last_operation IN ('status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume','drain','heartbeat','release'));
-ALTER TABLE managed_realtime_group_delivery_history DROP CONSTRAINT managed_realtime_group_delivery_history_event_check;
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('managed_realtime_group_delivery_history') AND conname='managed_realtime_group_delivery_history_event_check' AND position('''released''' in pg_get_constraintdef(oid))>0) THEN
+ALTER TABLE managed_realtime_group_delivery_history DROP CONSTRAINT IF EXISTS managed_realtime_group_delivery_history_event_check;
 ALTER TABLE managed_realtime_group_delivery_history ADD CONSTRAINT managed_realtime_group_delivery_history_event_check CHECK (event IN ('claimed','retried','lease_expired','dead_lettered','deadline_expired','invalid_deadline','completed','replayed','released'));
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION measure_realtime_group_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE wait_ms numeric := 0; first_count bigint := 0; retry_count bigint := 0; dead_count bigint := 0;

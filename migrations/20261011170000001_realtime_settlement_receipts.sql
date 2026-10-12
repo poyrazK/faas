@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_group_settlement_receipts (
+CREATE TABLE IF NOT EXISTS managed_realtime_group_settlement_receipts (
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK (principal='account' OR principal~'^[0-9a-f-]{36}$'),
  idempotency_key uuid NOT NULL,
@@ -9,7 +9,7 @@ CREATE TABLE managed_realtime_group_settlement_receipts (
  expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at>created_at),
  PRIMARY KEY(group_id,principal,idempotency_key)
 );
-CREATE INDEX realtime_settlement_receipts_expiry ON managed_realtime_group_settlement_receipts(group_id,expires_at);
+CREATE INDEX IF NOT EXISTS realtime_settlement_receipts_expiry ON managed_realtime_group_settlement_receipts(group_id,expires_at);
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

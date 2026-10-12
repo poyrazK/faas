@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_replay_jobs (
+CREATE TABLE IF NOT EXISTS managed_realtime_replay_jobs (
  id uuid PRIMARY KEY,
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  state text NOT NULL CHECK (state IN ('running','paused','completed','cancelled')),
@@ -13,7 +13,7 @@ CREATE TABLE managed_realtime_replay_jobs (
  next_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX realtime_replay_jobs_due ON managed_realtime_replay_jobs(next_at) WHERE state='running';
+CREATE INDEX IF NOT EXISTS realtime_replay_jobs_due ON managed_realtime_replay_jobs(next_at) WHERE state='running';
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

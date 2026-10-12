@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_worker_credentials (
+CREATE TABLE IF NOT EXISTS managed_realtime_worker_credentials (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 128),
@@ -13,8 +13,8 @@ CREATE TABLE managed_realtime_worker_credentials (
  last_operation text CHECK (last_operation IS NULL OR last_operation IN ('status','claim','renew','complete','retry','dead_letters','replay','resync','delete')),
  use_count bigint NOT NULL DEFAULT 0 CHECK (use_count >= 0)
 );
-CREATE INDEX realtime_worker_credentials_group ON managed_realtime_worker_credentials(group_id,issued_at);
-ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN credential_id uuid;
+CREATE INDEX IF NOT EXISTS realtime_worker_credentials_group ON managed_realtime_worker_credentials(group_id,issued_at);
+ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN IF NOT EXISTS credential_id uuid;
 -- Credential ownership is retained with a lease; no FK can cascade-away work.
 -- +goose Down
 ALTER TABLE managed_realtime_consumer_group_messages DROP COLUMN credential_id;

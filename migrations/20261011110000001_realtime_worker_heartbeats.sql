@@ -1,6 +1,6 @@
 -- +goose Up
-ALTER TABLE managed_realtime_consumer_groups ADD COLUMN next_worker_health_check_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(next_worker_health_check_at));
-CREATE TABLE managed_realtime_worker_heartbeats (
+ALTER TABLE managed_realtime_consumer_groups ADD COLUMN IF NOT EXISTS next_worker_health_check_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(next_worker_health_check_at));
+CREATE TABLE IF NOT EXISTS managed_realtime_worker_heartbeats (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  worker text NOT NULL CHECK (octet_length(worker) BETWEEN 1 AND 128),
@@ -13,23 +13,34 @@ CREATE TABLE managed_realtime_worker_heartbeats (
  CHECK ((principal='account')=(credential_id IS NULL)),
  UNIQUE(group_id,worker,principal)
 );
-CREATE INDEX realtime_worker_health_due ON managed_realtime_consumer_groups(next_worker_health_check_at,id);
-ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT managed_realtime_worker_credentials_last_operation_check;
+CREATE INDEX IF NOT EXISTS realtime_worker_health_due ON managed_realtime_consumer_groups(next_worker_health_check_at,id);
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('managed_realtime_worker_credentials') AND conname='managed_realtime_worker_credentials_permissions_check' AND position('''heartbeat''' in pg_get_constraintdef(oid))>0) OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('managed_realtime_worker_credentials') AND conname='managed_realtime_worker_credentials_last_operation_check' AND position('''heartbeat''' in pg_get_constraintdef(oid))>0) THEN
+ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT IF EXISTS managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT IF EXISTS managed_realtime_worker_credentials_last_operation_check;
 ALTER TABLE managed_realtime_worker_credentials
  ADD CONSTRAINT managed_realtime_worker_credentials_permissions_check CHECK (cardinality(permissions) BETWEEN 1 AND 13 AND permissions <@ ARRAY['status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume','drain','heartbeat']::text[]),
  ADD CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK (last_operation IS NULL OR last_operation IN ('status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume','drain','heartbeat'));
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 DO $$
 DECLARE definition text;
 BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk';
  IF definition IS NULL THEN RAISE EXCEPTION 'missing webhook event constraint'; END IF;
+ IF position('''realtime.consumer_group.worker_lost''' in definition)>0 AND position('''realtime.consumer_group.worker_recovered''' in definition)>0 THEN RETURN; END IF;
  definition:=regexp_replace(definition,' NOT VALID$','');
  ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
  EXECUTE format('ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((%s) OR event IN (%L,%L))',substring(definition from 8 for length(definition)-8),'realtime.consumer_group.worker_lost','realtime.consumer_group.worker_recovered');
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF to_regprocedure('enqueue_realtime_worker_health()') IS NULL THEN
 CREATE FUNCTION enqueue_realtime_worker_health() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE recipients uuid[]; v_app uuid; v_account uuid; v_endpoint uuid; v_channel text; v_group text; event_id uuid; event_name text;
 BEGIN
@@ -49,8 +60,17 @@ BEGIN
  'heartbeat_id',NEW.id,'worker',NEW.worker,'ready',NEW.ready,'status_code',NEW.status_code,'last_seen_at',NEW.last_seen_at,'occurred_at',clock_timestamp()),recipients);
  RETURN NEW;
 END $$;
+ END IF;
+END $realtime_replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('managed_realtime_worker_heartbeats') AND tgname='realtime_worker_health_transition') THEN
 CREATE TRIGGER realtime_worker_health_transition AFTER UPDATE ON managed_realtime_worker_heartbeats FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_worker_health();
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose Down
 -- Existing heartbeat grants/last-operation values intentionally block unsafe downgrade.
 ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT managed_realtime_worker_credentials_last_operation_check;

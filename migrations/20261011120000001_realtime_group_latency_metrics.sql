@@ -1,10 +1,9 @@
 -- +goose Up
-ALTER TABLE managed_realtime_consumer_group_messages
- ADD COLUMN processing_started_at timestamptz CHECK (processing_started_at IS NULL OR isfinite(processing_started_at)),
- ADD COLUMN first_claim_observed boolean NOT NULL DEFAULT false CHECK (first_claim_observed IN (true,false));
+ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN IF NOT EXISTS processing_started_at timestamptz CHECK (processing_started_at IS NULL OR isfinite(processing_started_at));
+ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN IF NOT EXISTS first_claim_observed boolean NOT NULL DEFAULT false CHECK (first_claim_observed IN (true,false));
 -- Preserve first-claim identity across replay of pre-migration attempted rows.
-UPDATE managed_realtime_consumer_group_messages SET first_claim_observed=true WHERE attempts>0;
-CREATE TABLE managed_realtime_group_metrics (
+UPDATE managed_realtime_consumer_group_messages SET first_claim_observed=true WHERE attempts>0 AND NOT first_claim_observed;
+CREATE TABLE IF NOT EXISTS managed_realtime_group_metrics (
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  bucket_at timestamptz NOT NULL CHECK (isfinite(bucket_at) AND bucket_at=date_trunc('minute',bucket_at,'UTC')),
  first_claims bigint NOT NULL DEFAULT 0 CHECK (first_claims>=0),
@@ -16,6 +15,9 @@ CREATE TABLE managed_realtime_group_metrics (
  PRIMARY KEY(group_id,bucket_at)
 );
 -- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF to_regprocedure('record_realtime_group_metric(uuid,bigint,bigint,bigint,bigint,numeric,numeric)') IS NULL THEN
 CREATE FUNCTION record_realtime_group_metric(g uuid, first_count bigint, complete_count bigint, retry_count bigint, dead_count bigint, queue_ms numeric, processing_ms numeric) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE bucket timestamptz := date_trunc('minute',clock_timestamp(),'UTC');
 BEGIN
@@ -30,8 +32,13 @@ BEGIN
  queue_milliseconds=managed_realtime_group_metrics.queue_milliseconds+excluded.queue_milliseconds,
  processing_milliseconds=managed_realtime_group_metrics.processing_milliseconds+excluded.processing_milliseconds;
 END $$;
+ END IF;
+END $realtime_replay$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF to_regprocedure('measure_realtime_group_transition()') IS NULL THEN
 CREATE FUNCTION measure_realtime_group_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE wait_ms numeric := 0; first_count bigint := 0; retry_count bigint := 0; dead_count bigint := 0;
 BEGIN
@@ -54,8 +61,17 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END $realtime_replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('managed_realtime_consumer_group_messages') AND tgname='realtime_group_measure_transition') THEN
 CREATE TRIGGER realtime_group_measure_transition BEFORE UPDATE ON managed_realtime_consumer_group_messages FOR EACH ROW EXECUTE FUNCTION measure_realtime_group_transition();
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose Down
 DROP TRIGGER realtime_group_measure_transition ON managed_realtime_consumer_group_messages;
 DROP FUNCTION measure_realtime_group_transition();

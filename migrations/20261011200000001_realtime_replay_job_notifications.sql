@@ -6,12 +6,16 @@ BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint
  WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk';
  IF definition IS NULL THEN RAISE EXCEPTION 'missing webhook event constraint'; END IF;
+ IF position('''realtime.replay_job.cancelled''' in definition)>0 AND position('''realtime.replay_job.completed''' in definition)>0 AND position('''realtime.replay_job.processing_failed''' in definition)>0 THEN RETURN; END IF;
  definition:=regexp_replace(definition,' NOT VALID$','');
  ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
  EXECUTE format('ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((%s) OR event IN (%L,%L,%L))',substring(definition from 8 for length(definition)-8),'realtime.replay_job.completed','realtime.replay_job.cancelled','realtime.replay_job.processing_failed');
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF to_regprocedure('enqueue_realtime_replay_job_notification()') IS NULL THEN
 CREATE FUNCTION enqueue_realtime_replay_job_notification() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE recipients uuid[]; v_app uuid; v_account uuid; v_endpoint uuid;
  v_channel text; v_group text; v_slug text; event_id uuid; event_name text;
@@ -51,9 +55,18 @@ BEGIN
  ON CONFLICT (event,source_id) DO NOTHING;
  RETURN NEW;
 END $$;
+ END IF;
+END $realtime_replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('managed_realtime_replay_jobs') AND tgname='realtime_replay_job_notification') THEN
 CREATE TRIGGER realtime_replay_job_notification AFTER UPDATE ON managed_realtime_replay_jobs
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_replay_job_notification();
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose Down
 DROP TRIGGER realtime_replay_job_notification ON managed_realtime_replay_jobs;
 DROP FUNCTION enqueue_realtime_replay_job_notification();

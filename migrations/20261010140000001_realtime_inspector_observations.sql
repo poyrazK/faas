@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_outbox_observations (
+CREATE TABLE IF NOT EXISTS managed_realtime_outbox_observations (
  source_id uuid NOT NULL REFERENCES commit_sources(id) ON DELETE CASCADE,
  event_id uuid NOT NULL,
  endpoint_id text NOT NULL,

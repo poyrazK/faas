@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_inbox_message_expirations (
+CREATE TABLE IF NOT EXISTS managed_realtime_inbox_message_expirations (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL CHECK (channel ~ '^[0-9a-f]{64}$'),
  sequence bigint NOT NULL CHECK (sequence > 0),

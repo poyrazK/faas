@@ -6,12 +6,16 @@ BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint
  WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk';
  IF definition IS NULL THEN RAISE EXCEPTION 'missing webhook event constraint'; END IF;
+ IF position('''realtime.consumer_group.dead_lettered''' in definition)>0 THEN RETURN; END IF;
  definition:=regexp_replace(definition,' NOT VALID$','');
  ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
  EXECUTE format('ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((%s) OR event=%L)',substring(definition from 8 for length(definition)-8),'realtime.consumer_group.dead_lettered');
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF to_regprocedure('enqueue_realtime_consumer_group_dead_letter()') IS NULL THEN
 CREATE FUNCTION enqueue_realtime_consumer_group_dead_letter() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE recipients uuid[]; v_app uuid; v_account uuid; v_endpoint uuid;
  v_channel text; v_group text; v_max_attempts integer; event_id uuid; occurred_at timestamptz;
@@ -35,9 +39,18 @@ BEGIN
  'occurred_at',occurred_at),recipients);
  RETURN NEW;
 END $$;
+ END IF;
+END $realtime_replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $realtime_replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('managed_realtime_consumer_group_messages') AND tgname='realtime_consumer_group_dead_letter') THEN
 CREATE TRIGGER realtime_consumer_group_dead_letter AFTER UPDATE ON managed_realtime_consumer_group_messages
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_consumer_group_dead_letter();
+ END IF;
+END $realtime_replay$;
+-- +goose StatementEnd
 -- +goose Down
 DROP TRIGGER realtime_consumer_group_dead_letter ON managed_realtime_consumer_group_messages;
 DROP FUNCTION enqueue_realtime_consumer_group_dead_letter();

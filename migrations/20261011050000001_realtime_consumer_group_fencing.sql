@@ -1,7 +1,7 @@
 -- +goose Up
-ALTER TABLE managed_realtime_consumer_groups ADD COLUMN last_fencing_token bigint NOT NULL DEFAULT 0 CHECK (last_fencing_token>=0);
-ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN fencing_token bigint CHECK (fencing_token>0);
-CREATE UNIQUE INDEX realtime_group_fencing_unique ON managed_realtime_consumer_group_messages(group_id,fencing_token) WHERE fencing_token IS NOT NULL;
+ALTER TABLE managed_realtime_consumer_groups ADD COLUMN IF NOT EXISTS last_fencing_token bigint NOT NULL DEFAULT 0 CHECK (last_fencing_token>=0);
+ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN IF NOT EXISTS fencing_token bigint CHECK (fencing_token>0);
+CREATE UNIQUE INDEX IF NOT EXISTS realtime_group_fencing_unique ON managed_realtime_consumer_group_messages(group_id,fencing_token) WHERE fencing_token IS NOT NULL;
 -- Legacy leases deliberately have no retroactively issued token.
 -- +goose Down
 LOCK TABLE managed_realtime_consumer_groups IN ACCESS EXCLUSIVE MODE;

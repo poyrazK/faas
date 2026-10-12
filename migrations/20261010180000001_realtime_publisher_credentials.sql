@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_publisher_credentials (
+CREATE TABLE IF NOT EXISTS managed_realtime_publisher_credentials (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 128),
@@ -20,8 +20,8 @@ CREATE TABLE managed_realtime_publisher_credentials (
  last_channel text CHECK (last_channel IS NULL OR octet_length(last_channel) BETWEEN 1 AND 256),
  last_sequence bigint CHECK (last_sequence IS NULL OR last_sequence>0)
 );
-CREATE INDEX realtime_publisher_credentials_endpoint ON managed_realtime_publisher_credentials(endpoint_id,issued_at);
-CREATE TABLE managed_realtime_publisher_receipts (
+CREATE INDEX IF NOT EXISTS realtime_publisher_credentials_endpoint ON managed_realtime_publisher_credentials(endpoint_id,issued_at);
+CREATE TABLE IF NOT EXISTS managed_realtime_publisher_receipts (
  credential_id uuid NOT NULL REFERENCES managed_realtime_publisher_credentials(id) ON DELETE CASCADE,
  idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 128),
  content_hash bytea NOT NULL CHECK (octet_length(content_hash)=32),

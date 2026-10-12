@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_consumer_groups (
+CREATE TABLE IF NOT EXISTS managed_realtime_consumer_groups (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  channel text NOT NULL CHECK (octet_length(channel) BETWEEN 1 AND 256),
@@ -11,7 +11,7 @@ CREATE TABLE managed_realtime_consumer_groups (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(endpoint_id,channel,name)
 );
-CREATE TABLE managed_realtime_consumer_group_messages (
+CREATE TABLE IF NOT EXISTS managed_realtime_consumer_group_messages (
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  sequence bigint NOT NULL CHECK (sequence > 0),
  message jsonb NOT NULL CHECK (jsonb_typeof(message)='object'),
@@ -27,7 +27,7 @@ CREATE TABLE managed_realtime_consumer_group_messages (
  CHECK (status='leased' OR (token_hash IS NULL AND lease_until IS NULL))
 );
 -- Each group's outstanding rows are admission bounded; this index orders claims.
-CREATE INDEX realtime_consumer_group_claim ON managed_realtime_consumer_group_messages(group_id,status,sequence);
+CREATE INDEX IF NOT EXISTS realtime_consumer_group_claim ON managed_realtime_consumer_group_messages(group_id,status,sequence);
 -- +goose Down
 DROP TABLE managed_realtime_consumer_group_messages;
 DROP TABLE managed_realtime_consumer_groups;
