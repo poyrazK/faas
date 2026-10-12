@@ -16,7 +16,10 @@ T = TypeVar("T", bound="OutboundAIPriceListResponse")
 
 @_attrs_define
 class OutboundAIPriceListResponse:
-    """The price list in effect; effective_from is null when none was ever set, and cost is then zero."""
+    """The price list in effect; effective_from is null when none was ever set. Models the list does not name are priced
+    from the built-in catalog.
+
+    """
 
     effective_from: datetime.datetime | None
     entries: list[OutboundAIPriceEntry]

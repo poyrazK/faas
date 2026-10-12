@@ -162,19 +162,19 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   const events = []
   // Adapt only the fixture transport; the hosted entrypoint accepts HTTPS origins.
   const fetcher = async (target,init) => {
-    const url = new URL(target), local = fresh + url.pathname + url.search
-    // The replacement engine's one-connection pool can briefly report 503
-    // while its readiness probe settles. Warm only the read-only schema probe;
-    // application requests and authorization denials stay single-attempt.
-    if (url.pathname !== '/__gregale/schema' || (init.method && init.method !== 'GET')) return fetch(local,init)
-    let response
+    // Readiness can regress while PostgREST returns its sole connection.
+    // Establish this transport prerequisite for each request, without retrying
+    // an authentication/RLS assertion or changing the two-connection budget.
+    let readyObservations = 0
     await eventually(async () => {
-      response = await fetch(local,init)
-      if (response.status !== 503) return true
-      await response.body?.cancel()
-      return false
+      const response = await fetch(`http://127.0.0.1:${ready}/ready`)
+      await response.arrayBuffer()
+      readyObservations = response.status === 200 ? readyObservations + 1 : 0
+      return readyObservations >= 3
     })
-    return response
+    const response = await fetch(fresh + new URL(target).pathname + new URL(target).search,init)
+    const body = await response.arrayBuffer()
+    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers})
   }
   // Engine /ready can briefly regress while its single connection is released
   // after the first post-restart request. Establish the serving prerequisite

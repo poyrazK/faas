@@ -28,6 +28,8 @@ class OutboundAIBudgetAlert:
     integration_id: UUID
     budget: OutboundAIBudgetAlertBudget
     app_id: None | UUID
+    end_user: None | str
+    """The end user of a user_daily_tokens or user_daily_cost alert (ADR-995)."""
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetAlertThresholdPercent
     limit: int
@@ -48,6 +50,9 @@ class OutboundAIBudgetAlert:
         else:
             app_id = self.app_id
 
+        end_user: None | str
+        end_user = self.end_user
+
         period_start = self.period_start.isoformat()
 
         threshold_percent: int = self.threshold_percent
@@ -66,6 +71,7 @@ class OutboundAIBudgetAlert:
                 "integration_id": integration_id,
                 "budget": budget,
                 "app_id": app_id,
+                "end_user": end_user,
                 "period_start": period_start,
                 "threshold_percent": threshold_percent,
                 "limit": limit,
@@ -100,6 +106,13 @@ class OutboundAIBudgetAlert:
 
         app_id = _parse_app_id(d.pop("app_id"))
 
+        def _parse_end_user(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        end_user = _parse_end_user(d.pop("end_user"))
+
         period_start = datetime.date.fromisoformat(d.pop("period_start"))
 
         threshold_percent = check_outbound_ai_budget_alert_threshold_percent(d.pop("threshold_percent"))
@@ -115,6 +128,7 @@ class OutboundAIBudgetAlert:
             integration_id=integration_id,
             budget=budget,
             app_id=app_id,
+            end_user=end_user,
             period_start=period_start,
             threshold_percent=threshold_percent,
             limit=limit,

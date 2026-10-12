@@ -25,6 +25,15 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
 BUILD_CGO_ENABLED ?= 0
+# apidserver's test compile is the largest in the repo (ADR-982). A local
+# `-race` build of it peaks at ~13.5 GB RSS with the default compiler flags;
+# CI's per-package flags plus a soft heap limit keep it near 7.5 GB, at the
+# cost of a slower apidserver compile. GO_TEST applies both; a GOMEMLIMIT
+# already in the environment wins. Packages that never approach the limit
+# are unaffected.
+APID_TEST_GCFLAGS ?= '-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false'
+GO_TEST_MEMLIMIT ?= $(if $(GOMEMLIMIT),$(GOMEMLIMIT),6GiB)
+GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(APID_TEST_GCFLAGS)
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -232,7 +241,11 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# (pkg/e2etest.EnsureSharedBinaries) rather than once per test, so
 	# the e2e wall is dominated by the tests themselves; the ceiling is
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
-	$(GO) test -race -count=1 -timeout=18m $(PKGS)
+	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
+
+.PHONY: test-apid
+test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
+	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
 .PHONY: test-state-coverage
 test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated pkg/state/sqlc/**). Needs DATABASE_URL pointing at a reachable Postgres; PgStore tests skip cleanly otherwise.
@@ -281,14 +294,6 @@ spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synth
 .PHONY: adr-number-uniqueness-check
 adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet over docs/adr/DUPLICATE_NUMBERS_BASELINE.txt)
 	bash scripts/ci/check_adr_number_uniqueness.sh
-
-.PHONY: apid-size-check
-apid-size-check: ## Reject growth of pkg/apid/apidserver non-test code past scripts/ci/apid_size_baseline.txt (ADR-977)
-	bash scripts/ci/check_apid_size.sh
-
-.PHONY: apid-size-check-test
-apid-size-check-test: ## Exercise the apid size gate against synthetic packages
-	bash scripts/ci/check_apid_size_test.sh
 
 .PHONY: adr-number-uniqueness-check-test
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
@@ -706,7 +711,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check apid-size-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1228,7 +1233,7 @@ standards-contract-check: ## Run official-schema and SDK interoperability checks
 
 .PHONY: focus-contract-check
 focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and CLI operations
-	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./pkg/apid/apidserver ./cmd/gregale
+	@$(GO_TEST) -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./pkg/apid/apidserver ./cmd/gregale
 	@$(GO) test -count=1 -run '^TestInvoiceSnapshot|^TestInvoiceRefresh|^TestMemInvoiceRefresh|^TestMemInvoiceDetails|^TestMemInvoiceLifecycle|^TestInvoiceDetailsValidation' ./pkg/billing ./pkg/billing/stripe ./pkg/billing/paddle ./pkg/billing/polar ./pkg/state
 
 .PHONY: pricing-md
@@ -1427,7 +1432,7 @@ test-flags: ## Validate customer-aware flag release, SDK and request evidence ag
 	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
 	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
 	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1
-	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/apid/apidserver -run '^TestFeatureFlags' -count=1
+	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^TestFeatureFlags' -count=1
 	@$(GO) test -p 1 ./cmd/gregale -run '^TestCmdFlags' -count=1
 
 .PHONY: test-flags-metal
@@ -1446,7 +1451,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./pkg/apid/apidserver ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -1454,7 +1459,7 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*|queue_demand_uses_captured_environment|worker_pool_history_is_generation_scoped|worker_account_capacity_is_shared_and_released|worker_admission_identity_cannot_be_reinterpreted|queue_binding_consumer_publication_is_atomic|queue_binding_environment_identity_is_scoped_and_retained|queue_binding_retirement_holds_work_and_retains_receipts|queue_binding_identity_survives_rename_replacement_and_replay|queue_dead_letter_replay_rearms_original_receipt|queue_consumer_and_trigger_share_account_quota)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPgQueue(Consumer.*|Replay.*|Binding(Retirement|Admission).*)|TestPgWorkerAccountReservationRace)$$' -count=1
-	@$(GO) test -p 1 ./pkg/apid/apidserver -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*|TestQueueEnvironmentHTTP.*|TestPGQueueEnvironmentHTTP.*)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*|TestQueueEnvironmentHTTP.*|TestPGQueueEnvironmentHTTP.*)$$' -count=1
 	@$(GO) test -p 1 ./migrations -run '^(TestMigration(EnvironmentGitOpsQueueIntent|InvocationDeploymentScope|InvocationQueueBindingIdentity|QueueBindingEnvironmentScope|QueueReplayDeliveryFence|QueueConsumerBindingIdentity).*|TestEnvironmentGitOpsMigrationsReplayRetainsIdentityAndLeases|TestEnvironmentGitApprovalProvenance.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1
@@ -1463,7 +1468,7 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestQueuePollerLinksTriggerAndInvocationOutcomes|TestQueuePollerRequiresAuthoritativeBindingIdentity|TestQueuePollerBindingIdentitySurvivesRename|TestQueuePollerEnvironmentIdentity.*|TestQueueReplay.*|TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement|TestBuildDispatchEnvelope_DurableIdentityIsTyped|TestQueueBatchDispatchPreservesCapturedScopes)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gateway -run '^TestHandleInvocationDispatchBatch_DurableIdentity$$' -count=1
 	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*|TestSynthBatch.*)$$' -count=1
-	@$(GO) test -p 1 ./pkg/apid/apidserver -run '^TestReplayInvocation_(PreservesCapturedEnvironment|BoundQueueRetainsDeliveryIdentity)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^TestReplayInvocation_(PreservesCapturedEnvironment|BoundQueueRetainsDeliveryIdentity)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1

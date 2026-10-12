@@ -39,6 +39,9 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimit   *int64
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit *int64
+	AIUserDailyCostLimit  *int64
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -82,11 +85,16 @@ type OutboundAIPolicy struct {
 	DailyCostLimit    *int64
 	MonthlyCostLimit  *int64
 	RequestLogEnabled bool
+	// UserDailyTokenLimit and UserDailyCostLimit cap each end user named by
+	// X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit *int64
+	UserDailyCostLimit  *int64
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
+		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
 		(!p.RequestLogEnabled || p.Provider != "")
 }
 
