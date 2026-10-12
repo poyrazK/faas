@@ -9459,6 +9459,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	}
+	// A worker pool has no periodic floor unless it scales on a queue
+	// signal, so a worker parked here never came back: h8-worker sat at
+	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
+	// H9-171).
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
+		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
+	}
 	return true, nil
 }
 
