@@ -958,6 +958,77 @@ func (q *Queries) EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const eventRecoveryLegacySettled = `-- name: EventRecoveryLegacySettled :one
+SELECT state='delivered' AS settled FROM event_fanout_outbox WHERE id=$1
+`
+
+func (q *Queries) EventRecoveryLegacySettled(ctx context.Context, db DBTX, id int64) (bool, error) {
+	row := db.QueryRow(ctx, eventRecoveryLegacySettled, id)
+	var settled bool
+	err := row.Scan(&settled)
+	return settled, err
+}
+
+const eventRecoveryPublishedVersion = `-- name: EventRecoveryPublishedVersion :one
+SELECT published_version FROM workflow_automation_definitions
+WHERE app_id=$1::uuid AND name=$2::text
+`
+
+type EventRecoveryPublishedVersionParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) EventRecoveryPublishedVersion(ctx context.Context, db DBTX, arg EventRecoveryPublishedVersionParams) (int64, error) {
+	row := db.QueryRow(ctx, eventRecoveryPublishedVersion, arg.AppID, arg.Name)
+	var published_version int64
+	err := row.Scan(&published_version)
+	return published_version, err
+}
+
+const eventRecoveryReplayCount = `-- name: EventRecoveryReplayCount :one
+WITH locked AS MATERIALIZED (
+ SELECT id FROM event_fanout_attempt_history
+ WHERE outbox_id=$1::bigint AND subscription_id=$2::text AND action='operator_replay'
+ FOR SHARE
+) SELECT count(*)::bigint FROM locked
+`
+
+type EventRecoveryReplayCountParams struct {
+	OutboxID       int64
+	SubscriptionID string
+}
+
+func (q *Queries) EventRecoveryReplayCount(ctx context.Context, db DBTX, arg EventRecoveryReplayCountParams) (int64, error) {
+	row := db.QueryRow(ctx, eventRecoveryReplayCount, arg.OutboxID, arg.SubscriptionID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventRecoveryRoutingGeneration = `-- name: EventRecoveryRoutingGeneration :one
+SELECT generation, state FROM event_fanout_recipients
+WHERE outbox_id=$1::bigint AND subscription_id=$2::text
+FOR UPDATE
+`
+
+type EventRecoveryRoutingGenerationParams struct {
+	OutboxID       int64
+	SubscriptionID string
+}
+
+type EventRecoveryRoutingGenerationRow struct {
+	Generation int64
+	State      string
+}
+
+func (q *Queries) EventRecoveryRoutingGeneration(ctx context.Context, db DBTX, arg EventRecoveryRoutingGenerationParams) (EventRecoveryRoutingGenerationRow, error) {
+	row := db.QueryRow(ctx, eventRecoveryRoutingGeneration, arg.OutboxID, arg.SubscriptionID)
+	var i EventRecoveryRoutingGenerationRow
+	err := row.Scan(&i.Generation, &i.State)
+	return i, err
+}
+
 const eventRoutingClaimReceipt = `-- name: EventRoutingClaimReceipt :one
 WITH candidate AS (
  SELECT o.id FROM event_fanout_outbox o
@@ -1291,4 +1362,66 @@ func (q *Queries) EventRoutingSettleSnapshot(ctx context.Context, db DBTX, id in
 	var id_2 int64
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const eventWorkflowRecoveryCandidate = `-- name: EventWorkflowRecoveryCandidate :one
+SELECT o.id AS outbox_id, o.source AS event_source,o.event_id,o.event_type,
+ (r.recipient->>'id')::text AS subscription_id,
+ coalesce((p.progress->>'updated_at')::timestamptz,o.created_at)::timestamptz AS failed_at,
+ coalesce(nullif(p.progress->>'failure_code',''),'unknown')::text AS failure_code,
+ coalesce((p.progress->>'retryable')::boolean,false)::boolean AS retryable,
+ event_recovery_failure_identity(p.progress)::jsonb AS expected_progress
+FROM event_fanout_outbox o
+JOIN apps a ON a.id=$1::uuid AND a.account_id=o.account_id AND a.status<>'deleted'
+CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r(recipient)
+CROSS JOIN LATERAL (SELECT o.recipient_progress->(r.recipient->>'id') AS progress) p
+WHERE o.account_id=$2::uuid AND o.source=$3::text AND o.event_id=$4::text
+ AND r.recipient->>'app_id'=a.id::text AND r.recipient->>'id'=$5::text
+ AND r.recipient->'workflow'->>'name'=$6::text
+ AND p.progress->>'state'='failed'
+`
+
+type EventWorkflowRecoveryCandidateParams struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	EventSource    string
+	EventID        string
+	SubscriptionID string
+	WorkflowName   string
+}
+
+type EventWorkflowRecoveryCandidateRow struct {
+	OutboxID         int64
+	EventSource      string
+	EventID          string
+	EventType        string
+	SubscriptionID   string
+	FailedAt         pgtype.Timestamptz
+	FailureCode      string
+	Retryable        bool
+	ExpectedProgress []byte
+}
+
+func (q *Queries) EventWorkflowRecoveryCandidate(ctx context.Context, db DBTX, arg EventWorkflowRecoveryCandidateParams) (EventWorkflowRecoveryCandidateRow, error) {
+	row := db.QueryRow(ctx, eventWorkflowRecoveryCandidate,
+		arg.AppID,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+		arg.SubscriptionID,
+		arg.WorkflowName,
+	)
+	var i EventWorkflowRecoveryCandidateRow
+	err := row.Scan(
+		&i.OutboxID,
+		&i.EventSource,
+		&i.EventID,
+		&i.EventType,
+		&i.SubscriptionID,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.Retryable,
+		&i.ExpectedProgress,
+	)
+	return i, err
 }

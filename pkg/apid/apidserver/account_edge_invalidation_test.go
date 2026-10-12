@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,7 +21,7 @@ import (
 // a customer who paid after a suspension stayed behind a 402 until
 // gatewayd restarted.
 
-func edgeInvalidationEnv(t *testing.T) (*server, *state.MemStore, *spyNotifier, state.Account, string) {
+func edgeInvalidationEnv(t *testing.T) (*apidserver.Server, *state.MemStore, *apidserver.SpyNotifier, state.Account, string) {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -35,14 +36,14 @@ func edgeInvalidationEnv(t *testing.T) (*server, *state.MemStore, *spyNotifier, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	spy := &spyNotifier{}
-	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", spy,
-		stripeWebhookSecretForTest, noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
+	spy := &apidserver.SpyNotifier{}
+	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", spy,
+		apidserver.StripeWebhookSecretForTest, apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	return srv, store, spy, acct, app.ID
 }
 
-func appChangedFor(spy *spyNotifier, appID, kind string) bool {
-	for _, n := range spy.snapshot() {
+func appChangedFor(spy *apidserver.SpyNotifier, appID, kind string) bool {
+	for _, n := range spy.Snapshot() {
 		if n.Channel != db.NotifyAppChanged {
 			continue
 		}
@@ -62,11 +63,11 @@ func TestPaymentSucceeded_TellsTheEdge(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if rec := postStripeEvent(t, srv.handler(), "invoice.payment_succeeded", "cus_test_123"); rec.Code != http.StatusOK {
+	if rec := apidserver.PostStripeEvent(t, srv.Handler(), "invoice.payment_succeeded", "cus_test_123"); rec.Code != http.StatusOK {
 		t.Fatalf("webhook = %d %s", rec.Code, rec.Body)
 	}
 	if !appChangedFor(spy, appID, "account_reactivated") {
-		t.Fatalf("payment restored the account without app_changed(account_reactivated); notifications: %v", spy.snapshot())
+		t.Fatalf("payment restored the account without app_changed(account_reactivated); notifications: %v", spy.Snapshot())
 	}
 }
 
@@ -76,7 +77,7 @@ func TestSelfServiceDeleteAndRestore_TellTheEdge(t *testing.T) {
 	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	h := srv.handler()
+	h := srv.Handler()
 	do := func(method, path string) {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -100,13 +101,13 @@ func TestSelfServiceDeleteAndRestore_TellTheEdge(t *testing.T) {
 func TestSetAccountPlan_TellsTheEdgeOnlyOnChange(t *testing.T) {
 	srv, _, spy, acct, appID := edgeInvalidationEnv(t)
 	ctx := context.Background()
-	if err := srv.setAccountPlan(ctx, acct, api.PlanHobby); err != nil { // unchanged
+	if err := srv.SetAccountPlan(ctx, acct, api.PlanHobby); err != nil { // unchanged
 		t.Fatal(err)
 	}
 	if appChangedFor(spy, appID, "account_plan_changed") {
 		t.Fatal("an unchanged plan fanned out app_changed")
 	}
-	if err := srv.setAccountPlan(ctx, acct, api.PlanPro); err != nil {
+	if err := srv.SetAccountPlan(ctx, acct, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
 	if !appChangedFor(spy, appID, "account_plan_changed") {

@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.event_recovery_preflight_review_mode import (
+    EventRecoveryPreflightReviewMode,
+    check_event_recovery_preflight_review_mode,
+)
 from ..models.event_recovery_preflight_state import EventRecoveryPreflightState, check_event_recovery_preflight_state
 from ..types import UNSET, Unset
 
@@ -21,7 +25,10 @@ T = TypeVar("T", bound="EventRecoveryPreflight")
 
 @_attrs_define
 class EventRecoveryPreflight:
-    """Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job."""
+    """Read-only eligibility and capacity for pending recovery items or saved native retry outcomes. Timing fields always
+    describe the parent job; observations do not reserve capacity.
+
+    """
 
     job_id: UUID
     observed_at: datetime.datetime
@@ -45,6 +52,15 @@ class EventRecoveryPreflight:
     """Active job and optimistic earliest drain strictly precedes expiry; true is not a guarantee of completion."""
     assumes_immediate_resume: bool
     sample: list[EventRecoveryPreflightItem]
+    review_mode: EventRecoveryPreflightReviewMode | Unset = UNSET
+    """Present only for the saved native retry view."""
+    app_id: UUID | Unset = UNSET
+    """Native recovery application scope."""
+    workflow_name: str | Unset = UNSET
+    """Native recovery workflow scope."""
+    reviewed_count: int | Unset = UNSET
+    """Number of saved parent items reviewed in retry mode. Pending count remains zero; status counters partition
+    this count and sample includes every item."""
     receipt_protection_until: datetime.datetime | Unset = UNSET
     """This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted
     after expiry or terminal state; does not protect execution history or extend delivery deadlines."""
@@ -98,6 +114,18 @@ class EventRecoveryPreflight:
             sample_item = sample_item_data.to_dict()
             sample.append(sample_item)
 
+        review_mode: str | Unset = UNSET
+        if not isinstance(self.review_mode, Unset):
+            review_mode = self.review_mode
+
+        app_id: str | Unset = UNSET
+        if not isinstance(self.app_id, Unset):
+            app_id = str(self.app_id)
+
+        workflow_name = self.workflow_name
+
+        reviewed_count = self.reviewed_count
+
         receipt_protection_until: str | Unset = UNSET
         if not isinstance(self.receipt_protection_until, Unset):
             receipt_protection_until = self.receipt_protection_until.isoformat()
@@ -136,6 +164,14 @@ class EventRecoveryPreflight:
                 "sample": sample,
             }
         )
+        if review_mode is not UNSET:
+            field_dict["review_mode"] = review_mode
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
+        if workflow_name is not UNSET:
+            field_dict["workflow_name"] = workflow_name
+        if reviewed_count is not UNSET:
+            field_dict["reviewed_count"] = reviewed_count
         if receipt_protection_until is not UNSET:
             field_dict["receipt_protection_until"] = receipt_protection_until
         if receipt_retention_warning_count is not UNSET:
@@ -197,6 +233,24 @@ class EventRecoveryPreflight:
 
             sample.append(sample_item)
 
+        _review_mode = d.pop("review_mode", UNSET)
+        review_mode: EventRecoveryPreflightReviewMode | Unset
+        if isinstance(_review_mode, Unset):
+            review_mode = UNSET
+        else:
+            review_mode = check_event_recovery_preflight_review_mode(_review_mode)
+
+        _app_id = d.pop("app_id", UNSET)
+        app_id: UUID | Unset
+        if isinstance(_app_id, Unset):
+            app_id = UNSET
+        else:
+            app_id = UUID(_app_id)
+
+        workflow_name = d.pop("workflow_name", UNSET)
+
+        reviewed_count = d.pop("reviewed_count", UNSET)
+
         _receipt_protection_until = d.pop("receipt_protection_until", UNSET)
         receipt_protection_until: datetime.datetime | Unset
         if isinstance(_receipt_protection_until, Unset):
@@ -236,6 +290,10 @@ class EventRecoveryPreflight:
             fits_before_expiry=fits_before_expiry,
             assumes_immediate_resume=assumes_immediate_resume,
             sample=sample,
+            review_mode=review_mode,
+            app_id=app_id,
+            workflow_name=workflow_name,
+            reviewed_count=reviewed_count,
             receipt_protection_until=receipt_protection_until,
             receipt_retention_warning_count=receipt_retention_warning_count,
             receipt_retention_held_count=receipt_retention_held_count,

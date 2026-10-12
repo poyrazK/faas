@@ -1,14 +1,16 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestParseDataUpstreamHistoryQueryDefaults(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 34, 56, 0, time.UTC)
-	q, prob := parseDataUpstreamHistoryQuery(httptest.NewRequest("GET", "/v1/apps/demo/upstreams/history", nil), now)
+	q, prob := apidserver.ParseDataUpstreamHistoryQuery(httptest.NewRequest("GET", "/v1/apps/demo/upstreams/history", nil), now)
 	if prob != nil {
 		t.Fatalf("unexpected problem: %+v", prob)
 	}
@@ -22,7 +24,7 @@ func TestParseDataUpstreamHistoryQueryDefaults(t *testing.T) {
 
 func TestParseDataUpstreamHistoryQueryFiltersAndBounds(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/apps/demo/upstreams/history?from=2026-09-01T00:00:00Z&to=2026-09-01T01:00:00Z&bucket=10m&region=eu-west-1&deployment_scope=production", nil)
-	q, prob := parseDataUpstreamHistoryQuery(r, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+	q, prob := apidserver.ParseDataUpstreamHistoryQuery(r, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
 	if prob != nil {
 		t.Fatalf("unexpected problem: %+v", prob)
 	}
@@ -39,7 +41,7 @@ func TestParseDataUpstreamHistoryQueryRejectsUnsafeWindows(t *testing.T) {
 		"bad region":   "/v1/apps/demo/upstreams/history?region=EU-West-1",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, prob := parseDataUpstreamHistoryQuery(httptest.NewRequest("GET", target, nil), time.Now().UTC()); prob == nil {
+			if _, prob := apidserver.ParseDataUpstreamHistoryQuery(httptest.NewRequest("GET", target, nil), time.Now().UTC()); prob == nil {
 				t.Fatal("expected validation problem")
 			}
 		})
@@ -47,11 +49,11 @@ func TestParseDataUpstreamHistoryQueryRejectsUnsafeWindows(t *testing.T) {
 }
 
 func TestValidDataUpstreamHistoryRegion(t *testing.T) {
-	if !validDataUpstreamHistoryRegion("us_east-1") {
+	if !apidserver.ValidDataUpstreamHistoryRegion("us_east-1") {
 		t.Fatal("expected valid region")
 	}
 	for _, region := range []string{"", "EU-west-1", "us east", "a/b"} {
-		if validDataUpstreamHistoryRegion(region) {
+		if apidserver.ValidDataUpstreamHistoryRegion(region) {
 			t.Errorf("validDataUpstreamHistoryRegion(%q) = true, want false", region)
 		}
 	}

@@ -890,3 +890,21 @@ func (l *NodeLedger) AdmissionUsedMB(nodeID string) int {
 	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, ceiling)
 	return used
 }
+
+// MeasuredAdmissionEnabled reports whether EnableMeasuredAdmission is on.
+func (l *NodeLedger) MeasuredAdmissionEnabled() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.measured != nil
+}
+
+// CeilingForNode is the RAM admission ceiling the ledger last applied on a
+// node, or the global ceiling for a node it has not admitted to.
+func (l *NodeLedger) CeilingForNode(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if node := l.resident[nodeID]; node != nil && node.ceilingMB > 0 {
+		return node.ceilingMB
+	}
+	return l.ceilingForNode_locked(nodeID, api.Limits{})
+}

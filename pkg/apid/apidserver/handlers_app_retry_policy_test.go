@@ -1,17 +1,18 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 134
 func TestEffectiveInvocationRetryPolicyPrecedence(t *testing.T) {
 	app := state.App{RetryPolicyJSON: json.RawMessage(`{"max_attempts":4,"base_seconds":2}`)}
-	got := effectiveInvocationRetryPolicy(app, nil, 3)
+	got := apidserver.EffectiveInvocationRetryPolicy(app, nil, 3)
 	var policy api.RetryPolicyDTO
 	if err := json.Unmarshal(got, &policy); err != nil {
 		t.Fatal(err)
@@ -20,7 +21,7 @@ func TestEffectiveInvocationRetryPolicyPrecedence(t *testing.T) {
 		t.Fatalf("inherited policy = %+v, want plan-capped max_attempts=3 base_seconds=2", policy)
 	}
 	override := &api.RetryPolicyDTO{MaxAttempts: 2, BaseSeconds: 1}
-	got = effectiveInvocationRetryPolicy(app, override, 3)
+	got = apidserver.EffectiveInvocationRetryPolicy(app, override, 3)
 	if err := json.Unmarshal(got, &policy); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func TestEffectiveInvocationRetryPolicyPrecedence(t *testing.T) {
 }
 
 func TestEffectiveInvocationRetryPolicyMaterializesNoRetryPlan(t *testing.T) {
-	got := effectiveInvocationRetryPolicy(state.App{}, nil, 0)
+	got := apidserver.EffectiveInvocationRetryPolicy(state.App{}, nil, 0)
 	var policy api.RetryPolicyDTO
 	if err := json.Unmarshal(got, &policy); err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestEffectiveInvocationRetryPolicyMaterializesNoRetryPlan(t *testing.T) {
 }
 
 func TestMarshalAppRetryPolicyRejectsInvalidValues(t *testing.T) {
-	if _, problem := marshalAppRetryPolicy(&api.RetryPolicyDTO{BaseSeconds: -1}); problem == nil {
+	if _, problem := apidserver.MarshalAppRetryPolicy(&api.RetryPolicyDTO{BaseSeconds: -1}); problem == nil {
 		t.Fatal("expected invalid retry policy problem")
 	}
 }

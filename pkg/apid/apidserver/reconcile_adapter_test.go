@@ -1,14 +1,15 @@
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMapReconcileErrorConflictIsClientVisible(t *testing.T) {
-	mapped := mapReconcileError(errors.Join(errors.New("create workload"), state.ErrConflict))
+	mapped := apidserver.MapReconcileError(errors.Join(errors.New("create workload"), state.ErrConflict))
 	if mapped == nil {
 		t.Fatal("mapReconcileError returned nil")
 	}

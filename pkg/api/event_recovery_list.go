@@ -25,7 +25,7 @@ func (q EventRecoveryListQuery) Validate() error {
 	default:
 		return fmt.Errorf("invalid recovery state")
 	}
-	if q.Mode != "" && q.Mode != "routing" && q.Mode != "execution" {
+	if q.Mode != "" && q.Mode != "routing" && q.Mode != "execution" && q.Mode != "workflow" {
 		return fmt.Errorf("invalid recovery mode")
 	}
 	if len(q.SubscriptionID) > EventBacklogFilterMaxBytes || len(q.Cursor) > EventRecoveryCursorMaxBytes {

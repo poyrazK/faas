@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 735
 
@@ -8,14 +8,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // ADR-735: opt-in notifications link to the owner's retained health evidence.
 func TestAppHealthNotificationsAPISubscriptionAndProvenance(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "observed-health-notifications")
-	app, err := e.store.AppBySlug(t.Context(), slug)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "observed-health-notifications")
+	app, err := (*e.Store()).AppBySlug(t.Context(), slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,19 +27,19 @@ func TestAppHealthNotificationsAPISubscriptionAndProvenance(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	for i, status := range []string{"healthy", "unhealthy"} {
 		at := now.Add(time.Duration(i) * 31 * time.Second)
-		claim, err := e.store.ClaimAppHealth(t.Context(), uuid.NewString(), at)
+		claim, err := (*e.Store()).ClaimAppHealth(t.Context(), uuid.NewString(), at)
 		if err != nil {
 			t.Fatal(err)
 		}
 		a := api.AppHealthResponse{AppID: app.ID, Scope: "default", Status: status, Phase: "serving", EvaluatedAt: at.Format(time.RFC3339Nano), ValidForSeconds: 120, ServingDeploymentIDs: []string{}, Checks: []api.AppHealthCheck{}}
-		if err := e.store.FinishAppHealth(t.Context(), claim, a, at); err != nil {
+		if err := (*e.Store()).FinishAppHealth(t.Context(), claim, a, at); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n, err := e.store.DrainAppWebhookEventOutbox(t.Context(), 32); err != nil || n != 1 {
+	if n, err := (*e.Store()).DrainAppWebhookEventOutbox(t.Context(), 32); err != nil || n != 1 {
 		t.Fatal("durable app health event", n, err)
 	}
-	rows, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	rows, _, err := (*e.Store()).ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
 	if err != nil || len(rows) != 1 {
 		t.Fatal("delivery", err)
 	}
@@ -46,7 +48,7 @@ func TestAppHealthNotificationsAPISubscriptionAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	var page api.AppHealthHistoryPage
-	rec := e.do(t, "GET", payload.HistoryPath, nil, nil)
+	rec := e.Do(t, "GET", payload.HistoryPath, nil, nil)
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Entries) != 2 || page.Entries[0].ID != payload.TransitionID {
 		t.Fatal("notification cannot resolve saved observation", rec.Code, rec.Body)
 	}

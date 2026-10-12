@@ -5,7 +5,7 @@
 // is correct end-to-end — that is, the right routes are wrapped and
 // the bucket actually trips on the 11th attempt from the same IP.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,8 @@ func newAuthLimitServer(t *testing.T) http.Handler {
 	if _, err := store.CreateAccount(context.Background(), "alice@example.com", api.PlanPro); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	return srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	return srv.Handler()
 }
 
 // TestLoginLimitBlocksEleventhAttempt exercises the CountEveryAttempt

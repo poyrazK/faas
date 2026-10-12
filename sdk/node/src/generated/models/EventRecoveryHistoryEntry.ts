@@ -6,9 +6,12 @@
  * Immutable recovery lifecycle or control action with actor identity and previous settings.
  */
 export type EventRecoveryHistoryEntry = {
+  target_position?: number;
+  target_run_id?: string;
+  target_resume_count?: number;
   id: number;
   occurred_at: string;
-  action: 'created' | 'paused' | 'resumed' | 'rate_changed' | 'cancelled' | 'expired';
+  action: 'created' | 'paused' | 'resumed' | 'rate_changed' | 'cancelled' | 'expired' | 'workflow_cancelled';
   actor_kind: 'account' | 'api_key' | 'internal' | 'system';
   /**
    * Authenticated account or API key ID, or an internal/system identifier. No credential values.

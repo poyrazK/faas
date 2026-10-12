@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,16 +10,17 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestListAppDeploymentsPaginates(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "history-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "history-app")
 	base := time.Now().UTC().Add(-time.Minute)
 	for i := 0; i < 3; i++ {
-		_, err := e.store.CreateDeployment(context.Background(), state.Deployment{
-			AppID: appID, ImageDigest: "sha256:" + repeat(string(rune('a'+i)), 64),
+		_, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
+			AppID: appID, ImageDigest: "sha256:" + apidserver.Repeat(string(rune('a'+i)), 64),
 			Kind: state.DeploymentKindImage, Status: state.DeployBuilding,
 			CreatedAt: base.Add(time.Duration(i) * time.Second),
 		})
@@ -28,7 +29,7 @@ func TestListAppDeploymentsPaginates(t *testing.T) {
 		}
 	}
 
-	page1 := e.do(t, http.MethodGet, "/v1/apps/history-app/deployments?limit=2", nil, nil)
+	page1 := e.Do(t, http.MethodGet, "/v1/apps/history-app/deployments?limit=2", nil, nil)
 	if page1.Code != http.StatusOK {
 		t.Fatalf("page 1 status %d: %s", page1.Code, page1.Body)
 	}
@@ -43,7 +44,7 @@ func TestListAppDeploymentsPaginates(t *testing.T) {
 		t.Fatal("page 1 missing next_before")
 	}
 
-	page2 := e.do(t, http.MethodGet, "/v1/apps/history-app/deployments?limit=2&before="+first.NextBefore, nil, nil)
+	page2 := e.Do(t, http.MethodGet, "/v1/apps/history-app/deployments?limit=2&before="+first.NextBefore, nil, nil)
 	if page2.Code != http.StatusOK {
 		t.Fatalf("page 2 status %d: %s", page2.Code, page2.Body)
 	}
@@ -60,10 +61,10 @@ func TestListAppDeploymentsPaginates(t *testing.T) {
 }
 
 func TestListAppDeploymentsNeverDeployedIsEmpty(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "history-empty")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "history-empty")
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/history-empty/deployments", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/history-empty/deployments", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -77,45 +78,45 @@ func TestListAppDeploymentsNeverDeployedIsEmpty(t *testing.T) {
 }
 
 func TestListAppDeploymentsForeignAppReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	foreign, err := e.store.CreateAccount(context.Background(), "foreign-history@example.com", api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
+	foreign, err := (*e.Store()).CreateAccount(context.Background(), "foreign-history@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustSeedAppFor(t, e.store, foreign.ID, "foreign-history")
+	apidserver.MustSeedAppFor(t, (*e.Store()), foreign.ID, "foreign-history")
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/foreign-history/deployments", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/foreign-history/deployments", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestListAppDeploymentsBadCursor(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "history-bad-cursor")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "history-bad-cursor")
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/history-bad-cursor/deployments?before=not-a-timestamp", nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/history-bad-cursor/deployments?before=not-a-timestamp", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestCancelDeploymentAppearsInOrgActivity(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	org := seedActivityPersonalOrg(t, e)
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, OrgID: org.ID, Slug: "cancel-history", Status: state.AppActive})
+	org := apidserver.SeedActivityPersonalOrg(t, e)
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, OrgID: org.ID, Slug: "cancel-history", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
-	deployment, err := e.store.CreateDeployment(ctx, state.Deployment{
+	deployment, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployBuilding,
 	})
 	if err != nil {
 		t.Fatalf("create deployment: %v", err)
 	}
 
-	rec := e.do(t, http.MethodPost, "/v1/apps/cancel-history/deployments/"+deployment.ID+"/cancel", map[string]string{"reason": "user"}, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/cancel-history/deployments/"+deployment.ID+"/cancel", map[string]string{"reason": "user"}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cancel deployment status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(org.ID), Limit: 10})
+	rows, err := (*e.Store()).ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(org.ID), Limit: 10})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("activity = (%#v, %v); want one cancellation event", rows, err)
 	}

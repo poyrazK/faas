@@ -24,7 +24,7 @@
 //   - closed-vocab slip: 302 to ?retried=bad
 //
 //   - missing ?from: 302 to ?retried=bad (no defaulting)
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -51,7 +52,7 @@ func TestFailedStageFromJSON_FirstFailedRow(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(ss)
-	if got := failedStageFromJSON(b); got != "image_build" {
+	if got := apidserver.FailedStageFromJSON(b); got != "image_build" {
 		t.Errorf("got %q, want %q", got, "image_build")
 	}
 }
@@ -70,7 +71,7 @@ func TestFailedStageFromJSON_EmptyAndMalformed(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if got := failedStageFromJSON(tc.input); got != tc.want {
+			if got := apidserver.FailedStageFromJSON(tc.input); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -85,7 +86,7 @@ func TestFailedStageFromJSON_NoFailedRowFallsBackToCurrent(t *testing.T) {
 	// name; callers gate on empty to decide "no retry form".
 	ss := state.StageState{Current: "snapshot_prepare"}
 	b, _ := json.Marshal(ss)
-	if got := failedStageFromJSON(b); got != "snapshot_prepare" {
+	if got := apidserver.FailedStageFromJSON(b); got != "snapshot_prepare" {
 		t.Errorf("got %q, want %q (current fallback)", got, "snapshot_prepare")
 	}
 }
@@ -97,7 +98,7 @@ func TestFailedStageFromJSON_NoClosedVocabCurrentReturnsEmpty(t *testing.T) {
 	// closed-6 vocabulary is enforced upstream.
 	ss := state.StageState{Current: "future_stage_xyz"}
 	b, _ := json.Marshal(ss)
-	if got := failedStageFromJSON(b); got != "" {
+	if got := apidserver.FailedStageFromJSON(b); got != "" {
 		t.Errorf("got %q, want empty (unknown vocab rejected)", got)
 	}
 }
@@ -260,7 +261,7 @@ func renderDashboardDeploymentDetail(t *testing.T, h http.Handler, sessionCookie
 // token against (action="retry_deployment", account_id)
 // requires the render path.
 func TestDashboardRetryDeployment_HappyPath(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	_, _, dep := seedFailedDeployment(t, store)
 	csrfSidecar, token := renderDashboardDeploymentDetail(t, h, sessionCookie, dep.ID)
 	rec := dashboardRetryFormPOST(t, h, sessionCookie, dep.ID, string(state.StageSnapshotPrepare), token,
@@ -299,7 +300,7 @@ func TestDashboardRetryDeployment_HappyPath(t *testing.T) {
 // never a 500, never a 403 (which would confirm the source id
 // exists on a different account).
 func TestDashboardRetryDeployment_CrossAccount(t *testing.T) {
-	h, _, store, _ := newAuthedDashboardServerFull(t)
+	h, _, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	_, _, dep := seedFailedDeployment(t, store)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost,
@@ -320,7 +321,7 @@ func TestDashboardRetryDeployment_CrossAccount(t *testing.T) {
 // inserted). Defends the closed-6 vocabulary at the dashboard
 // edge; storage has its own IsStageName check.
 func TestDashboardRetryDeployment_ClosedVocabSlip(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	_, _, dep := seedFailedDeployment(t, store)
 	csrfSidecar, token := renderDashboardDeploymentDetail(t, h, sessionCookie, dep.ID)
 	rec := dashboardRetryFormPOST(t, h, sessionCookie, dep.ID, "not_a_stage", token,
@@ -337,7 +338,7 @@ func TestDashboardRetryDeployment_ClosedVocabSlip(t *testing.T) {
 // ?from query param → same ?retried=bad branch. The handler
 // must NOT silently pick a stage.
 func TestDashboardRetryDeployment_NoFromStage(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	_, _, dep := seedFailedDeployment(t, store)
 	csrfSidecar, token := renderDashboardDeploymentDetail(t, h, sessionCookie, dep.ID)
 	rec := dashboardRetryFormPOST(t, h, sessionCookie, dep.ID, "", token,

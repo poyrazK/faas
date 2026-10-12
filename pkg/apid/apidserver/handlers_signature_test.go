@@ -27,7 +27,7 @@
 //     pkg/cosign/verify_test.go (happy + missing + wrong-key +
 //     no-publishers).
 //   - The trusted-signer CRUD handlers — see handlers_trusted_signers_test.go.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -38,6 +38,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -45,9 +46,9 @@ import (
 // flag flipped on (or off, depending on the case) so the table
 // can focus on the wire shape, not the UpdateApp plumbing. Returns
 // the slug the table can then deploy to.
-func requireSignedApp(t *testing.T, e testEnv, slug string, on bool) {
+func requireSignedApp(t *testing.T, e apidserver.TestEnv, slug string, on bool) {
 	t.Helper()
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed app %q: %d %s", slug, rec.Code, rec.Body)
 	}
@@ -61,7 +62,7 @@ func requireSignedApp(t *testing.T, e testEnv, slug string, on bool) {
 	// on the MemStore. The customer's only legal path to set this
 	// flag is via PATCH /v1/apps/{slug}/security (admin+MFA), which
 	// is exercised in handlers_security_test.go.
-	apps, err := e.store.ListApps(testCtx(), e.acct.ID)
+	apps, err := (*e.Store()).ListApps(testCtx(), (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("ListApps: %v", err)
 	}
@@ -70,7 +71,7 @@ func requireSignedApp(t *testing.T, e testEnv, slug string, on bool) {
 			continue
 		}
 		tt := true
-		if _, err := e.store.UpdateApp(testCtx(), a.ID, state.UpdateAppParams{
+		if _, err := (*e.Store()).UpdateApp(testCtx(), a.ID, state.UpdateAppParams{
 			RequireSigned:    &tt,
 			SetRequireSigned: true,
 		}); err != nil {
@@ -85,7 +86,7 @@ func requireSignedApp(t *testing.T, e testEnv, slug string, on bool) {
 // directly on the MemStore. We bypass the PUT endpoint so the
 // test isn't coupled to its validation rules; the wire-level
 // CRUD coverage lives in handlers_trusted_signers_test.go.
-func seedTrustedSigner(t *testing.T, e testEnv, appID, signerName string) {
+func seedTrustedSigner(t *testing.T, e apidserver.TestEnv, appID, signerName string) {
 	t.Helper()
 	// 64 bytes of base64(0xAA) — a placeholder DER blob; the
 	// pre-flight gate only checks len(signers) > 0, not the bytes.
@@ -93,16 +94,16 @@ func seedTrustedSigner(t *testing.T, e testEnv, appID, signerName string) {
 	for i := range der {
 		der[i] = 0xAA
 	}
-	if _, _, err := e.store.UpsertAppTrustedSigner(testCtx(), e.acct.ID, appID, signerName, der, e.acct.ID); err != nil {
+	if _, _, err := (*e.Store()).UpsertAppTrustedSigner(testCtx(), (*e.Acct()).ID, appID, signerName, der, (*e.Acct()).ID); err != nil {
 		t.Fatalf("UpsertAppTrustedSigner: %v", err)
 	}
 }
 
 // findAppID is a small lookup helper so the table doesn't have to
 // thread the appID through every subcase.
-func findAppID(t *testing.T, e testEnv, slug string) string {
+func findAppID(t *testing.T, e apidserver.TestEnv, slug string) string {
 	t.Helper()
-	apps, err := e.store.ListApps(testCtx(), e.acct.ID)
+	apps, err := (*e.Store()).ListApps(testCtx(), (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("ListApps: %v", err)
 	}
@@ -203,12 +204,12 @@ func TestCreateDeployment_SignatureEnforcement(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e := setup(t, c.plan)
+			e := apidserver.Setup(t, c.plan)
 			requireSignedApp(t, e, c.slug, c.flagOn)
 			if c.seedSigner {
 				seedTrustedSigner(t, e, findAppID(t, e, c.slug), "ci-bot")
 			}
-			rec := e.do(t, "POST", "/v1/apps/"+c.slug+"/deployments", c.req, nil)
+			rec := e.Do(t, "POST", "/v1/apps/"+c.slug+"/deployments", c.req, nil)
 			if rec.Code != c.wantStatus {
 				t.Fatalf("status = %d, want %d (body=%s)", rec.Code, c.wantStatus, rec.Body)
 			}
@@ -233,7 +234,7 @@ func TestCreateDeployment_SignatureEnforcement(t *testing.T) {
 // boundary explicit so a future refactor doesn't accidentally
 // widen the gate.
 func TestCreateDeployment_SourceTarball_BypassesSignatureGate(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	requireSignedApp(t, e, "app-tarball", true)
 	// Intentionally do NOT seed a trusted signer — the tarball
 	// path must accept anyway because it never asks the registry
@@ -243,7 +244,7 @@ func TestCreateDeployment_SourceTarball_BypassesSignatureGate(t *testing.T) {
 	// Content-Type BEFORE the signature pre-flight. The simplest
 	// pin is the reverse: a JSON body without Image would 400,
 	// not 403, so the signature gate never runs.
-	rec := e.do(t, "POST", "/v1/apps/app-tarball/deployments",
+	rec := e.Do(t, "POST", "/v1/apps/app-tarball/deployments",
 		api.CreateDeploymentRequest{}, nil)
 	if rec.Code == http.StatusForbidden {
 		t.Fatalf("tarball-shaped deploy triggered signature gate; want 4xx but NOT 403 signature_invalid (got %d %s)", rec.Code, rec.Body)
@@ -289,9 +290,9 @@ func TestPutTrustedSigner_PEMShape(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
+			e := apidserver.Setup(t, api.PlanPro)
 			requireSignedApp(t, e, "app-pem", false)
-			rec := e.do(t, "PUT", "/v1/apps/app-pem/trusted_signers/ci-bot", c.body, nil)
+			rec := e.Do(t, "PUT", "/v1/apps/app-pem/trusted_signers/ci-bot", c.body, nil)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 (body=%s)", rec.Code, rec.Body)
 			}
@@ -308,9 +309,9 @@ func TestPutTrustedSigner_PEMShape(t *testing.T) {
 // was "empty list is the expected state for any app with
 // require_signed=false"; this test pins that.
 func TestListTrustedSigners_Empty(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	requireSignedApp(t, e, "app-list-empty", false)
-	rec := e.do(t, "GET", "/v1/apps/app-list-empty/trusted_signers", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/app-list-empty/trusted_signers", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
 	}
@@ -323,18 +324,18 @@ func TestListTrustedSigners_Empty(t *testing.T) {
 // blob, GET the list, the row is there. The admin key in setup()
 // already carries ScopesAdminOnly so the auth chain passes.
 func TestPutTrustedSigner_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	requireSignedApp(t, e, "app-put", false)
 	der := make([]byte, 64)
 	for i := range der {
 		der[i] = 0xBB
 	}
 	body := api.AddTrustedSignerRequest{PublicKeyPEM: base64.StdEncoding.EncodeToString(der)}
-	rec := e.do(t, "PUT", "/v1/apps/app-put/trusted_signers/ci-bot", body, nil)
+	rec := e.Do(t, "PUT", "/v1/apps/app-put/trusted_signers/ci-bot", body, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	listRec := e.do(t, "GET", "/v1/apps/app-put/trusted_signers", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/app-put/trusted_signers", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("LIST: %d %s", listRec.Code, listRec.Body)
 	}
@@ -352,23 +353,23 @@ func TestPutTrustedSigner_HappyPath(t *testing.T) {
 // returns the empty list again. Pins the (slug, name) → gone
 // surface of the handler.
 func TestDeleteTrustedSigner_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	requireSignedApp(t, e, "app-del", false)
 	der := make([]byte, 64)
 	for i := range der {
 		der[i] = 0xCC
 	}
 	body := api.AddTrustedSignerRequest{PublicKeyPEM: base64.StdEncoding.EncodeToString(der)}
-	putRec := e.do(t, "PUT", "/v1/apps/app-del/trusted_signers/ci-bot", body, nil)
+	putRec := e.Do(t, "PUT", "/v1/apps/app-del/trusted_signers/ci-bot", body, nil)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", putRec.Code, putRec.Body)
 	}
-	delRec := e.do(t, "DELETE",
+	delRec := e.Do(t, "DELETE",
 		"/v1/apps/app-del/trusted_signers/"+url.PathEscape("ci-bot"), nil, nil)
 	if delRec.Code != http.StatusNoContent && delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE: %d %s", delRec.Code, delRec.Body)
 	}
-	listRec := e.do(t, "GET", "/v1/apps/app-del/trusted_signers", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/app-del/trusted_signers", nil, nil)
 	if !strings.Contains(listRec.Body.String(), `"signers":[]`) {
 		t.Errorf("list after delete = %s, want empty", listRec.Body)
 	}
@@ -378,16 +379,16 @@ func TestDeleteTrustedSigner_HappyPath(t *testing.T) {
 // and the audit log is listed per account, so production-us owners never
 // saw app.trusted_signer_added / _removed for their own apps.
 func TestTrustedSignerAuditRowsBelongToTheAccount(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	requireSignedApp(t, e, "app-audit", false)
 	body := api.AddTrustedSignerRequest{PublicKeyPEM: base64.StdEncoding.EncodeToString(make([]byte, 64))}
-	if rec := e.do(t, "PUT", "/v1/apps/app-audit/trusted_signers/ci-bot", body, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, "PUT", "/v1/apps/app-audit/trusted_signers/ci-bot", body, nil); rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	if rec := e.do(t, "DELETE", "/v1/apps/app-audit/trusted_signers/ci-bot", nil, nil); rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+	if rec := e.Do(t, "DELETE", "/v1/apps/app-audit/trusted_signers/ci-bot", nil, nil); rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
 		t.Fatalf("DELETE: %d %s", rec.Code, rec.Body)
 	}
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 50)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 50)
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}

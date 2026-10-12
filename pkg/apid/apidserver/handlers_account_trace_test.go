@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,27 +9,28 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "trace-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "trace-app")
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
-	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
-		AppID: appID, AccountID: e.acct.ID, Source: state.InvocationQueue,
+	inv, err := (*e.Store()).EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: appID, AccountID: (*e.Acct()).ID, Source: state.InvocationQueue,
 		QueueName: "orders", Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736","traceparent":"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}`),
 		DueAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
-	claimed, err := e.store.ClaimInvocation(context.Background(), inv.ID, "trace-test-instance", 30)
+	claimed, err := (*e.Store()).ClaimInvocation(context.Background(), inv.ID, "trace-test-instance", 30)
 	if err != nil {
 		t.Fatalf("ClaimInvocation: %v", err)
 	}
-	asyncInv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
-		AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+	asyncInv, err := (*e.Store()).EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: appID, AccountID: (*e.Acct()).ID, Source: state.InvocationAsyncInvoke,
 		Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736","traceparent":"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}`),
 		DueAt:   time.Now().UTC(),
 	})
@@ -37,7 +38,7 @@ func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
 		t.Fatalf("EnqueueInvocation async: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -66,28 +67,28 @@ func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
 }
 
 func TestAccountTraceLookupIncludesSafeHTTPLogEvents(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "trace-logs-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "trace-logs-app")
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	now := time.Now().UTC()
 	for _, event := range []state.LogEvent{
 		{
-			OccurredAt: now.Add(-time.Second), AccountID: e.acct.ID, AppID: appID,
+			OccurredAt: now.Add(-time.Second), AccountID: (*e.Acct()).ID, AppID: appID,
 			Source: state.LogEventSourceHTTP, SourceEventID: "http:matching", RequestID: traceID, TraceID: traceID,
 			Route: "GET /checkout", Method: "GET", Status: 503, Message: "GET /checkout returned 503",
 		},
 		{
-			OccurredAt: now.Add(-500 * time.Millisecond), AccountID: e.acct.ID, AppID: appID,
+			OccurredAt: now.Add(-500 * time.Millisecond), AccountID: (*e.Acct()).ID, AppID: appID,
 			Source: state.LogEventSourceHTTP, SourceEventID: "http:matching-newer", RequestID: traceID, TraceID: traceID,
 			Route: "GET /checkout", Method: "GET", Status: 200, Message: "GET /checkout returned 200",
 		},
 		{
-			OccurredAt: now.Add(-2 * time.Second), AccountID: e.acct.ID, AppID: appID,
+			OccurredAt: now.Add(-2 * time.Second), AccountID: (*e.Acct()).ID, AppID: appID,
 			Source: state.LogEventSourceHTTP, SourceEventID: "http:request-id-not-trace", RequestID: traceID, TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Route: "GET /other", Method: "GET", Status: 200, Message: "unrelated trace",
 		},
 		{
-			OccurredAt: now.Add(-3 * time.Second), AccountID: e.acct.ID, AppID: appID,
+			OccurredAt: now.Add(-3 * time.Second), AccountID: (*e.Acct()).ID, AppID: appID,
 			Source: state.LogEventSourceRuntime, SourceEventID: "runtime:matching", TraceID: traceID,
 			Stream: "stderr", Message: "runtime logs are outside the HTTP-only trace projection",
 		},
@@ -97,12 +98,12 @@ func TestAccountTraceLookupIncludesSafeHTTPLogEvents(t *testing.T) {
 			Route: "GET /private", Method: "GET", Status: 200, Message: "other tenant event",
 		},
 	} {
-		if _, err := e.store.InsertLogEvent(context.Background(), event); err != nil {
+		if _, err := (*e.Store()).InsertLogEvent(context.Background(), event); err != nil {
 			t.Fatalf("InsertLogEvent: %v", err)
 		}
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/account/traces/"+traceID+"?limit=1", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/account/traces/"+traceID+"?limit=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -125,16 +126,16 @@ func TestAccountTraceLookupIncludesSafeHTTPLogEvents(t *testing.T) {
 // merge newest first, and a failed read is one account-level error rather
 // than one per app.
 func TestAccountTraceLookupReadsEvidenceAccountWide(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	now := time.Now().UTC()
 	for i, slug := range []string{"trace-a", "trace-b", "trace-quiet"} {
-		appID := mustSeedApp(t, e, slug)
+		appID := apidserver.MustSeedApp(t, e, slug)
 		if slug == "trace-quiet" {
 			continue
 		}
-		if _, err := e.store.InsertLogEvent(context.Background(), state.LogEvent{
-			OccurredAt: now.Add(-time.Duration(i+1) * time.Second), AccountID: e.acct.ID, AppID: appID,
+		if _, err := (*e.Store()).InsertLogEvent(context.Background(), state.LogEvent{
+			OccurredAt: now.Add(-time.Duration(i+1) * time.Second), AccountID: (*e.Acct()).ID, AppID: appID,
 			Source: state.LogEventSourceHTTP, SourceEventID: "http:" + slug, RequestID: traceID, TraceID: traceID,
 			Route: "GET /", Method: "GET", Status: 200, Message: "GET / returned 200",
 		}); err != nil {
@@ -142,7 +143,7 @@ func TestAccountTraceLookupReadsEvidenceAccountWide(t *testing.T) {
 		}
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}

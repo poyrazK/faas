@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,8 @@ func seedInvoiceDirect(t *testing.T, store *state.MemStore, accountID, provider,
 }
 
 func TestListInvoices_HappyPath_EmptyHistory(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/invoices", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/invoices", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -53,21 +54,21 @@ func TestListInvoices_HappyPath_EmptyHistory(t *testing.T) {
 }
 
 func TestListInvoices_BadMonth(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/invoices?month=garbage", nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/invoices?month=garbage", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestListInvoices_BadCursor(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/invoices?before=not-a-timestamp", nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/invoices?before=not-a-timestamp", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestListInvoices_BadLimit(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/invoices?limit=999", nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/invoices?limit=999", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestListInvoices_CrossAccountIsolation(t *testing.T) {
@@ -75,13 +76,13 @@ func TestListInvoices_CrossAccountIsolation(t *testing.T) {
 	// response. The store filter is account_id-only; the test pins
 	// the contract that GET /v1/invoices never returns another
 	// account's rows.
-	alice := setup(t, api.PlanHobby)
-	bob := setup(t, api.PlanHobby)
+	alice := apidserver.Setup(t, api.PlanHobby)
+	bob := apidserver.Setup(t, api.PlanHobby)
 
 	july := time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC)
-	seedInvoiceDirect(t, alice.store, alice.acct.ID, "stripe", "in_alice", july, 900)
+	seedInvoiceDirect(t, (*alice.Store()), (*alice.Acct()).ID, "stripe", "in_alice", july, 900)
 
-	rec := alice.do(t, http.MethodGet, "/v1/invoices", nil, nil)
+	rec := alice.Do(t, http.MethodGet, "/v1/invoices", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("alice status %d", rec.Code)
 	}
@@ -96,7 +97,7 @@ func TestListInvoices_CrossAccountIsolation(t *testing.T) {
 		t.Fatalf("alice got wrong row: %q", aliceResp.Items[0].ProviderInvoiceID)
 	}
 
-	rec = bob.do(t, http.MethodGet, "/v1/invoices", nil, nil)
+	rec = bob.Do(t, http.MethodGet, "/v1/invoices", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("bob status %d", rec.Code)
 	}
@@ -110,13 +111,13 @@ func TestListInvoices_CrossAccountIsolation(t *testing.T) {
 }
 
 func TestListInvoices_MonthFilter(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	july := time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC)
 	aug := time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC)
-	seedInvoiceDirect(t, e.store, e.acct.ID, "stripe", "in_jul", july, 900)
-	seedInvoiceDirect(t, e.store, e.acct.ID, "stripe", "in_aug", aug, 900)
+	seedInvoiceDirect(t, (*e.Store()), (*e.Acct()).ID, "stripe", "in_jul", july, 900)
+	seedInvoiceDirect(t, (*e.Store()), (*e.Acct()).ID, "stripe", "in_aug", aug, 900)
 
-	rec := e.do(t, http.MethodGet, "/v1/invoices?month=2026-07", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/invoices?month=2026-07", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}

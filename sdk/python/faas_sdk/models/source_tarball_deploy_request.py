@@ -77,8 +77,8 @@ class SourceTarballDeployRequest:
     """Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
     defaulting to false."""
     mcp_task_migration_override: bool | Unset = UNSET
-    """One-use operator override to allow this deployment to cut over while queued MCP tasks still need
-    handler versions it does not provide."""
+    """One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler
+    versions it does not provide."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the
     default boost."""

@@ -23,7 +23,7 @@ func (s *Server) destroyDiverged(ctx context.Context, instance string) *api.Prob
 	if err := s.vmm.Destroy(ctx, instance); err != nil {
 		return toProblem(err)
 	}
-	s.streamBridges.forget(context.WithoutCancel(ctx), instance)
+	s.forgetForwarding(ctx, instance)
 	s.ForgetCPU(instance)
 	s.ForgetNet(instance)
 	s.ForgetActivity(instance)

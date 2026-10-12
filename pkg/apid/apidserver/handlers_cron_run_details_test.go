@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func createCronCommandRunForDetailsTest(t *testing.T, e testEnv, app state.App, deployment state.Deployment, cron state.Cron) state.AppTask {
+func createCronCommandRunForDetailsTest(t *testing.T, e apidserver.TestEnv, app state.App, deployment state.Deployment, cron state.Cron) state.AppTask {
 	t.Helper()
-	var tasks state.AppTaskStore = e.store
+	var tasks state.AppTaskStore = (*e.Store())
 	task, err := tasks.CreateAppTask(context.Background(), state.CreateAppTaskParams{
-		AccountID: e.acct.ID, AppID: app.ID, DeploymentID: deployment.ID,
+		AccountID: (*e.Acct()).ID, AppID: app.ID, DeploymentID: deployment.ID,
 		CronID: cron.ID, Kind: state.AppTaskKindCron, Command: cron.Command,
 		CreatedAt: time.Now().UTC(),
 	})
@@ -45,12 +46,12 @@ func createCronCommandRunForDetailsTest(t *testing.T, e testEnv, app state.App, 
 }
 
 func TestGetCronCommandRunReturnsTaskDetailsOnlyForOwningCron(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
-	app, deployment := seedAppTaskDeployment(t, e, "cron-run-detail")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	app, deployment := apidserver.SeedAppTaskDeployment(t, e, "cron-run-detail")
 	createCron := func(schedule string) state.Cron {
 		t.Helper()
-		cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, schedule, "", true, state.CronOptions{
+		cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), app.ID, schedule, "", true, state.CronOptions{
 			Command: []string{"bin/maintenance"},
 		})
 		if err != nil {
@@ -64,7 +65,7 @@ func TestGetCronCommandRunReturnsTaskDetailsOnlyForOwningCron(t *testing.T) {
 	otherTask := createCronCommandRunForDetailsTest(t, e, app, deployment, otherCron)
 
 	path := "/v1/crons/" + cron.ID + "/runs/" + task.ID
-	rec := e.do(t, http.MethodGet, path, nil, nil)
+	rec := e.Do(t, http.MethodGet, path, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET command run = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -77,11 +78,11 @@ func TestGetCronCommandRunReturnsTaskDetailsOnlyForOwningCron(t *testing.T) {
 		t.Fatalf("command run details = %+v", got)
 	}
 
-	wrongCron := e.do(t, http.MethodGet, "/v1/crons/"+cron.ID+"/runs/"+otherTask.ID, nil, nil)
+	wrongCron := e.Do(t, http.MethodGet, "/v1/crons/"+cron.ID+"/runs/"+otherTask.ID, nil, nil)
 	if wrongCron.Code != http.StatusNotFound {
 		t.Fatalf("run from sibling cron = %d, want 404; body=%s", wrongCron.Code, wrongCron.Body.String())
 	}
-	foreignAccount, err := e.store.CreateAccount(context.Background(), "cron-run-foreign@example.com", api.PlanPro)
+	foreignAccount, err := (*e.Store()).CreateAccount(context.Background(), "cron-run-foreign@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount foreign: %v", err)
 	}
@@ -89,23 +90,23 @@ func TestGetCronCommandRunReturnsTaskDetailsOnlyForOwningCron(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAPIKey foreign: %v", err)
 	}
-	if _, err := e.store.CreateAPIKey(context.Background(), foreignAccount.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(context.Background(), foreignAccount.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("CreateAPIKey foreign: %v", err)
 	}
 	foreign := e
-	foreign.acct = foreignAccount
-	foreign.key = foreignToken
-	foreignRead := foreign.do(t, http.MethodGet, path, nil, nil)
+	(*foreign.Acct()) = foreignAccount
+	(*foreign.Key()) = foreignToken
+	foreignRead := foreign.Do(t, http.MethodGet, path, nil, nil)
 	if foreignRead.Code != http.StatusNotFound {
 		t.Fatalf("cross-account run detail = %d, want 404; body=%s", foreignRead.Code, foreignRead.Body.String())
 	}
 }
 
 func TestGetCronCommandRunHidesHTTPCronRuns(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
 	cronID, _ := seedCron(t, e, "cron-run-detail-http", "0 * * * *")
-	rec := e.do(t, http.MethodGet, "/v1/crons/"+cronID+"/runs/01234567-89ab-cdef-0123-456789abcdef", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/crons/"+cronID+"/runs/01234567-89ab-cdef-0123-456789abcdef", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("HTTP cron run details = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}

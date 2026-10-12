@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -9,28 +9,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestDebugRunning_ReturnsCurrentAndHistory(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{
-		AccountID: e.acct.ID,
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{
+		AccountID: (*e.Acct()).ID,
 		Slug:      "running-debug-app",
 		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	if _, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug"); err != nil {
+	if _, err := (*e.Store()).CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug"); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	now := time.Now().UTC()
 	appendRunningEvent(t, e, app.ID, now.Add(-2*time.Minute), api.DebugRunningReasonRequestActivity)
 	appendRunningEvent(t, e, app.ID, now.Add(-time.Minute), api.DebugRunningReasonOpenConnection)
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-app/debug/running?since=3h&limit=10", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/running-debug-app/debug/running?since=3h&limit=10", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -62,9 +63,9 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 		{name: "failed", state: state.StateFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			app, err := e.store.CreateApp(t.Context(), state.App{
-				AccountID:    e.acct.ID,
+			e := apidserver.Setup(t, api.PlanPro)
+			app, err := (*e.Store()).CreateApp(t.Context(), state.App{
+				AccountID:    (*e.Acct()).ID,
 				Slug:         "running-debug-" + tc.name,
 				Status:       state.AppActive,
 				IdleTimeoutS: 120,
@@ -72,21 +73,21 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CreateApp: %v", err)
 			}
-			instance, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
+			instance, err := (*e.Store()).CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
 			if err != nil {
 				t.Fatalf("CreateInstance: %v", err)
 			}
 			if tc.state == state.StateParked {
-				err = e.store.UpdateInstanceState(t.Context(), instance.ID, string(tc.state))
+				err = (*e.Store()).UpdateInstanceState(t.Context(), instance.ID, string(tc.state))
 			} else {
-				err = e.store.UpdateInstanceStateToTerminal(t.Context(), instance.ID, string(tc.state), time.Now().UTC())
+				err = (*e.Store()).UpdateInstanceStateToTerminal(t.Context(), instance.ID, string(tc.state), time.Now().UTC())
 			}
 			if err != nil {
 				t.Fatalf("transition to %s: %v", tc.state, err)
 			}
 			appendRunningEvent(t, e, app.ID, time.Now().UTC().Add(-time.Minute), api.DebugRunningReasonRequestActivity)
 
-			rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-"+tc.name+"/debug/running?since=3h", nil, nil)
+			rec := e.Do(t, http.MethodGet, "/v1/apps/running-debug-"+tc.name+"/debug/running?since=3h", nil, nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 			}
@@ -111,8 +112,8 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 }
 
 func TestDebugRunning_SkipsMalformedEventsAndEnforcesLimit(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "running-debug-limit", Status: state.AppActive})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "running-debug-limit", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -120,11 +121,11 @@ func TestDebugRunning_SkipsMalformedEventsAndEnforcesLimit(t *testing.T) {
 	subject := app.ID
 	appendRunningEvent(t, e, app.ID, now.Add(-3*time.Minute), api.DebugRunningReasonMinInstances)
 	appendRunningEvent(t, e, app.ID, now.Add(-2*time.Minute), api.DebugRunningReasonTailTasks)
-	if err := e.store.AppendEventAt(t.Context(), "schedd", debugRunningEventKind, &subject, []byte("not-json"), now.Add(-time.Minute)); err != nil {
+	if err := (*e.Store()).AppendEventAt(t.Context(), "schedd", apidserver.DebugRunningEventKind, &subject, []byte("not-json"), now.Add(-time.Minute)); err != nil {
 		t.Fatalf("AppendEventAt malformed: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-limit/debug/running?limit=1", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/running-debug-limit/debug/running?limit=1", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -141,12 +142,12 @@ func TestDebugRunning_SkipsMalformedEventsAndEnforcesLimit(t *testing.T) {
 }
 
 func TestDebugRunning_IsPlanGated(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	if _, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "running-debug-free", Status: state.AppActive}); err != nil {
+	e := apidserver.Setup(t, api.PlanFree)
+	if _, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "running-debug-free", Status: state.AppActive}); err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-free/debug/running", nil, nil)
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanFeatureGated)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/running-debug-free/debug/running", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanFeatureGated)
 }
 
 func TestNearestRunningTelemetryRow_BoundedAndClosest(t *testing.T) {
@@ -156,7 +157,7 @@ func TestNearestRunningTelemetryRow_BoundedAndClosest(t *testing.T) {
 		{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}, ReceivedAt: pgtype.Timestamptz{Time: target.Add(900 * time.Millisecond), Valid: true}},
 		{ID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true}, ReceivedAt: pgtype.Timestamptz{Time: target.Add(3 * time.Minute), Valid: true}},
 	}
-	row, delta, ok := nearestRunningTelemetryRow(rows, target)
+	row, delta, ok := apidserver.NearestRunningTelemetryRow(rows, target)
 	if !ok {
 		t.Fatal("nearestRunningTelemetryRow returned no match")
 	}
@@ -166,14 +167,14 @@ func TestNearestRunningTelemetryRow_BoundedAndClosest(t *testing.T) {
 	if delta != 1500*time.Millisecond {
 		t.Fatalf("delta = %s, want 1500ms", delta)
 	}
-	if _, _, ok := nearestRunningTelemetryRow([]sqlc.ListRequestTelemetryByAppRow{{ReceivedAt: pgtype.Timestamptz{Time: target.Add(3 * time.Minute), Valid: true}}}, target); ok {
+	if _, _, ok := apidserver.NearestRunningTelemetryRow([]sqlc.ListRequestTelemetryByAppRow{{ReceivedAt: pgtype.Timestamptz{Time: target.Add(3 * time.Minute), Valid: true}}}, target); ok {
 		t.Fatal("out-of-slack telemetry row was attributed")
 	}
 }
 
-func appendRunningEvent(t *testing.T, e testEnv, appID string, at time.Time, code string) {
+func appendRunningEvent(t *testing.T, e apidserver.TestEnv, appID string, at time.Time, code string) {
 	t.Helper()
-	payload, err := json.Marshal(debugRunningEvent{
+	payload, err := json.Marshal(apidserver.DebugRunningEvent{
 		SchemaVersion:          1,
 		AppID:                  appID,
 		ObservedAt:             at.UTC().Format(time.RFC3339Nano),
@@ -191,7 +192,7 @@ func appendRunningEvent(t *testing.T, e testEnv, appID string, at time.Time, cod
 		t.Fatalf("marshal running event: %v", err)
 	}
 	subject := appID
-	if err := e.store.AppendEventAt(t.Context(), "schedd", debugRunningEventKind, &subject, payload, at); err != nil {
+	if err := (*e.Store()).AppendEventAt(t.Context(), "schedd", apidserver.DebugRunningEventKind, &subject, payload, at); err != nil {
 		t.Fatalf("AppendEventAt: %v", err)
 	}
 }

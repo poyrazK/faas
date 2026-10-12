@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -19,11 +21,11 @@ func TestDebugTelemetryCursorRoundTrip(t *testing.T) {
 		ID:         pgtype.UUID{Bytes: requestID, Valid: true},
 		ReceivedAt: pgtype.Timestamptz{Time: receivedAt, Valid: true},
 	}
-	raw := encodeDebugTelemetryCursor(appID.String(), "GET /orders", windowStart, windowEnd, true, row)
+	raw := apidserver.EncodeDebugTelemetryCursor(appID.String(), "GET /orders", windowStart, windowEnd, true, row)
 	if raw == "" {
 		t.Fatal("encodeDebugTelemetryCursor() returned empty cursor")
 	}
-	got, err := decodeDebugTelemetryCursor(raw)
+	got, err := apidserver.DecodeDebugTelemetryCursor(raw)
 	if err != nil {
 		t.Fatalf("decodeDebugTelemetryCursor() error = %v", err)
 	}
@@ -36,7 +38,7 @@ func TestDebugTelemetryCursorRoundTrip(t *testing.T) {
 	if !got.WindowStart.Equal(windowStart) || !got.WindowEnd.Equal(windowEnd) || !got.ReceivedAt.Equal(receivedAt) {
 		t.Fatalf("decoded times = %+v, want start=%s end=%s received=%s", got, windowStart, windowEnd, receivedAt)
 	}
-	received, id := debugTelemetryCursorParams(got)
+	received, id := apidserver.DebugTelemetryCursorParams(got)
 	if !received.Valid || !received.Time.Equal(receivedAt) || !id.Valid || uuid.UUID(id.Bytes) != requestID {
 		t.Fatalf("cursor params = received=%+v id=%+v", received, id)
 	}
@@ -51,21 +53,21 @@ func TestDebugTelemetryCursorCarriesAllFilters(t *testing.T) {
 		ID:         pgtype.UUID{Bytes: requestID, Valid: true},
 		ReceivedAt: pgtype.Timestamptz{Time: receivedAt, Valid: true},
 	}
-	filters := debugTelemetryCursorFilters{
+	filters := apidserver.DebugTelemetryCursorFilters{
 		DeploymentID: uuid.NewString(), Status: 503, ColdBoot: &coldBoot,
-		ConsumerID: debugTelemetryAnonymousConsumer, MinLatencyMS: 250,
+		ConsumerID: apidserver.DebugTelemetryAnonymousConsumer, MinLatencyMS: 250,
 	}
-	raw := encodeDebugTelemetryCursorWithFilters(appID.String(), "/checkout", filters, receivedAt.Add(-time.Hour), receivedAt.Add(time.Hour), false, row)
-	got, err := decodeDebugTelemetryCursor(raw)
+	raw := apidserver.EncodeDebugTelemetryCursorWithFilters(appID.String(), "/checkout", filters, receivedAt.Add(-time.Hour), receivedAt.Add(time.Hour), false, row)
+	got, err := apidserver.DecodeDebugTelemetryCursor(raw)
 	if err != nil {
 		t.Fatalf("decodeDebugTelemetryCursor() error = %v", err)
 	}
-	publicFilters := debugTelemetryFilters{
+	publicFilters := apidserver.DebugTelemetryFilters{
 		DeploymentID: filters.DeploymentID, Status: filters.Status, ColdBoot: filters.ColdBoot,
 		ConsumerID: filters.ConsumerID, MinLatencyMS: filters.MinLatencyMS,
 	}
-	if !publicFilters.same(got.filters()) {
-		t.Fatalf("decoded filters = %+v, want %+v", got.filters(), filters)
+	if !publicFilters.Same(got.Filters()) {
+		t.Fatalf("decoded filters = %+v, want %+v", got.Filters(), filters)
 	}
 }
 
@@ -74,7 +76,7 @@ func TestDebugTelemetryCursorRejectsMalformedAndOutOfWindow(t *testing.T) {
 		if raw == "" {
 			continue
 		}
-		if _, err := decodeDebugTelemetryCursor(raw); err == nil {
+		if _, err := apidserver.DecodeDebugTelemetryCursor(raw); err == nil {
 			t.Errorf("decodeDebugTelemetryCursor(%q) error = nil", raw)
 		}
 	}
@@ -83,8 +85,8 @@ func TestDebugTelemetryCursorRejectsMalformedAndOutOfWindow(t *testing.T) {
 		ID:         pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ReceivedAt: pgtype.Timestamptz{Time: time.Unix(100, 0).UTC(), Valid: true},
 	}
-	raw := encodeDebugTelemetryCursor(appID.String(), "", time.Unix(0, 0).UTC(), time.Unix(200, 0).UTC(), false, row)
-	if _, err := decodeDebugTelemetryCursor(raw); err != nil {
+	raw := apidserver.EncodeDebugTelemetryCursor(appID.String(), "", time.Unix(0, 0).UTC(), time.Unix(200, 0).UTC(), false, row)
+	if _, err := apidserver.DecodeDebugTelemetryCursor(raw); err != nil {
 		t.Fatalf("decodeDebugTelemetryCursor(valid) error = %v", err)
 	}
 }

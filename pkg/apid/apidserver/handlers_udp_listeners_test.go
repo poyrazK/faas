@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -104,12 +105,12 @@ func TestUDPListenerAPI(t *testing.T) {
 }
 
 func TestContainerListenerReadOnlyScope(t *testing.T) {
-	e := setupWithScopes(t, []string{api.ScopeAppsRead})
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "listener-scopes", RAMMB: 256, Status: state.AppActive})
+	e := apidserver.SetupWithScopes(t, []string{api.ScopeAppsRead})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "listener-scopes", RAMMB: 256, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := e.store.CreateTCPListener(t.Context(), state.TCPListener{AccountID: e.acct.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 9000, PublicPort: 40151, Enabled: true})
+	listener, err := (*e.Store()).CreateTCPListener(t.Context(), state.TCPListener{AccountID: (*e.Acct()).ID, AppID: app.ID, ListenerName: "echo", GuestPort: 9000, PublicPort: 40151, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,19 +130,19 @@ func TestContainerListenerReadOnlyScope(t *testing.T) {
 		{http.MethodDelete, "/tcp-listeners/echo", nil, http.StatusForbidden},
 	} {
 		t.Run(scenario.method+scenario.path, func(t *testing.T) {
-			response := e.do(t, scenario.method, base+scenario.path, scenario.body, nil)
+			response := e.Do(t, scenario.method, base+scenario.path, scenario.body, nil)
 			if scenario.want == http.StatusForbidden {
-				assertProblem(t, response, scenario.want, api.CodeForbidden)
+				apidserver.AssertProblem(t, response, scenario.want, api.CodeForbidden)
 			} else if response.Code != scenario.want {
 				t.Fatalf("status=%d want=%d body=%s", response.Code, scenario.want, response.Body)
 			}
 		})
 	}
-	current, err := e.store.TCPListenerByAppAndName(t.Context(), app.ID, "echo")
+	current, err := (*e.Store()).TCPListenerByAppAndName(t.Context(), app.ID, "echo")
 	if err != nil || current.Enabled != listener.Enabled || current.TLSMode != listener.TLSMode {
 		t.Fatalf("read-only key changed TCP intent: listener=%+v err=%v", current, err)
 	}
-	udp, err := e.store.ListUDPListenersForApp(t.Context(), app.ID)
+	udp, err := (*e.Store()).ListUDPListenersForApp(t.Context(), app.ID)
 	if err != nil || len(udp) != 0 {
 		t.Fatalf("read-only key created UDP intent: listeners=%+v err=%v", udp, err)
 	}

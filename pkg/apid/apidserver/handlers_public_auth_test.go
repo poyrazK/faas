@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // handlers_public_auth_test.go — PATCH /v1/apps/{slug}
 // integration tests for the public-auth surface
@@ -41,6 +41,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,13 +59,13 @@ import (
 // tests can swap recipients without trampling one another.
 func withPublicAuthTestRecipient(t *testing.T) {
 	t.Helper()
-	prev := setSecretRecipient
-	t.Cleanup(func() { setSecretRecipient = prev })
+	prev := (*apidserver.SetSecretRecipient)
+	t.Cleanup(func() { (*apidserver.SetSecretRecipient) = prev })
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatalf("GenerateX25519Identity: %v", err)
 	}
-	setSecretRecipient = func() *age.X25519Recipient { return id.Recipient() }
+	(*apidserver.SetSecretRecipient) = func() *age.X25519Recipient { return id.Recipient() }
 }
 
 // patchPublicAuth is the PATCH helper for this file's
@@ -73,9 +74,9 @@ func withPublicAuthTestRecipient(t *testing.T) {
 // helper keeps the test cases scannable. The PublicAuth
 // pointer is the test's only mutable surface; passing nil
 // is the "no public_auth block" path.
-func patchPublicAuth(t *testing.T, e testEnv, slug string, pub *api.PublicAuthBlock) *httptest.ResponseRecorder {
+func patchPublicAuth(t *testing.T, e apidserver.TestEnv, slug string, pub *api.PublicAuthBlock) *httptest.ResponseRecorder {
 	t.Helper()
-	return e.do(t, http.MethodPatch, "/v1/apps/"+slug,
+	return e.Do(t, http.MethodPatch, "/v1/apps/"+slug,
 		api.UpdateAppRequest{PublicAuth: pub}, nil)
 }
 
@@ -89,8 +90,8 @@ func patchPublicAuth(t *testing.T, e testEnv, slug string, pub *api.PublicAuthBl
 // PaymentRequired shape across tier-locked features).
 func TestPublicAuthPatch_BearerPlanGate(t *testing.T) {
 	t.Run("free_returns_402_bearer_not_allowed", func(t *testing.T) {
-		e := setup(t, api.PlanFree)
-		app := seedAppForAudit(t, e, "pa-bearer-free")
+		e := apidserver.Setup(t, api.PlanFree)
+		app := apidserver.SeedAppForAudit(t, e, "pa-bearer-free")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{Mode: api.AppPublicAuthModeBearer})
 		if rec.Code != http.StatusPaymentRequired {
 			t.Fatalf("PATCH mode=bearer on Free: code=%d body=%s; want 402",
@@ -104,7 +105,7 @@ func TestPublicAuthPatch_BearerPlanGate(t *testing.T) {
 		// happened. The redaction invariant extends to the
 		// row: a rejected PATCH never leaves a partial
 		// update behind.
-		got, err := e.store.AppByID(context.Background(), app.ID)
+		got, err := (*e.Store()).AppByID(context.Background(), app.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,8 +125,8 @@ func TestPublicAuthPatch_BearerPlanGate(t *testing.T) {
 		assertNoAuditRow(t, e, "app.public_auth_changed")
 	})
 	t.Run("hobby_returns_200", func(t *testing.T) {
-		e := setup(t, api.PlanHobby)
-		app := seedAppForAudit(t, e, "pa-bearer-hobby")
+		e := apidserver.Setup(t, api.PlanHobby)
+		app := apidserver.SeedAppForAudit(t, e, "pa-bearer-hobby")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{Mode: api.AppPublicAuthModeBearer})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PATCH mode=bearer on Hobby: code=%d body=%s; want 200",
@@ -141,8 +142,8 @@ func TestPublicAuthPatch_BearerPlanGate(t *testing.T) {
 // so the CLI can branch on plan-specific upgrade copy.
 func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 	t.Run("free_returns_402_basic_not_allowed", func(t *testing.T) {
-		e := setup(t, api.PlanFree)
-		app := seedAppForAudit(t, e, "pa-basic-free")
+		e := apidserver.Setup(t, api.PlanFree)
+		app := apidserver.SeedAppForAudit(t, e, "pa-basic-free")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
@@ -157,8 +158,8 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 		}
 	})
 	t.Run("hobby_returns_402_basic_not_allowed", func(t *testing.T) {
-		e := setup(t, api.PlanHobby)
-		app := seedAppForAudit(t, e, "pa-basic-hobby")
+		e := apidserver.Setup(t, api.PlanHobby)
+		app := apidserver.SeedAppForAudit(t, e, "pa-basic-hobby")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
@@ -171,8 +172,8 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 	})
 	t.Run("pro_with_creds_returns_200", func(t *testing.T) {
 		withPublicAuthTestRecipient(t)
-		e := setup(t, api.PlanPro)
-		app := seedAppForAudit(t, e, "pa-basic-pro")
+		e := apidserver.Setup(t, api.PlanPro)
+		app := apidserver.SeedAppForAudit(t, e, "pa-basic-pro")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:      api.AppPublicAuthModeBasic,
 			BasicUser: "editor",
@@ -205,8 +206,8 @@ func TestPublicAuthPatch_BasicPlanGate(t *testing.T) {
 // shape could re-seal the old blob under the same key id).
 func TestPublicAuthPatch_OpenClearsBasicSealed(t *testing.T) {
 	withPublicAuthTestRecipient(t)
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-clear")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-clear")
 	// 1. PATCH mode='basic' succeeds; row has sealed blob.
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:      api.AppPublicAuthModeBasic,
@@ -216,7 +217,7 @@ func TestPublicAuthPatch_OpenClearsBasicSealed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first PATCH (basic): code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	row, err := e.store.AppByID(context.Background(), app.ID)
+	row, err := (*e.Store()).AppByID(context.Background(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +234,7 @@ func TestPublicAuthPatch_OpenClearsBasicSealed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second PATCH (open): code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	row, err = e.store.AppByID(context.Background(), app.ID)
+	row, err = (*e.Store()).AppByID(context.Background(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +261,8 @@ func TestPublicAuthPatch_OpenClearsBasicSealed(t *testing.T) {
 // in-process state.
 func TestPublicAuthPatch_AuditEmitsWithRedaction(t *testing.T) {
 	withPublicAuthTestRecipient(t)
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-audit")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-audit")
 	// PATCH open → basic (audit fires; has_basic_creds=true).
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:      api.AppPublicAuthModeBasic,
@@ -271,11 +272,11 @@ func TestPublicAuthPatch_AuditEmitsWithRedaction(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first PATCH: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	found := findEventByKind(rows, "app.public_auth_changed")
+	found := apidserver.FindEventByKind(rows, "app.public_auth_changed")
 	if found == nil {
 		t.Fatalf("no app.public_auth_changed event row; rows=%+v", rows)
 	}
@@ -323,8 +324,8 @@ func TestPublicAuthPatch_AuditEmitsWithRedaction(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second PATCH: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, _ = e.store.ListEvents(context.Background(), e.acct.ID, 0)
-	found = findEventByKind(rows, "app.public_auth_changed")
+	rows, _ = (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
+	found = apidserver.FindEventByKind(rows, "app.public_auth_changed")
 	if found == nil {
 		t.Fatalf("no app.public_auth_changed row for second flip")
 	}
@@ -343,8 +344,8 @@ func TestPublicAuthPatch_AuditEmitsWithRedaction(t *testing.T) {
 // future contributor adding more 402 codes would silently
 // shadow the 422, confusing the customer.
 func TestPublicAuthPatch_ClosedEnumFirst(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app := seedAppForAudit(t, e, "pa-enum")
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.SeedAppForAudit(t, e, "pa-enum")
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{Mode: "weird"})
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("PATCH mode=weird on Free: code=%d body=%s; want 422",
@@ -371,8 +372,8 @@ func TestPublicAuthPatch_ClosedEnumFirst(t *testing.T) {
 // iff mode='basic'" branch.
 func TestPublicAuthPatch_BasicRequiresCreds(t *testing.T) {
 	withPublicAuthTestRecipient(t)
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-creds")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-creds")
 	// mode='basic' with empty basic_pass → 422
 	// invalid_public_auth_basic_pass.
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
@@ -387,7 +388,7 @@ func TestPublicAuthPatch_BasicRequiresCreds(t *testing.T) {
 	// Row must NOT have flipped — the 422 short-circuits
 	// before the SQL write (the seal step has no creds
 	// to encrypt).
-	row, _ := e.store.AppByID(context.Background(), app.ID)
+	row, _ := (*e.Store()).AppByID(context.Background(), app.ID)
 	if row.PublicAuthMode != "" && row.PublicAuthMode != api.AppPublicAuthModeOpen && row.PublicAuthMode != api.AppPublicAuthModeBearer {
 		t.Fatalf("PublicAuthMode after rejected PATCH = %q; want default", row.PublicAuthMode)
 	}
@@ -411,13 +412,13 @@ var _ state.App
 // carries no plaintext (the closed-enum test would
 // currently emit mode='weird' — questionable audit
 // value). Asserting NO row pins the cleaner posture.
-func assertNoAuditRow(t *testing.T, e testEnv, kind string) {
+func assertNoAuditRow(t *testing.T, e apidserver.TestEnv, kind string) {
 	t.Helper()
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if found := findEventByKind(rows, kind); found != nil {
+	if found := apidserver.FindEventByKind(rows, kind); found != nil {
 		t.Fatalf("unexpected %s audit row on rejected PATCH: data=%s", kind, string(found.Data))
 	}
 }
@@ -431,8 +432,8 @@ func assertNoAuditRow(t *testing.T, e testEnv, kind string) {
 // CLI can branch on plan-specific upgrade copy.
 func TestPublicAuthPatch_IPAllowlistPlanGate(t *testing.T) {
 	t.Run("free_returns_403_ip_allowlist_not_allowed", func(t *testing.T) {
-		e := setup(t, api.PlanFree)
-		app := seedAppForAudit(t, e, "pa-ip-free")
+		e := apidserver.Setup(t, api.PlanFree)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-free")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:        api.AppPublicAuthModeIPAllowlist,
 			IPAllowlist: []string{"10.0.0.0/8"},
@@ -447,8 +448,8 @@ func TestPublicAuthPatch_IPAllowlistPlanGate(t *testing.T) {
 		assertNoAuditRow(t, e, "app.public_auth_changed")
 	})
 	t.Run("hobby_returns_403_ip_allowlist_not_allowed", func(t *testing.T) {
-		e := setup(t, api.PlanHobby)
-		app := seedAppForAudit(t, e, "pa-ip-hobby")
+		e := apidserver.Setup(t, api.PlanHobby)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-hobby")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:        api.AppPublicAuthModeIPAllowlist,
 			IPAllowlist: []string{"10.0.0.0/8"},
@@ -459,8 +460,8 @@ func TestPublicAuthPatch_IPAllowlistPlanGate(t *testing.T) {
 		}
 	})
 	t.Run("pro_with_one_entry_returns_200", func(t *testing.T) {
-		e := setup(t, api.PlanPro)
-		app := seedAppForAudit(t, e, "pa-ip-pro")
+		e := apidserver.Setup(t, api.PlanPro)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-pro")
 		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 			Mode:        api.AppPublicAuthModeIPAllowlist,
 			IPAllowlist: []string{"10.0.0.0/8"},
@@ -471,8 +472,8 @@ func TestPublicAuthPatch_IPAllowlistPlanGate(t *testing.T) {
 		}
 	})
 	t.Run("scale_with_max_entries_returns_200", func(t *testing.T) {
-		e := setup(t, api.PlanScale)
-		app := seedAppForAudit(t, e, "pa-ip-scale")
+		e := apidserver.Setup(t, api.PlanScale)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-scale")
 		// Scale max is 64 — exactly at the boundary.
 		entries := make([]string, 64)
 		for i := range entries {
@@ -498,8 +499,8 @@ func TestPublicAuthPatch_IPAllowlistPlanGate(t *testing.T) {
 // does not — per-app cap only).
 func TestPublicAuthPatch_IPAllowlistSizeGate(t *testing.T) {
 	t.Run("pro_with_17_entries_returns_400", func(t *testing.T) {
-		e := setup(t, api.PlanPro)
-		app := seedAppForAudit(t, e, "pa-ip-pro-overflow")
+		e := apidserver.Setup(t, api.PlanPro)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-pro-overflow")
 		entries := make([]string, 17)
 		for i := range entries {
 			// Distinct prefixes so dedup doesn't drop them.
@@ -518,8 +519,8 @@ func TestPublicAuthPatch_IPAllowlistSizeGate(t *testing.T) {
 		}
 	})
 	t.Run("pro_with_16_entries_returns_200", func(t *testing.T) {
-		e := setup(t, api.PlanPro)
-		app := seedAppForAudit(t, e, "pa-ip-pro-max")
+		e := apidserver.Setup(t, api.PlanPro)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-pro-max")
 		entries := make([]string, 16)
 		for i := range entries {
 			entries[i] = fmt.Sprintf("10.%d.0.0/16", i)
@@ -540,8 +541,8 @@ func TestPublicAuthPatch_IPAllowlistSizeGate(t *testing.T) {
 	// entries where exactly 1 is a duplicate (16 unique
 	// after dedup) must still 400.
 	t.Run("pro_with_17_wire_16_unique_still_returns_400", func(t *testing.T) {
-		e := setup(t, api.PlanPro)
-		app := seedAppForAudit(t, e, "pa-ip-pro-cap-bypass")
+		e := apidserver.Setup(t, api.PlanPro)
+		app := apidserver.SeedAppForAudit(t, e, "pa-ip-pro-cap-bypass")
 		entries := make([]string, 17)
 		// First 16 distinct; 17th is a duplicate of #0.
 		for i := 0; i < 16; i++ {
@@ -571,8 +572,8 @@ func TestPublicAuthPatch_IPAllowlistSizeGate(t *testing.T) {
 // upstream for a friendlier error name). This is NOT a plan gate
 // or size gate; it's a per-entry shape gate on Pro.
 func TestPublicAuthPatch_IPAllowlistSlashZeroRejected(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-ip-slashzero")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-ip-slashzero")
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:        api.AppPublicAuthModeIPAllowlist,
 		IPAllowlist: []string{"0.0.0.0/0"},
@@ -587,7 +588,7 @@ func TestPublicAuthPatch_IPAllowlistSlashZeroRejected(t *testing.T) {
 	// The rejected PATCH must not leave a partial write behind —
 	// the app row's mode must stay at default (open), not flip to
 	// ip_allowlist without a usable list.
-	got, err := e.store.AppByID(context.Background(), app.ID)
+	got, err := (*e.Store()).AppByID(context.Background(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,8 +608,8 @@ func TestPublicAuthPatch_IPAllowlistSlashZeroRejected(t *testing.T) {
 // "upgrade your plan" — wrong guidance, since 'weird' isn't a
 // real mode on any plan.
 func TestPublicAuthPatch_IPAllowlistClosedEnumFirst(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app := seedAppForAudit(t, e, "pa-ip-enum")
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.SeedAppForAudit(t, e, "pa-ip-enum")
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
 		Mode:        "weird_mode",
 		IPAllowlist: []string{"10.0.0.0/8"},
@@ -630,8 +631,8 @@ func TestPublicAuthPatch_IPAllowlistClosedEnumFirst(t *testing.T) {
 // partner-customer ranges, and the redaction invariant is the
 // same shape as has_basic_creds for mode='basic' (L301).
 func TestPublicAuthPatch_IPAllowlistAuditEmitsEntryCount(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-ip-audit")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-ip-audit")
 	// Submit a 3-entry list with one duplicate so the
 	// canonicalised count is 2.
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
@@ -645,11 +646,11 @@ func TestPublicAuthPatch_IPAllowlistAuditEmitsEntryCount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	found := findEventByKind(rows, "app.public_auth_changed")
+	found := apidserver.FindEventByKind(rows, "app.public_auth_changed")
 	if found == nil {
 		t.Fatalf("no app.public_auth_changed row; rows=%+v", rows)
 	}
@@ -695,8 +696,8 @@ func TestPublicAuthPatch_IPAllowlistAuditEmitsEntryCount(t *testing.T) {
 // for a basic-mode app.
 func TestPublicAuthPatch_IPAllowlistEntryCountGatedByMode(t *testing.T) {
 	withPublicAuthTestRecipient(t)
-	e := setup(t, api.PlanPro)
-	app := seedAppForAudit(t, e, "pa-ip-entry-count-gate")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForAudit(t, e, "pa-ip-entry-count-gate")
 
 	// 1. PATCH ip_allowlist with 5 CIDRs.
 	rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
@@ -727,7 +728,7 @@ func TestPublicAuthPatch_IPAllowlistEntryCountGatedByMode(t *testing.T) {
 
 	// 3. GET and verify ip_allowlist_entry_count = 0
 	//    (mode='basic' now; the stale column is gated out).
-	rec = e.do(t, "GET", "/v1/apps/"+app.Slug, nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+app.Slug, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET: code=%d body=%s", rec.Code, rec.Body.String())
 	}

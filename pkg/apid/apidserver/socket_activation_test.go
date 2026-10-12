@@ -1,5 +1,5 @@
 // adr: 126
-package apidserver
+package apidserver_test
 
 import (
 	"bufio"
@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAPIDListenerFallsBackWithoutActivation(t *testing.T) {
 	_ = os.Unsetenv("LISTEN_PID")
 	_ = os.Unsetenv("LISTEN_FDS")
-	listener, err := apidListener("tcp", "127.0.0.1:0")
+	listener, err := apidserver.ApidListener("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("apidListener: %v", err)
 	}
@@ -38,7 +40,7 @@ func TestActivatedAPIDListenerQueuesAcrossRestart(t *testing.T) {
 	defer master.Close()
 	addr := tcpBase.Addr().String()
 
-	first, err := activatedAPIDListener(master, addr)
+	first, err := apidserver.ActivatedAPIDListener(master, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestActivatedAPIDListenerQueuesAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	replacement, err := activatedAPIDListener(master, addr)
+	replacement, err := apidserver.ActivatedAPIDListener(master, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +101,13 @@ func TestActivatedAPIDListenerAcceptsNarrowerBindThanWildcardConfig(t *testing.T
 	defer master.Close()
 
 	port := tcpBase.Addr().(*net.TCPAddr).Port
-	listener, err := activatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port))
+	listener, err := apidserver.ActivatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		t.Fatalf("narrower activated bind rejected: %v", err)
 	}
 	_ = listener.Close()
 
-	if _, err := activatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port+1)); err == nil {
+	if _, err := apidserver.ActivatedAPIDListener(master, fmt.Sprintf("0.0.0.0:%d", port+1)); err == nil {
 		t.Fatal("activated listener accepted a different configured port")
 	}
 }
@@ -113,7 +115,7 @@ func TestActivatedAPIDListenerAcceptsNarrowerBindThanWildcardConfig(t *testing.T
 func TestAPIDListenerRejectsIncompleteActivation(t *testing.T) {
 	t.Setenv("LISTEN_PID", fmt.Sprint(os.Getpid()))
 	_ = os.Unsetenv("LISTEN_FDS")
-	_, err := apidListener("tcp", "127.0.0.1:0")
+	_, err := apidserver.ApidListener("tcp", "127.0.0.1:0")
 	if err == nil || !strings.Contains(err.Error(), "incomplete") {
 		t.Fatalf("error = %v, want incomplete activation", err)
 	}
@@ -122,7 +124,7 @@ func TestAPIDListenerRejectsIncompleteActivation(t *testing.T) {
 func TestAPIDListenerRejectsMultipleDescriptors(t *testing.T) {
 	t.Setenv("LISTEN_PID", fmt.Sprint(os.Getpid()))
 	t.Setenv("LISTEN_FDS", "2")
-	_, err := apidListener("tcp", "127.0.0.1:0")
+	_, err := apidserver.ApidListener("tcp", "127.0.0.1:0")
 	if err == nil || !strings.Contains(err.Error(), "exactly 1") {
 		t.Fatalf("error = %v, want descriptor-count rejection", err)
 	}

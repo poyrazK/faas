@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,35 +12,37 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.devBridgeEnabled = true
-	project, err := e.store.CreateProject(t.Context(), state.Project{AccountID: e.acct.ID, Slug: "shop"})
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).DevBridgeEnabled()) = true
+	project, err := (*e.Store()).CreateProject(t.Context(), state.Project{AccountID: (*e.Acct()).ID, Slug: "shop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "development"})
+	_, err = (*e.Store()).CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "development"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "payments", Type: state.AppTypeApp, Status: state.AppActive})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "payments", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
 	relay := devbridge.NewRelay(api.DevBridgeMaxConcurrentRequests)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	relayServer := httptest.NewServer(devbridge.NewServer(relay, e.store.DevBridgeByID, nil))
+	relayServer := httptest.NewServer(devbridge.NewServer(relay, (*e.Store()).DevBridgeByID, nil))
 	defer relayServer.Close()
-	e.s.devBridgeURL = relayServer.URL
-	apiServer := httptest.NewServer(e.h)
+	(*(*e.S()).DevBridgeURL()) = relayServer.URL
+	apiServer := httptest.NewServer((*e.H()))
 	defer apiServer.Close()
-	client := api.NewClient(apiServer.URL, e.key)
+	client := api.NewClient(apiServer.URL, (*e.Key()))
 	session, err := client.CreateDevBridge(ctx, api.CreateDevBridgeRequest{App: app.Slug, Environment: "development", DeveloperID: "alice"})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +68,7 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 	}))
 	defer local.Close()
 	target, _ := url.Parse(local.URL)
-	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{(*e.Acct()).ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
 	if handshake != nil && handshake.Body != nil {
 		_ = handshake.Body.Close()
 	}
@@ -87,7 +89,7 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	request, _ := http.NewRequestWithContext(ctx, "POST", apiServer.URL+"/v1/dev/bridges/"+session.Session.ID+"/traffic/charge", nil)
-	request.Header.Set(devbridge.AccountHeader, e.acct.ID)
+	request.Header.Set(devbridge.AccountHeader, (*e.Acct()).ID)
 	request.Header.Set(devbridge.TokenHeader, session.Credentials.RequestToken)
 	request.Header.Set("Authorization", "Bearer local-app-key")
 	request.AddCookie(&http.Cookie{Name: "faas_sid", Value: "dashboard-session"})

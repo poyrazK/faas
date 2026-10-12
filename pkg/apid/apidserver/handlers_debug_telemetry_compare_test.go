@@ -26,7 +26,7 @@
 // debugCompareHandler for testability; if you change one,
 // change both. The test asserts equality of the DTO output
 // shape (JSON wire format), not internal helper state.
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -35,15 +35,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // mergeDebugCompare mirrors the merge loop in debugCompareHandler.
 // Keep in sync with cmd/apid/handlers_debug_telemetry.go:325-343.
 func mergeDebugCompare(
-	source map[string]routeStats,
-	mirror map[string]routeStats,
+	source map[string]apidserver.RouteStats,
+	mirror map[string]apidserver.RouteStats,
 	sourceID, mirrorID string,
 ) []api.DebugCompareRouteStats {
 	merged := make(map[string]api.DebugCompareRouteStats, len(source)+len(mirror))
@@ -87,17 +89,17 @@ func mergeDebugCompare(
 // the happy-path mapping assertion; the pgtype plumbing lives
 // in fetchRouteStats itself (already exercised by
 // memstore_request_telemetry_test.go).
-func routeStatsFromRow(r sqlc.RequestTelemetryBaselineP95ByRouteRow) routeStats {
-	return routeStats{P50: int(r.P50Ms), P95: int(r.P95Ms), P99: int(r.P99Ms), N: r.N}
+func routeStatsFromRow(r sqlc.RequestTelemetryBaselineP95ByRouteRow) apidserver.RouteStats {
+	return apidserver.RouteStats{P50: int(r.P50Ms), P95: int(r.P95Ms), P99: int(r.P99Ms), N: r.N}
 }
 
 func TestMergeDebugCompare_FullRows(t *testing.T) {
 	// Case (a): both sides have rows for the same route →
 	// all percentiles + count populated.
-	source := map[string]routeStats{
+	source := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 10, P95: 50, P99: 100, N: 200},
 	}
-	mirror := map[string]routeStats{
+	mirror := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 20, P95: 80, P99: 200, N: 150},
 	}
 	got := mergeDebugCompare(source, mirror, "src", "mir")
@@ -122,10 +124,10 @@ func TestMergeDebugCompare_OneSideEmpty(t *testing.T) {
 	// "honest baseline" contract — the dashboard's
 	// "X% slower than baseline" badge has to mean "the baseline
 	// actually had rows".
-	source := map[string]routeStats{
+	source := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 10, P95: 50, P99: 100, N: 200},
 	}
-	mirror := map[string]routeStats{} // zero traffic in window
+	mirror := map[string]apidserver.RouteStats{} // zero traffic in window
 	got := mergeDebugCompare(source, mirror, "src", "mir")
 	if len(got) != 1 {
 		t.Fatalf("want 1 route, got %d", len(got))
@@ -147,11 +149,11 @@ func TestMergeDebugCompare_RouteFilter(t *testing.T) {
 	// filtered inputs — the filter logic itself lives in
 	// fetchRouteStats and is exercised end-to-end at the
 	// pgtest layer.
-	source := map[string]routeStats{
+	source := map[string]apidserver.RouteStats{
 		"/api/v1/list":   {P50: 10, P95: 50, P99: 100, N: 200},
 		"/api/v1/unused": {P50: 99, P95: 99, P99: 99, N: 999},
 	}
-	mirror := map[string]routeStats{
+	mirror := map[string]apidserver.RouteStats{
 		"/api/v1/list":   {P50: 20, P95: 80, P99: 200, N: 150},
 		"/api/v1/unused": {P50: 1, P95: 1, P99: 1, N: 10},
 	}
@@ -173,10 +175,10 @@ func TestMergeDebugCompare_RouteFilter(t *testing.T) {
 func TestMergeDebugCompare_UnionOfRoutes(t *testing.T) {
 	// Case (d): disjoint routes between sides → both appear in
 	// the union, missing side zero-valued.
-	source := map[string]routeStats{
+	source := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 10, P95: 50, P99: 100, N: 200},
 	}
-	mirror := map[string]routeStats{
+	mirror := map[string]apidserver.RouteStats{
 		"/api/v1/show": {P50: 5, P95: 30, P99: 60, N: 100},
 	}
 	got := mergeDebugCompare(source, mirror, "src", "mir")
@@ -206,10 +208,10 @@ func TestMergeDebugCompare_WireShape(t *testing.T) {
 	// source_p50_ms / source_p95_ms / source_p99_ms / source_count
 	// alongside their mirror_* siblings. Renames break the
 	// dashboard silently.
-	source := map[string]routeStats{
+	source := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 10, P95: 50, P99: 100, N: 200},
 	}
-	mirror := map[string]routeStats{
+	mirror := map[string]apidserver.RouteStats{
 		"/api/v1/list": {P50: 20, P95: 80, P99: 200, N: 150},
 	}
 	got := mergeDebugCompare(source, mirror, "src", "mir")

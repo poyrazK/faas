@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 458
 
@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -33,31 +35,31 @@ func (s *routeRecoveryAPIStore) RecoverCanaryRouteHealth(_ context.Context, acco
 	return state.RouteHealthRecoveryResult{Aborted: true, AuditID: 42, Decision: &api.RouteHealthDecision{DeploymentID: deployment, Mode: "enforce", OnRegression: "abort", Status: "aborted", HistoryID: uuid.NewString()}}, nil
 }
 func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "health-abort")
-	app, _ := e.store.AppBySlug(t.Context(), slug)
-	stable, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "health-abort")
+	app, _ := (*e.Store()).AppBySlug(t.Context(), slug)
+	stable, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(t.Context(), stable.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(t.Context(), stable.ID); err != nil {
 		t.Fatal(err)
 	}
-	d, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", CanaryTotalSteps: 4, CanaryPreset: "balanced", RolloutState: "pending", TrafficPercent: 1})
+	d, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", CanaryTotalSteps: 4, CanaryPreset: "balanced", RolloutState: "pending", TrafficPercent: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(t.Context(), d.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(t.Context(), d.ID); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/internal/safe-deploy/deployments/" + d.ID + "/route-health/recover"
-	if rec := e.do(t, "POST", path, api.CanaryRouteHealthRecoveryRequest{ExpectedStep: 0}, nil); rec.Code != 404 {
+	if rec := e.Do(t, "POST", path, api.CanaryRouteHealthRecoveryRequest{ExpectedStep: 0}, nil); rec.Code != 404 {
 		t.Fatal("private action exposed publicly", rec.Code)
 	}
 	const canaryToken = "canary-service-secret-0000000000000001"
 	const actionToken = "action-service-secret-0000000000000001"
 	mux := http.NewServeMux()
-	if err := e.s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
+	if err := (*e.S()).MountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
 		t.Fatal(err)
 	}
 	call := func(token, remote, body string) *httptest.ResponseRecorder {
@@ -72,7 +74,7 @@ func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
 	for _, tc := range []struct {
 		token, remote string
 		status        int
-	}{{e.key, "127.0.0.1:1234", 401}, {canaryToken, "127.0.0.1:1234", 401}, {actionToken, "192.0.2.1:1234", 403}} {
+	}{{(*e.Key()), "127.0.0.1:1234", 401}, {canaryToken, "127.0.0.1:1234", 401}, {actionToken, "192.0.2.1:1234", 403}} {
 		if rec := call(tc.token, tc.remote, `{"expected_step":0}`); rec.Code != tc.status {
 			t.Fatal("action authorization", rec.Code, tc.status)
 		}
@@ -83,14 +85,14 @@ func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
 	if rec := call(actionToken, "127.0.0.1:1234", `{"expected_step":0}`); rec.Code != 503 {
 		t.Fatal("missing lease accepted", rec.Code, rec.Body)
 	}
-	if err := e.store.StampSafeReleaseWorkerLease(t.Context(), time.Minute); err != nil {
+	if err := (*e.Store()).StampSafeReleaseWorkerLease(t.Context(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if rec := call(actionToken, "127.0.0.1:1234", `{"expected_step":1}`); rec.Code != 409 {
 		t.Fatal("stale stage accepted", rec.Code, rec.Body)
 	}
 	gate := api.SetRouteHealthGateRequest{Mode: "enforce", OnRegression: "abort", ExpectedRevision: new(int64), Routes: []api.RouteHealthRoute{{Method: "POST", Path: "/checkout"}}}
-	if rec := e.do(t, "PUT", "/v1/apps/"+slug+"/route-health/gate", gate, nil); rec.Code != 200 {
+	if rec := e.Do(t, "PUT", "/v1/apps/"+slug+"/route-health/gate", gate, nil); rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body)
 	}
 	rec := call(actionToken, "127.0.0.1:1234", `{"expected_step":0}`)
@@ -98,12 +100,12 @@ func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &unknown) != nil || unknown.Aborted || unknown.RouteHealth == nil || unknown.RouteHealth.Status != "blocked" {
 		t.Fatal("unavailable evidence authorized abort", rec.Code, rec.Body)
 	}
-	page, err := e.store.ListRouteHealthHistory(t.Context(), e.acct.ID, app.ID, d.ID, 5, "")
+	page, err := (*e.Store()).ListRouteHealthHistory(t.Context(), (*e.Acct()).ID, app.ID, d.ID, 5, "")
 	if err != nil || len(page.Entries) != 0 {
 		t.Fatal("periodic check retained history", err)
 	}
-	stub := &routeRecoveryAPIStore{MemStore: e.store, account: e.acct.ID, app: app.ID, deployment: d.ID}
-	e.s.store = stub
+	stub := &routeRecoveryAPIStore{MemStore: (*e.Store()), account: (*e.Acct()).ID, app: app.ID, deployment: d.ID}
+	(*(*e.S()).Store()) = stub
 	for i := 0; i < 2; i++ {
 		rec := call(actionToken, "127.0.0.1:1234", `{"expected_step":0}`)
 		var result api.CanaryRouteHealthRecoveryResponse
@@ -121,7 +123,7 @@ func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
 
 func TestRouteHealthRecoveryAPIConfigurationDefaultAndSubscription(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "health-action")
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "health-action")
 	path := "/v1/apps/" + slug + "/route-health/gate"
 	for _, tc := range []struct {
 		body   map[string]any
@@ -132,7 +134,7 @@ func TestRouteHealthRecoveryAPIConfigurationDefaultAndSubscription(t *testing.T)
 		{map[string]any{"mode": "enforce", "on_regression": "abort", "expected_revision": 0, "routes": []map[string]string{{"method": "GET", "path": "/health"}}}, "abort", 200},
 		{map[string]any{"mode": "enforce", "expected_revision": 1, "routes": []map[string]string{{"method": "GET", "path": "/health"}}}, "hold", 200},
 	} {
-		rec := e.do(t, "PUT", path, tc.body, nil)
+		rec := e.Do(t, "PUT", path, tc.body, nil)
 		if rec.Code != tc.status {
 			t.Fatal("policy update", rec.Code, rec.Body)
 		}

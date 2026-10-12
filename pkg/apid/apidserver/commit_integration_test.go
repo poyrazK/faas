@@ -1,17 +1,20 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"filippo.io/age"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"filippo.io/age"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/commitmanaged"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -21,8 +24,8 @@ import (
 
 func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	t.Setenv("FAAS_COMMIT_API_ENABLED", "true")
-	e := setupPGHandler(t, api.PlanPro)
-	created := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-worker"}, nil)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	created := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-worker"}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("app: %d %s", created.Code, created.Body.String())
 	}
@@ -32,23 +35,23 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &app); err != nil {
 		t.Fatal(err)
 	}
-	otherAppResponse := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-other"}, nil)
+	otherAppResponse := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-other"}, nil)
 	var otherApp struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(otherAppResponse.Body.Bytes(), &otherApp); err != nil || otherAppResponse.Code != http.StatusCreated {
 		t.Fatalf("other app: %d %s (%v)", otherAppResponse.Code, otherAppResponse.Body.String(), err)
 	}
-	if _, err := state.NewPgStore(e.pool).UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+	if _, err := state.NewPgStore((*e.Pool())).UpsertExclusiveWorkPolicy(t.Context(), (*e.Acct()).ID, exclusivework.Policy{
 		Name: "orders", Scope: "account", Contention: "queue", MemberAppIDs: []string{app.ID, otherApp.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60, MaxAttempts: 3, RetryAfterSeconds: 7,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	missingPolicy := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "missing-policy"}, nil)
+	missingPolicy := e.Do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "missing-policy"}, nil)
 	if missingPolicy.Code != http.StatusBadRequest {
 		t.Fatalf("source without managed policy: %d", missingPolicy.Code)
 	}
-	source := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
+	source := e.Do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
 	if source.Code != http.StatusCreated {
 		t.Fatalf("source: %d %s", source.Code, source.Body.String())
 	}
@@ -58,7 +61,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err := json.Unmarshal(source.Body.Bytes(), &src); err != nil {
 		t.Fatal(err)
 	}
-	conflict := e.do(t, http.MethodPost, "/v1/apps/commit-other/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
+	conflict := e.Do(t, http.MethodPost, "/v1/apps/commit-other/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("source destination conflict: %d %s", conflict.Code, conflict.Body.String())
 	}
@@ -72,10 +75,10 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousRecipient := outboundCredentialRecipient
-	outboundCredentialRecipient = func() *age.X25519Recipient { return identity.Recipient() }
-	t.Cleanup(func() { outboundCredentialRecipient = previousRecipient })
-	credential := e.do(t, http.MethodPut, "/v1/commit-sources/"+src.ID+"/connection", map[string]string{"connection_url": "postgres://relay:private-password@db.example.com/customer?sslmode=verify-full"}, nil)
+	previousRecipient := (*apidserver.OutboundCredentialRecipient)
+	(*apidserver.OutboundCredentialRecipient) = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { (*apidserver.OutboundCredentialRecipient) = previousRecipient })
+	credential := e.Do(t, http.MethodPut, "/v1/commit-sources/"+src.ID+"/connection", map[string]string{"connection_url": "postgres://relay:private-password@db.example.com/customer?sslmode=verify-full"}, nil)
 	if credential.Code != http.StatusNoContent || credential.Body.Len() != 0 {
 		t.Fatalf("credential registration: %d", credential.Code)
 	}
@@ -87,9 +90,9 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if _, err := customer.Exec(ctx, `INSERT INTO public.gregale_commit_binding(source_id) VALUES($1::uuid)`, src.ID); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(e.h)
+	server := httptest.NewServer((*e.H()))
 	defer server.Close()
-	acceptor := &commitwork.HTTPAcceptor{URL: server.URL + "/v1/commit-sources/" + src.ID + "/events", Token: e.key}
+	acceptor := &commitwork.HTTPAcceptor{URL: server.URL + "/v1/commit-sources/" + src.ID + "/events", Token: (*e.Key())}
 	event := commitwork.Event{ID: uuid.NewString(), Type: "order.created", Data: []byte(`{"order_id":"one"}`)}
 	tx, err := customer.Begin(ctx)
 	if err != nil {
@@ -116,20 +119,20 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if first != second || first.OperationID == "" || first.InvocationID != "" {
 		t.Fatalf("unstable receipt: %+v %+v", first, second)
 	}
-	if _, err := e.pool.Exec(ctx, `UPDATE apps SET streaming_enabled=false WHERE account_id=$1::uuid`, e.acct.ID); err != nil {
+	if _, err := (*e.Pool()).Exec(ctx, `UPDATE apps SET streaming_enabled=false WHERE account_id=$1::uuid`, (*e.Acct()).ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.pool.Exec(ctx, `UPDATE accounts SET plan='free' WHERE id=$1::uuid`, e.acct.ID); err != nil {
+	if _, err := (*e.Pool()).Exec(ctx, `UPDATE accounts SET plan='free' WHERE id=$1::uuid`, (*e.Acct()).ID); err != nil {
 		t.Fatal(err)
 	}
 	downgradedReplay, err := acceptor.Accept(ctx, event)
 	if err != nil || downgradedReplay != first {
 		t.Fatalf("plan downgrade lost accepted receipt: %+v (%v)", downgradedReplay, err)
 	}
-	if _, err := e.pool.Exec(ctx, `UPDATE accounts SET plan='pro' WHERE id=$1::uuid`, e.acct.ID); err != nil {
+	if _, err := (*e.Pool()).Exec(ctx, `UPDATE accounts SET plan='pro' WHERE id=$1::uuid`, (*e.Acct()).ID); err != nil {
 		t.Fatal(err)
 	}
-	pause := e.do(t, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": false}, nil)
+	pause := e.Do(t, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": false}, nil)
 	if pause.Code != http.StatusOK {
 		t.Fatalf("pause: %d %s", pause.Code, pause.Body.String())
 	}
@@ -142,22 +145,22 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if _, err := acceptor.Accept(ctx, newEvent); err == nil {
 		t.Fatal("paused source accepted new event")
 	}
-	resume := e.do(t, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": true}, nil)
+	resume := e.Do(t, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": true}, nil)
 	if resume.Code != http.StatusOK {
 		t.Fatalf("resume: %d %s", resume.Code, resume.Body.String())
 	}
 	if _, err := acceptor.Accept(ctx, newEvent); err != nil {
 		t.Fatalf("resumed acceptance: %v", err)
 	}
-	status := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID+"/events/"+event.ID, nil, nil)
+	status := e.Do(t, http.MethodGet, "/v1/commit-sources/"+src.ID+"/events/"+event.ID, nil, nil)
 	if status.Code != http.StatusOK {
 		t.Fatalf("receipt lookup: %d %s", status.Code, status.Body.String())
 	}
-	invocation := e.do(t, http.MethodGet, "/v1/invocations/"+first.OperationID, nil, nil)
+	invocation := e.Do(t, http.MethodGet, "/v1/invocations/"+first.OperationID, nil, nil)
 	if invocation.Code != http.StatusNotFound {
 		t.Fatalf("managed operation created a legacy invocation: %d %s", invocation.Code, invocation.Body.String())
 	}
-	operation := e.do(t, http.MethodGet, "/v1/operations/"+first.OperationID, nil, nil)
+	operation := e.Do(t, http.MethodGet, "/v1/operations/"+first.OperationID, nil, nil)
 	var op api.CommitOperationResponse
 	if err := json.Unmarshal(operation.Body.Bytes(), &op); err != nil || operation.Code != http.StatusOK || op.State != "pending" || op.ReceiptID != first.ID {
 		t.Fatalf("operation status: %d %+v %v", operation.Code, op, err)
@@ -174,17 +177,17 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager := commitmanaged.Manager{Store: state.NewPgStore(e.pool), Identities: []*age.X25519Identity{identity}, Open: func(ctx context.Context, _ string, _ commitwork.NetworkPolicy) (*pgxpool.Pool, error) {
+	manager := commitmanaged.Manager{Store: state.NewPgStore((*e.Pool())), Identities: []*age.X25519Identity{identity}, Open: func(ctx context.Context, _ string, _ commitwork.NetworkPolicy) (*pgxpool.Pool, error) {
 		return pgxpool.NewWithConfig(ctx, customer.Config().Copy())
 	}}
 	if err := manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	managedReceipt, err := state.NewPgStore(e.pool).CommitReceiptByEvent(ctx, e.acct.ID, src.ID, managedEvent.ID)
+	managedReceipt, err := state.NewPgStore((*e.Pool())).CommitReceiptByEvent(ctx, (*e.Acct()).ID, src.ID, managedEvent.ID)
 	if err != nil {
 		t.Fatalf("managed handoff: %v", err)
 	}
-	managedOperation, err := state.NewPgStore(e.pool).ExclusiveOperationByID(ctx, e.acct.ID, managedReceipt.OperationID)
+	managedOperation, err := state.NewPgStore((*e.Pool())).ExclusiveOperationByID(ctx, (*e.Acct()).ID, managedReceipt.OperationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +195,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if policy.MaxAttempts != 3 || policy.RetryAfterSeconds != 7 || managedReceipt.InvocationID != "" {
 		t.Fatalf("managed handoff lost Operations policy: %+v", policy)
 	}
-	health := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
+	health := e.Do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
 	if health.Code != http.StatusOK {
 		t.Fatalf("source health: %d", health.Code)
 	}
@@ -211,7 +214,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err := manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	blocked := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID+"/blocked-events", nil, nil)
+	blocked := e.Do(t, http.MethodGet, "/v1/commit-sources/"+src.ID+"/blocked-events", nil, nil)
 	if blocked.Code != http.StatusOK {
 		t.Fatalf("blocked listing: %d %s", blocked.Code, blocked.Body.String())
 	}
@@ -227,35 +230,35 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if _, err := customer.Exec(ctx, `UPDATE gregale_outbox SET event_type='order.created' WHERE event_id=$1::uuid`, blockedID); err != nil {
 		t.Fatal(err)
 	}
-	replay := e.do(t, http.MethodPost, "/v1/commit-sources/"+src.ID+"/events/"+blockedID+"/replay", nil, nil)
+	replay := e.Do(t, http.MethodPost, "/v1/commit-sources/"+src.ID+"/events/"+blockedID+"/replay", nil, nil)
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("replay request: %d %s", replay.Code, replay.Body.String())
 	}
 	if err := manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.NewPgStore(e.pool).CommitReceiptByEvent(ctx, e.acct.ID, src.ID, blockedID); err != nil {
+	if _, err := state.NewPgStore((*e.Pool())).CommitReceiptByEvent(ctx, (*e.Acct()).ID, src.ID, blockedID); err != nil {
 		t.Fatalf("blocked replay acceptance: %v", err)
 	}
 	// A second source using the same database cannot acquire this outbox.
-	otherResponse := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "wrong-source", "operation_policy": "orders"}, nil)
+	otherResponse := e.Do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "wrong-source", "operation_policy": "orders"}, nil)
 	var other api.CommitSourceResponse
 	if err := json.Unmarshal(otherResponse.Body.Bytes(), &other); err != nil || otherResponse.Code != http.StatusCreated {
 		t.Fatalf("other source: %d %v", otherResponse.Code, err)
 	}
-	otherConnection := e.do(t, http.MethodPut, "/v1/commit-sources/"+other.ID+"/connection", map[string]string{"connection_url": "postgres://relay:private-password@db.example.com/customer?sslmode=verify-full"}, nil)
+	otherConnection := e.Do(t, http.MethodPut, "/v1/commit-sources/"+other.ID+"/connection", map[string]string{"connection_url": "postgres://relay:private-password@db.example.com/customer?sslmode=verify-full"}, nil)
 	if otherConnection.Code != http.StatusNoContent {
 		t.Fatalf("other connection: %d", otherConnection.Code)
 	}
 	if err := manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	otherHealth := e.do(t, http.MethodGet, "/v1/commit-sources/"+other.ID, nil, nil)
+	otherHealth := e.Do(t, http.MethodGet, "/v1/commit-sources/"+other.ID, nil, nil)
 	var rejected api.CommitSourceResponse
 	if err := json.Unmarshal(otherHealth.Body.Bytes(), &rejected); err != nil || rejected.RelayStatus != "source_binding_unqualified" {
 		t.Fatalf("duplicate database source: %+v %v", rejected, err)
 	}
-	if _, err := state.NewPgStore(e.pool).CommitReceiptByEvent(ctx, e.acct.ID, other.ID, managedEvent.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := state.NewPgStore((*e.Pool())).CommitReceiptByEvent(ctx, (*e.Acct()).ID, other.ID, managedEvent.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("another source accepted the event: %v", err)
 	}
 
@@ -265,32 +268,32 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 // through the actual customer DB relay and recovers identities before admission.
 func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
 	t.Setenv("FAAS_COMMIT_API_ENABLED", "true")
-	e := setupPGHandler(t, api.PlanPro)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	ctx := t.Context()
-	store := state.NewPgStore(e.pool)
-	app, err := store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "routed-commit-worker", Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256, PlatformTenantRequired: true})
+	store := state.NewPgStore((*e.Pool()))
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "routed-commit-worker", Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256, PlatformTenantRequired: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.UpsertExclusiveWorkPolicy(ctx, e.acct.ID, exclusivework.Policy{Name: "customer-orders", Scope: "platform_tenant", Contention: "queue", MemberAppIDs: []string{app.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60})
+	_, err = store.UpsertExclusiveWorkPolicy(ctx, (*e.Acct()).ID, exclusivework.Policy{Name: "customer-orders", Scope: "platform_tenant", Contention: "queue", MemberAppIDs: []string{app.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant, _, err := store.CreatePlatformTenant(ctx, e.acct.ID, "customer-a", "Customer A", 250)
+	tenant, _, err := store.CreatePlatformTenant(ctx, (*e.Acct()).ID, "customer-a", "Customer A", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	surface, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: e.acct.ID, AppID: app.ID, Name: "customer-a", CertKind: state.CertKindPerHostSAN}, api.MustLimitsFor(api.PlanPro))
+	surface, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "customer-a", CertKind: state.CertKindPerHostSAN}, api.MustLimitsFor(api.PlanPro))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surface.ID); err != nil {
+	if _, err := store.LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenant.ID, surface.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.pool.Exec(ctx, `UPDATE tenant_surfaces SET status='active' WHERE id=$1::uuid`, surface.ID); err != nil {
+	if _, err := (*e.Pool()).Exec(ctx, `UPDATE tenant_surfaces SET status='active' WHERE id=$1::uuid`, surface.ID); err != nil {
 		t.Fatal(err)
 	}
-	created := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/commit-sources", api.CreateCommitSourceRequest{Name: "customer-orders", OperationPolicy: "customer-orders", ContractVersion: 2, AllowTenantSelection: true}, nil)
+	created := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/commit-sources", api.CreateCommitSourceRequest{Name: "customer-orders", OperationPolicy: "customer-orders", ContractVersion: 2, AllowTenantSelection: true}, nil)
 	var src api.CommitSourceResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &src); err != nil || created.Code != http.StatusCreated || src.ContractVersion != 2 || !src.AllowTenantSelection {
 		t.Fatalf("source: %d %s %v", created.Code, created.Body.String(), err)
@@ -302,9 +305,9 @@ func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
 	if _, err := customer.Exec(ctx, `INSERT INTO public.gregale_commit_binding(source_id) VALUES($1::uuid)`, src.ID); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(e.h)
+	server := httptest.NewServer((*e.H()))
 	defer server.Close()
-	acceptor := &commitwork.HTTPAcceptor{URL: server.URL + "/v1/commit-sources/" + src.ID + "/events", Token: e.key}
+	acceptor := &commitwork.HTTPAcceptor{URL: server.URL + "/v1/commit-sources/" + src.ID + "/events", Token: (*e.Key())}
 	event := commitwork.Event{ID: uuid.NewString(), Type: "order.created", Data: json.RawMessage(`{"order_id":1,"platform_tenant_id":"untrusted-payload"}`), Routing: &api.CommitRouting{Version: 2, PlatformTenantID: tenant.ID, Key: json.RawMessage(`"order-1"`)}}
 	tx, err := customer.Begin(ctx)
 	if err != nil {
@@ -324,25 +327,25 @@ func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := store.ExclusiveOperationByID(ctx, e.acct.ID, first.OperationID)
+	op, err := store.ExclusiveOperationByID(ctx, (*e.Acct()).ID, first.OperationID)
 	if err != nil || op.PlatformTenantID != tenant.ID || op.AppID != app.ID {
 		t.Fatalf("trusted dispatch ownership: %+v %v", op, err)
 	}
 	path := "/v1/commit-sources/" + src.ID + "/events"
-	unknown := e.do(t, http.MethodPost, path, map[string]any{"id": uuid.NewString(), "type": "order.created", "data": map[string]any{}, "routing": map[string]any{"version": 2, "key": "order-1", "platform_tenant_id": tenant.ID, "app_id": app.ID}}, nil)
+	unknown := e.Do(t, http.MethodPost, path, map[string]any{"id": uuid.NewString(), "type": "order.created", "data": map[string]any{}, "routing": map[string]any{"version": 2, "key": "order-1", "platform_tenant_id": tenant.ID, "app_id": app.ID}}, nil)
 	if unknown.Code != http.StatusBadRequest {
 		t.Fatalf("unknown routing field: %d %s", unknown.Code, unknown.Body.String())
 	}
 	changed := event
 	changed.Routing = &api.CommitRouting{Version: 2, PlatformTenantID: tenant.ID, Key: json.RawMessage(`"order-2"`)}
-	conflict := e.do(t, http.MethodPost, path, changed, nil)
+	conflict := e.Do(t, http.MethodPost, path, changed, nil)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("routing conflict: %d %s", conflict.Code, conflict.Body.String())
 	}
 	noGrant := event
 	noGrant.ID = uuid.NewString()
 	noGrant.Routing = &api.CommitRouting{Version: 2, Key: json.RawMessage(`1`)}
-	denied := e.do(t, http.MethodPost, path, noGrant, nil)
+	denied := e.Do(t, http.MethodPost, path, noGrant, nil)
 	if denied.Code != http.StatusBadRequest {
 		t.Fatalf("missing customer: %d %s", denied.Code, denied.Body.String())
 	}
@@ -356,7 +359,7 @@ func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetCommitSourceConnection(ctx, e.acct.ID, src.ID, sealed); err != nil {
+	if err := store.SetCommitSourceConnection(ctx, (*e.Acct()).ID, src.ID, sealed); err != nil {
 		t.Fatal(err)
 	}
 	managed := event
@@ -377,26 +380,26 @@ func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
 	if err := manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	managedReceipt, err := store.CommitReceiptByEvent(ctx, e.acct.ID, src.ID, managed.ID)
+	managedReceipt, err := store.CommitReceiptByEvent(ctx, (*e.Acct()).ID, src.ID, managed.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	managedOp, err := store.ExclusiveOperationByID(ctx, e.acct.ID, managedReceipt.OperationID)
+	managedOp, err := store.ExclusiveOperationByID(ctx, (*e.Acct()).ID, managedReceipt.OperationID)
 	if err != nil || managedOp.PlatformTenantID != tenant.ID || managedOp.KeyID != op.KeyID {
 		t.Fatalf("managed relay lost customer/business lane: %+v %v", managedOp, err)
 	}
-	health := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
+	health := e.Do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
 	var snapshot api.CommitSourceResponse
 	if err := json.Unmarshal(health.Body.Bytes(), &snapshot); err != nil || snapshot.ContractVersion != 2 || !snapshot.AllowTenantSelection || snapshot.RelayStatus != "healthy" {
 		t.Fatalf("routed source observation: %d %s %v", health.Code, health.Body.String(), err)
 	}
 
-	if _, err := store.SetPlatformTenantStatus(ctx, e.acct.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+	if _, err := store.SetPlatformTenantStatus(ctx, (*e.Acct()).ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
 		t.Fatal(err)
 	}
 	suspended := event
 	suspended.ID = uuid.NewString()
-	denied = e.do(t, http.MethodPost, path, suspended, nil)
+	denied = e.Do(t, http.MethodPost, path, suspended, nil)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("suspended customer: %d %s", denied.Code, denied.Body.String())
 	}

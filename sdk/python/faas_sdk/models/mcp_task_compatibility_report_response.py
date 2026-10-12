@@ -18,6 +18,8 @@ T = TypeVar("T", bound="MCPTaskCompatibilityReportResponse")
 
 @_attrs_define
 class MCPTaskCompatibilityReportResponse:
+    """Latest observer inventory with platform timestamps and freshness state."""
+
     published: bool
     handlers: list[MCPTaskHandlerCompatibility]
     truncated: bool

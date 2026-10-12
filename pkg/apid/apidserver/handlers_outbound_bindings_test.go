@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,31 +9,33 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOutboundCustomerBindingLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := createApp(t, e, "outbound-customer")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.CreateApp(t, e, "outbound-customer")
 	integrationID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: integrationID, AccountID: e.acct.ID, Name: "stripe-production",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: integrationID, AccountID: (*e.Acct()).ID, Name: "stripe-production",
 		Origin: "https://api.stripe.com", AllowedMethods: []string{"GET", "POST"},
 		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
 	})
-	other, err := e.store.CreateAccount(context.Background(), "other-outbound@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other-outbound@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: otherID, AccountID: other.ID, Name: "other-secret",
 		Origin: "https://private.example", AllowedMethods: []string{"POST"},
 		AllowedPathPrefixes: []string{"/admin"}, Enabled: true,
 	})
 
-	offers := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	offers := e.Do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
 	if offers.Code != http.StatusOK || strings.Contains(offers.Body.String(), otherID) {
 		t.Fatalf("account-scoped offers = %d %s", offers.Code, offers.Body.String())
 	}
@@ -42,9 +44,9 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 		t.Fatalf("catalog = %+v, %v", catalog, err)
 	}
 	path := "/v1/apps/" + app.Slug + "/outbound-bindings/" + integrationID
-	wrong := e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID, nil, nil)
-	assertProblem(t, wrong, http.StatusNotFound, api.CodeNotFound)
-	created := e.do(t, http.MethodPut, path, nil, nil)
+	wrong := e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID, nil, nil)
+	apidserver.AssertProblem(t, wrong, http.StatusNotFound, api.CodeNotFound)
+	created := e.Do(t, http.MethodPut, path, nil, nil)
 	if created.Code != http.StatusOK {
 		t.Fatalf("create binding = %d %s", created.Code, created.Body.String())
 	}
@@ -57,25 +59,25 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	}
 	budgetPath := path + "/budget"
 	limit := int64(5000)
-	setBudget := e.do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: &limit}, nil)
+	setBudget := e.Do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: &limit}, nil)
 	if setBudget.Code != http.StatusNoContent || setBudget.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("set binding budget = %d %s", setBudget.Code, setBudget.Body.String())
 	}
-	usageResponse := e.do(t, http.MethodGet, path+"/usage", nil, nil)
+	usageResponse := e.Do(t, http.MethodGet, path+"/usage", nil, nil)
 	var usage api.OutboundBindingUsageResponse
 	if usageResponse.Code != http.StatusOK || usageResponse.Header().Get("Cache-Control") != "no-store" ||
 		json.Unmarshal(usageResponse.Body.Bytes(), &usage) != nil || usage.DailyRequestCount != 0 ||
 		usage.DailyRequestLimit == nil || *usage.DailyRequestLimit != limit || usage.UsageDate == "" || usage.ResetsAt.IsZero() {
 		t.Fatalf("binding usage = %d %s (%+v)", usageResponse.Code, usageResponse.Body.String(), usage)
 	}
-	maximum, ok := api.OutboundRequestsPerDayMaxForPlan(e.acct.Plan)
+	maximum, ok := api.OutboundRequestsPerDayMaxForPlan((*e.Acct()).Plan)
 	if !ok {
-		t.Fatalf("missing outbound budget ceiling for plan %q", e.acct.Plan)
+		t.Fatalf("missing outbound budget ceiling for plan %q", (*e.Acct()).Plan)
 	}
 	tooHigh := maximum + 1
-	assertProblem(t, e.do(t, http.MethodPut, budgetPath,
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, budgetPath,
 		api.PutOutboundBindingDailyRequestBudgetRequest{DailyRequestLimit: &tooHigh}, nil), http.StatusBadRequest, api.CodeValidation)
-	assertProblem(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID+"/usage", nil, nil),
+	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID+"/usage", nil, nil),
 		http.StatusNotFound, api.CodeNotFound)
 	if len(binding.AllowedMethods) != 2 || len(binding.AllowedPathPrefixes) != 1 || binding.AllowedPathPrefixes[0] != "/v1" {
 		t.Fatalf("initial binding policy = %+v", binding)
@@ -83,13 +85,13 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	if strings.Contains(created.Body.String(), "sk_") || strings.Contains(created.Body.String(), "gateway-token") {
 		t.Fatal("binding response contains credential material")
 	}
-	repeated := e.do(t, http.MethodPut, path, nil, nil)
+	repeated := e.Do(t, http.MethodPut, path, nil, nil)
 	var repeatedBinding api.OutboundAppBinding
 	if repeated.Code != http.StatusOK || json.Unmarshal(repeated.Body.Bytes(), &repeatedBinding) != nil || !repeatedBinding.CreatedAt.Equal(binding.CreatedAt) {
 		t.Fatalf("idempotent bind = %d %s", repeated.Code, repeated.Body.String())
 	}
 	policy := api.UpdateOutboundBindingPolicyRequest{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/customers"}}
-	updated := e.do(t, http.MethodPatch, path, policy, nil)
+	updated := e.Do(t, http.MethodPatch, path, policy, nil)
 	if updated.Code != http.StatusNoContent {
 		t.Fatalf("update binding policy = %d %s", updated.Code, updated.Body.String())
 	}
@@ -99,10 +101,10 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 		{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/%63ustomers"}},
 		{AllowedMethods: []string{"GET", "GET"}, AllowedPathPrefixes: []string{"/v1"}},
 	} {
-		assertProblem(t, e.do(t, http.MethodPatch, path, invalid, nil), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPatch, path, invalid, nil), http.StatusBadRequest, api.CodeValidation)
 	}
-	assertProblem(t, e.do(t, http.MethodPatch, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID, policy, nil), http.StatusNotFound, api.CodeNotFound)
-	list := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPatch, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID, policy, nil), http.StatusNotFound, api.CodeNotFound)
+	list := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
 	var bindings api.OutboundAppBindingList
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &bindings) != nil || len(bindings.Items) != 1 {
 		t.Fatalf("binding list = %d %s", list.Code, list.Body.String())
@@ -114,40 +116,40 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	if bindings.Items[0].DailyRequestLimit == nil || *bindings.Items[0].DailyRequestLimit != limit {
 		t.Fatalf("binding list daily request limit = %v, want %d", bindings.Items[0].DailyRequestLimit, limit)
 	}
-	repeated = e.do(t, http.MethodPut, path, nil, nil)
+	repeated = e.Do(t, http.MethodPut, path, nil, nil)
 	if repeated.Code != http.StatusOK || json.Unmarshal(repeated.Body.Bytes(), &repeatedBinding) != nil ||
 		len(repeatedBinding.AllowedPathPrefixes) != 1 || repeatedBinding.AllowedPathPrefixes[0] != "/v1/customers" {
 		t.Fatalf("idempotent bind widened policy = %d %s", repeated.Code, repeated.Body.String())
 	}
-	clearBudget := e.do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{}, nil)
+	clearBudget := e.Do(t, http.MethodPut, budgetPath, api.PutOutboundBindingDailyRequestBudgetRequest{}, nil)
 	if clearBudget.Code != http.StatusNoContent {
 		t.Fatalf("clear binding budget = %d %s", clearBudget.Code, clearBudget.Body.String())
 	}
-	usageResponse = e.do(t, http.MethodGet, path+"/usage", nil, nil)
+	usageResponse = e.Do(t, http.MethodGet, path+"/usage", nil, nil)
 	if usageResponse.Code != http.StatusOK || json.Unmarshal(usageResponse.Body.Bytes(), &usage) != nil || usage.DailyRequestLimit != nil {
 		t.Fatalf("cleared binding usage = %d %s (%+v)", usageResponse.Code, usageResponse.Body.String(), usage)
 	}
-	deleted := e.do(t, http.MethodDelete, path, nil, nil)
+	deleted := e.Do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete binding = %d %s", deleted.Code, deleted.Body.String())
 	}
-	list = e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
+	list = e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &bindings) != nil || len(bindings.Items) != 0 {
 		t.Fatalf("binding list after delete = %d %s", list.Code, list.Body.String())
 	}
 }
 
 func TestOutboundCustomerRequestPolicyLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	id := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: id, AccountID: e.acct.ID, Name: "customer-policy", Origin: "https://api.example.com",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: (*e.Acct()).ID, Name: "customer-policy", Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
 	})
 	policy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 200, MaxInFlight: 100, RequestTimeoutMS: 45_000}
 	path := "/v1/outbound/integrations/" + id + "/request-policy"
-	updated := e.do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
+	updated := e.Do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
 	if updated.Code != http.StatusNoContent {
 		t.Fatalf("update request policy = %d %s", updated.Code, updated.Body.String())
 	}
@@ -156,28 +158,28 @@ func TestOutboundCustomerRequestPolicyLifecycle(t *testing.T) {
 		{RatePerSecond: 50, Burst: 200, MaxInFlight: 100, RequestTimeoutMS: 120_001},
 		{},
 	} {
-		assertProblem(t, e.do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: invalid}, nil), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: invalid}, nil), http.StatusBadRequest, api.CodeValidation)
 	}
-	other, err := e.store.CreateAccount(context.Background(), "other-outbound-policy@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other-outbound-policy@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: otherID, AccountID: other.ID, Name: "foreign-policy", Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
 	})
-	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/request-policy",
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/request-policy",
 		api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil), http.StatusNotFound, api.CodeNotFound)
 	operatorID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: operatorID, AccountID: e.acct.ID, Name: "operator-policy", Origin: "https://api.operator.example",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: operatorID, AccountID: (*e.Acct()).ID, Name: "operator-policy", Origin: "https://api.operator.example",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
 	})
-	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/request-policy",
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/request-policy",
 		api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil), http.StatusNotFound, api.CodeNotFound)
-	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
 	var offers api.OutboundIntegrationOfferList
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 {
 		t.Fatalf("offer list = %d %s", list.Code, list.Body.String())
@@ -190,95 +192,95 @@ func TestOutboundCustomerRequestPolicyLifecycle(t *testing.T) {
 }
 
 func TestOutboundRunsGrantLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	id := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: id, AccountID: e.acct.ID, Name: "customer-runs-grant", Origin: "https://api.example.com",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: (*e.Acct()).ID, Name: "customer-runs-grant", Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
 	})
 	path := "/v1/outbound/integrations/" + id + "/runs"
-	assertProblem(t, e.do(t, http.MethodPut, path, map[string]any{}, nil), http.StatusBadRequest, api.CodeValidation)
-	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/not-a-uuid/runs",
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, map[string]any{}, nil), http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, "/v1/outbound/integrations/not-a-uuid/runs",
 		api.PutOutboundRunsBindingRequest{}, nil), http.StatusBadRequest, api.CodeValidation)
-	assertProblem(t, e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil),
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: apidserver.BoolPtr(true)}, nil),
 		http.StatusConflict, "outbound_runs_binding_ineligible")
-	if err := e.store.SetOutboundCredential(context.Background(), e.acct.ID, id, []byte("sealed")); err != nil {
+	if err := (*e.Store()).SetOutboundCredential(context.Background(), (*e.Acct()).ID, id, []byte("sealed")); err != nil {
 		t.Fatalf("SetOutboundCredential: %v", err)
 	}
-	enabled := e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil)
+	enabled := e.Do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: apidserver.BoolPtr(true)}, nil)
 	if enabled.Code != http.StatusNoContent || enabled.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("enable Runs grant = %d %s", enabled.Code, enabled.Body.String())
 	}
 	var offers api.OutboundIntegrationOfferList
-	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 1 || !offers.Items[0].RunsEnabled {
 		t.Fatalf("Runs grant not shown in account offer: %d %s (%+v)", list.Code, list.Body.String(), offers)
 	}
-	disabled := e.do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: boolPtr(false)}, nil)
+	disabled := e.Do(t, http.MethodPut, path, api.PutOutboundRunsBindingRequest{Enabled: apidserver.BoolPtr(false)}, nil)
 	if disabled.Code != http.StatusNoContent {
 		t.Fatalf("disable Runs grant = %d %s", disabled.Code, disabled.Body.String())
 	}
-	other, err := e.store.CreateAccount(context.Background(), "other-runs-grant@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other-runs-grant@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: otherID, AccountID: other.ID, Name: "foreign-runs-grant", Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
 	})
-	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/runs",
-		api.PutOutboundRunsBindingRequest{Enabled: boolPtr(true)}, nil), http.StatusNotFound, api.CodeNotFound)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/runs",
+		api.PutOutboundRunsBindingRequest{Enabled: apidserver.BoolPtr(true)}, nil), http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestOutboundCustomerCredentialLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous := outboundCredentialRecipient
-	outboundCredentialRecipient = func() *age.X25519Recipient { return identity.Recipient() }
-	t.Cleanup(func() { outboundCredentialRecipient = previous })
+	previous := (*apidserver.OutboundCredentialRecipient)
+	(*apidserver.OutboundCredentialRecipient) = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { (*apidserver.OutboundCredentialRecipient) = previous })
 	id := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: id, AccountID: e.acct.ID, Name: "customer-key", Origin: "https://api.example.com",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: (*e.Acct()).ID, Name: "customer-key", Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, CredentialSource: "customer_sealed",
 	})
 	path := "/v1/outbound/integrations/" + id + "/credential"
-	bad := e.do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: "Bearer bad\nvalue"}, nil)
-	assertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
-	other, err := e.store.CreateAccount(context.Background(), "outbound-credential-other@example.com", api.PlanPro)
+	bad := e.Do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: "Bearer bad\nvalue"}, nil)
+	apidserver.AssertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "outbound-credential-other@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: otherID, AccountID: other.ID, Name: "other-key", Origin: "https://private.example",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
 		Enabled: true, CredentialSource: "customer_sealed",
 	})
-	wrong := e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/credential",
+	wrong := e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/credential",
 		api.PutOutboundCredentialRequest{Authorization: "Bearer sk_foreign"}, nil)
-	assertProblem(t, wrong, http.StatusNotFound, api.CodeNotFound)
+	apidserver.AssertProblem(t, wrong, http.StatusNotFound, api.CodeNotFound)
 	operatorID := uuid.NewString()
-	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
-		ID: operatorID, AccountID: e.acct.ID, Name: "operator-key", Origin: "https://api.operator.example",
+	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: operatorID, AccountID: (*e.Acct()).ID, Name: "operator-key", Origin: "https://api.operator.example",
 		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
 	})
-	operatorWrite := e.do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/credential",
+	operatorWrite := e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/credential",
 		api.PutOutboundCredentialRequest{Authorization: "Bearer sk_override"}, nil)
-	assertProblem(t, operatorWrite, http.StatusNotFound, api.CodeNotFound)
+	apidserver.AssertProblem(t, operatorWrite, http.StatusNotFound, api.CodeNotFound)
 	for _, value := range []string{"Bearer sk_first", "Bearer sk_rotated"} {
-		response := e.do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: value}, nil)
+		response := e.Do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: value}, nil)
 		if response.Code != http.StatusNoContent || strings.Contains(response.Body.String(), value) {
 			t.Fatalf("set credential = %d %s", response.Code, response.Body.String())
 		}
 	}
-	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
 	var offers api.OutboundIntegrationOfferList
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 || !offers.Items[0].CredentialConfigured {
 		t.Fatalf("credential status = %d %s", list.Code, list.Body.String())
@@ -286,11 +288,11 @@ func TestOutboundCustomerCredentialLifecycle(t *testing.T) {
 	if strings.Contains(list.Body.String(), "sk_first") || strings.Contains(list.Body.String(), "sk_rotated") {
 		t.Fatal("credential escaped through offer metadata")
 	}
-	deleted := e.do(t, http.MethodDelete, path, nil, nil)
+	deleted := e.Do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete credential = %d %s", deleted.Code, deleted.Body.String())
 	}
-	list = e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	list = e.Do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 || offers.Items[0].CredentialConfigured {
 		t.Fatalf("revoked credential status = %d %s", list.Code, list.Body.String())
 	}

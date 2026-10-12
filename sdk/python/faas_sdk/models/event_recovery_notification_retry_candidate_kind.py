@@ -1,9 +1,10 @@
 from typing import Literal
 
-EventRecoveryNotificationRetryCandidateKind = Literal["admission", "execution"]
+EventRecoveryNotificationRetryCandidateKind = Literal["admission", "attention", "execution"]
 
 EVENT_RECOVERY_NOTIFICATION_RETRY_CANDIDATE_KIND_VALUES: set[EventRecoveryNotificationRetryCandidateKind] = {
     "admission",
+    "attention",
     "execution",
 }
 

@@ -173,8 +173,12 @@ func writeEventRecoveryJob(out api.EventRecoveryJob) {
 
 }
 func writeEventRecoveryItems(items []api.EventRecoveryItem) {
-	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON\tPARENT JOB\tPARENT POSITION")
+	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON\tPARENT JOB\tPARENT POSITION\tWORKFLOW RUN\tEXPECTED RESUME COUNT")
 	for _, item := range items {
+		resumeCount := ""
+		if item.ExpectedResumeCount != nil {
+			resumeCount = fmt.Sprint(*item.ExpectedResumeCount)
+		}
 		parentPosition := ""
 		if item.ParentPosition != nil {
 			parentPosition = fmt.Sprint(*item.ParentPosition)
@@ -191,7 +195,7 @@ func writeEventRecoveryItems(items []api.EventRecoveryItem) {
 				recorded = item.Execution.RecordedAt.Format(time.RFC3339)
 			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason), oneLine(item.ParentJobID), parentPosition)
+		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason), oneLine(item.ParentJobID), parentPosition, oneLine(item.WorkflowRunID), resumeCount)
 	}
 }
 
@@ -231,7 +235,7 @@ func cmdEventsRecoveryList(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("events recovery-list", flag.ContinueOnError)
 	state := fs.String("state", "", "running, paused, completed, or cancelled")
-	mode := fs.String("mode", "", "routing or execution")
+	mode := fs.String("mode", "", "routing, execution or workflow")
 	sub := fs.String("subscription-id", "", "filter by selected or captured subscription")
 	after := fs.String("created-after", "", "exclusive creation lower bound (RFC3339)")
 	before := fs.String("created-before", "", "exclusive creation upper bound (RFC3339)")
@@ -369,6 +373,9 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "Partial counts: oldest %d unresolved jobs; counts are lower bounds.\n", execution.JobLimit)
 		}
 		for _, job := range execution.Jobs {
+			if job.Attention != nil {
+				writeAutomationRecoveryAttention(osStdout, positional[0], job.JobID, *job.Attention)
+			}
 			_, _ = fmt.Fprintf(osStdout, "%s | %s | waiting %.0fs | queued/running/retrying: %d/%d/%d | unknown: %d | missing saved results: %d | retain until: %s | notification pending: %t\n", oneLine(job.JobID), oneLine(job.Status), job.WaitAgeSeconds, job.Execution.Queued, job.Execution.Running, job.Execution.Retrying, job.UnknownCount, job.UnresolvedCount, job.RetainUntil.Format(time.RFC3339), job.NotificationPending)
 		}
 	}

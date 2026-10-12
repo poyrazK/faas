@@ -11,6 +11,8 @@ import (
 )
 
 func (m *MemStore) enqueueWorkflowFinishedWebhookLocked(run WorkflowRun, finishedAt time.Time) {
+	m.captureWorkflowRecoveryResultLocked(run, finishedAt)
+	m.captureWorkflowFailureLocked(run, finishedAt)
 	if run.Status != WorkflowRunStatusSucceeded && run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead {
 		return
 	}

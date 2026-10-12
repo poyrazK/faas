@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"crypto/sha256"
@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -210,22 +211,22 @@ func (f *crossCopyNative) counts() (int, int, int, int) {
 }
 
 func TestCrossBucketCopyControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	crossBucketCopyControlE2E(t, e.s, e.store, e.acct, e.key, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	crossBucketCopyControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil)
 }
 func TestCrossBucketCopyControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	crossBucketCopyControlE2E(t, e.s, e.store, e.acct, e.key, e.pool)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	crossBucketCopyControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()))
 }
-func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
-	identity, teardown := withTestIdentities(t)
+func crossBucketCopyControlE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &crossCopyNative{objects: map[string]http.Header{}, uploads: map[string]http.Header{}, parts: map[string]bool{}}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) }))
 	defer upstream.Close()
 	registry, b, backend, _ := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
-	s.objectStorage.Accounting.MaxAccountBytes = 100 * 1024 * 1024
-	s.objectStorage.Accounting.MaxBucketBytes = 100 * 1024 * 1024
+	(*s.ObjectStorage()).Accounting.MaxAccountBytes = 100 * 1024 * 1024
+	(*s.ObjectStorage()).Accounting.MaxBucketBytes = 100 * 1024 * 1024
 	app, err := st.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "copy-origin", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
@@ -248,10 +249,10 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	if err = accounting.FinishObjectInventory(t.Context(), source.ID, "source-baseline", api.MinMultipartPartBytes+1, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	control := httptest.NewServer(s.handler())
+	control := httptest.NewServer(s.Handler())
 	defer control.Close()
 	client := api.NewClient(control.URL, bearer)
 	credential, err := client.CreateObjectS3Credential(t.Context(), "encrypted-journal", b.ID, api.CreateObjectS3CredentialRequest{Label: "copy only writer", Permission: api.ObjectBucketPermissionWrite})
@@ -275,14 +276,14 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	if _, err = client.PutObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID, selection); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	var gateway http.Handler
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
-	h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1, OpenSecret: func(blob []byte) (string, error) {
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	h, err := s3gateway.New(s3gateway.Config{Registry: (*s.ObjectStorage()), Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1, OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, e := secretbox.OpenBytes(identity, blob)
 		if e != nil || ns != s3gateway.CredentialSecretNamespace {
 			return "", objectstorage.ErrConfiguration
@@ -293,7 +294,7 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	gateway = h
-	sdk := awss3.NewFromConfig(aws.Config{Region: s.objectStorage.PublicRegion, Credentials: credentials.NewStaticCredentialsProvider(credential.AccessKeyID, credential.SecretAccessKey, ""), HTTPClient: public.Client()}, func(o *awss3.Options) {
+	sdk := awss3.NewFromConfig(aws.Config{Region: (*s.ObjectStorage()).PublicRegion, Credentials: credentials.NewStaticCredentialsProvider(credential.AccessKeyID, credential.SecretAccessKey, ""), HTTPClient: public.Client()}, func(o *awss3.Options) {
 		o.BaseEndpoint = aws.String(public.URL)
 		o.UsePathStyle = true
 		o.RetryMaxAttempts = 1
@@ -412,8 +413,8 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(registry())
+	if err = (*fresh.Object()).ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := st.(state.ObjectTrackedGatewayCopyStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", credential.ID, lostID)
@@ -424,7 +425,7 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	crossCopyPlacementDenial(t, s, st, acct, b, credential.ID, bearer)
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	if err = client.DeleteObjectS3CopySource(t.Context(), "encrypted-journal", b.ID, credential.ID, source.ID); err != nil {
@@ -436,7 +437,7 @@ func crossBucketCopyControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	}
 }
 
-func crossCopyPlacementDenial(t *testing.T, s *server, st state.Store, acct state.Account, destination state.ObjectBucket, credential, bearer string) {
+func crossCopyPlacementDenial(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, destination state.ObjectBucket, credential, bearer string) {
 	t.Helper()
 	buckets := st.(state.ObjectBucketStore)
 	source, err := buckets.ReserveObjectBucket(t.Context(), state.ObjectBucket{ID: uuid.NewString(), AccountID: acct.ID, AppID: destination.AppID, Name: "other-placement", Scope: "default", Region: destination.Region, BackendID: "other-placement", BackendFingerprint: destination.BackendFingerprint, PhysicalName: "other-private"}, 10)
@@ -454,13 +455,13 @@ func crossCopyPlacementDenial(t *testing.T, s *server, st state.Store, acct stat
 	r.Header.Set("Authorization", "Bearer "+bearer)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	s.handler().ServeHTTP(w, r)
+	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusNotImplemented || strings.Contains(w.Body.String(), "other-private") {
 		t.Fatal("different placement was not explicitly unsupported", w.Code, w.Body.String())
 	}
 }
 
-func crossCopyManagementAuthority(t *testing.T, s *server, st state.Store, acct state.Account, destination, source state.ObjectBucket, credential string) {
+func crossCopyManagementAuthority(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, destination, source state.ObjectBucket, credential string) {
 	t.Helper()
 	plain, hash, err := api.GenerateAPIKey()
 	if err != nil {
@@ -477,7 +478,7 @@ func crossCopyManagementAuthority(t *testing.T, s *server, st state.Store, acct 
 		r.Header.Set("Authorization", "Bearer "+plain)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		s.handler().ServeHTTP(w, r)
+		s.Handler().ServeHTTP(w, r)
 		return w
 	}
 	if r := do(`{"prefix":"allowed/"}`); r.Code != 403 {

@@ -10,17 +10,23 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
 
+
 T = TypeVar("T", bound="MCPTaskHandlerCompatibility")
 
 
 @_attrs_define
 class MCPTaskHandlerCompatibility:
+    """Outstanding task counts and live worker coverage for one tool and handler version."""
+
     tool_name: str
     handler_version: str
     waiting_tasks: int
     live_compatible_workers: int
     unknown_deployment_workers: int | Unset = UNSET
+    """Workers whose deployment identity is not available yet, including workers from older starter versions."""
     deployments: list[MCPTaskHandlerDeploymentWorkers] | Unset = UNSET
+    """Per-deployment worker counts. A report contains at most 768 deployment entries overall; larger snapshots set
+    truncated=true."""
 
     def to_dict(self) -> dict[str, Any]:
         tool_name = self.tool_name
@@ -74,10 +80,11 @@ class MCPTaskHandlerCompatibility:
 
         _deployments = d.pop("deployments", UNSET)
         deployments: list[MCPTaskHandlerDeploymentWorkers] | Unset = UNSET
-        if not isinstance(_deployments, Unset):
+        if _deployments is not UNSET:
             deployments = []
             for deployments_item_data in _deployments:
                 deployments_item = MCPTaskHandlerDeploymentWorkers.from_dict(deployments_item_data)
+
                 deployments.append(deployments_item)
 
         mcp_task_handler_compatibility = cls(

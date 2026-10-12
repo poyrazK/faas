@@ -358,10 +358,15 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 }
 
-// degradedAccountSLOPartial mirrors degradedAppSLO for the account-scoped
-// surface (same CodeQL-safe sanitiser pattern) but keeps the fields resp
-// already holds: the Postgres usage rollup and any metrics collected before
-// the failing query.
+// degradedAccountSLO mirrors degradedAppSLO for the account-scoped surface
+// when nothing has been collected yet.
+func degradedAccountSLO(err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
+	return degradedAccountSLOPartial(api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, err, log, label, accountID, window)
+}
+
+// degradedAccountSLOPartial is degradedAccountSLO (same CodeQL-safe sanitiser
+// pattern) keeping the fields resp already holds: the Postgres usage rollup
+// and any metrics collected before the failing query.
 func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
 	msg := strings.ReplaceAll(err.Error(), "\r", "")
 	msg = strings.ReplaceAll(msg, "\n", "")

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // scan_service_audit_test.go — unit tests for the ADR-124 ship-
 // blocker #2 audit emission (emitWorkloadSkippedRow +
@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -141,15 +142,15 @@ func TestScanProject_ExclusionsRemainReadOnly(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
-			req := scanAuditRegressionRequest(t, e.key, scanAuditRegressionTarGz(t), tc.fields)
+			e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+			req := scanAuditRegressionRequest(t, (*e.Key()), scanAuditRegressionTarGz(t), tc.fields)
 			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, req)
+			(*e.H()).ServeHTTP(rec, req)
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("scan status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
 			if tc.wantSkip {
-				var resp scanPlanResponse
+				var resp apidserver.ScanPlanResponse
 				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 					t.Fatalf("scan response is not JSON: %v", err)
 				}
@@ -157,14 +158,14 @@ func TestScanProject_ExclusionsRemainReadOnly(t *testing.T) {
 					t.Fatalf("scan skipped = %#v, want the excluded workload preserved", resp.Skipped)
 				}
 			}
-			events, err := e.store.ListEvents(context.Background(), "", 100)
+			events, err := (*e.Store()).ListEvents(context.Background(), "", 100)
 			if err != nil {
 				t.Fatalf("list audit events: %v", err)
 			}
 			if len(events) != 0 {
 				t.Fatalf("scan wrote %d audit events: %#v", len(events), events)
 			}
-			if _, err := e.store.ProjectBySlug(context.Background(), e.acct.ID, tc.fields["project_slug"]); !errors.Is(err, state.ErrNotFound) {
+			if _, err := (*e.Store()).ProjectBySlug(context.Background(), (*e.Acct()).ID, tc.fields["project_slug"]); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("scan created project: err=%v, want %v", err, state.ErrNotFound)
 			}
 		})
@@ -178,14 +179,14 @@ func TestApplyProject_ExclusionAuditAfterSuccess(t *testing.T) {
 	spool := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
-	req := scanAuditRegressionRequest(t, e.key, scanAuditRegressionTarGz(t), map[string]string{
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+	req := scanAuditRegressionRequest(t, (*e.Key()), scanAuditRegressionTarGz(t), map[string]string{
 		"project_slug": "apply-audit",
 		"exclude":      "excluded",
 	})
 	req.URL.Path = "/v1/projects"
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("apply status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -198,7 +199,7 @@ func TestApplyProject_ExclusionAuditAfterSuccess(t *testing.T) {
 	if resp.ProjectID == "" {
 		t.Fatal("apply response omitted project_id")
 	}
-	events, err := e.store.ListEvents(context.Background(), "", 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), "", 100)
 	if err != nil {
 		t.Fatalf("list audit events: %v", err)
 	}
@@ -255,7 +256,7 @@ func (s *skippedStubAudit) EmitAs(_ context.Context, actor, kind string, account
 // project_id + workload_name).
 func TestEmitWorkloadSkippedRow_KindAndPayload(t *testing.T) {
 	stub := &skippedStubAudit{}
-	emitWorkloadSkippedRow(
+	apidserver.EmitWorkloadSkippedRow(
 		context.Background(),
 		stub,
 		"dashboard:8a2f3a2e-1111-2222-3333-444455556666",
@@ -325,7 +326,7 @@ func TestEmitWorkloadSkippedRow_NilAuditorIsSafe(t *testing.T) {
 			t.Fatalf("nil auditor panicked: %v", r)
 		}
 	}()
-	emitWorkloadSkippedRow(
+	apidserver.EmitWorkloadSkippedRow(
 		context.Background(),
 		nil,
 		"dashboard:any",
@@ -355,7 +356,7 @@ func TestEmitWorkloadSkippedRow_PerRowIndependence(t *testing.T) {
 		{"inventory", "app-c", "sha-c"},
 	}
 	for _, tc := range cases {
-		emitWorkloadSkippedRow(
+		apidserver.EmitWorkloadSkippedRow(
 			context.Background(),
 			stub,
 			"dashboard:user-x",
@@ -431,7 +432,7 @@ func TestEmitSkippedAuditRows_BrandNewExcluded(t *testing.T) {
 		// slug-normalization refactor that mangles the name.
 		{Slug: "checkout-web", Action: "noop"},
 	}
-	emitSkippedAuditRows(
+	apidserver.EmitSkippedAuditRows(
 		context.Background(),
 		stub,
 		"dashboard:user-z",
@@ -494,7 +495,7 @@ func TestEmitSkippedAuditRows_NilAuditorIsSafe(t *testing.T) {
 			t.Fatalf("nil auditor panicked: %v", r)
 		}
 	}()
-	emitSkippedAuditRows(
+	apidserver.EmitSkippedAuditRows(
 		context.Background(),
 		nil,
 		"dashboard:any",
@@ -514,7 +515,7 @@ func TestEmitSkippedAuditRows_NilAuditorIsSafe(t *testing.T) {
 // pollute the audit-events table on every preview scan.
 func TestEmitSkippedAuditRows_EmptySliceIsNoop(t *testing.T) {
 	stub := &skippedStubAudit{}
-	emitSkippedAuditRows(
+	apidserver.EmitSkippedAuditRows(
 		context.Background(),
 		stub,
 		"dashboard:user-q",
@@ -526,7 +527,7 @@ func TestEmitSkippedAuditRows_EmptySliceIsNoop(t *testing.T) {
 	if got := len(stub.calls); got != 0 {
 		t.Fatalf("calls on nil rows: got %d, want 0", got)
 	}
-	emitSkippedAuditRows(
+	apidserver.EmitSkippedAuditRows(
 		context.Background(),
 		stub,
 		"dashboard:user-q",

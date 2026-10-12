@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -22,13 +23,13 @@ func TestProjectManifestAsyncRoutesLoadForProjectReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.Default(), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.Default(), "gregale.dev", apidserver.NoopNotifier{})
 	dir := t.TempDir()
 	body := "async_routes: []\n"
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolved, problem := srv.loadAndResolveProjectManifest(context.Background(), acct, dir, []string{"reports"}, "")
+	resolved, problem := srv.LoadAndResolveProjectManifest(context.Background(), acct, dir, []string{"reports"}, "")
 	if problem != nil {
 		t.Fatalf("project deploy async_routes: %+v", problem)
 	}
@@ -43,11 +44,11 @@ func TestProjectManifestAsyncRoutesGateOnlySelectedWorkloads(t *testing.T) {
 		{Name: "reports", Class: reposcan.ClassHTTP},
 		{Name: "worker", Class: reposcan.ClassWorker},
 	}
-	if problem := projectAsyncRoutesPlanProblem(api.PlanFree, routes, workloads[:1], nil); problem == nil || problem.Code != api.CodePlanEdgeRuleKindNotAllowed {
+	if problem := apidserver.ProjectAsyncRoutesPlanProblem(api.PlanFree, routes, workloads[:1], nil); problem == nil || problem.Code != api.CodePlanEdgeRuleKindNotAllowed {
 		t.Fatalf("selected Free route problem = %+v, want async route feature gate", problem)
 	}
 	workerRoute := []gregalemanifest.AsyncRoute{{App: "worker", Name: "consume"}}
-	if problem := projectAsyncRoutesPlanProblem(api.PlanFree, workerRoute, workloads[:1], nil); problem != nil {
+	if problem := apidserver.ProjectAsyncRoutesPlanProblem(api.PlanFree, workerRoute, workloads[:1], nil); problem != nil {
 		t.Fatalf("unselected Free route must not block a partial project deploy: %+v", problem)
 	}
 }
@@ -58,7 +59,7 @@ func TestResolveManagedPostgresDatabaseRecordByIDOrName(t *testing.T) {
 		{ID: "db-analytics", Name: "analytics", State: managedpostgres.StateReady},
 	}
 	for _, reference := range []string{"db-orders", "orders"} {
-		got, err := resolveManagedPostgresDatabaseRecord(databases, reference)
+		got, err := apidserver.ResolveManagedPostgresDatabaseRecord(databases, reference)
 		if err != nil || got.ID != "db-orders" {
 			t.Fatalf("reference %q resolved to %+v, err=%v", reference, got, err)
 		}
@@ -70,7 +71,7 @@ func TestResolveManagedPostgresDatabaseRecordRejectsAmbiguousName(t *testing.T) 
 		{ID: "db-a", Name: "orders", State: managedpostgres.StateReady, CreatedAt: time.Unix(1, 0)},
 		{ID: "db-b", Name: "orders", State: managedpostgres.StateReady, CreatedAt: time.Unix(2, 0)},
 	}
-	_, err := resolveManagedPostgresDatabaseRecord(databases, "orders")
+	_, err := apidserver.ResolveManagedPostgresDatabaseRecord(databases, "orders")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("err = %v, want ambiguous database reference", err)
 	}

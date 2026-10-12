@@ -1,6 +1,10 @@
-package apidserver
+package apidserver_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+)
 
 // adr: 198
 //
@@ -60,7 +64,7 @@ var revisionRefCases = []struct {
 func TestParseDeploymentRevisionRef(t *testing.T) {
 	for _, c := range revisionRefCases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := ParseDeploymentRevisionRef(c.in)
+			got, ok := apidserver.ParseDeploymentRevisionRef(c.in)
 			if ok != c.wantOK {
 				t.Fatalf("ParseDeploymentRevisionRef(%q) ok = %v, want %v", c.in, ok, c.wantOK)
 			}
@@ -85,7 +89,7 @@ func TestRenderRevision(t *testing.T) {
 		{0, ""},
 		{-1, ""},
 	} {
-		if got := renderRevision(c.in); got != c.want {
+		if got := apidserver.RenderRevision(c.in); got != c.want {
 			t.Errorf("renderRevision(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -99,11 +103,11 @@ func TestRenderRevision(t *testing.T) {
 // adr: 198
 func TestParseDeploymentRevisionRef_RoundTripsRenderRevision(t *testing.T) {
 	for _, revision := range []int{1, 2, 41, 42, 999, 100000} {
-		rendered := renderRevision(revision)
+		rendered := apidserver.RenderRevision(revision)
 		if rendered == "" {
 			t.Fatalf("renderRevision(%d) returned empty for a positive revision", revision)
 		}
-		got, ok := ParseDeploymentRevisionRef(rendered)
+		got, ok := apidserver.ParseDeploymentRevisionRef(rendered)
 		if !ok || got != revision {
 			t.Errorf("round trip %d -> %q -> (%d, %v), want (%d, true)", revision, rendered, got, ok, revision)
 		}

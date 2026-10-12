@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
@@ -16,9 +17,9 @@ import (
 // `gregale add bucket` answered "Object storage is unavailable; retry later."
 // That reads as a transient outage; retrying can never succeed.
 func TestCreateBucketWhenObjectStorageDisabledSaysNotEnabled(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "bucket-off")
-	rec := e.do(t, http.MethodPost, "/v1/apps/bucket-off/buckets", map[string]any{"name": "assets"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "bucket-off")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/bucket-off/buckets", map[string]any{"name": "assets"}, nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}

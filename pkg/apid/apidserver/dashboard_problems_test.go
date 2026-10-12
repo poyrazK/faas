@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestWriteDashboardUnauthorizedNegotiatesBrowserPage(t *testing.T) {
@@ -15,7 +16,7 @@ func TestWriteDashboardUnauthorizedNegotiatesBrowserPage(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/dashboard/apps/demo/delete", nil)
 	request.Header.Set("Accept", "text/html")
 
-	writeDashboardUnauthorized(recorder, request)
+	apidserver.WriteDashboardUnauthorized(recorder, request)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", recorder.Code)
@@ -38,7 +39,7 @@ func TestWriteDashboardBadRequestReturnsProblemJSON(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/dashboard/projects/not-valid/preview", nil)
 
-	writeDashboardBadRequest(recorder, request, "The project slug is invalid.")
+	apidserver.WriteDashboardBadRequest(recorder, request, "The project slug is invalid.")
 
 	var problem api.Problem
 	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
