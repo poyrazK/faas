@@ -9,6 +9,15 @@ from ...client import AuthenticatedClient, Client
 from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_due import (
     ListPlatformTenantSelfWorkflowReadinessFollowUpsDue,
 )
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_impact_kind import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind,
+)
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_impact_priority import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority,
+)
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_sort import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsSort,
+)
 from ...models.operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -24,6 +33,10 @@ def _get_kwargs(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -48,6 +61,26 @@ def _get_kwargs(
     params["limit"] = limit
 
     params["reminder_only"] = reminder_only
+
+    json_impact_priority: str | Unset = UNSET
+    if not isinstance(impact_priority, Unset):
+        json_impact_priority = impact_priority
+
+    params["impact_priority"] = json_impact_priority
+
+    json_impact_kind: str | Unset = UNSET
+    if not isinstance(impact_kind, Unset):
+        json_impact_kind = impact_kind
+
+    params["impact_kind"] = json_impact_kind
+
+    params["impact_code"] = impact_code
+
+    json_sort: str | Unset = UNSET
+    if not isinstance(sort, Unset):
+        json_sort = sort
+
+    params["sort"] = json_sort
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -126,6 +159,10 @@ def sync_detailed(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -143,6 +180,10 @@ def sync_detailed(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,6 +202,10 @@ def sync_detailed(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     )
 
     response = client.get_httpx_client().request(
@@ -181,6 +226,10 @@ def sync(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -198,6 +247,10 @@ def sync(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,6 +270,10 @@ def sync(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     ).parsed
 
 
@@ -231,6 +288,10 @@ async def asyncio_detailed(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -248,6 +309,10 @@ async def asyncio_detailed(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -266,6 +331,10 @@ async def asyncio_detailed(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -284,6 +353,10 @@ async def asyncio(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List PlatformTenantSelf readiness follow-up work queue
 
@@ -301,6 +374,10 @@ async def asyncio(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListPlatformTenantSelfWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -321,5 +398,9 @@ async def asyncio(
             offset=offset,
             limit=limit,
             reminder_only=reminder_only,
+            impact_priority=impact_priority,
+            impact_kind=impact_kind,
+            impact_code=impact_code,
+            sort=sort,
         )
     ).parsed

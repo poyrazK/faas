@@ -5411,6 +5411,10 @@ export class OperationsService {
     offset,
     limit,
     reminderOnly,
+    impactPriority,
+    impactKind,
+    impactCode,
+    sort,
   }: {
     /**
      * ListAccountWorkflowReadinessFollowUps. Application slug.
@@ -5448,6 +5452,22 @@ export class OperationsService {
      * ListAccountWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
      */
     reminderOnly?: boolean,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+     */
+    impactPriority?: 'normal' | 'high' | 'critical',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+     */
+    impactKind?: 'milestone' | 'outcome',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+     */
+    impactCode?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+     */
+    sort?: 'due' | 'business_impact',
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5464,6 +5484,10 @@ export class OperationsService {
         'offset': offset,
         'limit': limit,
         'reminder_only': reminderOnly,
+        'impact_priority': impactPriority,
+        'impact_kind': impactKind,
+        'impact_code': impactCode,
+        'sort': sort,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -5497,6 +5521,10 @@ export class OperationsService {
     offset,
     limit,
     reminderOnly,
+    impactPriority,
+    impactKind,
+    impactCode,
+    sort,
   }: {
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
@@ -5530,6 +5558,22 @@ export class OperationsService {
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
      */
     reminderOnly?: boolean,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+     */
+    impactPriority?: 'normal' | 'high' | 'critical',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+     */
+    impactKind?: 'milestone' | 'outcome',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+     */
+    impactCode?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+     */
+    sort?: 'due' | 'business_impact',
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5543,6 +5587,10 @@ export class OperationsService {
         'offset': offset,
         'limit': limit,
         'reminder_only': reminderOnly,
+        'impact_priority': impactPriority,
+        'impact_kind': impactKind,
+        'impact_code': impactCode,
+        'sort': sort,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

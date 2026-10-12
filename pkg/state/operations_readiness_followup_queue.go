@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,9 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 	if len(opts.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(opts.Owner) || strings.TrimSpace(opts.Owner) != opts.Owner || strings.IndexFunc(opts.Owner, unicode.IsControl) >= 0 || opts.Workflow != "" && api.ValidateOperationWorkflowName(opts.Workflow) != nil || opts.Offset < 0 || opts.Offset > api.OperationWorkflowReadinessFollowUpCandidatesMax || opts.Due != "" && opts.Due != "all" && opts.Due != "overdue" && opts.Due != "upcoming" {
 		return out, ErrInvalidArgument
 	}
+	if !slices.Contains([]string{"", "normal", "high", "critical"}, opts.ImpactPriority) || !slices.Contains([]string{"", "milestone", "outcome"}, opts.ImpactKind) || !slices.Contains([]string{"", "due", "business_impact"}, opts.Sort) || (opts.ImpactCode != "" && (opts.ImpactKind == "" || api.ValidateOperationWorkflowStateName(opts.ImpactCode) != nil)) {
+		return out, ErrInvalidArgument
+	}
 	rows, err := store.readReadinessFollowUps(ctx, account, tenant, normalized.AppID, opts.Scope, operator)
 	if err != nil {
 		return out, err
@@ -44,6 +48,10 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 			return out, err
 		}
 		if row.Coordination.FollowUpAt == nil || opts.Owner != "" && row.Coordination.Owner != opts.Owner || opts.Workflow != "" && row.Workflow != opts.Workflow || operator && tenant != "" && !sameOperationHistoryIdentity(row.PlatformTenantID, tenant) {
+			continue
+		}
+		impact := readinessFollowUpImpact(row)
+		if (opts.ImpactPriority != "" || opts.ImpactKind != "" || opts.ImpactCode != "") && (impact == nil || opts.ImpactPriority != "" && impact.Priority != opts.ImpactPriority || opts.ImpactKind != "" && impact.Kind != opts.ImpactKind || opts.ImpactCode != "" && impact.Code != opts.ImpactCode) {
 			continue
 		}
 		row.Overdue = !row.Coordination.FollowUpAt.After(out.EvaluatedAt)
@@ -71,6 +79,15 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 	}
 	sort.Slice(matched, func(i, j int) bool {
 		a, b := matched[i], matched[j]
+		if opts.Sort == "business_impact" {
+			if a.Overdue != b.Overdue {
+				return a.Overdue
+			}
+			ap, bp := readinessFollowUpImpactPriority(a), readinessFollowUpImpactPriority(b)
+			if ap != bp {
+				return ap > bp
+			}
+		}
 		if !a.Coordination.FollowUpAt.Equal(*b.Coordination.FollowUpAt) {
 			return a.Coordination.FollowUpAt.Before(*b.Coordination.FollowUpAt)
 		}
@@ -110,4 +127,26 @@ func readinessFollowUpProjection(s api.OperationWorkflowReadinessSubscription, t
 		}
 	}
 	return row
+}
+
+func readinessFollowUpImpact(row api.OperationWorkflowReadinessFollowUp) *api.OperationWorkflowPlaybookReviewImpact {
+	if row.PlaybookStep == nil || row.PlaybookStep.DependencyReview == nil || row.PlaybookStep.DependencyReviewStatus != "awaiting" {
+		return nil
+	}
+	return row.PlaybookStep.ReviewImpact
+}
+func readinessFollowUpImpactPriority(row api.OperationWorkflowReadinessFollowUp) int {
+	impact := readinessFollowUpImpact(row)
+	if impact == nil {
+		return 0
+	}
+	switch impact.Priority {
+	case "critical":
+		return 3
+	case "high":
+		return 2
+	case "normal":
+		return 1
+	}
+	return 0
 }

@@ -90,6 +90,18 @@ func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx contex
 
 func readinessFollowUpQuery(opts OperationWorkflowReadinessFollowUpOptions) url.Values {
 	q := readinessSubscriptionQuery(opts.AppID, opts.Scope, opts.TenantID)
+	if opts.ImpactPriority != "" {
+		q.Set("impact_priority", opts.ImpactPriority)
+	}
+	if opts.ImpactKind != "" {
+		q.Set("impact_kind", opts.ImpactKind)
+	}
+	if opts.ImpactCode != "" {
+		q.Set("impact_code", opts.ImpactCode)
+	}
+	if opts.Sort != "" {
+		q.Set("sort", opts.Sort)
+	}
 	if opts.ReminderOnly {
 		q.Set("reminder_only", "true")
 	}

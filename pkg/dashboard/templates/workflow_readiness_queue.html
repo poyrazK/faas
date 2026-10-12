@@ -97,13 +97,17 @@
 <p role="status" aria-live="polite">Due reminders for these filters: <strong id="readiness-due-reminder-count">Checking…</strong></p>
 <button type="button" id="readiness-show-reminders">Show due reminders</button>
 <p>Due reminders are published periodically and stay with their original notification. Reschedule or clear the follow-up to retire its reminder.</p>
-<p>Pending follow-ups across this application's readiness inboxes, ordered by due time with overdue items first. Follow-up ownership tracks coordination; current readiness must be checked against application evidence.</p>
+<p>Pending follow-ups across this application's readiness inboxes, ordered by due time with overdue items first by default. Choose business priority ordering to triage unresolved reviews across workflow cases. Follow-up ownership tracks coordination; current readiness must be checked against application evidence.</p>
 <form id="readiness-work-form">
 <label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
 <label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="All customers"></label>
 <label>Follow-up owner <input name="owner" maxlength="256" placeholder="All owners"></label>
 <label>Workflow <input name="workflow" maxlength="63" value="{{.Data.Options.Workflow}}" placeholder="All workflows"></label>
 <label>Due <select name="due"><option value="all">All pending</option><option value="overdue">Overdue</option><option value="upcoming">Upcoming</option></select></label>
+<label>Review priority <select name="impact_priority"><option value="">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option></select></label>
+<label>Protected result <select name="impact_kind"><option value="">All results</option><option value="milestone">Milestone</option><option value="outcome">Outcome</option></select></label>
+<label>Result code <input name="impact_code" maxlength="64" placeholder="Exact milestone or outcome code"></label>
+<label>Order <select name="sort"><option value="due">Due time</option><option value="business_impact">Overdue, then business priority</option></select></label>
 <label><input type="checkbox" name="reminder_only" value="true" id="readiness-reminder-only"> Published due reminders only</label>
 <label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
 <button type="submit">Load follow-ups</button>
@@ -628,7 +632,7 @@
   finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
  };
  const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();more.hidden=true;await read();};
- form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;applied=formValues();void refresh();});
+ form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;const selectors=formValues();if(selectors.has('impact_code')&&!selectors.has('impact_kind')){message.textContent='Choose Milestone or Outcome when filtering by a result code.';return;}applied=selectors;void refresh();});
 
  more.addEventListener('click',()=>{void read();});
  const refreshCount=async()=>{

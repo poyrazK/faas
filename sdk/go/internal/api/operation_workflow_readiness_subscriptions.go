@@ -109,15 +109,19 @@ type OperationWorkflowReadinessNotificationCheck struct {
 
 // Follow-up queues aggregate retained coordination, not application execution tasks.
 type OperationWorkflowReadinessFollowUpOptions struct {
-	ReminderOnly bool   `json:"reminder_only,omitempty"`
-	AppID        string `json:"app_id,omitempty"`
-	TenantID     string `json:"tenant_id,omitempty"`
-	Scope        string `json:"scope"`
-	Owner        string `json:"owner,omitempty"`
-	Workflow     string `json:"workflow,omitempty"`
-	Due          string `json:"due,omitempty"`
-	Offset       int    `json:"offset,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
+	ImpactPriority string `json:"impact_priority,omitempty"`
+	ImpactKind     string `json:"impact_kind,omitempty"`
+	ImpactCode     string `json:"impact_code,omitempty"`
+	Sort           string `json:"sort,omitempty"`
+	ReminderOnly   bool   `json:"reminder_only,omitempty"`
+	AppID          string `json:"app_id,omitempty"`
+	TenantID       string `json:"tenant_id,omitempty"`
+	Scope          string `json:"scope"`
+	Owner          string `json:"owner,omitempty"`
+	Workflow       string `json:"workflow,omitempty"`
+	Due            string `json:"due,omitempty"`
+	Offset         int    `json:"offset,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
 	PlaybookStep         *OperationWorkflowPlaybookStepAssignment     `json:"playbook_step,omitempty"`

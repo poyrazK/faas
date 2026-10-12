@@ -10,6 +10,18 @@ from ..models.operation_workflow_readiness_follow_up_options_due import (
     OperationWorkflowReadinessFollowUpOptionsDue,
     check_operation_workflow_readiness_follow_up_options_due,
 )
+from ..models.operation_workflow_readiness_follow_up_options_impact_kind import (
+    OperationWorkflowReadinessFollowUpOptionsImpactKind,
+    check_operation_workflow_readiness_follow_up_options_impact_kind,
+)
+from ..models.operation_workflow_readiness_follow_up_options_impact_priority import (
+    OperationWorkflowReadinessFollowUpOptionsImpactPriority,
+    check_operation_workflow_readiness_follow_up_options_impact_priority,
+)
+from ..models.operation_workflow_readiness_follow_up_options_sort import (
+    OperationWorkflowReadinessFollowUpOptionsSort,
+    check_operation_workflow_readiness_follow_up_options_sort,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUpOptions")
@@ -22,6 +34,15 @@ class OperationWorkflowReadinessFollowUpOptions:
     scope: str
     """OperationWorkflowReadinessFollowUpOptions.scope. Follow-up queue selector; customer tenant derives from
     authentication."""
+    impact_priority: OperationWorkflowReadinessFollowUpOptionsImpactPriority | Unset = UNSET
+    """OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter."""
+    impact_kind: OperationWorkflowReadinessFollowUpOptionsImpactKind | Unset = UNSET
+    """OperationWorkflowReadinessFollowUpOptions.impact_kind. Exact protected business result category."""
+    impact_code: str | Unset = UNSET
+    """OperationWorkflowReadinessFollowUpOptions.impact_code. Exact protected result code, requires impact_kind."""
+    sort: OperationWorkflowReadinessFollowUpOptionsSort | Unset = UNSET
+    """OperationWorkflowReadinessFollowUpOptions.sort. Due by default; business_impact orders overdue first, then
+    declared unresolved review priority and due time before pagination."""
     app_id: UUID | Unset = UNSET
     """OperationWorkflowReadinessFollowUpOptions.app_id. Follow-up queue selector; customer tenant derives from
     authentication."""
@@ -49,6 +70,20 @@ class OperationWorkflowReadinessFollowUpOptions:
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope
+
+        impact_priority: str | Unset = UNSET
+        if not isinstance(self.impact_priority, Unset):
+            impact_priority = self.impact_priority
+
+        impact_kind: str | Unset = UNSET
+        if not isinstance(self.impact_kind, Unset):
+            impact_kind = self.impact_kind
+
+        impact_code = self.impact_code
+
+        sort: str | Unset = UNSET
+        if not isinstance(self.sort, Unset):
+            sort = self.sort
 
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
@@ -79,6 +114,14 @@ class OperationWorkflowReadinessFollowUpOptions:
                 "scope": scope,
             }
         )
+        if impact_priority is not UNSET:
+            field_dict["impact_priority"] = impact_priority
+        if impact_kind is not UNSET:
+            field_dict["impact_kind"] = impact_kind
+        if impact_code is not UNSET:
+            field_dict["impact_code"] = impact_code
+        if sort is not UNSET:
+            field_dict["sort"] = sort
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
         if tenant_id is not UNSET:
@@ -102,6 +145,29 @@ class OperationWorkflowReadinessFollowUpOptions:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         scope = d.pop("scope")
+
+        _impact_priority = d.pop("impact_priority", UNSET)
+        impact_priority: OperationWorkflowReadinessFollowUpOptionsImpactPriority | Unset
+        if isinstance(_impact_priority, Unset):
+            impact_priority = UNSET
+        else:
+            impact_priority = check_operation_workflow_readiness_follow_up_options_impact_priority(_impact_priority)
+
+        _impact_kind = d.pop("impact_kind", UNSET)
+        impact_kind: OperationWorkflowReadinessFollowUpOptionsImpactKind | Unset
+        if isinstance(_impact_kind, Unset):
+            impact_kind = UNSET
+        else:
+            impact_kind = check_operation_workflow_readiness_follow_up_options_impact_kind(_impact_kind)
+
+        impact_code = d.pop("impact_code", UNSET)
+
+        _sort = d.pop("sort", UNSET)
+        sort: OperationWorkflowReadinessFollowUpOptionsSort | Unset
+        if isinstance(_sort, Unset):
+            sort = UNSET
+        else:
+            sort = check_operation_workflow_readiness_follow_up_options_sort(_sort)
 
         _app_id = d.pop("app_id", UNSET)
         app_id: UUID | Unset
@@ -136,6 +202,10 @@ class OperationWorkflowReadinessFollowUpOptions:
 
         operation_workflow_readiness_follow_up_options = cls(
             scope=scope,
+            impact_priority=impact_priority,
+            impact_kind=impact_kind,
+            impact_code=impact_code,
+            sort=sort,
             app_id=app_id,
             tenant_id=tenant_id,
             owner=owner,

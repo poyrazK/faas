@@ -322,6 +322,10 @@ export class GregaleOperationClient {
 
   workflowReadinessFollowUps(options: OperationWorkflowReadinessFollowUpOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessFollowUpsResponse> {
     const q = readinessSubscriptionQuery(options);
+    if (options.impactPriority !== undefined) q.set('impact_priority', options.impactPriority);
+    if (options.impactKind !== undefined) q.set('impact_kind', options.impactKind);
+    if (options.impactCode !== undefined) q.set('impact_code', options.impactCode);
+    if (options.sort !== undefined) q.set('sort', options.sort);
     if (options.reminderOnly !== undefined) q.set('reminder_only', String(options.reminderOnly));
     if (options.owner !== undefined) q.set('owner', options.owner);
     if (options.workflow !== undefined) q.set('workflow', options.workflow);
@@ -780,7 +784,7 @@ export interface OperationWorkflowReadinessCoordination extends OperationWorkflo
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
 export interface OperationWorkflowReadinessNotificationCheck { business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
-export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
+export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { impactPriority?: 'normal' | 'high' | 'critical'; impactKind?: 'milestone' | 'outcome'; impactCode?: string; sort?: 'due' | 'business_impact'; reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
 export interface OperationWorkflowReadinessFollowUp { playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
 export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
 

@@ -39261,6 +39261,31 @@ paths:
           due reminders using the same owner, customer, workflow and environment filters.
         schema:
           type: boolean
+      - name: impact_priority
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+        schema:
+          type: string
+          enum: [normal, high, critical]
+      - name: impact_kind
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+        schema:
+          type: string
+          enum: [milestone, outcome]
+      - name: impact_code
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      - name: sort
+        in: query
+        description: ListAccountWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+        schema:
+          type: string
+          enum: [due, business_impact]
       responses:
         '200':
           description: ListAccountWorkflowReadinessFollowUps. Retained follow-up page.
@@ -39349,6 +39374,31 @@ paths:
           active durable due reminders using the same owner, customer, workflow and environment filters.
         schema:
           type: boolean
+      - name: impact_priority
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+        schema:
+          type: string
+          enum: [normal, high, critical]
+      - name: impact_kind
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+        schema:
+          type: string
+          enum: [milestone, outcome]
+      - name: impact_code
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+      - name: sort
+        in: query
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+        schema:
+          type: string
+          enum: [due, business_impact]
       responses:
         '200':
           description: ListPlatformTenantSelfWorkflowReadinessFollowUps. Retained follow-up page.
@@ -80312,6 +80362,22 @@ components:
       description: Selectors for the live retained follow-up queue; offset pages may move as coordination is edited.
       additionalProperties: false
       properties:
+        impact_priority:
+          type: string
+          enum: [normal, high, critical]
+          description: OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter.
+        impact_kind:
+          type: string
+          enum: [milestone, outcome]
+          description: OperationWorkflowReadinessFollowUpOptions.impact_kind. Exact protected business result category.
+        impact_code:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowReadinessFollowUpOptions.impact_code. Exact protected result code, requires impact_kind.
+        sort:
+          type: string
+          enum: [due, business_impact]
+          description: OperationWorkflowReadinessFollowUpOptions.sort. Due by default; business_impact orders overdue first, then declared unresolved review priority and due time before pagination.
         app_id:
           type: string
           format: uuid

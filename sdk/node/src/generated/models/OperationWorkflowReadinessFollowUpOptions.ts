@@ -7,6 +7,22 @@
  */
 export type OperationWorkflowReadinessFollowUpOptions = {
   /**
+   * OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter.
+   */
+  impact_priority?: 'normal' | 'high' | 'critical';
+  /**
+   * OperationWorkflowReadinessFollowUpOptions.impact_kind. Exact protected business result category.
+   */
+  impact_kind?: 'milestone' | 'outcome';
+  /**
+   * OperationWorkflowReadinessFollowUpOptions.impact_code. Exact protected result code, requires impact_kind.
+   */
+  impact_code?: string;
+  /**
+   * OperationWorkflowReadinessFollowUpOptions.sort. Due by default; business_impact orders overdue first, then declared unresolved review priority and due time before pagination.
+   */
+  sort?: 'due' | 'business_impact';
+  /**
    * OperationWorkflowReadinessFollowUpOptions.app_id. Follow-up queue selector; customer tenant derives from authentication.
    */
   app_id?: string;
