@@ -798,3 +798,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
+
+- [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
