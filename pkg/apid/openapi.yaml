@@ -42006,7 +42006,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -42025,6 +42025,9 @@ components:
           type: string
         image:
           type: string
+        full_rootfs:
+          type: boolean
+          description: Explicit full-rootfs dispatch for an immutable image source; unsupported for other source kinds.
       required:
       - kind
       additionalProperties: false

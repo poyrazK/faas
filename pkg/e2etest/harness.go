@@ -276,8 +276,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 			`socket_path = %q
 owner_user = %q
 kernel_path = %q
+resource_journal_dir = %q
 `,
-			sockPath, "root", kernelPath,
+			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"),
 		)
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
