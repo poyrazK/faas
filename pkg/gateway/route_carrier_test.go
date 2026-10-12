@@ -35,8 +35,8 @@ func TestHandlerFillsTheObservedRouteCarrier(t *testing.T) {
 
 func TestObservedRouteLabelBoundsUnlabelledPaths(t *testing.T) {
 	for path, want := range map[string]string{
-		"/orders/12345": "GET /orders/{id}",
-		"/healthz":      "GET /healthz",
+		"/orders/12345":                 "GET /orders/{id}",
+		"/healthz":                      "GET /healthz",
 		"/" + string(make([]byte, 300)): otherRouteLabel,
 	} {
 		if got := ObservedRouteLabel(http.MethodGet, path); got != want {
