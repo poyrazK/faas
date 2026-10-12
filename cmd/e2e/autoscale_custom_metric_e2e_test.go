@@ -209,6 +209,13 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 		t.Fatalf("mark observer deployment live: %v", err)
 	}
 	publishNormalPathLayer(t, f, observerDeployment.ID)
+	// Store-only promotion does not emit imaged's deployment lifecycle
+	// notification. Start the observer through the public wake path after
+	// its signed rootfs is ready, then verify real worker admission below.
+	body, status = doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+observerSlug+"/wake", nil)
+	if status != http.StatusAccepted && status != http.StatusOK {
+		t.Fatalf("wake observer app: status=%d body=%s", status, body)
+	}
 	observerReady := false
 	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); {
 		instances, err := f.store.ListInstancesForApp(f.ctx, observer.ID)
