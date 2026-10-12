@@ -46,6 +46,7 @@ curl -H "Authorization: Bearer $GREGALE_TOKEN" \
 | Error rate | Errors divided by calls. The dashboard highlights edges at 5% or more. |
 | p50 / p95 | Latency of successful calls, measured by Gregale from the caller's request to the target's response. It includes routing and, when the target was parked, the time to wake it. |
 | Woke target | Calls that found the target parked (scaled to zero) and waited for it to restore, and their share of all calls on the edge. |
+| Wake-ahead used | For a caller with wake-ahead on: how many of the restores it started for this target were then called while fresh (`wake_ahead_used` of `wake_ahead_started`). A low share means wake-ahead is waking the target for nothing. |
 
 ## Cold calls and wake-ahead
 

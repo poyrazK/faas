@@ -263,6 +263,9 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 			CallerAppSlug: "public-api", TargetAppSlug: "billing",
 			Calls: 12040, Errors: 48, ErrorRatePct: 0.4, LatencyP50MS: 11.2, LatencyP95MS: 38,
 			ColdCalls: 9030, ColdCallPct: 75, SuggestWakeAhead: true,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "ledger",
+			Calls: 40, WakeAheadStarted: 10, WakeAheadUsed: 8,
 		}},
 	})
 	stdout := captureMetricsStdout(t)
@@ -281,7 +284,8 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		"p50=11.2ms p95=38.0ms",
 		"Woke:       9030 calls (75%) found the target parked",
 		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
-		"showing the 1 busiest edges",
+		"Wake-ahead: 8 of 10 restores used",
+		"showing the 2 busiest edges",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\nfull: %s", want, out)

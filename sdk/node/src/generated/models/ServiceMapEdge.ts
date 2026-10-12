@@ -34,5 +34,13 @@ export type ServiceMapEdge = {
    *
    */
   suggest_wake_ahead: boolean;
+  /**
+   * Wake-aheads (ADR-977) the caller's wakes started for this target in the window.
+   */
+  wake_ahead_started: number;
+  /**
+   * Of those, the wake-aheads whose target was called while they were fresh.
+   */
+  wake_ahead_used: number;
 };
 

@@ -79,9 +79,18 @@ CLI and dashboard turn it into a one-line `gregale wake-ahead <caller> on`
 hint. A failed opt-in lookup leaves that caller unmarked and unsuggested
 rather than failing the map.
 
+## Wake-ahead payoff per edge
+
+ADR-977's outcome counter carries no app labels, so the map could suggest
+wake-ahead but not show whether it then pays off. Each wake-ahead claim now
+remembers the caller whose wake predicted it, and gatewayd-internal also
+counts `gateway_service_wake_ahead_edge_total{caller_app,target_app,outcome}`
+for `started`, `used`, `unused` and `failed` (trusted UUIDs only; the
+existing outcome-only counter is unchanged). Series are bounded by ADR-977's
+own learner bounds (4,096 callers × 16 edges). A fourth bounded PromQL query
+fills `wake_ahead_started` and `wake_ahead_used` per edge; the CLI prints
+"Wake-ahead: N of M restores used" and the dashboard adds a column.
+
 ## Follow-ups
 
 1. Promote to `preview` once the map has been checked against live edges.
-2. Per-edge ADR-977 `used`/`unused`: the wake-ahead outcome counter still
-   carries no app labels, so the map cannot yet show whether an opted-in
-   caller's predictions pay off per edge.

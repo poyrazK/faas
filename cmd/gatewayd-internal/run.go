@@ -3822,6 +3822,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
 		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		wakeAheadLearner.SetEdgeOutcome(func(outcome, caller, target string) {
+			handler.Metrics().IncServiceWakeAheadEdge(outcome, caller, target)
+		})
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,

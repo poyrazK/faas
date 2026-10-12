@@ -202,6 +202,13 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.05"},"value":[1,"96"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"+Inf"},"value":[1,"96"]}]}}`,
 				gw(publicAPIID), gw(paymentsID))
+		case strings.Contains(query, "gateway_service_wake_ahead_edge_total"):
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"started"},"value":[1,"10"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"used"},"value":[1,"8"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"unused"},"value":[1,"2"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s","outcome":"started"},"value":[1,"9"]}]}}`,
+				gw(publicAPIID), gw(paymentsID), gw(foreignID))
 		case strings.Contains(query, "gateway_service_dependency_edge_wakes_total"):
 			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"60"]},`+
@@ -219,8 +226,8 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	if out.Source != appmetrics.SourcePrometheus || out.Range != "1h" || out.Truncated {
 		t.Fatalf("envelope = source %q range %q truncated %v", out.Source, out.Range, out.Truncated)
 	}
-	if got := queries.Load(); got != 3 {
-		t.Fatalf("Prometheus queries = %d, want 3", got)
+	if got := queries.Load(); got != 4 {
+		t.Fatalf("Prometheus queries = %d, want 4", got)
 	}
 	if len(out.Edges) != 2 {
 		t.Fatalf("edges = %+v, want public-api→payments and payments→ledger only", out.Edges)
@@ -241,6 +248,9 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	// 60 of 100 calls woke payments and public-api has not opted in: suggest.
 	if top.ColdCalls != 60 || math.Abs(top.ColdCallPct-60) > 1e-9 || !top.SuggestWakeAhead {
 		t.Fatalf("top edge cold = %d (%v%%) suggest=%v, want 60, 60%%, true", top.ColdCalls, top.ColdCallPct, top.SuggestWakeAhead)
+	}
+	if top.WakeAheadStarted != 10 || top.WakeAheadUsed != 8 {
+		t.Fatalf("top edge wake-ahead = %d started / %d used, want 10 / 8", top.WakeAheadStarted, top.WakeAheadUsed)
 	}
 	// 2 cold calls are below the evidence bar even at 20%.
 	if second := out.Edges[1]; second.ColdCalls != 2 || second.SuggestWakeAhead {

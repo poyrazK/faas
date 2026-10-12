@@ -36,6 +36,10 @@ class ServiceMapEdge:
     mostly wake the target: at least 20 cold calls in the window,
     making up at least half of the edge's calls.
     """
+    wake_ahead_started: int
+    """Wake-aheads (ADR-977) the caller's wakes started for this target in the window."""
+    wake_ahead_used: int
+    """Of those, the wake-aheads whose target was called while they were fresh."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +67,10 @@ class ServiceMapEdge:
 
         suggest_wake_ahead = self.suggest_wake_ahead
 
+        wake_ahead_started = self.wake_ahead_started
+
+        wake_ahead_used = self.wake_ahead_used
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -79,6 +87,8 @@ class ServiceMapEdge:
                 "cold_calls": cold_calls,
                 "cold_call_pct": cold_call_pct,
                 "suggest_wake_ahead": suggest_wake_ahead,
+                "wake_ahead_started": wake_ahead_started,
+                "wake_ahead_used": wake_ahead_used,
             }
         )
 
@@ -111,6 +121,10 @@ class ServiceMapEdge:
 
         suggest_wake_ahead = d.pop("suggest_wake_ahead")
 
+        wake_ahead_started = d.pop("wake_ahead_started")
+
+        wake_ahead_used = d.pop("wake_ahead_used")
+
         service_map_edge = cls(
             caller_app_id=caller_app_id,
             caller_app_slug=caller_app_slug,
@@ -124,6 +138,8 @@ class ServiceMapEdge:
             cold_calls=cold_calls,
             cold_call_pct=cold_call_pct,
             suggest_wake_ahead=suggest_wake_ahead,
+            wake_ahead_started=wake_ahead_started,
+            wake_ahead_used=wake_ahead_used,
         )
 
         service_map_edge.additional_properties = d

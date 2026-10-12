@@ -67,4 +67,9 @@ type ServiceMapEdge struct {
 	// ServiceWakeAheadMinWakes cold calls in the window, making up at least
 	// ServiceWakeAheadMinColdShare of the edge's calls.
 	SuggestWakeAhead bool `json:"suggest_wake_ahead"`
+	// WakeAheadStarted counts the ADR-977 wake-aheads the caller's wakes
+	// started for this target in the window; WakeAheadUsed counts those the
+	// target was called on while fresh. Both are zero when wake-ahead is off.
+	WakeAheadStarted int64 `json:"wake_ahead_started"`
+	WakeAheadUsed    int64 `json:"wake_ahead_used"`
 }

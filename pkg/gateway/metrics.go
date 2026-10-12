@@ -724,7 +724,10 @@ type Metrics struct {
 	// parked target (ADR-196); the service map divides it by the edge calls
 	// for its cold-call share (ADR-1131).
 	serviceDependencyEdgeWakes *prometheus.CounterVec
-	serviceDependencyDuration  *prometheus.HistogramVec
+	// serviceWakeAheadEdges attributes ADR-977 wake-ahead outcomes to the
+	// predicting caller and the woken target (ADR-1131).
+	serviceWakeAheadEdges     *prometheus.CounterVec
+	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
 	// speculative wake-ahead along depends_on edges "until measured evidence";
@@ -1598,6 +1601,12 @@ func NewMetrics() *Metrics {
 				Help: "Unsampled service calls, by trusted caller and target app UUID, that found the target parked and were held while it was restored (ADR-196). Divided by gateway_service_dependency_edge_calls_total it is the edge's cold-call share (ADR-1131).",
 			}, []string{"caller_app", "target_app"},
 		),
+		serviceWakeAheadEdges: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_edge_total",
+				Help: "ADR-977 wake-ahead outcomes by trusted predicting caller and woken target app UUID (ADR-1131): started, used (the target was called while the wake-ahead was fresh), unused, failed.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
 		serviceDependencyDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_dependency_duration_seconds",
@@ -1990,7 +1999,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
 	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
-	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
+	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes, m.serviceWakeAheadEdges)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -3666,6 +3675,28 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 	labels := []string{caller.String(), target.String(), outcome}
 	m.serviceDependencyEdges.WithLabelValues(labels...).Inc()
 	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
+}
+
+// IncServiceWakeAheadEdge counts one wake-ahead outcome on its caller →
+// target edge. Labels are trusted UUIDs only, as on the other edge series.
+func (m *Metrics) IncServiceWakeAheadEdge(outcome, callerAppID, targetAppID string) {
+	if m == nil || m.serviceWakeAheadEdges == nil {
+		return
+	}
+	switch outcome {
+	case WakeAheadStarted, WakeAheadUsed, WakeAheadUnused, WakeAheadFailed:
+	default:
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	m.serviceWakeAheadEdges.WithLabelValues(caller.String(), target.String(), outcome).Inc()
 }
 
 // IncServiceDependencyEdgeWake counts one edge call that restored a parked

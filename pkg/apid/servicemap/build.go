@@ -45,10 +45,11 @@ type samples struct {
 	calls   map[edgeKey]float64
 	errors  map[edgeKey]float64
 	wakes   map[edgeKey]float64
+	ahead   map[edgeKey]map[string]float64 // wake-ahead outcome -> count
 	buckets map[edgeKey]map[string]float64
 }
 
-// fetchSamples runs three bounded PromQL queries. Both constrain the caller and
+// fetchSamples runs four bounded PromQL queries. Both constrain the caller and
 // the target to the account's closed app set before Prometheus evaluates
 // them; returned labels are checked against the same set again.
 func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]state.App, window string) (samples, error) {
@@ -56,6 +57,7 @@ func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]s
 		calls:   map[edgeKey]float64{},
 		errors:  map[edgeKey]float64{},
 		wakes:   map[edgeKey]float64{},
+		ahead:   map[edgeKey]map[string]float64{},
 		buckets: map[edgeKey]map[string]float64{},
 	}
 	if len(owned) == 0 {
@@ -115,6 +117,23 @@ func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]s
 			out.wakes[key] += row.Value
 		}
 	}
+
+	rows, err = client.QueryVector(ctx, fmt.Sprintf(
+		`sum by (caller_app, target_app, outcome)(increase(gateway_service_wake_ahead_edge_total{%s}[%s]))`,
+		selector, window))
+	if err != nil {
+		return out, err
+	}
+	for _, row := range rows {
+		key, ok := ownedKey(row.Labels, owned)
+		if !ok {
+			continue
+		}
+		if out.ahead[key] == nil {
+			out.ahead[key] = map[string]float64{}
+		}
+		out.ahead[key][row.Labels["outcome"]] += row.Value
+	}
 	return out, nil
 }
 
@@ -144,17 +163,19 @@ func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceM
 			cold = rounded // the two counters are scraped independently
 		}
 		edges = append(edges, api.ServiceMapEdge{
-			CallerAppID:   caller.ID,
-			CallerAppSlug: caller.Slug,
-			TargetAppID:   target.ID,
-			TargetAppSlug: target.Slug,
-			Calls:         rounded,
-			Errors:        int64(appmetrics.SafeRoundNonNeg(in.errors[key]) + 0.5),
-			ErrorRatePct:  appmetrics.SafePercent(percentOf(in.errors[key], calls)),
-			LatencyP50MS:  appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.50, buckets) * 1000),
-			LatencyP95MS:  appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.95, buckets) * 1000),
-			ColdCalls:     cold,
-			ColdCallPct:   appmetrics.SafePercent(percentOf(float64(cold), float64(rounded))),
+			CallerAppID:      caller.ID,
+			CallerAppSlug:    caller.Slug,
+			TargetAppID:      target.ID,
+			TargetAppSlug:    target.Slug,
+			Calls:            rounded,
+			Errors:           int64(appmetrics.SafeRoundNonNeg(in.errors[key]) + 0.5),
+			ErrorRatePct:     appmetrics.SafePercent(percentOf(in.errors[key], calls)),
+			LatencyP50MS:     appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.50, buckets) * 1000),
+			LatencyP95MS:     appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.95, buckets) * 1000),
+			ColdCalls:        cold,
+			ColdCallPct:      appmetrics.SafePercent(percentOf(float64(cold), float64(rounded))),
+			WakeAheadStarted: int64(appmetrics.SafeRoundNonNeg(in.ahead[key]["started"]) + 0.5),
+			WakeAheadUsed:    int64(appmetrics.SafeRoundNonNeg(in.ahead[key]["used"]) + 0.5),
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {

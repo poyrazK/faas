@@ -41,6 +41,9 @@ type WakeAheadLearner struct {
 	outcome     func(string)
 	callers     map[string]*wakeAheadCaller
 	speculative map[string]*wakeAheadSpeculation
+	// edgeOutcome attributes used/unused verdicts to the caller whose
+	// prediction started the wake-ahead (ADR-1131); it may be nil.
+	edgeOutcome func(outcome, caller, target string)
 }
 
 type wakeAheadCaller struct {
@@ -54,8 +57,9 @@ type wakeAheadCaller struct {
 type wakeAheadEdge struct{ calls, cold float64 }
 
 type wakeAheadSpeculation struct {
-	at   time.Time
-	used bool
+	at     time.Time
+	used   bool
+	caller string // the app whose wake predicted the target; may be empty
 }
 
 // NewWakeAheadLearner returns an empty learner. outcome receives used and
@@ -107,6 +111,7 @@ func (l *WakeAheadLearner) ObserveCall(caller, target string, woken bool) {
 		if !s.used {
 			s.used = true
 			l.outcome(WakeAheadUsed)
+			l.edgeOutcomeLocked(WakeAheadUsed, s.caller, target)
 		}
 	}
 	c := l.callers[caller]
@@ -157,6 +162,13 @@ func (l *WakeAheadLearner) Predict(app string) []string {
 // ClaimSpeculation reserves one wake-ahead of target. It fails while an
 // earlier wake-ahead of the same target is still fresh.
 func (l *WakeAheadLearner) ClaimSpeculation(target string) bool {
+	return l.ClaimSpeculationFor("", target)
+}
+
+// ClaimSpeculationFor is ClaimSpeculation that remembers which caller's wake
+// predicted the target, so its used/unused verdict is attributed to that
+// caller → target edge.
+func (l *WakeAheadLearner) ClaimSpeculationFor(caller, target string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -164,8 +176,21 @@ func (l *WakeAheadLearner) ClaimSpeculation(target string) bool {
 	if _, fresh := l.speculative[target]; fresh {
 		return false
 	}
-	l.speculative[target] = &wakeAheadSpeculation{at: now}
+	l.speculative[target] = &wakeAheadSpeculation{at: now, caller: caller}
 	return true
+}
+
+// SetEdgeOutcome installs the per-edge verdict sink (ADR-1131).
+func (l *WakeAheadLearner) SetEdgeOutcome(fn func(outcome, caller, target string)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.edgeOutcome = fn
+}
+
+func (l *WakeAheadLearner) edgeOutcomeLocked(outcome, caller, target string) {
+	if l.edgeOutcome != nil && caller != "" {
+		l.edgeOutcome(outcome, caller, target)
+	}
 }
 
 // ReleaseSpeculation drops a claim whose wake did not happen.
@@ -222,6 +247,7 @@ func (l *WakeAheadLearner) sweepLocked(now time.Time) {
 		if now.Sub(s.at) > api.ServiceWakeAheadFollowWindow {
 			if !s.used {
 				l.outcome(WakeAheadUnused)
+				l.edgeOutcomeLocked(WakeAheadUnused, s.caller, target)
 			}
 			delete(l.speculative, target)
 		}
@@ -333,16 +359,18 @@ func (h *Handler) runWakeAhead(parent context.Context, appID string, depth int) 
 	ctx = context.WithValue(ctx, wakeAheadDepthKey{}, depth)
 	var wg sync.WaitGroup
 	for _, target := range targets {
-		if h.backend.HealthyCount(target) > 0 || !r.cfg.Learner.ClaimSpeculation(target) {
+		if h.backend.HealthyCount(target) > 0 || !r.cfg.Learner.ClaimSpeculationFor(appID, target) {
 			continue
 		}
 		h.metrics.IncServiceWakeAhead(WakeAheadStarted)
+		h.metrics.IncServiceWakeAheadEdge(WakeAheadStarted, appID, target)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := r.cfg.Wake(ctx, target); err != nil {
 				r.cfg.Learner.ReleaseSpeculation(target)
 				h.metrics.IncServiceWakeAhead(WakeAheadFailed)
+				h.metrics.IncServiceWakeAheadEdge(WakeAheadFailed, appID, target)
 				if h.log != nil {
 					h.log.Warn("gateway: service wake-ahead failed", "caller_app", appID, "target_app", target, "err", err)
 				}
