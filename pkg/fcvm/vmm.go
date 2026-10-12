@@ -405,6 +405,13 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		if firecrackerControlLine(line) || guestInitStageLine(line) || benignGuestKernelLine(line) {
 			continue
 		}
+		// The guest serial console's tty turns every '\n' into "\r\n"
+		// (ONLCR); the '\r' is the console's, not the app's, and reached the
+		// logs API, drains and log search on every line (production-us
+		// hunt #9, H9-108). An app's own trailing '\r' survives.
+		if n := len(line); n >= 2 && line[n-2] == '\r' {
+			line = append(line[:n-2], '\n')
+		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
 			return len(p), err
 		}
