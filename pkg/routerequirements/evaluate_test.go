@@ -122,6 +122,27 @@ func TestEvaluateThrottlePreservesGatewayFractionalRate(t *testing.T) {
 	}
 }
 
+// The gateway keeps fractional throttle rates (H9-45), so the requirement is
+// judged against the configured rate, not a 1 rps floor.
+func TestEvaluateThrottleUsesGatewayEffectiveRate(t *testing.T) {
+	config := requirementConfig(t, `{"throttle":{"key_by":"none","max_rps":0.5}}`)
+	for _, tc := range []struct {
+		rps    string
+		status string
+		actual string
+	}{
+		{rps: "0.2", status: "satisfied", actual: "gateway_rps=0.2"},
+		{rps: "0.8", status: "violated", actual: "gateway_rps=0.8"},
+	} {
+		context := requirementContext()
+		context.Rules = []api.EdgeRuleResponse{requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":`+tc.rps+`,"burst":1}}`, 10)}
+		report := Evaluate(config, "digest", context)
+		if report.Status != tc.status || !strings.Contains(report.Routes[0].Checks[0].Actual, tc.actual) {
+			t.Fatalf("rps=%s: status=%s, want %s with %s: %+v", tc.rps, report.Status, tc.status, tc.actual, report)
+		}
+	}
+}
+
 func TestEvaluateAuthenticationKeepsMechanismsDistinct(t *testing.T) {
 	consumer := requirementConfig(t, `{"authentication":"consumer"}`)
 	context := requirementContext()
