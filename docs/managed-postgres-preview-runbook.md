@@ -194,13 +194,57 @@ old credentials require a disposable app canary on a supported native KVM host.
 
 ## Staging canary rollout
 
-Keep the global qualification gates enabled only in the isolated staging
-environment. To start with one or a small set of accounts, set
+For a staging rollout, keep the qualification gates enabled in the isolated
+staging environment. To start with one or a small set of accounts, set
 `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` to their exact account IDs separated by
 commas. Verify a database create and binding smoke for each listed account,
 then expand the list deliberately. Leave the variable empty only when every
 qualified staging account is an intentional canary. The gate is fail-closed on
 malformed entries and never blocks database deletion or credential revocation.
+
+## Production test account canary
+
+Use this only for an operator-owned test account. Deploy a signed release with
+ADR-1000 through the existing production workflow; a registry toggle cannot
+enable the older staging-only binary. Verify migration compatibility, deployment
+health and rollback evidence before activation. Keep the Neon organization plan
+unchanged.
+
+1. Obtain a dedicated provider key and a single region/backend configuration.
+   Configure lower operator database, storage and restore-history limits for the
+   test. Enable usage collection and fill in verified positive provider prices
+   and finite ceilings for every canonical meter and estimated cost.
+2. Run full version-8 live provider and durable lifecycle qualification using a
+   disposable marked catalog. Use the production placement configuration and
+   exact test account ID for the artifact allowlist. Set approval TTL to `23h`
+   to leave time for durable qualification: production allows at most 24 hours
+   from provider report completion to approval expiry. The qualifier process
+   runs in staging; the production daemon remains
+   labeled production. Never point the qualifier at the production catalog.
+3. Verify the artifact against that configuration and account allowlist with the
+   read-only `managed-postgres-qualify --verify` command. This does not qualify
+   native guest behavior or authorize every provider capability.
+4. Install private provider credentials and the artifact for the apid service.
+   Set `FAAS_ENVIRONMENT=production`,
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_CANARY=true`,
+   `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS=<exact account ID>`, and
+   `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH=<artifact path>`. Enable registry
+   provisioning. Remove any `UnsetEnvironment=FAAS_MANAGED_POSTGRES_CONFIG`
+   drop-in and point the service at the registry. Restart apid.
+5. Check account capabilities, create/bind/rotate smoke results and independent
+   provider inventory. Confirm that a different account remains denied. Give
+   testers the explicit expiry and distinguish API/provider checks from guest
+   deployment and recovery checks.
+6. Close admission with the canary flag or registry flag when testing ends.
+   Retain the registry and valid key while deleting bindings/databases through
+   their owners. Verify provider absence before revoking the key. Disabling the
+   registry entirely can strand cleanup.
+
+This is a bounded test rollout. Approval expiry blocks new provisioning but
+does not delete existing resources, retire the key or stop provider charges.
+Metering checks complete provider windows and is not an upstream spending cap.
+Supported native guest qualification remains required before expanding the
+rollout beyond operator testing.
 
 ## Admission failures
 
