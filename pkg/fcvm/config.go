@@ -32,7 +32,7 @@ type VMConfig struct {
 	// endpoint accepts.
 	VsockDevice *VsockDevice `json:"vsock,omitempty"`
 	// Balloon, when set, attaches a never-inflated balloon whose only job is
-	// free page reporting (ADR-985). JailerVMM.WithFreePageReporting sets it
+	// free page reporting (ADR-907). JailerVMM.WithFreePageReporting sets it
 	// at boot; the config builders leave it nil.
 	Balloon *Balloon `json:"balloon,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
@@ -345,7 +345,7 @@ type JobColdBootSpec struct {
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is
 // off (spec §4.4); virtio-rng is always attached (spec §11). The VMM adds the
-// free-page-reporting balloon when enabled (ADR-985).
+// free-page-reporting balloon when enabled (ADR-907).
 //
 // slot is the per-instance slot from Lease.Slot; it must be in range [0, MaxSlots).
 // It derives GuestVsockCID so the in-guest resume listener is reachable at a

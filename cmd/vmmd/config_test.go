@@ -964,7 +964,7 @@ func TestLoadConfig_RestorePrefetchSwitch(t *testing.T) {
 	}
 }
 
-// adr: 985 — free page reporting is on by default; TOML can disable it and
+// adr: 907 — free page reporting is on by default; TOML can disable it and
 // FAAS_FREE_PAGE_REPORTING overrides TOML in either direction.
 func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))

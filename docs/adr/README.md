@@ -799,4 +799,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
-- [ADR-985: Balloon free page reporting](985-balloon-free-page-reporting.md)
+- [ADR-907: Balloon free page reporting](907-balloon-free-page-reporting.md)

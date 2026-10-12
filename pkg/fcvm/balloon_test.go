@@ -1,4 +1,4 @@
-// adr: 985 — cold boots carry a never-inflated free-page-reporting balloon
+// adr: 907 — cold boots carry a never-inflated free-page-reporting balloon
 // only on Firecracker releases that accept it.
 package fcvm
 

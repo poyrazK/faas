@@ -876,7 +876,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if stopArchive != nil {
 		defer stopArchive()
 	}
-	// ADR-985: Firecracker before 1.14 rejects the balloon field, so an
+	// ADR-907: Firecracker before 1.14 rejects the balloon field, so an
 	// older or undetected binary boots without it.
 	freePageReporting := !cfg.DisableFreePageReporting && fcvm.FreePageReportingSupported(fcVersion)
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).

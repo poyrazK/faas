@@ -4,7 +4,7 @@ import "golang.org/x/mod/semver"
 
 // Balloon is the Firecracker balloon device (`balloon` in the config file).
 // Gregale never inflates it: AmountMiB stays 0, so the guest keeps all of
-// its plan RAM. The device exists for free page reporting (ADR-985), which
+// its plan RAM. The device exists for free page reporting (ADR-907), which
 // lets the guest hand pages it has freed back to the host.
 type Balloon struct {
 	AmountMiB             int  `json:"amount_mib"`
@@ -25,7 +25,7 @@ func FreePageReportingSupported(fcVersion string) bool {
 }
 
 // WithFreePageReporting attaches a free-page-reporting balloon to every VM
-// this VMM cold boots (ADR-985). Restored VMs keep whatever devices their
+// this VMM cold boots (ADR-907). Restored VMs keep whatever devices their
 // snapshot recorded, so snapshots taken before the switch restore unchanged.
 // The caller must check FreePageReportingSupported first.
 func (v *JailerVMM) WithFreePageReporting(enabled bool) *JailerVMM {

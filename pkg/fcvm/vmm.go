@@ -74,7 +74,7 @@ type JailerVMM struct {
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
 	// freePageReporting attaches a free-page-reporting balloon to every cold
-	// boot (ADR-985).
+	// boot (ADR-907).
 	freePageReporting bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop

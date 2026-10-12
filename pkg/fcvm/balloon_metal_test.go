@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 985 — a cold-booted VM carries the free-page-reporting balloon, and a
+// adr: 907 — a cold-booted VM carries the free-page-reporting balloon, and a
 // VM restored from its snapshot keeps it.
 package fcvm
 

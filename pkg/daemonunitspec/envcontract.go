@@ -274,7 +274,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_FLEET_AGE_IDENTITY_PATH", Owners: []string{"apid", "outboundd"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLEET_AGE_RECIPIENT_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_FREE_PAGE_REPORTING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-985 free-page-reporting balloon; production default is enabled on Firecracker 1.14+"},
+	{Name: "FAAS_FREE_PAGE_REPORTING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+"},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},

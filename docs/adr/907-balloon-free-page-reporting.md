@@ -1,8 +1,8 @@
-# ADR-985: Balloon free page reporting
+# ADR-907: Balloon free page reporting
 
 - Status: Accepted
 - Date: 2026-10-12
-- Related: ADR-005, ADR-159, ADR-225, ADR-983, ADR-984
+- Related: ADR-005, ADR-159, ADR-225, ADR-983, ADR-906
 - Amends: spec §4.4 boot config ("balloon off (v1)")
 
 ## Context
@@ -35,7 +35,7 @@ because inflating a balloon would take plan RAM from the guest.
 4. Billing and admission are unchanged: plan RAM + 8 MB per running second,
    and invariant 2 still sums reservations. The change gives back real host
    memory (page cache and headroom), shrinks snapshots, and is the
-   prerequisite for measured admission and frozen instances (ADR-984).
+   prerequisite for measured admission and frozen instances (ADR-906).
 5. Free page hinting is not used. It needs a host-driven run before each
    snapshot (about 50 ms), and after reporting it removed only 13 MB more
    (see Evidence).
