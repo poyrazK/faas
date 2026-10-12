@@ -819,6 +819,22 @@ Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle
 
 `gregale bucket [<subcommand>]`
 
+### bucket list
+
+List an app&#39;s object-storage buckets and their IDs
+
+`gregale bucket list <app>`
+
+### bucket delete
+
+Delete an empty bucket (including retained versions)
+
+`gregale bucket delete [--yes] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
 ### bucket uploads
 
 Inspect owned multipart upload sessions and parts
