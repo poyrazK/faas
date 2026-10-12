@@ -47,6 +47,10 @@ func (s *server) setAutomationFailurePolicy(w http.ResponseWriter, r *http.Reque
 		writeAutomationFailurePolicyError(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "app.automation_failure_policy_changed", &account.ID, map[string]any{
+		"app_id": app.ID, "automation": r.PathValue("name"), "enabled": body.Enabled != nil && *body.Enabled,
+		"failure_threshold": body.FailureThreshold, "min_completed_runs": body.MinCompletedRuns, "window_seconds": body.WindowSeconds,
+	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
 }
@@ -68,6 +72,9 @@ func (s *server) resumeAutomationFailurePause(w http.ResponseWriter, r *http.Req
 		writeAutomationFailurePolicyError(w, err)
 		return
 	}
+	s.audit.Emit(r.Context(), "app.automation_failure_resumed", &account.ID, map[string]any{
+		"app_id": app.ID, "automation": r.PathValue("name"), "generation": body.ExpectedGeneration,
+	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
 }

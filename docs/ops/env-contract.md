@@ -196,6 +196,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FLEET_AGE_IDENTITY_PATH` | apid, outboundd | `unit` |  |  | `` |  |
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
+| `FAAS_FREE_PAGE_REPORTING` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+ |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_NODE22` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -338,6 +339,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PERSISTENT_WORKER` | shared | `internal` |  |  | `` | set by the builder path for its own worker process |
 | `FAAS_PGTEST_TEMPLATE_DATABASE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_PLAN_CACHE_ROOT` | apid | `default` |  |  | `` |  |
+| `FAAS_PMEM_BASE_DIR` | vmmd | `default` |  |  | `` | optional directory of per-account pmem base copies (ADR-908); unset keeps every base on virtio-blk; must share a reflink-capable filesystem with the cached bases |
 | `FAAS_POLAR_ACCESS_TOKEN` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_BASE_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -364,7 +366,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
 | `FAAS_PREFLIGHT_GITHUB_TOKEN` | apid | `secrets-env` |  |  | `` | optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid) |
-| `FAAS_PREPARED_NETWORKS` | vmmd, shared | `dropin` |  |  | `` | unused-network cache size (0–16); ansible vmmd_prepared_networks (default 4) renders 99-faas-prepared-networks.conf, code default 0; ADR-149; "shared" covers pkg/e2etest forwarding it to a harness-booted vmmd |
+| `FAAS_PREPARED_NETWORKS` | vmmd, shared | `dropin` |  |  | `` | unused-network cache size (0–16); ansible vmmd_prepared_networks (default 4) renders 99-faas-prepared-networks.conf; code default 4 (0 under native_process_recovery); ADR-149; "shared" covers pkg/e2etest forwarding it to a harness-booted vmmd |
 | `FAAS_PRESSURE_MIGRATION_POLICY` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_REASSESSMENT_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_THRESHOLD_PER_MIN` | schedd | `default` |  |  | `` |  |

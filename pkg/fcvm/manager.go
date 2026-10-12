@@ -4194,6 +4194,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// Plan is allocator-side state and must follow the lease's
 	// lifetime.
 	lease.Plan = req.Plan
+	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec

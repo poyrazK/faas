@@ -3912,7 +3912,7 @@ func TestDeploymentResponse_RoundTrip(t *testing.T) {
 		BuildID: "b1", SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
-	resp := srv.deploymentResponse(d, state.App{})
+	resp := srv.deploymentResponse(t.Context(), d, state.App{})
 	if resp.ID != "d1" || resp.Status != "live" || resp.Error != "boom" ||
 		resp.ErrorCode != "image_not_found" || resp.CreatedAt != "2026-01-02T03:04:05Z" ||
 		resp.BuildID != "b1" || resp.SourceSHA256 != d.SourceSHA256 {

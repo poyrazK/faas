@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -327,7 +328,7 @@ func cmdDelayedTaskList(args []string) int {
 
 // cmdDelayedTaskGet implements `gregale delayed-task get <id>` (account-scoped
 // GET /v1/delayed-tasks/{id}). Single positional id, --json returns
-// the response, human mode prints id + scheduled_at + state.
+// the response, human mode prints every populated field.
 func cmdDelayedTaskGet(args []string) int {
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale delayed-task get <id>", "delayed-task")
@@ -348,12 +349,38 @@ func cmdDelayedTaskGet(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "id:", resp.ID)
-	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "scheduled_at:", resp.ScheduledAt.Format(time.RFC3339))
-	if resp.State != "" {
-		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "state:", resp.State)
-	}
+	renderDelayedTask(resp)
 	return 0
+}
+
+// renderDelayedTask prints the task's populated fields. Attempts and the last
+// error are what explain a dead_letter task; the text view used to stop at
+// state (production-us hunt #9).
+func renderDelayedTask(resp api.DelayedTaskResponse) {
+	row := func(label, value string) {
+		if value != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", label+":", value)
+		}
+	}
+	row("id", resp.ID)
+	row("scheduled_at", resp.ScheduledAt.Format(time.RFC3339))
+	row("state", resp.State)
+	if resp.Method != "" || resp.Path != "" {
+		row("request", strings.TrimSpace(resp.Method+" "+resp.Path))
+	}
+	if resp.Attempts > 0 {
+		row("attempts", strconv.Itoa(resp.Attempts))
+	}
+	row("last_error", resp.LastError)
+	if !resp.CreatedAt.IsZero() {
+		row("created_at", resp.CreatedAt.Format(time.RFC3339))
+	}
+	if resp.CompletedAt != nil {
+		row("completed_at", resp.CompletedAt.Format(time.RFC3339))
+	}
+	if len(resp.Result) > 0 {
+		row("result", string(resp.Result))
+	}
 }
 
 // cmdDelayedTaskCancel implements `gregale delayed-task cancel <id>`

@@ -35,6 +35,9 @@ class AlertRuleResponse:
     name: str
     enabled: bool
     metric: AlertRuleResponseMetric
+    """MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1
+    when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat
+    with value 1."""
     comparison: AlertRuleResponseComparison
     threshold: float
     window_spec: AlertRuleResponseWindowSpec
@@ -50,6 +53,8 @@ class AlertRuleResponse:
     action: AlertRuleResponseAction = "webhook"
     """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
+    promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task metrics support webhook only.
+   """
     promote = short-circuit the canary ladder to 100%. Pre-auth target and event consumer and workflow metrics
     support webhook only."""
     event_subscription_id: UUID | Unset = UNSET

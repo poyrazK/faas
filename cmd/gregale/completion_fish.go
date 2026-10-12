@@ -144,6 +144,19 @@ func renderFishHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "complete -c gregale -n '__gregale_profile_value_position' -f -a '(gregale completion profile-names 2>/dev/null)'")
 	_, _ = fmt.Fprintln(w, "complete -c gregale -n 'test (count (__gregale_context_words)) -eq 1' -l profile -r -f -a '(gregale completion profile-names 2>/dev/null)' -d 'Connection profile' ")
 
+	_, _ = io.WriteString(w, `function __gregale_secret_key_position
+  set -l words (__gregale_context_words)
+  test "$words[2]" = secrets; or return 1
+  set -l current (commandline -ct)
+  gregale (__gregale_profile_args) completion secret-key-context -- $words[2..-1] "$current" >/dev/null 2>/dev/null
+end
+function __gregale_secret_key_names
+  set -l words (__gregale_context_words)
+  set -l current (commandline -ct)
+  gregale (__gregale_profile_args) completion secret-keys -- $words[2..-1] "$current" 2>/dev/null
+end
+complete -c gregale -f -n __gregale_secret_key_position -a '(__gregale_secret_key_names)'
+`)
 	renderFishAppSlugPosition(w)
 	_, _ = fmt.Fprintln(w)
 	renderFishEnvironmentProjectLookup(w)

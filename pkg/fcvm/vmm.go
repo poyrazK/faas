@@ -73,6 +73,12 @@ type JailerVMM struct {
 	// and warms it ahead of the next wake (ADR-225). nil disables both the
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
+	// freePageReporting attaches a free-page-reporting balloon to every cold
+	// boot (ADR-907).
+	freePageReporting bool
+	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
+	// nil keeps drive0 on virtio-blk.
+	pmemBase *pmemBaseStore
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -398,6 +404,13 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		w.pending = w.pending[newline+1:]
 		if firecrackerControlLine(line) || guestInitStageLine(line) || benignGuestKernelLine(line) {
 			continue
+		}
+		// The guest serial console's tty turns every '\n' into "\r\n"
+		// (ONLCR); the '\r' is the console's, not the app's, and reached the
+		// logs API, drains and log search on every line (production-us
+		// hunt #9, H9-108). An app's own trailing '\r' survives.
+		if n := len(line); n >= 2 && line[n-2] == '\r' {
+			line = append(line[:n-2], '\n')
 		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
 			return len(p), err
@@ -997,6 +1010,8 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}()
 	_ = v.registerRing(l.Instance)
 
+	cfg = v.withBalloon(cfg)
+	cfg = v.withPmemBase(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
@@ -1880,6 +1895,15 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	// A pmem snapshot refers to the account's copy (ADR-908). Without one
+	// the snapshot cannot load and the wake falls back to a cold boot.
+	if v.pmemEligible(l) {
+		if copyPath, err := v.pmemBase.accountCopy(l.AccountID, baseSrc); err == nil {
+			if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, copyPath, pmemBaseImageName, l.Instance); err != nil {
+				return fmt.Errorf("vmm: stage pmem base: %w", err)
+			}
+		}
 	}
 	// layerSrc is empty when cold-booting without a layer (cold path, no snapshot yet).
 	// stageWritable with an empty src would fail; skip it — Boot handles a missing drive1.
@@ -5233,8 +5257,24 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		return out, err
 	}
 	out.BootSource.KernelImagePath = kname
+	// A pmem base takes drive0's place; the remaining drives keep the jail
+	// names they have on virtio-blk, which restores stage by.
+	driveOffset := 0
+	if len(cfg.Pmem) > 0 {
+		driveOffset = 1
+		out.Pmem = make([]Pmem, len(cfg.Pmem))
+		for i, p := range cfg.Pmem {
+			name, err := v.stageReadOnlyAsForOwner(ctx, owner, root, p.PathOnHost, pmemBaseImageName, instanceID)
+			if err != nil {
+				return out, fmt.Errorf("stage pmem base: %w", err)
+			}
+			p.PathOnHost = name
+			out.Pmem[i] = p
+		}
+	}
 	out.Drives = make([]Drive, len(cfg.Drives))
-	for i, d := range cfg.Drives {
+	for j, d := range cfg.Drives {
+		i := j + driveOffset
 		var name string
 		var err error
 		if d.IsReadOnly {
@@ -5255,7 +5295,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 			return out, err
 		}
 		d.PathOnHost = name
-		out.Drives[i] = d
+		out.Drives[j] = d
 	}
 	return out, nil
 }
@@ -6215,6 +6255,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				if mismatchErr := characterizationReadinessMismatch(receipt.report, executionMode, err); mismatchErr != nil {
 					return mismatchErr
 				}
+				if loopbackErr := loopbackBindProblem(receipt.report, err); loopbackErr != nil {
+					return loopbackErr
+				}
 			}
 			return err
 		case <-receiptDone:
@@ -6249,10 +6292,11 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 4096 {
 			tail = tail[len(tail)-4096:]
 		}
+		detail := fmt.Sprintf("workload exited with code %d during startup", report.ExitCode)
 		if len(tail) > 0 {
-			return true, fmt.Errorf("workload exited with code %d during startup: %s", report.ExitCode, string(tail))
+			detail += ": " + string(tail)
 		}
-		return true, fmt.Errorf("workload exited with code %d during startup", report.ExitCode)
+		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 	}
 
 	switch executionMode {
@@ -6282,6 +6326,39 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+// loopbackBindProblem names a readiness failure whose only observed listener
+// is bound to loopback: the gateway reaches the guest at 10.0.0.2 (ADR-009),
+// so the app can never answer. Spec §6.4 amendment 1 promises
+// app_loopback_bound from the characterization's listening_addrs, but the
+// refused probes surfaced as app_not_listening (production-us hunt #9: a Node
+// app on 127.0.0.1 waited out the 2 min deadline). Only a readiness failure is
+// reclassified; the report names the first listener only, so a loopback
+// socket alone never fails a boot.
+func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) error {
+	if p := api.AsProblem(readinessErr); p == nil || p.Code != api.CodeAppNotListening || report.ObservedPort <= 0 || len(report.ListeningAddrs) == 0 {
+		return nil
+	}
+	for _, addr := range report.ListeningAddrs {
+		if !loopbackListenAddr(addr) {
+			return nil
+		}
+	}
+	return api.NewProblem(422, api.CodeAppLoopbackBound, "app bound to loopback",
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on %s, which the gateway cannot reach; bind 0.0.0.0 (or ::) instead (%s)",
+			strings.Join(report.ListeningAddrs, ", "), readinessErr))
+}
+
+// loopbackListenAddr reports a host:port bound to a loopback address. An
+// unparsable address is not evidence of a loopback bind.
+func loopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
 func characterizationReadinessMismatch(report api.CharacterizationReport, executionMode string, readinessErr error) error {
@@ -6376,14 +6453,46 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
-		for _, line := range ring.Snapshot(0) {
+		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
+		// nothing, so the crash output never reached the customer
+		// (production-us hunt #9, H9-91).
+		for _, line := range ring.Snapshot(1) {
 			lines = append(lines, line.Line)
 		}
 	}
+	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
-		return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready): %s", l.Instance, tail)
+		detail += ": " + tail
 	}
-	return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
+	// Only guest-init's supervisor output proves the customer's workload ran
+	// and exited. Without it the guest itself failed (overlay, pivot, init),
+	// which stays a platform failure (production-us hunt #9, H9-106).
+	if supervisedWorkloadExited(lines) {
+		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+	}
+	return errors.New(detail)
+}
+
+// supervisedWorkloadMarkers are guest-init's own console lines for a
+// supervised workload that exited: each restart, and the final crash-loop or
+// exhausted restart budget (guest/init/supervise.go, main_linux.go,
+// workload_linux.go).
+var supervisedWorkloadMarkers = []string{
+	"guest-init: app restart (",
+	"guest-init: main restart (",
+	"app crash-looped after ",
+	"app restart budget exhausted",
+}
+
+func supervisedWorkloadExited(lines []string) bool {
+	for _, line := range lines {
+		for _, marker := range supervisedWorkloadMarkers {
+			if strings.Contains(line, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // kernelLogLine matches guest kernel messages ("[    1.445781] ...") that the

@@ -66,7 +66,7 @@ func (s *server) previewEnvironmentMemberResponse(
 		case readErr != nil:
 			return response, fmt.Errorf("load current-head deployment for preview workload %q: %w", member.Slug, readErr)
 		case deployment.AppID == preview.ID && deployment.Kind == state.DeploymentKindPreview && deployment.CommitSHA == commitSHA:
-			projected := s.deploymentResponse(deployment, preview)
+			projected := s.deploymentResponse(ctx, deployment, preview)
 			candidate = &projected
 		}
 	}

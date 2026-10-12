@@ -420,6 +420,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+		MCPTaskMigrationOverride: req.MCPTaskMigrationOverride,
 	}
 	if app.Manifest.ProjectImage != "" {
 		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck)

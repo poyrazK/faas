@@ -1332,8 +1332,13 @@ type OpsMetrics struct {
 	// would nondeterministically overwrite siblings on .Set. The
 	// per-instance values live in pkg/sched/instancestats.Reader;
 	// the wire only carries the {app,node} rollup.
-	instanceCPUPct       *prometheus.GaugeVec
-	instanceRSSMB        *prometheus.GaugeVec
+	instanceCPUPct *prometheus.GaugeVec
+	instanceRSSMB  *prometheus.GaugeVec
+	// nodeMemoryReservedMB / nodeMemoryMeasuredMB: ADR-909 shadow mode. What
+	// admission books per node today, and what admission by measured memory
+	// would book.
+	nodeMemoryReservedMB *prometheus.GaugeVec
+	nodeMemoryMeasuredMB *prometheus.GaugeVec
 	instanceInflightReqs *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
@@ -3387,6 +3392,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_instance_rss_mb",
 		Help: "Cgroup memory.current in MiB, per (app, node) — sum over live siblings (issue #170 / PR-A). Capacity rollup.",
 	}, []string{"app", "node"})
+	nodeMemoryReservedMB := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_memory_reserved_mb",
+		Help: "Plan RAM + 8 MB summed over a node's instances that count toward invariant 2: what admission books today (ADR-909 shadow mode).",
+	}, []string{"node"})
+	nodeMemoryMeasuredMB := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_memory_measured_mb",
+		Help: "What admission by measured memory would book on a node: per instance its cgroup memory plus headroom, capped at plan RAM + 8 MB (ADR-909 shadow mode; admission is unchanged).",
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -3859,6 +3872,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
+		nodeMemoryReservedMB, nodeMemoryMeasuredMB,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -5403,6 +5417,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		staleDeploymentsReconciled:           staleDeploymentsReconciled,
 		instanceCPUPct:                       instanceCPUPct,
 		instanceRSSMB:                        instanceRSSMB,
+		nodeMemoryReservedMB:                 nodeMemoryReservedMB,
+		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -8934,6 +8950,21 @@ func (m *OpsMetrics) AlertEvaluatorEnabled() bool {
 //
 // Safe on a nil receiver so schedd unit tests without metrics
 // keep working.
+// ReplaceNodeMemoryShadow publishes each node's reserved and measured
+// bookings ([reserved, measured] MB) for ADR-909's shadow mode; nodes absent
+// from byNode are dropped.
+func (m *OpsMetrics) ReplaceNodeMemoryShadow(byNode map[string][2]int) {
+	if m == nil {
+		return
+	}
+	m.nodeMemoryReservedMB.Reset()
+	m.nodeMemoryMeasuredMB.Reset()
+	for node, v := range byNode {
+		m.nodeMemoryReservedMB.WithLabelValues(node).Set(float64(v[0]))
+		m.nodeMemoryMeasuredMB.WithLabelValues(node).Set(float64(v[1]))
+	}
+}
+
 func (m *OpsMetrics) ReplaceInstanceStats(rows []InstanceStatRow, dur time.Duration) {
 	if m == nil {
 		return

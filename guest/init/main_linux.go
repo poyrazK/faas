@@ -37,7 +37,6 @@ import (
 // overlay. When the roster declares sidecars, drive2+ are mounted as their own
 // read-only roots below /run/faas/sidecars after the pivot.
 const (
-	layerDevice        = "/dev/vdb"
 	layerMount         = "/overlay"
 	newRoot            = "/overlay/merged"
 	builderPATH        = "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -986,7 +985,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(builderDriveMount, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir builder drive mount: %w", err), "")
 	}
-	if err := syscall.Mount(layerDevice, builderDriveMount, "ext4", 0, ""); err != nil {
+	if err := syscall.Mount(layerDevice(), builderDriveMount, "ext4", 0, ""); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mount builder drive scratch: %w", err), "")
 	}
 	for _, dir := range []string{builderDriveMount, builderDriveMount + "/upper", builderDriveMount + "/upper/build"} {
@@ -2112,8 +2111,8 @@ func assembleOverlay() (string, error) {
 	if err := os.MkdirAll(layerMount, 0o755); err != nil {
 		return "", err
 	}
-	if err := syscall.Mount(layerDevice, layerMount, "ext4", 0, ""); err != nil {
-		return "", fmt.Errorf("mount layer %s: %w", layerDevice, err)
+	if err := syscall.Mount(layerDevice(), layerMount, "ext4", 0, ""); err != nil {
+		return "", fmt.Errorf("mount layer %s: %w", layerDevice(), err)
 	}
 	// Full-rootfs artifacts contain all OCI layers and a marker written by
 	// pkg/rootfs.BuildFullRootfs. They use the existing layer device slot for
@@ -2244,11 +2243,12 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
-		// at /dev/vdc (drive2) and increments. SidecarCapMax
+		// at /dev/vdc (drive2) and increments; a pmem base moves
+		// each one letter down (drive_devices.go). SidecarCapMax
 		// bounds this to five helper drives per deployment.
 		out = append(out, sidecarDevice{
 			name:         fmt.Sprintf("sidecar-%d", i),
-			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
+			device:       blkDriveDevice(2+i, bootRootOnPmem()),
 			workloadName: workloadName,
 			tmpfsSizeMB:  sidecarScratchSizeMB(roster.Sidecars[i].ScratchMB, roster.Sidecars[i].RamMB),
 		})

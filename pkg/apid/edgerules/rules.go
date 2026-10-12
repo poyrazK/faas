@@ -1006,6 +1006,29 @@ func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
+	if row.Kind == state.EdgeRuleKindJWT {
+		host, path, methods, headers := row.MatchHost, row.MatchPath, row.MatchMethods, row.MatchHeaders
+		if req.MatchHost != nil {
+			host = *req.MatchHost
+		}
+		if req.MatchPath != nil {
+			path = *req.MatchPath
+		}
+		if req.MatchMethods != nil {
+			methods = *req.MatchMethods
+		}
+		if req.MatchHeaders != nil {
+			headers = *req.MatchHeaders
+		}
+		raw, _ := json.Marshal(row.Action.JWT)
+		if req.Action != nil {
+			raw = *req.Action
+		}
+		if prob := ValidateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	// ValidateMode (ADR-128 D1): top-level wire field on
 	// update must be the closed enum when set. nil == "leave
 	// alone" (no row update). The action-level field is

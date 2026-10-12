@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -70,9 +71,8 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 			if resp.StatusCode == http.StatusSwitchingProtocols {
 				detachBudget()
-			} else if resp.StatusCode == http.StatusGatewayTimeout &&
-				strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone) {
-				w.Header().Set(edgeOriginalStatusHeader, "504")
+			} else if edgeTransportStatus(r, resp.StatusCode) {
+				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus
 			}
 			return nil
@@ -91,7 +91,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 				writeForwarderProblem(dst, http.StatusServiceUnavailable)
 				return
 			}
-			writeForwarderProblem(dst, http.StatusBadGateway)
+			writeForwarderProblem(edgeTransportWriter{ResponseWriter: dst, r: r}, http.StatusBadGateway)
 		},
 	}
 	proxy.ServeHTTP(w, r.WithContext(streamCtx))

@@ -5,6 +5,7 @@ export const MCP_TASK_DATABASE_PROFILES = Object.freeze({
     gregale_mcp_tasks: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_fairness: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_workers: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    gregale_mcp_task_worker_handlers: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     gregale_mcp_task_crypto_keys: ['SELECT'],
     gregale_mcp_task_admission: ['SELECT'],
     gregale_mcp_task_admission_namespaces: ['SELECT'],
@@ -12,6 +13,7 @@ export const MCP_TASK_DATABASE_PROFILES = Object.freeze({
   },
   observer: {
     gregale_mcp_tasks: ['SELECT'], gregale_mcp_task_workers: ['SELECT'],
+    gregale_mcp_task_worker_handlers: ['SELECT'],
     gregale_mcp_task_schema: ['SELECT'], gregale_mcp_task_admission_namespaces: ['SELECT'],
   },
   operator: {

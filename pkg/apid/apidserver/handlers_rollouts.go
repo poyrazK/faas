@@ -200,7 +200,7 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// therefore returns 202 while its durable handoff remains rolling_out.
 	// audit id on the operator's terminal.
 	writeJSON(w, status, api.RolloutTransitionResponse{
-		Deployment: s.deploymentResponse(updated, app),
+		Deployment: s.deploymentResponse(r.Context(), updated, app),
 		AuditID:    int64ToAuditIDString(auditID),
 	})
 }

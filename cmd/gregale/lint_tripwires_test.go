@@ -813,6 +813,7 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeAppRuntimeOOM,
 		api.CodeDepInstallFailed,
 		api.CodeAppStartupTimeout,
+		api.CodeAppStartupCrash,
 		api.CodeStatelessOnlyViolation,
 		// ADR-117 §Production-ready follow-on: per-stage failure
 		// codes. The renderer (pkg/dashboard/stages.StageFailureHTML)

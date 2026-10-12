@@ -4447,6 +4447,19 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
+	// ADR-909 (proposed) charge: what admission by measured memory would book
+	// for a running instance. schedd only reports it (shadow mode); admission
+	// still books BillableRAMMB. See MeasuredChargeMB.
+	MeasuredChargeFloorMB         = 64
+	MeasuredChargeHeadroomPercent = 25
+	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
+	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
+	// share of the admission ceiling while measured charges stay under the
+	// ceiling itself. MeasuredAdmissionSampleMaxAgeMillis is how old a node's
+	// measurement may be before admission falls back to reservations.
+	MeasuredAdmissionMaxOvercommitPercent = 200
+	MeasuredAdmissionSampleMaxAgeMillis   = 2000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -6009,7 +6022,12 @@ const (
 
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
-	MaxPreparedNetworkCacheSize            = 16
+	MaxPreparedNetworkCacheSize = 16
+	// DefaultPreparedNetworkCacheSize is vmmd's cache size when neither
+	// vmmd.toml nor FAAS_PREPARED_NETWORKS sets one (ADR-149, amended
+	// 2026-10-12). It matches the vmmd_service role default, which nodes
+	// joined through node_join never received.
+	DefaultPreparedNetworkCacheSize        = 4
 	PreparedNetworkCacheTTLSeconds         = 60
 	PreparedNetworkOperationTimeoutSeconds = 2
 	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill
@@ -8488,6 +8506,17 @@ func (l Limits) DefaultIdleTimeoutS(appType string) int {
 		return min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
 	}
 	return l.IdleTimeoutS
+}
+
+// EffectiveIdleTimeoutS resolves an app's idle timeout: the default for its
+// type unless the app configured one, clamped to IdleTimeoutBounds (spec
+// §4.3). The reaper and every surface that explains it share this one rule.
+func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
+	if configured <= 0 {
+		return l.DefaultIdleTimeoutS(appType)
+	}
+	floor, ceiling := l.IdleTimeoutBounds()
+	return min(max(configured, floor), ceiling)
 }
 
 // Obs admin pagination (issue #777 / ADR-091). The operator surface

@@ -7,6 +7,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
@@ -124,28 +125,29 @@ Scaffold, deploy and verify stateless MCP servers
 
 ### mcp init
 
-Create a Node, Go, or Python MCP starter
+Create an MCP starter in Node, Go or Python
 
-`gregale mcp init --path <DIR> [--language <LANGUAGE>]`
+`gregale mcp init --path <DIR> [--language <LANGUAGE>] [--runtime <RUNTIME>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | empty destination directory | required |
-| `--language <LANGUAGE>` | starter language (default node) | one of `node` · `go` · `python` |
+| `--language <LANGUAGE>` | starter language alias | one of `node` · `go` · `python` |
+| `--runtime <RUNTIME>` | starter language (node, go or python; default node) | one of `node` · `go` · `python` |
 
 Examples:
 
 ```sh
 gregale mcp init --path ./my-mcp
-gregale mcp init --language go --path ./my-mcp-go
-gregale mcp init --language python --path ./my-mcp-python
+gregale mcp init --path ./my-mcp --runtime go
+gregale mcp init --path ./my-mcp --runtime python
 ```
 
 ### mcp deploy
 
-Deploy the worktree, enable streaming and verify MCP discovery
+Pin the candidate catalog to its revision, verify MCP discovery and promote
 
-`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--timeout <SECONDS>]`
+`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--idempotency-key <KEY>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -154,6 +156,9 @@ Deploy the worktree, enable streaming and verify MCP discovery
 | `--profile <NAME>` | app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--token-env <ENV>` | client token for external OAuth verification |  |
 | `--secrets-file <PATH>` | sealed app secrets |  |
+| `--release-policy <PATH>` | role-specific catalog baselines to verify before promotion |  |
+| `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
+| `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
 
 Examples:
@@ -162,11 +167,36 @@ Examples:
 gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
 ```
 
+### mcp status
+
+Qualify serving MCP replicas and watch hosting health or catalog changes
+
+`gregale mcp status --app <SLUG> [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>] [--watch] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | Gregale MCP app slug | required |
+| `--endpoint <PATH>` | literal MCP endpoint path (default /mcp) |  |
+| `--token-env <ENV>` | MCP client bearer token environment variable |  |
+| `--release-policy <PATH>` | role-specific catalog baselines and token environments |  |
+| `--timeout <DURATION>` | overall replica qualification deadline (default 10s) |  |
+| `--watch` | poll until interrupted and report status changes |  |
+| `--interval <DURATION>` | poll interval with --watch (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp status --app my-mcp
+gregale mcp status --app my-mcp --token-env MCP_READER_TOKEN
+gregale mcp status --app my-mcp --release-policy release.json --json
+gregale mcp status --app my-mcp --watch --interval 15s --json
+```
+
 ### mcp doctor
 
 Check discovery, Origin rejection, compatibility and optional streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -194,7 +224,7 @@ gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
 
 Discover tool schemas without invoking tools
 
-`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -222,7 +252,7 @@ gregale mcp tools --app my-mcp
 
 Discover resource and template definitions without reading contents
 
-`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -250,7 +280,7 @@ gregale mcp resources --app my-mcp
 
 Read one explicitly selected resource URI
 
-`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -655,6 +685,19 @@ Examples:
 
 ```sh
 gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+
+## menu
+
+Choose a common task and open its guided command
+
+`gregale menu`
+
+Examples:
+
+```sh
+gregale menu
 ```
 
 
@@ -1543,7 +1586,7 @@ Add an alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric, e.g. error_rate_pct or latency_p95_ms |  |
+| `--metric <METRIC>` | metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat) |  |
 | `--comparison <OP>` | gt\|gte\|lt\|lte |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -1559,6 +1602,8 @@ Examples:
 
 ```sh
 printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
+printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app mcp-worker --name mcp-oldest-task-age --metric mcp_tasks_oldest_age_seconds --comparison gt --threshold 300 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
+printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app mcp-worker --name mcp-task-metrics-stale --metric mcp_tasks_metrics_stale --comparison gt --threshold 0 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin
 ```
 
 ### alerts info
@@ -2761,7 +2806,23 @@ gregale app my-api --consumer-auth-mode required --json
 
 Explain default-scope serving health and missing evidence
 
-`gregale app <slug> health`
+`gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options |  |
+| `--wait` | wait for a fresh healthy default-scope assessment |  |
+| `--timeout <DURATION>` | maximum wait (default 2m; requires --wait) |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h; requires --wait) |  |
+| `--history` | show recorded health changes; excludes --wait |  |
+| `--limit <N>` | history page size |  |
+| `--before <CURSOR>` | history cursor |  |
+
+Examples:
+
+```sh
+gregale app my-api health --wait --timeout 2m
+```
 
 ### app scale
 
@@ -4020,12 +4081,13 @@ gregale jobs add --interactive
 
 ### jobs info
 
-Show a Job or wait for its image to be ready
+Inspect Job readiness (saved Job by default)
 
-`gregale jobs info [--wait-ready] [--timeout <DURATION>] [--poll-interval <DURATION>] <name>`
+`gregale jobs info [--check] [--wait-ready] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--check` | exit 0 only for an active Job with a ready image; excludes --wait-ready |  |
 | `--wait-ready` | wait for selected image preparation |  |
 | `--timeout <DURATION>` | maximum image wait (default 5m) |  |
 | `--poll-interval <DURATION>` | polling interval (default 2s) |  |
@@ -4033,6 +4095,9 @@ Show a Job or wait for its image to be ready
 Examples:
 
 ```sh
+gregale jobs info
+gregale jobs info --check
+gregale jobs info --wait-ready
 gregale jobs info my-job --wait-ready --timeout 5m
 ```
 
@@ -4085,11 +4150,23 @@ gregale jobs rm --interactive
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--interactive] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
+`gregale jobs run [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--wait-ready` | wait for selected image preparation before submitting |  |
+| `--image-wait-timeout <DURATION>` | image preparation deadline (default 5m; requires --wait-ready) |  |
+| `--image-poll-interval <DURATION>` | image polling interval (default 2s; requires --wait-ready) |  |
 | `--interactive` | choose a Job, review settings, and confirm one run |  |
+| `--wait` | wait for the accepted run to succeed (explicit Job only) |  |
+| `--results` | wait and collect outputs (default ./results/JOB/RUN_ID) |  |
+| `--out-dir <DIR>` | collect whole-run managed artifacts after success; implies --wait |  |
+| `--all-artifacts` | ignore saved artifact filters for this invocation |  |
+| `--include <GLOB>` | repeatable artifact-name glob for collection; requires --out-dir or --results; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit; requires --out-dir or --results; exclusions take precedence |  |
+| `--wait-timeout <DURATION>` | wait deadline after acceptance (default 10m; requires --wait, --out-dir, or --results) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait, --out-dir, or --results) |  |
+| `--dry-run` | preview effective run settings locally without submitting |  |
 | `--tasks <N>` | number of tasks to fan out (or use --input) |  |
 | `--retries <N>` | override retry max for this run |  |
 | `--timeout <SECONDS>` | override task timeout for this run |  |
@@ -4108,19 +4185,71 @@ Examples:
 ```sh
 gregale jobs run --interactive
 gregale jobs run <job-name>
+gregale jobs run nightly-report --tasks 10 --wait --wait-timeout 10m
+gregale jobs run nightly-report --tasks 10 --out-dir ./results
+gregale jobs run nightly-report --tasks 10 --results
+gregale jobs run --dry-run
+gregale jobs run --wait-ready --results
 ```
 
 ### jobs runs
 
-List runs for one job
+List runs (saved Job by default)
 
-`gregale jobs runs [--limit <N>] [--offset <N>] [--all] <name>`
+`gregale jobs runs [--failed-only] [--status <STATUS>] [--limit <N>] [--offset <N>] [--all] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--failed-only` | show failed and dead-letter runs in fetched history; use --all for subsequent pages |  |
+| `--status <STATUS>` | filter fetched history by aggregate status; use --all to scan subsequent pages | one of `queued` · `running` · `succeeded` · `failed` · `cancelled` · `dead_letter` |
 | `--limit <N>` | page size (1..200, default 50) |  |
 | `--offset <N>` | starting offset (&gt;= 0) |  |
 | `--all` | walk every page using --limit and --offset |  |
+
+Examples:
+
+```sh
+gregale jobs runs
+gregale jobs runs --failed-only --all
+```
+
+### jobs overview
+
+Summarize Job readiness, latest run, and next commands (saved Job by default)
+
+`gregale jobs overview [--check] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | exit 0 only for an active Job, ready image, and succeeded latest run |  |
+
+Examples:
+
+```sh
+gregale jobs overview
+gregale jobs overview --check
+gregale jobs overview nightly-report --json
+```
+
+### jobs status
+
+Read one exact or latest Job run summary (saved Job and latest by default)
+
+`gregale jobs status [--check] [<name>] [<run-id|latest>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | exit 0 only when the recorded run status is succeeded |  |
+
+Examples:
+
+```sh
+gregale jobs status
+gregale jobs status nightly-report
+gregale jobs status nightly-report RUN_ID --check
+gregale jobs status nightly-report latest
+gregale --json jobs status nightly-report RUN_ID
+```
 
 ### jobs occurrences
 
@@ -4144,19 +4273,25 @@ gregale jobs occurrences --interactive
 
 ### jobs wait
 
-Follow one Job run until completion
+Follow a Job run (saved Job and latest by default)
 
-`gregale jobs wait [--interactive] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>] [<run-id>]`
+`gregale jobs wait [--interactive] [--out-dir <DIR>] [--include <GLOB>] [--exclude <GLOB>] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose a Job and run |  |
+| `--out-dir <DIR>` | collect artifacts after success, verifying matching existing files; non-interactive target only |  |
+| `--include <GLOB>` | repeatable artifact-name glob for collection; requires --out-dir; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit; requires --out-dir; exclusions take precedence |  |
 | `--timeout <DURATION>` | maximum wait duration (default 10m) |  |
 | `--poll-interval <DURATION>` | polling interval (default 2s) |  |
 
 Examples:
 
 ```sh
+gregale jobs wait
+gregale jobs wait nightly-report
+gregale jobs wait nightly-report latest --timeout 10m
 gregale jobs wait --interactive
 gregale jobs wait my-job RUN_ID --timeout 10m --json
 ```
@@ -4177,67 +4312,189 @@ Examples:
 gregale jobs cancel --interactive
 ```
 
-### jobs tasks
+### jobs defaults
 
-List tasks for one run
+Manage non-secret project-local Job defaults
 
-`gregale jobs tasks [--interactive] [<name>] [<run-id>]`
+#### jobs defaults set
+
+Replace saved Job defaults
+
+`gregale jobs defaults set [--tasks <N>] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--tasks <N>` | default positive task count |  |
+| `--results` | collect results by default |  |
+| `--wait-ready` | wait for image preparation before submitting by default |  |
+| `--include <GLOB>` | repeatable saved artifact-name glob; quote patterns |  |
+| `--exclude <GLOB>` | repeatable saved artifact-name glob to omit |  |
+
+#### jobs defaults update
+
+Change saved Job defaults while preserving omitted settings
+
+`gregale jobs defaults update [--tasks <N>] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--tasks <N>` | replace default positive task count |  |
+| `--results` | replace results preference; use --results=false to disable |  |
+| `--wait-ready` | replace image-wait preference; use --wait-ready=false to disable |  |
+| `--include <GLOB>` | repeatable glob; explicit filters replace both saved lists |  |
+| `--exclude <GLOB>` | repeatable glob to omit; explicit filters replace both saved lists |  |
+| `--all-artifacts` | clear saved artifact filters |  |
+
+Examples:
+
+```sh
+gregale jobs defaults update --tasks 3
+gregale jobs defaults update --results=false
+gregale jobs defaults update --all-artifacts
+```
+
+#### jobs defaults show
+
+Show saved Job defaults and their path
+
+`gregale jobs defaults show`
+
+#### jobs defaults clear
+
+Remove saved Job defaults
+
+`gregale jobs defaults clear`
+
+### jobs results
+
+Wait for success and collect outputs, verifying matching existing files
+
+`gregale jobs results [--out-dir <DIR>] [--all-artifacts] [--dry-run] [--timeout <DURATION>] [--poll-interval <DURATION>] [--include <GLOB>] [--exclude <GLOB>] [<name>] [<run-id|latest>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--out-dir <DIR>` | local destination (default ./results/JOB/RUN_ID) |  |
+| `--all-artifacts` | ignore saved artifact filters for this invocation |  |
+| `--dry-run` | preview current artifacts without waiting or writing files |  |
+| `--timeout <DURATION>` | maximum wait duration (default 10m) |  |
+| `--poll-interval <DURATION>` | polling interval (default 2s) |  |
+| `--include <GLOB>` | repeatable artifact-name glob; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit; exclusions take precedence |  |
+
+Examples:
+
+```sh
+gregale jobs results nightly-report
+gregale jobs results nightly-report latest --out-dir ./results
+gregale jobs results nightly-report latest --out-dir ./results --dry-run
+```
+
+### jobs tasks
+
+List tasks (saved Job and latest run by default)
+
+`gregale jobs tasks [--all] [--limit <N>] [--offset <N>] [--failed-only] [--artifacts-only] [--include <GLOB>] [--exclude <GLOB>] [--interactive] [<name>] [<run-id|latest>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | read all task pages from the starting offset |  |
+| `--limit <N>` | task page size (1..200) |  |
+| `--offset <N>` | starting task offset (non-negative) |  |
+| `--failed-only` | scan all task pages and show failed, timeout, and oom tasks |  |
+| `--artifacts-only` | scan task pages for valid manifests containing artifacts |  |
+| `--include <GLOB>` | repeatable artifact-name glob; requires --artifacts-only; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit; requires --artifacts-only; exclusions take precedence |  |
 | `--interactive` | choose a run, browse task pages, and filter unsuccessful tasks |  |
 
 Examples:
 
 ```sh
+gregale jobs tasks
+gregale jobs tasks --failed-only
+gregale jobs tasks --artifacts-only
+gregale jobs tasks nightly-report latest --all
+gregale jobs tasks nightly-report latest --failed-only
+gregale jobs tasks nightly-report latest
 gregale jobs tasks --interactive
 ```
 
 ### jobs attempts
 
-List retained attempts for one task
+List retained attempts for one task in an exact or latest run
 
-`gregale jobs attempts [--interactive] [<name>] [<run-id>] [<task-index>]`
+`gregale jobs attempts [--task <N>] [--failed-only] [--all] [--limit <N>] [--offset <N>] [--interactive] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--task <N>` | task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--failed-only` | filter fetched history to failed, timeout, and oom attempts |  |
+| `--all` | read all retained attempt pages from the starting offset |  |
+| `--limit <N>` | history page size (1..200; server default 50) |  |
+| `--offset <N>` | starting history offset (non-negative) |  |
 | `--interactive` | choose a task and inspect retained attempts and output |  |
 
 Examples:
 
 ```sh
+gregale jobs attempts --task 2 --failed-only --all
+gregale jobs attempts nightly-report latest 0 --all --failed-only
+gregale jobs attempts nightly-report latest 0 --all
+gregale jobs attempts nightly-report latest 0
 gregale jobs attempts --interactive
 ```
 
 ### jobs retry
 
-Retry one failed task
+Retry one failed task; --task uses the saved Job and newest run
 
-`gregale jobs retry [--interactive] [<name>] [<run-id>] [<task-index>]`
+`gregale jobs retry [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--results` | wait for success and collect outputs into ./results/JOB/RUN_ID, verifying existing files |  |
+| `--include <GLOB>` | artifact-name glob; requires --results |  |
+| `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
+| `--all-artifacts` | ignore saved artifact filters; requires --results |  |
+| `--task <N>` | task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--wait` | wait for the whole run after one task retry |  |
+| `--wait-timeout <DURATION>` | wait deadline after retry acceptance (default 10m; requires --wait or --results) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait or --results) |  |
 | `--interactive` | choose a failed task, review eligibility, and confirm one retry |  |
 
 Examples:
 
 ```sh
+gregale jobs retry --task 2 --results
+gregale jobs retry --task 2
+gregale jobs retry nightly-report latest --task 2 --wait
+gregale jobs retry nightly-report RUN_ID 0 --wait
 gregale jobs retry --interactive
 ```
 
 ### jobs replay-failed
 
-Replay unsuccessful tasks in a linked run
+Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses latest
 
-`gregale jobs replay-failed [--interactive] [<name>] [<run-id>]`
+`gregale jobs replay-failed [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--results` | wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID, verifying existing files |  |
+| `--include <GLOB>` | artifact-name glob; requires --results |  |
+| `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
+| `--all-artifacts` | ignore saved artifact filters; requires --results |  |
+| `--wait` | wait for the new recovery run |  |
+| `--wait-timeout <DURATION>` | wait deadline after replay acceptance (default 10m; requires --wait or --results) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait or --results) |  |
 | `--interactive` | choose a source run, review unsuccessful tasks, and confirm replay |  |
 
 Examples:
 
 ```sh
+gregale jobs replay-failed --results
+gregale jobs replay-failed
+gregale jobs replay-failed nightly-report latest --wait
+gregale jobs replay-failed nightly-report RUN_ID --wait
 gregale jobs replay-failed --interactive
 ```
 
@@ -4245,7 +4502,7 @@ gregale jobs replay-failed --interactive
 
 Verify a managed result and get a signed URL
 
-`gregale jobs artifact-url [--interactive] [<name>] [<run-id>] [<task-index>] [<artifact-name>]`
+`gregale jobs artifact-url [--interactive] [<name>] [<run-id|latest>] [<task-index>] [<artifact-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4254,24 +4511,78 @@ Verify a managed result and get a signed URL
 Examples:
 
 ```sh
+gregale jobs artifact-url nightly-report latest 0 report.csv
 gregale jobs artifact-url --interactive
 gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>
 ```
 
-### jobs logs
+### jobs artifact-download
 
-Tail logs for one task
+Download and verify current managed artifacts
 
-`gregale jobs logs [--interactive] [--max-bytes <N>] [<name>] [<run-id>] [<task-index>]`
+`gregale jobs artifact-download [--task <N>] [--out <PATH>] [--all] [--all-tasks] [--include <GLOB>] [--exclude <GLOB>] [--dry-run] [--resume] [--out-dir <DIR>] [<name>] [<run-id|latest>] [<task-index>] [<artifact-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--task <N>` | single-artifact task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--out <PATH>` | new destination file; required for a single artifact |  |
+| `--all` | download all current managed artifacts |  |
+| `--all-tasks` | download current managed artifacts across all task pages into task directories |  |
+| `--include <GLOB>` | repeatable artifact-name glob for bulk modes; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit in bulk modes; exclusions take precedence |  |
+| `--dry-run` | preview bulk destinations, bytes, and conflicts; requires --all or --all-tasks |  |
+| `--resume` | verify and skip matching files; requires bulk mode and an explicit run UUID |  |
+| `--out-dir <DIR>` | destination directory, created when missing; required in bulk mode |  |
+
+Examples:
+
+```sh
+gregale jobs artifact-download --task 2 report.csv --out report.csv
+gregale jobs artifact-download nightly-report latest 0 report.csv --out report.csv
+```
+
+### jobs artifacts
+
+List recorded task artifacts and managed download commands
+
+`gregale jobs artifacts [--task <N>] [--attempt <N>] [--include <GLOB>] [--exclude <GLOB>] [<name>] [<run-id|latest>] [<task-index>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--task <N>` | task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--attempt <N>` | retained attempt number (metadata only) |  |
+| `--include <GLOB>` | repeatable artifact-name glob; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit; exclusions take precedence |  |
+
+Examples:
+
+```sh
+gregale jobs artifacts --task 2
+gregale jobs artifacts --task 2 --attempt 1
+gregale jobs artifacts nightly-report latest 0
+```
+
+### jobs logs
+
+Tail task logs from an exact or latest run
+
+`gregale jobs logs [--failed-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--failed-only` | scan task pages and read current logs for failed, timeout, and oom tasks |  |
+| `--task <N>` | task index shortcut; omitted Job uses saved defaults, omitted run uses latest |  |
+| `--attempt <N>` | read retained output for a positive attempt number (explicit task only) |  |
 | `--interactive` | choose a Job, run, and task to inspect |  |
 | `--max-bytes <N>` | maximum log payload size (1..1048576) |  |
 
 Examples:
 
 ```sh
+gregale jobs logs --failed-only
+gregale jobs logs --task 0
+gregale jobs logs nightly-report --task 0
+gregale jobs logs nightly-report latest 0
 gregale jobs logs --interactive
 ```
 
@@ -4641,13 +4952,14 @@ Manage durable execution workflows
 
 List workflow runs for an app
 
-`gregale workflows list --app <SLUG> [--limit <N>] [--offset <N>] [--status <STATUS>] [--workflow-name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+`gregale workflows list [--app <SLUG>] [--limit <N>] [--offset <N>] [--all] [--status <STATUS>] [--workflow-name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | app slug | required |
+| `--app <SLUG>` | app slug (defaults to linked project app) |  |
 | `--limit <N>` | page size (1..100) |  |
-| `--offset <N>` | page offset |  |
+| `--offset <N>` | starting page offset |  |
+| `--all` | walk all matching pages from the selected offset |  |
 | `--status <STATUS>` | filter by workflow run status |  |
 | `--workflow-name <NAME>` | filter by exact workflow name |  |
 | `--created-after <RFC3339>` | inclusive RFC3339 creation-time start |  |
@@ -4656,6 +4968,7 @@ List workflow runs for an app
 Examples:
 
 ```sh
+gregale workflows list --workflow-name nightly-report --all
 gregale workflows list --app billing --workflow-name paid-invoice --status failed
 gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z --created-before 2026-10-05T23:59:59Z
 ```
@@ -4742,73 +5055,202 @@ gregale workflows schedule-history replay --app billing --occurrence-id <uuid>
 
 Trigger a new workflow run
 
-`gregale workflows run --app <slug> [--input <JSON>] [--idempotency-key <KEY>] <workflow-name>`
+`gregale workflows run [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--app <slug>] [--input <JSON>] [--input-file <PATH|->] [--idempotency-key <KEY>] <workflow-name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--input <JSON>` | JSON input payload (default {}) |  |
+| `--wait` | follow the accepted run to success without resubmitting |  |
+| `--timeout <DURATION>` | wait deadline after acceptance (default 5m; requires --wait) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait) |  |
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--input <JSON>` | JSON input payload (default {}; excludes --input-file) |  |
+| `--input-file <PATH|->` | read one JSON value from a file, or - for stdin; maximum 1 MiB; excludes --input |  |
 | `--idempotency-key <KEY>` | stable key for retrying an uncertain run start |  |
+
+Examples:
+
+```sh
+gregale workflows run nightly-report --input-file input.json --wait
+gregale workflows run nightly-report --input-file input.json
+gregale workflows run nightly-report --input-file -
+```
+
+### workflows wait
+
+Wait for an exact or latest workflow run to succeed; failure or timeout exits nonzero
+
+`gregale workflows wait [--app <SLUG>] [--workflow-name <NAME>] [--timeout <DURATION>] [--poll-interval <DURATION>] <run_id|latest>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app for latest (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--timeout <DURATION>` | maximum wait (default 5m; positive) |  |
+| `--poll-interval <DURATION>` | read interval (default 2s; 1s to 1h) |  |
+
+Examples:
+
+```sh
+gregale workflows wait RUN_ID --timeout 5m
+gregale workflows wait latest --workflow-name billing --timeout 5m
+```
 
 ### workflows status
 
 Show details of a workflow run
 
-`gregale workflows status <run_id>`
+`gregale workflows status [--check] [--interactive] [--app <slug>] [--workflow-name <NAME>] [<run_id|latest>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | exit 0 only for a succeeded, non-cancelled run (explicit read only) |  |
+| `--interactive` | choose a run for inspection |  |
+| `--app <slug>` | app for latest or interactive selection (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+
+Examples:
+
+```sh
+gregale workflows status RUN_ID --check
+gregale workflows status latest --workflow-name nightly-report
+gregale workflows status --interactive
+gregale workflows status --app billing --interactive
+gregale workflows status <run_id>
+```
 
 ### workflows diagnose
 
 Inspect queue reasons and preview recovery without changing the run
 
-`gregale workflows diagnose <run_id>`
+`gregale workflows diagnose [--app <SLUG>] [--workflow-name <NAME>] <run_id|latest>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
 
 Examples:
 
 ```sh
+gregale workflows diagnose latest --workflow-name nightly-report
 gregale workflows diagnose <run_id>
 gregale --json workflows diagnose <run_id>
 ```
 
 ### workflows steps
 
-List steps for a workflow run
+List steps for an exact or latest workflow run
 
-`gregale workflows steps <run_id>`
+`gregale workflows steps [--failed-only] [--app <SLUG>] [--workflow-name <NAME>] <run_id|latest>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--failed-only` | show only failed steps with inspection commands |  |
+| `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+
+Examples:
+
+```sh
+gregale workflows steps latest --workflow-name billing --failed-only
+gregale workflows steps latest --workflow-name nightly-report
+```
 
 ### workflows attempts
 
 List retry attempts and managed effect delivery status for a workflow step
 
-`gregale workflows attempts <run_id> <step_name>`
+`gregale workflows attempts [--failed-only] [--app <SLUG>] [--workflow-name <NAME>] <run_id|latest> <step_name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--failed-only` | show only failed attempts |  |
+| `--app <SLUG>` | app for latest (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+
+Examples:
+
+```sh
+gregale workflows attempts latest charge-card --workflow-name billing --failed-only
+gregale workflows attempts latest charge-card --workflow-name billing
+```
 
 ### workflows retry
 
 Retry one safely resumable failed HTTP step
 
-`gregale workflows retry <run_id> <step_name>`
+`gregale workflows retry [--interactive] [--app <slug>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<run_id>] [<step_name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a run; preview and confirm changes for retry or cancel |  |
+| `--app <slug>` | app for interactive run selection (otherwise use linked app or picker) |  |
+| `--wait` | follow the retried run to success (explicit run and step only) |  |
+| `--timeout <DURATION>` | wait deadline after retry acceptance (default 5m; requires --wait) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait) |  |
+
+Examples:
+
+```sh
+gregale workflows retry --app billing --interactive
+gregale workflows retry <run_id> <step_name>
+gregale workflows retry RUN_ID STEP_NAME --wait
+```
 
 ### workflows resume
 
 Resume eligible failed actions in a workflow run
 
-`gregale workflows resume --expected-resume-count <N> [--idempotency-key <KEY>] <run_id>`
+`gregale workflows resume [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] --expected-resume-count <N> [--idempotency-key <KEY>] <run_id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--wait` | follow the resumed run to success without another resume request |  |
+| `--timeout <DURATION>` | wait deadline after resume acceptance (default 5m; requires --wait) |  |
+| `--poll-interval <DURATION>` | wait read interval (default 2s; 1s to 1h; requires --wait) |  |
 | `--expected-resume-count <N>` | current resume_count shown by workflows status | required |
 | `--idempotency-key <KEY>` | stable key for retrying the same resume request |  |
 
+Examples:
+
+```sh
+gregale workflows resume RUN_ID --expected-resume-count 1 --wait
+```
+
 ### workflows resumes
 
-List continuation history for a workflow run
+List continuation history for an exact or latest workflow run
 
-`gregale workflows resumes <run_id>`
+`gregale workflows resumes [--app <SLUG>] [--workflow-name <NAME>] <run_id|latest>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app for latest (defaults to linked project app) |  |
+| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+
+Examples:
+
+```sh
+gregale workflows resumes latest --workflow-name billing
+```
 
 ### workflows cancel
 
 Cancel an active workflow run
 
-`gregale workflows cancel <run_id>`
+`gregale workflows cancel [--interactive] [--app <slug>] [<run_id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a run; preview and confirm changes for retry or cancel |  |
+| `--app <slug>` | app for interactive run selection (otherwise use linked app or picker) |  |
+
+Examples:
+
+```sh
+gregale workflows cancel --app billing --interactive
+gregale workflows cancel <run_id>
+```
 
 ### workflows cancel-queued-preview
 
@@ -4851,11 +5293,19 @@ gregale workflows cancel-queued --app billing --run-id <uuid> --yes
 
 Send external event to a workflow run
 
-`gregale workflows events [--payload <JSON>] <run_id> <event_name>`
+`gregale workflows events [--payload <JSON>] [--payload-file <PATH|->] <run_id> <event_name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--payload <JSON>` | JSON event payload (default {}) |  |
+| `--payload <JSON>` | JSON event payload (default {}; excludes --payload-file) |  |
+| `--payload-file <PATH|->` | read one JSON value from a file, or - for stdin; request maximum 1 MiB; excludes --payload |  |
+
+Examples:
+
+```sh
+gregale workflows events RUN_ID approved --payload-file approval.json
+gregale workflows events RUN_ID approved --payload-file -
+```
 
 
 ## dashboard
@@ -4961,11 +5411,12 @@ Cancel a delayed task
 
 List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--failed-only] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (app-scoped deployment history) |  |
+| `--failed-only` | show only failed deployments in fetched history |  |
 | `--limit <N>` | page size (1-200) |  |
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
@@ -5021,11 +5472,11 @@ Remove an alias without deleting its deployment
 
 Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances
 
-`gregale deployment [<subcommand>] <id|vN> [--app <SLUG>] [--show-scan] [--show-secret-scan] [--min <N>]`
+`gregale deployment [<subcommand>] <id|vN|latest> [--app <SLUG>] [--show-scan] [--show-secret-scan] [--min <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--app <SLUG>` | app slug for vN or latest outside a linked project |  |
 | `--show-scan` | include the per-deploy grype scan payload |  |
 | `--show-secret-scan` | include the per-deploy image-layer secret-scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
@@ -5035,6 +5486,23 @@ Examples:
 ```sh
 gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
+gregale deployment latest --app my-api
+```
+
+### deployment retry-hold
+
+Schedule an MCP promotion hold retry with all activation checks
+
+`gregale deployment retry-hold [--app <SLUG>] <ID|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug, to resolve a vN revision |  |
+
+Examples:
+
+```sh
+gregale deployment retry-hold v42 --app my-api
 ```
 
 ### deployment runtime
@@ -5096,11 +5564,11 @@ gregale deployment summary v42 --app my-api --json
 
 Wait until a deployment is live (or safe rollout completes)
 
-`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN>`
+`gregale deployment wait [--app <SLUG>] [--rollout] [--progress] [--timeout <SECONDS|DURATION>] <id|vN|latest>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | app slug for a vN revision outside a linked project |  |
+| `--app <SLUG>` | app slug for vN or latest outside a linked project |  |
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
 | `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
@@ -5108,6 +5576,7 @@ Wait until a deployment is live (or safe rollout completes)
 Examples:
 
 ```sh
+gregale deployment wait <id|vN> --app my-api
 gregale deployment wait 00000000000000000000000000000001
 gregale deployment wait 00000000000000000000000000000001 --rollout --progress
 ```
@@ -5233,7 +5702,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--execution-mode <request|service|worker|job>] [--restart-policy <no|on-failure|always|unless-stopped>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--plan] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5291,6 +5760,7 @@ Deploy an app, function, or project
 | `--healthcheck-grpc` | use standard gRPC health for startup readiness |  |
 | `--healthcheck-grpc-service <SERVICE>` | service name for --healthcheck-grpc; empty checks overall health |  |
 | `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
+| `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
@@ -7966,10 +8436,12 @@ gregale env pull --app my-api --scope staging
 
 Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
-`gregale env push [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
+`gregale env push [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--wait-for-ack` | wait for application acknowledgements for uploaded keys |  |
+| `--timeout <DURATION>` | restart and acknowledgement wait limit after uploading (default 2m; requires --wait-for-ack) |  |
 | `--dry-run` | preview key changes, scan findings, and quota without uploading or restarting |  |
 | `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
@@ -11089,11 +11561,16 @@ gregale secrets refs unset --app my-api --environment production DATABASE_URL
 
 List sealed secrets
 
-`gregale secrets list --app <slug> [--scope <SCOPE|__all__>] [--class <CLASS>] [--older-than <DURATION>]`
+`gregale secrets list [--key <KEY>]... [--watch] [--interval <DURATION>] [--timeout <DURATION>] [--delivery-status <STATUS>] [--app <slug>] [--scope <SCOPE|__all__>] [--class <CLASS>] [--older-than <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--key <KEY>` | include an exact secret key name (repeatable) |  |
+| `--watch` | follow metadata changes; JSON emits snapshot/change/unavailable events |  |
+| `--interval <DURATION>` | watch poll interval (1s to 1h; default 5s) |  |
+| `--timeout <DURATION>` | watch duration (zero until interrupted); expiry exits 124 |  |
+| `--delivery-status <STATUS>` | filter runtime-start delivery; unknown includes missing or inconsistent current-version evidence | one of `delivered` · `pending` · `failed` · `unknown` |
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 | `--scope <SCOPE|__all__>` | env scope filter (defaults to linked project environment) |  |
 | `--class <CLASS>` | filter by snapshot-retention class | one of `persistent` · `ephemeral` |
 | `--older-than <DURATION>` | filter to secrets not updated within a duration (for example 90d or 2160h); unknown timestamps are excluded |  |
@@ -11111,13 +11588,17 @@ gregale secrets list --app my-api --older-than 90d
 
 Set a sealed secret; ephemeral values disable VM snapshots for the scope
 
-`gregale secrets set --app <slug> [--interactive] [--from-stdin] [--scope <SCOPE>] [--class <CLASS>] [--restart] [<KEY=VALUE>...]`
+`gregale secrets set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--scope <SCOPE>] [--class <CLASS>] [--restart] [<KEY=VALUE>...]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--wait-for-ack` | wait for application acknowledgements for all updated keys |  |
+| `--timeout <DURATION>` | restart and acknowledgement wait limit after saving (default 2m; requires --wait-for-ack) |  |
+| `--dry-run` | validate local input and preview keys and runtime options without API requests or changes |  |
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 | `--interactive` | enter hidden values and confirm names, scope, and retention before saving |  |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
+| `--file <PATH>` | read a private KEY=VALUE file; excludes stdin, interactive input, and positional pairs |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
 | `--class <CLASS>` | retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class | one of `persistent` · `ephemeral` |
 | `--restart` | restart the app and apply updated secrets now |  |
@@ -11125,6 +11606,7 @@ Set a sealed secret; ephemeral values disable VM snapshots for the scope
 Examples:
 
 ```sh
+gregale secrets set --file secrets.env --dry-run
 gregale secrets set --app my-api --interactive
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
 printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
@@ -11134,14 +11616,15 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 ### secrets unset
 
-Remove a sealed secret (alias: rm)
+Remove named sealed secrets (alias: rm)
 
-`gregale secrets unset [--interactive] --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY>]`
+`gregale secrets unset [--dry-run] [--interactive] [--app <slug>] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY>...]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | validate local input and preview keys and runtime options without API requests or changes |  |
 | `--interactive` | choose a secret name, review scope and runtime options, and confirm removal |  |
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
 | `--restart` | restart the app so running instances drop the removed secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
@@ -11150,6 +11633,7 @@ Remove a sealed secret (alias: rm)
 Examples:
 
 ```sh
+gregale secrets unset OLD_TOKEN UNUSED_KEY --dry-run
 gregale secrets unset --app my-api --interactive
 gregale secrets unset --app my-api OLD_API_KEY
 gregale secrets unset --app my-api OLD_API_KEY --scope staging
@@ -11199,11 +11683,12 @@ gregale secrets audit --older-than 90d --fail-on-stale --json
 
 Rotate a secret and optionally wait for runtime application
 
-`gregale secrets rotate --app <slug> [--from-stdin] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY=VALUE>]`
+`gregale secrets rotate [--dry-run] [--app <slug>] [--from-stdin] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY=VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--dry-run` | validate local input and preview keys and runtime options without API requests or changes |  |
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 | `--from-stdin` | read one KEY=VALUE pair from stdin |  |
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
@@ -11213,8 +11698,8 @@ Rotate a secret and optionally wait for runtime application
 Examples:
 
 ```sh
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --wait-for-ack --timeout 5m
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --restart --wait-for-ack
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app my-api --from-stdin --scope production --restart --wait-for-ack --timeout 5m
 ```
 
 
@@ -11488,7 +11973,7 @@ Add a log drain; the credential is read from an environment variable
 | `--app <SLUG>` | app slug |  |
 | `--url <URL>` | destination URL | required |
 | `--kind <KIND>` | destination format (default http_json) | one of `http_json` · `otlp` |
-| `--auth-header-env <ENV>` | environment variable holding the Authorization header value |  |
+| `--auth-header-env <ENV>` | environment variable holding the Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
 | `--disabled` | create the drain disabled |  |
 
 Examples:
@@ -11536,7 +12021,7 @@ Change a drain&#39;s URL or credential, or pause and resume it
 | `--app <SLUG>` | app slug |  |
 | `--id <ID>` | log drain id | required |
 | `--url <URL>` | new destination URL |  |
-| `--auth-header-env <ENV>` | environment variable holding the new Authorization header value |  |
+| `--auth-header-env <ENV>` | environment variable holding the new Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
 | `--enable` | resume delivery |  |
 | `--disable` | pause delivery |  |
 

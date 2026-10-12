@@ -189,19 +189,7 @@ func (i InstanceInfo) admissionMB() int {
 // the app configured one within bounds (floor 10 s, ceiling plan default × 2,
 // spec §4.3).
 func EffectiveIdleTimeoutS(plan api.Plan, appType string, configured int) int {
-	l := api.MustLimitsFor(plan)
-	if configured <= 0 {
-		return l.DefaultIdleTimeoutS(appType)
-	}
-	floor, ceiling := l.IdleTimeoutBounds()
-	switch {
-	case configured < floor:
-		return floor
-	case configured > ceiling:
-		return ceiling
-	default:
-		return configured
-	}
+	return api.MustLimitsFor(plan).EffectiveIdleTimeoutS(appType, configured)
 }
 
 // idleReference returns the safest timestamp for idle decisions. The database

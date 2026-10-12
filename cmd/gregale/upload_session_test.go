@@ -33,6 +33,7 @@ func TestCanUseResumableUpload_PreservesRolloutFallback(t *testing.T) {
 		{name: "dockerfile", dockerfile: true, trafficPercent: -1, want: true},
 		{name: "traffic split", trafficPercent: 50},
 		{name: "annotation", annotations: api.DeployAnnotations{Reason: "release"}, trafficPercent: -1, want: true},
+		{name: "revision environment override", annotations: api.DeployAnnotations{OverrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": "digest"}}, trafficPercent: -1},
 		{name: "workspace source root", sourceRoot: "apps/api", trafficPercent: -1, want: true},
 	}
 	for _, tc := range cases {

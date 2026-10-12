@@ -328,14 +328,14 @@ func TestMCPNativeJournalCommandOwnership(t *testing.T) {
 			args = append(args, "--resume")
 		}
 		stderr, restore := captureStderr(t)
-		code := cmdMCPTaskRelease(args)
+		code := cmdMCP(append([]string{"tasks", "release"}, args...))
 		restore()
 		if code == 0 || !strings.Contains(stderr.String(), "owned by another command") {
 			t.Fatalf("%s bypassed ownership: code=%d output=%s", action, code, stderr.String())
 		}
 	}
 	output.Reset()
-	if code := cmdMCPTaskRelease([]string{"status", "--plan", plan, "--state", path}); code != 0 {
+	if code := cmdMCP([]string{"tasks", "release", "status", "--plan", plan, "--state", path}); code != 0 {
 		t.Fatalf("status blocked by ownership: %s", output.String())
 	}
 }

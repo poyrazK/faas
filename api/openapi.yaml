@@ -84,6 +84,8 @@ tags:
       surface is under `deployments` (preview kind deployments).
       Cross-tagged with `apps` so a tag filter of `apps` surfaces
       preview-destroy alongside the parent-app lifecycle.
+  - name: mcp
+    description: MCP hosting health and catalog integrity checks for app deployments.
   - name: dev
     description: Stable, expiring remote developer environments used by `gregale dev`.
   - name: deploydiff
@@ -12013,6 +12015,38 @@ paths:
         '204':
           description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/mcp-task-compatibility:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    put:
+      operationId: putMCPTaskCompatibilityReport
+      summary: Publish an MCP task handler compatibility snapshot
+      description: "Replaces the app's bounded observer snapshot with aggregate waiting-task and live-worker counts by tool and handler version. The report contains no task IDs, owners, or payloads; timestamps are assigned by Gregale."
+      tags: [mcp]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPTaskCompatibilityReportRequest' }
+      responses:
+        '204': { description: Snapshot stored. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: Request body exceeds 128 KiB. }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    get:
+      operationId: getMCPTaskCompatibilityReport
+      summary: Read the latest MCP task handler compatibility snapshot
+      description: "Returns the latest bounded observer snapshot, including server-computed freshness. An unpublished snapshot is returned as published=false and stale=true."
+      tags: [mcp]
+      responses:
+        '200':
+          description: Latest snapshot or an explicit unpublished/stale response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPTaskCompatibilityReportResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -14397,6 +14431,10 @@ paths:
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
+                override_env:
+                  type: string
+                  maxLength: 1048576
+                  description: "JSON object of non-secret environment overrides applied to this deployment revision only; values follow the plan's deployment override limits."
                 source_root:
                   type: string
                   maxLength: 256
@@ -17614,6 +17652,100 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Deployment UUID containing the exact replica selected for the MCP health probe.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: instance
+        description: Running instance UUID targeted by the MCP health probe.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [mcp]
+      operationId: probeMCPInstanceHealth
+      summary: Probe MCP catalog health on one exact replica.
+      description: |
+        Requires app read scope and MFA. The platform validates that the
+        deployment belongs to the app and the instance is RUNNING in that
+        deployment, then forwards a GET to the fixed `/healthz` path on that
+        instance. The response includes platform-stamped app, deployment, and
+        instance IDs; workload response headers cannot override them. The
+        supplied host is only the virtual-host authority delivered to the
+        workload and cannot contain a path or URL credentials.
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema: { type: string, maxLength: 255 }
+          description: Virtual-host authority used for this replica health request, including an optional port.
+      responses:
+        '200':
+          description: Exact instance response and platform-selected identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPInstanceHealthProbeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        description: Deployment UUID containing the exact replica selected for the MCP protocol probe.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: instance
+        description: Running instance UUID targeted by the MCP protocol probe.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [mcp]
+      operationId: probeMCPInstanceProtocol
+      summary: Send one read-only MCP protocol request to an exact replica.
+      description: |
+        Requires app read scope and MFA. The platform verifies that the
+        instance is RUNNING in the requested deployment, then forwards one
+        allowlisted MCP initialize or catalog-list request to the supplied
+        literal endpoint path on that exact instance. Tool execution, resource
+        reads, prompt rendering, and task operations are rejected. The response
+        includes platform-stamped identity and a bounded workload response.
+        The optional MCP-Probe-Authorization header carries a workload bearer
+        token for this request only; it is not logged or stored.
+      parameters:
+        - name: MCP-Probe-Authorization
+          in: header
+          required: false
+          schema: { type: string, format: password, maxLength: 8192 }
+          description: Optional bearer token forwarded to the MCP workload. Never returned or persisted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPInstanceProtocolProbeRequest' }
+      responses:
+        '200':
+          description: Bounded MCP protocol response from the verified running replica.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPInstanceProtocolProbeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/logs:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -19576,6 +19708,9 @@ paths:
         An in-flight managed canary owns the app's traffic weights; direct
         traffic changes during `pending` or `rolling_out` return 409
         `traffic_change_during_canary` without changing traffic.
+        Promoting a candidate to 100% also returns 409
+        `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+        an outstanding MCP task handler version.
       requestBody:
         required: true
         content:
@@ -19607,9 +19742,10 @@ paths:
             (`traffic_percent_sum_invalid`), the optional
             expected_serving_deployment_id was stale
             (`traffic_serving_changed`), or an in-flight managed canary
-            owns traffic (`traffic_change_during_canary`). The canary and
-            serving checks run before mutation; a sum-invariant failure
-            rolls back all tentative updates.
+            owns traffic (`traffic_change_during_canary`), or MCP task handler
+            compatibility blocks a 100% promotion
+            (`mcp_task_compatibility_gate_blocked`). These checks run before
+            mutation; a sum-invariant failure rolls back all tentative updates.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |
@@ -20173,6 +20309,46 @@ paths:
   # retry seam). Same 404 IDOR-safe posture as the sibling endpoints
   # but a tailored copy keeps vacuum's description-duplication rule
   # at zero on this branch.
+  /v1/deployments/{id}/mcp-task-hold/retry:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: retryDeploymentMCPTaskHold
+      summary: Schedule another recovery attempt for an active MCP compatibility hold.
+      description: >-
+        Requires deployment write scope and MFA policy. Returns 202 when recovery
+        is already due or a new retry is scheduled. An active lease is preserved
+        and schedules a follow-up. The worker repeats compatibility, readiness,
+        smoke and lifecycle checks; this action does not grant a migration override.
+      responses:
+        '202':
+          description: Current deployment status after scheduling; promotion remains asynchronous.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Deployment write scope or MFA is missing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: No deployment owned by this account.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The candidate has no active queued hold or is no longer eligible.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500':
+          description: Recovery scheduling or status refresh failed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/deployments/{id}/retry:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -55166,6 +55342,55 @@ components:
           type: integer
           example: 5
 
+    MCPTaskHandlerCompatibility:
+      description: Outstanding task counts and live worker coverage for one tool and handler version.
+      type: object
+      additionalProperties: false
+      required: [tool_name, handler_version, waiting_tasks, live_compatible_workers]
+      properties:
+        tool_name: { type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]{1,128}$' }
+        handler_version: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+        waiting_tasks: { type: integer, minimum: 1, maximum: 1000000000000 }
+        live_compatible_workers: { type: integer, minimum: 0, maximum: 1000000000000 }
+        unknown_deployment_workers: { type: integer, minimum: 0, maximum: 1000000000000, description: "Workers whose deployment identity is not available yet, including workers from older starter versions." }
+        deployments:
+          type: array
+          maxItems: 64
+          description: "Per-deployment worker counts. A report contains at most 768 deployment entries overall; larger snapshots set truncated=true."
+          items: { $ref: '#/components/schemas/MCPTaskHandlerDeploymentWorkers' }
+    MCPTaskHandlerDeploymentWorkers:
+      description: Compatible workers attributed to a specific serving deployment.
+      type: object
+      additionalProperties: false
+      required: [deployment_id, workers]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        workers: { type: integer, minimum: 1, maximum: 1000000000000 }
+    MCPTaskCompatibilityReportRequest:
+      description: Bounded aggregate handler inventory published by the task observer.
+      type: object
+      additionalProperties: false
+      required: [handlers]
+      properties:
+        handlers:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/MCPTaskHandlerCompatibility' }
+        truncated: { type: boolean, default: false }
+    MCPTaskCompatibilityReportResponse:
+      description: Latest observer inventory with platform timestamps and freshness state.
+      type: object
+      required: [published, handlers, truncated, freshness_seconds, stale]
+      properties:
+        published: { type: boolean }
+        handlers:
+          type: array
+          items: { $ref: '#/components/schemas/MCPTaskHandlerCompatibility' }
+        truncated: { type: boolean }
+        observed_at: { type: string, format: date-time }
+        freshness_seconds: { type: integer, example: 45 }
+        stale: { type: boolean }
+
     ScalingTarget:
       description: "(metric, value) pair the engine watches for the scale-up trigger. The metric surface is closed, and since ADR-194 every member of it is backed by a live source and read by a scheduler trigger. `p99_latency_ms` was removed: it validated for releases with no latency source behind it, and is now rejected with 422 pointing at concurrent_requests. The unset state (null) is the legacy 'engine falls back to autoscale_target_rps' path."
       type: object
@@ -55745,6 +55970,10 @@ components:
           type: number
           description: "Target backlog per worker instance. Custom metric targets use the custom gauge's units."
           example: 500
+        observer_app_slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          description: "Separate always-on worker app publishing MCP task metrics; required when mcp_tasks_outstanding scales this worker to zero."
 
     # ─── Deployments ──────────────────────────────────────────────────────
 
@@ -55862,6 +56091,32 @@ components:
         expires_at: { type: string, format: date-time }
         deployment_id: { type: [string, "null"] }
 
+    DeploymentPromotionHold:
+      description: Compatibility hold and durable recovery progress for a deployment awaiting promotion.
+      type: object
+      required: [code, detail, observed_at, held_at, recovery_attempts, recovery_in_progress]
+      properties:
+        code: { type: string }
+        detail: { type: string }
+        observed_at: { type: string, format: date-time }
+        held_at: { type: string, format: date-time, description: First compatibility hold observation. }
+        recovery_attempts: { type: integer, minimum: 0, description: Number of claimed automatic recovery attempts. }
+        next_retry_at: { type: string, format: date-time, description: Eligibility time; while an attempt runs this is its lease expiry, not a promise of execution. }
+        recovery_in_progress: { type: boolean }
+        last_recovery_outcome: { type: string, enum: [held, retry, recovered, inactive, cancelled] }
+        last_recovery_at: { type: string, format: date-time }
+        last_recovery_error_code: { type: string }
+    DeploymentWorkerDrainStatus:
+      type: object
+      description: Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application tasks. Overdue spans passed their deadline without a recorded outcome.
+      required: [active, completed, timed_out, failed, overdue]
+      properties:
+        active: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        timed_out: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        overdue: { type: integer, minimum: 0 }
+        deadline: { type: string, format: date-time, description: Earliest unfinished worker drain deadline. }
     DurableEntityValidatorDeploymentInfo:
       type: object
       additionalProperties: false
@@ -55877,6 +56132,11 @@ components:
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        worker_drain:
+          $ref: '#/components/schemas/DeploymentWorkerDrainStatus'
+        promotion_hold:
+          $ref: '#/components/schemas/DeploymentPromotionHold'
+          description: Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -56317,6 +56577,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        mcp_task_migration_override:
+          type: boolean
+          description: "One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler versions it does not provide."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -60961,6 +61224,11 @@ components:
       description: Persisted step status and action kind without customer values.
       required: [step_name, status, kind, attempt, retry_base]
       properties:
+        retry_eligible: { type: boolean, description: Advisory manual HTTP step retry eligibility using the captured graph and current quota. Absent means unavailable or ineligible. Actual retry rechecks state and quota. }
+        retry_reopened_steps:
+          type: array
+          description: Skipped dependency descendants that would reopen with this manual retry. Omitted when empty or ineligible.
+          items: { type: string }
         step_name: { type: string }
         status: { type: string, enum: [pending, running, awaiting_event, succeeded, failed, dead, skipped] }
         kind: { type: string, enum: [action, for_each, join, timer, event, callback, condition, unknown] }
@@ -61304,6 +61572,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        mcp_task_migration_override:
+          type: boolean
+          description: "One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -62040,6 +62311,57 @@ components:
           enum: [startup_fail, readiness_fail, liveness_fail, crash_loop, oom, clean_exit, error_exit, null]
           description: "Reason for the most recent terminal transition (ADR-138 §Decision 2). null when still running."
           example: null
+
+    MCPInstanceHealthProbeResponse:
+      description: Bounded /healthz response from one exact replica with identity stamped by the platform.
+      type: object
+      required: [app_id, deployment_id, instance_id, http_status, health_body]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        http_status: { type: integer, minimum: 100, maximum: 599, description: HTTP status returned by the workload's /healthz handler. }
+        health_body: { type: string, maxLength: 65536, description: UTF-8 body returned by the workload's /healthz handler. }
+        health_body_too_large: { type: boolean, description: True when the workload response exceeded the 64 KiB probe limit and health_body contains only its bounded prefix. }
+
+    MCPInstanceProtocolProbeRequest:
+      description: One bounded, read-only MCP JSON-RPC request to an exact replica.
+      type: object
+      required: [host, endpoint, protocol_version, rpc_request]
+      properties:
+        host: { type: string, maxLength: 255, description: Deployment preview hostname and optional port. }
+        endpoint: { type: string, maxLength: 1024, pattern: '^/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*/?)?$', description: "Literal absolute MCP endpoint path without query, fragment, escapes, empty interior segments, or route patterns." }
+        protocol_version: { type: string, enum: ['2026-07-28', '2025-11-25'] }
+        rpc_request: { $ref: '#/components/schemas/MCPProbeRPCRequest' }
+
+    MCPProbeRPCRequest:
+      description: Single MCP JSON-RPC initialize, initialized notification, discovery, or catalog-list request. Mutating and data-reading methods are rejected.
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, const: '2.0' }
+        id: { oneOf: [{ type: string }, { type: number }] }
+        method:
+          type: string
+          enum: [initialize, notifications/initialized, server/discover, tools/list, resources/list, resources/templates/list, prompts/list]
+        params: { type: object, additionalProperties: true }
+      additionalProperties: false
+
+    MCPInstanceProtocolProbeResponse:
+      description: Bounded MCP response from one exact replica with platform-stamped identity.
+      type: object
+      required: [app_id, deployment_id, instance_id, http_status, body]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        http_status: { type: integer, minimum: 100, maximum: 599 }
+        content_type: { type: string, maxLength: 128 }
+        protocol_version: { type: string, maxLength: 64 }
+        session_id: { type: string, maxLength: 1024 }
+        session_id_present: { type: boolean, description: "True when the workload returned an MCP-Session-Id header, including when its value exceeded the response header cap." }
+        body: { type: string, maxLength: 524288 }
+        body_too_large: { type: boolean }
 
     # ─── Domains ──────────────────────────────────────────────────────────
 
@@ -64478,6 +64800,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        mcp_task_migration_override:
+          type: boolean
+          description: "Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -65230,6 +65555,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
+          description: 'MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
           enum:
             - error_rate_pct
             - latency_p50_ms
@@ -65250,6 +65576,9 @@ components:
             - slo_burn_rate
             - pre_auth_target_threshold
             - pre_auth_target_signal_gap_pct
+            - mcp_tasks_oldest_age_seconds
+            - mcp_tasks_metrics_stale
+            - mcp_task_promotion_hold_age_seconds
             - pre_auth_pressure
             - edge_validation_failures
             - edge_rejections
@@ -65311,7 +65640,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and event consumer and workflow metrics support webhook only.'
+          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow metrics support webhook only.'
           default: webhook
           example: webhook
         state:
@@ -65341,7 +65670,8 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -65363,7 +65693,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow metrics support webhook only.'
+          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and MCP task, event consumer, and workflow metrics support webhook only.'
           default: webhook
           example: webhook
 
@@ -65380,8 +65710,8 @@ components:
         enabled: { type: boolean }
         metric:
           type: string
-          description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -65394,7 +65724,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and event consumer and workflow metrics support webhook only.'
+          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and MCP task, event consumer, and workflow metrics support webhook only.'
 
     RotateAlertRuleSecretResponse:
       description: 'rotate-secret response — returns the rotated_at timestamp + the masked constant.'

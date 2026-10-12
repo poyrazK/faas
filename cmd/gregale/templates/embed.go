@@ -44,10 +44,9 @@ var FS embed.FS
 const GoToolchainVersion = "1.26.9"
 
 // Names is the canonical template list, kept here so the CLI can
-// validate --template before touching the embed FS. The seven
-// "hello/function" scaffolds ship with `gregale deploy`; the
-// stateless-contract and event-driven scaffolds are scaffolded by
-// `gregale init` (commands_init.go). Names must stay in
+// validate --template before touching the embed FS. The hello/function and
+// stateless-contract scaffolds ship with `gregale deploy`; `gregale init`
+// (commands_init.go) can materialize every template. Names must stay in
 // lockstep with the //go:embed directive above — adding a template
 // means a new entry in BOTH places.
 var Names = []string{
@@ -105,13 +104,7 @@ var generatedDotfiles = map[string]map[string]string{
 // package after materialization, but its source must not be compiled as part
 // of Gregale's repository module.
 var generatedTemplateFiles = map[string]map[string]string{
-	"mcp-go": {
-		"main.go.tmpl":      "main.go",
-		"main_test.go.tmpl": "main_test.go",
-		"auth.go.tmpl":      "auth.go",
-		"tasks.go.tmpl":     "tasks.go",
-	},
-}
+	"mcp-go": {"main_test.go.tmpl": "main_test.go"}}
 
 // mcpGoModuleRequirements mirrors the Go SDK's pruned module graph so a fresh
 // mcp-go starter can run without a preliminary `go mod tidy`.
@@ -401,11 +394,13 @@ func NameIsValid(name string) bool {
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (7)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
+//	"mcp"                — stateless MCP server starters (3)
 //	""                   — unknown / not in Names
 //
 // The grouping mirrors the template sections in the public docs site:
 // hello/function are the "just run it" tier, stateless-contract
-// scaffolds are the "BYO managed service" tier, ai is the LLM tier.
+// scaffolds are the "BYO managed service" tier, ai is the LLM tier,
+// and mcp contains the protocol-specific language starters.
 // Adding a template means a new entry in BOTH Names AND this switch.
 func CategoryFor(name string) string {
 	switch name {

@@ -819,6 +819,8 @@ from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayload
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_readiness_probe import DeploymentReadinessProbe
+from .deployment_promotion_hold import DeploymentPromotionHold
+from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -1837,6 +1839,13 @@ from .managed_realtime_retained_history_response import ManagedRealtimeRetainedH
 from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
 from .managed_realtime_retained_message_request_metadata import ManagedRealtimeRetainedMessageRequestMetadata
 from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
+from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
+from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
+from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
+from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_probe_rpc_request import MCPProbeRPCRequest
+from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
+from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
 from .managed_realtime_retained_message_response_metadata import ManagedRealtimeRetainedMessageResponseMetadata
 from .managed_realtime_schedule_group_request import ManagedRealtimeScheduleGroupRequest
 from .managed_realtime_schedule_group_request_expected_versions import (
@@ -1863,6 +1872,10 @@ from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
+from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
+from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
+from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
+from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -4655,6 +4668,8 @@ __all__ = (
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
     "DeploymentReadinessProbe",
+    "DeploymentPromotionHold",
+    "DeploymentWorkerDrainStatus",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -5622,6 +5637,13 @@ __all__ = (
     "ManagedRealtimeRetainedMessageRequest",
     "ManagedRealtimeRetainedMessageRequestMetadata",
     "ManagedRealtimeRetainedMessageResponse",
+    "MCPInstanceHealthProbeResponse",
+    "MCPInstanceProtocolProbeRequest",
+    "MCPInstanceProtocolProbeRequestProtocolVersion",
+    "MCPInstanceProtocolProbeResponse",
+    "MCPProbeRPCRequest",
+    "MCPProbeRPCRequestMethod",
+    "MCPProbeRPCRequestParams",
     "ManagedRealtimeRetainedMessageResponseMetadata",
     "ManagedRealtimeScheduleGroupRequest",
     "ManagedRealtimeScheduleGroupRequestExpectedVersions",
@@ -5646,6 +5668,10 @@ __all__ = (
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
     "MCPResourcePolicyToolScopesType0",
+    "MCPTaskCompatibilityReportRequest",
+    "MCPTaskCompatibilityReportResponse",
+    "MCPTaskHandlerCompatibility",
+    "MCPTaskHandlerDeploymentWorkers",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
