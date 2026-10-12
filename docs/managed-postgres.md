@@ -506,7 +506,10 @@ When enabled, a new database reservation is admitted only if the account has a
 complete usage coverage for every provider resource and no unresolved accounting
 obligation, with fresh active observations and bounded final correction evidence
 for deleted resources and has not crossed its
-monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
+monthly cost, compute, storage, history (when configured), or egress ceiling. A live
+resource created inside the current, still-open window owes no completed window yet,
+so its missing first observation does not block; once that window closes it needs
+coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the
 plan's database-count allowance, converted to the canonical byte-second meter,

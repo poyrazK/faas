@@ -41,8 +41,10 @@ func TestPostgresUsageDeletionRetainsMonthlyConsumption(t *testing.T) {
 func TestPostgresUsageFreshDatabaseDoesNotHideUnmeteredDatabase(t *testing.T) {
 	store, _, ctx, account := postgresStoreFixture(t)
 	now := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
-	first := postgresReadyDatabase(t, store, account, "audit-fresh", now)
-	_ = postgresReadyDatabase(t, store, account, "audit-unmetered", now)
+	// Both existed before the current window (H9-P113 exempts only a database
+	// created inside it), so the unmetered one owes a completed window.
+	first := postgresReadyDatabase(t, store, account, "audit-fresh", now.Add(-2*time.Hour))
+	_ = postgresReadyDatabase(t, store, account, "audit-unmetered", now.Add(-2*time.Hour))
 	if err := store.RecordUsage(ctx, []UsageRecord{{AccountID: account, DatabaseID: first.ID,
 		BackendID: first.BackendID, BackendFingerprint: first.BackendFingerprint,
 		WindowFrom: now.Add(-time.Hour), WindowTo: now, ObservedAt: now,
@@ -279,8 +281,8 @@ func TestUsageStoresRejectOverlappingWindowSizesAndOlderCorrections(t *testing.T
 func TestPostgresRestoreUsageCoverageFollowsSource(t *testing.T) {
 	store, pool, ctx, account := postgresStoreFixture(t)
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	source := postgresReadyDatabase(t, store, account, "shared-source", now)
-	target := postgresReadyDatabase(t, store, account, "shared-target", now)
+	source := postgresReadyDatabase(t, store, account, "shared-source", now.Add(-2*time.Hour))
+	target := postgresReadyDatabase(t, store, account, "shared-target", now.Add(-2*time.Hour))
 	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET restore_source_database_id = $1, restore_source_resource_id = $2, restore_point_in_time = $3 WHERE id = $4`, source.ID, source.ProviderResourceID, now.Add(-time.Minute), target.ID); err != nil {
 		t.Fatal(err)
 	}

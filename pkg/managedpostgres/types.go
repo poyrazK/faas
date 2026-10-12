@@ -544,6 +544,10 @@ type UsageProgress struct {
 	// Unresolved is snapshot metadata for an accounting obligation whose
 	// provider identity is still unknown. Ledger observations cannot settle it.
 	Unresolved bool
+	// CreatedAt is snapshot metadata: when the accounting root was reserved.
+	// A resource created inside the current window has no completed window
+	// to collect yet, so its missing first observation is not a gap.
+	CreatedAt time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
