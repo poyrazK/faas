@@ -75,7 +75,11 @@ func TestMetalPmemAccountBase(t *testing.T) {
 	assertBaseDevice(t, v, "pmem-a", true)
 
 	wake(m, "pmem-b", "acct-b", nil)
-	accounts, err := os.ReadDir(dir)
+	copies, err := v.pmemBase.copyDir(base)
+	if err != nil {
+		t.Fatalf("pmem copy directory: %v", err)
+	}
+	accounts, err := os.ReadDir(copies)
 	if err != nil || len(accounts) != 2 {
 		t.Fatalf("pmem dir holds %d account copies (err %v), want 2", len(accounts), err)
 	}
