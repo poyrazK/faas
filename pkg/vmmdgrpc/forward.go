@@ -756,6 +756,10 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// Per-instance concurrency accounting (mirrors ForwardHTTPStream).
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
+	// An upgraded session outlives any request; instance teardown ends it
+	// through this context (H9-129).
+	ctx, release := s.forwardSessions.track(stream.Context(), reqInit.GetInstance())
+	defer release()
 
 	_, ok := s.vmm.NetnsFor(reqInit.GetInstance())
 	if !ok {
@@ -775,7 +779,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// the handler stays under the CLAUDE.md 50-line cap and the
 	// individual concerns (process lifecycle, streaming, error
 	// mapping) are testable in isolation.
-	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(stream.Context(), instancePID, dialPort)
+	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(ctx, instancePID, dialPort)
 	if err != nil {
 		return err
 	}
@@ -808,7 +812,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 		// would have us read the zero value and silently drop
 		// the error). rawBridgeFinish handles the cmd.Wait +
 		// WaitGroup coordination.
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, stream.Context(), stderr.String())
+		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
 		if sendErr != nil {
 			return status.Errorf(codes.Internal,
 				"raw bridge head failed (%v) AND init send failed: %v", headErr, sendErr)
@@ -823,15 +827,15 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 			},
 		},
 	}); err != nil {
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, stream.Context(), stderr.String())
+		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
 		return status.Errorf(codes.Internal, "raw bridge init send: %v", err)
 	}
 
 	if err := rawBridgePumpBody(stream, headReader, parsed.Body, reqInit.GetMaxRequestBytes()); err != nil {
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, stream.Context(), stderr.String())
+		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
 		return err
 	}
-	return rawBridgeFinish(cmd, bodyErrCh, bodyWG, stream.Context(), stderr.String())
+	return rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
 }
 
 // rawBridgeSpawn resolves the vmmd-raw-bridge binary path, opens
@@ -1087,6 +1091,11 @@ func rawBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest,
 // returns nil.
 func rawBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr string) error {
 	waitErr := cmd.Wait()
+	if instanceStopped(streamCtx) {
+		// vmmd tore the instance down and the session context killed the
+		// bridge; the gateway closes the client connection on Unavailable.
+		return status.Error(codes.Unavailable, "raw bridge: instance stopped")
+	}
 
 	// Wait for the body goroutine to actually exit. If it
 	// doesn't exit within the stream-context deadline, the
@@ -1104,6 +1113,9 @@ func rawBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGro
 		default:
 		}
 	case <-streamCtx.Done():
+		if instanceStopped(streamCtx) {
+			return status.Error(codes.Unavailable, "raw bridge: instance stopped")
+		}
 		// Client disconnected (or stream context cancelled
 		// for any other reason). Surface as Canceled so the
 		// gateway knows the response was truncated. The
