@@ -10,25 +10,32 @@ const ProductionCanaryEnv = "FAAS_MANAGED_POSTGRES_PRODUCTION_CANARY"
 
 // NewProvisioningGate preserves staging admission and adds an explicitly
 // enabled production test canary. A production canary requires a complete v8
-// artifact, an exact nonempty account allowlist, metering and prices, and an
-// approval lasting no more than 24 hours. Environment-only approval never
-// authorizes production provisioning.
+// artifact or a separate two-hour operator test approval, an exact nonempty
+// account allowlist, and metering and prices. A qualified approval lasts at
+// most 24 hours. Environment-only approval never authorizes production.
 func NewProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
 	staging := NewStagingProvisioningGate(registry, getenv, now)
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	var artifact *QualificationArtifact
+	var trial *OperatorTestApproval
+	var trialPath string
+	var trialErr error
 	if getenv != nil {
 		if loaded, err := LoadQualificationArtifact(getenv(QualificationApprovalPathEnv)); err == nil {
 			artifact = &loaded
+		}
+		trialPath = strings.TrimSpace(getenv(OperatorTestPathEnv))
+		if trialPath != "" {
+			trial, trialErr = loadOperatorTestApproval(trialPath)
 		}
 	}
 	return func() bool {
 		if !productionEnvironment(getenv) {
 			return staging()
 		}
-		if registry == nil || !registry.ProvisioningEnabled || !productionCanaryEnabled(getenv) || artifact == nil || artifact.Approval == nil {
+		if registry == nil || !registry.ProvisioningEnabled || !productionCanaryEnabled(getenv) {
 			return false
 		}
 		accounts, err := ParseStagingCanaryAccounts(getenv(CanaryAccountsEnv))
@@ -39,8 +46,14 @@ func NewProvisioningGate(registry *Registry, getenv func(string) string, now fun
 		if !policy.Enabled || policy.Validate() != nil || policy.ComputeUnitHourMillicents <= 0 || policy.StorageGiBHourMillicents <= 0 || policy.HistoryGiBHourMillicents <= 0 || policy.EgressGiBMillicents <= 0 || policy.MaxMonthlyHistoryByteSeconds <= 0 {
 			return false
 		}
-		approval := artifact.Approval
 		current := now().UTC()
+		if trialPath != "" {
+			return trialErr == nil && trial.valid(registry, accounts, current)
+		}
+		if artifact == nil || artifact.Approval == nil {
+			return false
+		}
+		approval := artifact.Approval
 		if approval.QualifiedAt.After(current) || approval.ExpiresAt.Sub(approval.QualifiedAt) > 24*time.Hour {
 			return false
 		}
