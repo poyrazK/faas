@@ -1422,7 +1422,7 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
 	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.Healthcheck != nil || sidecar.NoTriggers {
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -2478,6 +2478,30 @@ func (c *Client) ListInstancesWithHistory(ctx context.Context, slug string, hist
 		endpoint += "?history=true"
 	}
 	return out, c.do(ctx, "GET", endpoint, nil, &out)
+}
+
+// ProbeMCPInstanceHealth fetches /healthz from one exact running deployment
+// replica. The platform validates ownership and target identity and returns
+// those identities alongside the bounded workload response.
+func (c *Client) ProbeMCPInstanceHealth(ctx context.Context, slug, deploymentID, instanceID, host string) (MCPInstanceHealthProbeResponse, error) {
+	var out MCPInstanceHealthProbeResponse
+	endpoint := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deploymentID) + "/instances/" + url.PathEscape(instanceID) + "/mcp-health"
+	query := url.Values{}
+	query.Set("host", host)
+	return out, c.do(ctx, "GET", endpoint+"?"+query.Encode(), nil, &out)
+}
+
+// ProbeMCPInstanceProtocol sends one read-only MCP protocol request to an
+// exact running replica. The optional workload token uses a dedicated header
+// so it cannot replace the Gregale API credential and is never put in a URL.
+func (c *Client) ProbeMCPInstanceProtocol(ctx context.Context, slug, deploymentID, instanceID string, probe MCPInstanceProtocolProbeRequest, token string) (MCPInstanceProtocolProbeResponse, error) {
+	var out MCPInstanceProtocolProbeResponse
+	endpoint := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deploymentID) + "/instances/" + url.PathEscape(instanceID) + "/mcp-probe"
+	headers := make(http.Header)
+	if token != "" {
+		headers.Set("MCP-Probe-Authorization", token)
+	}
+	return out, c.doWithHeaders(ctx, "POST", endpoint, probe, &out, headers)
 }
 
 // GetInstances returns every live instance across the caller's account

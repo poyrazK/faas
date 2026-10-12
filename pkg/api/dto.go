@@ -550,7 +550,7 @@ type CreateAppRequest struct {
 	// standalone bindings. Omitted preserves the legacy HTTP URL contract.
 	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
 	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
@@ -2267,6 +2267,10 @@ type Companions = Sidecars
 // variant is used for tarball/dockerfile deploys).
 type CreateDeploymentRequest struct {
 	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	// MCPTaskMigrationOverride explicitly allows this deployment to replace
+	// the final worker for a queued MCP task handler version. The grant is
+	// one-use and consumed atomically with the stable cutover.
+	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3051,7 +3055,31 @@ type ListDeploymentAuditResponse struct {
 }
 
 // DeploymentResponse is a deployment as returned by the API.
+type DeploymentPromotionHold struct {
+	Code                  string     `json:"code"`
+	Detail                string     `json:"detail"`
+	ObservedAt            time.Time  `json:"observed_at"`
+	HeldAt                time.Time  `json:"held_at"`
+	RecoveryAttempts      int        `json:"recovery_attempts"`
+	NextRetryAt           *time.Time `json:"next_retry_at,omitempty"`
+	RecoveryInProgress    bool       `json:"recovery_in_progress"`
+	LastRecoveryOutcome   string     `json:"last_recovery_outcome,omitempty"`
+	LastRecoveryAt        *time.Time `json:"last_recovery_at,omitempty"`
+	LastRecoveryErrorCode string     `json:"last_recovery_error_code,omitempty"`
+}
+
+type DeploymentWorkerDrainStatus struct {
+	Active    int        `json:"active"`
+	Completed int        `json:"completed"`
+	TimedOut  int        `json:"timed_out"`
+	Failed    int        `json:"failed"`
+	Overdue   int        `json:"overdue"`
+	Deadline  *time.Time `json:"deadline,omitempty"`
+}
+
 type DeploymentResponse struct {
+	WorkerDrain            *DeploymentWorkerDrainStatus          `json:"worker_drain,omitempty"`
+	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
@@ -4322,6 +4350,53 @@ type InstanceResponse struct {
 	// the difference between 0 and unset; the JSON contract uses
 	// omitempty so absent and 0 are indistinguishable to clients.
 	MinInstancesTarget int `json:"min_instances_target,omitempty"`
+}
+
+// MCPInstanceHealthProbeResponse carries the bounded /healthz result from one
+// platform-selected instance. InstanceID, DeploymentID, and AppID are stamped
+// by the platform after it validates the requested target; they are not read
+// from workload-controlled response fields.
+type MCPInstanceHealthProbeResponse struct {
+	AppID              string `json:"app_id"`
+	DeploymentID       string `json:"deployment_id"`
+	InstanceID         string `json:"instance_id"`
+	HTTPStatus         int    `json:"http_status"`
+	HealthBody         string `json:"health_body"`
+	HealthBodyTooLarge bool   `json:"health_body_too_large,omitempty"`
+}
+
+// MCPProbeRPCRequest is the read-only JSON-RPC envelope accepted by an instance
+// protocol probe. IDs may be strings or numbers and are omitted for notifications.
+type MCPProbeRPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// MCPInstanceProtocolProbeRequest carries one bounded, read-only JSON-RPC
+// request to a fixed endpoint on one platform-selected running instance.
+type MCPInstanceProtocolProbeRequest struct {
+	Host            string          `json:"host"`
+	Endpoint        string          `json:"endpoint"`
+	ProtocolVersion string          `json:"protocol_version"`
+	RPCRequest      json.RawMessage `json:"rpc_request"`
+}
+
+// MCPInstanceProtocolProbeResponse carries one direct MCP HTTP response with
+// platform-stamped identity. Only protocol headers needed by stateless MCP
+// clients are forwarded; workload headers cannot replace the identity fields.
+type MCPInstanceProtocolProbeResponse struct {
+	AppID            string `json:"app_id"`
+	DeploymentID     string `json:"deployment_id"`
+	InstanceID       string `json:"instance_id"`
+	HTTPStatus       int    `json:"http_status"`
+	ContentType      string `json:"content_type,omitempty"`
+	ProtocolVersion  string `json:"protocol_version,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	SessionIDPresent bool   `json:"session_id_present,omitempty"`
+	Body             string `json:"body"`
+	BodyTooLarge     bool   `json:"body_too_large,omitempty"`
 }
 
 // ListInstancesResponse is the page shape for GET /v1/instances
@@ -6835,15 +6910,16 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason                 string                 `json:"reason,omitempty"`
-	Tag                    string                 `json:"tag,omitempty"`
-	DeployedBy             string                 `json:"deployed_by,omitempty"`
-	PRNumber               int                    `json:"pr_number,omitempty"`
-	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
-	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
-	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	Reason                   string                 `json:"reason,omitempty"`
+	Tag                      string                 `json:"tag,omitempty"`
+	DeployedBy               string                 `json:"deployed_by,omitempty"`
+	PRNumber                 int                    `json:"pr_number,omitempty"`
+	TrafficPercent           *int                   `json:"traffic_percent,omitempty"`
+	Canary                   *CanaryPresetSpec      `json:"canary,omitempty"`
+	MCPTaskMigrationOverride bool                   `json:"mcp_task_migration_override,omitempty"`
+	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -6857,7 +6933,8 @@ type SourceTarballDeployRequest struct {
 	Ref        string `json:"ref,omitempty"`
 	NoTriggers bool   `json:"no_triggers,omitempty"`
 	// Environment selects a registered project environment for this upload.
-	Environment string `json:"environment,omitempty"`
+	Environment              string `json:"environment,omitempty"`
+	MCPTaskMigrationOverride bool   `json:"mcp_task_migration_override,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are
 	// optional; the CLI's zero-config path auto-captures
 	// DeployedBy from `git config user.name` when in a repo (see

@@ -7,7 +7,7 @@ import (
 )
 
 func TestShippedFunctionTemplatesAreNotSecrets(t *testing.T) {
-	for _, template := range []string{"function-node", "function-node24", "function-python", "function-python313", "function-go"} {
+	for _, template := range []string{"function-node", "function-node24", "function-python", "function-python313", "function-go", "function-rust"} {
 		t.Run(template, func(t *testing.T) {
 			root := filepath.Join("..", "..", "cmd", "gregale", "templates", template)
 			err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {

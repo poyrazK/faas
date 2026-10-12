@@ -213,6 +213,12 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 		strings.Contains(statusAPIAvailabilityQuery, `code=~"[45].."`) {
 		t.Fatalf("API availability query does not exclude client 4xx outcomes: %q", statusAPIAvailabilityQuery)
 	}
+	// production-us hunt #9: a tenant app answering 500 must not lower the
+	// public API availability; only platform-produced 5xx count.
+	if !strings.Contains(statusAPIAvailabilityQuery, "gateway_platform_errors_total") ||
+		strings.Contains(statusAPIAvailabilityQuery, `code=~"5.."`) {
+		t.Fatalf("API availability error numerator is not platform-produced 5xx: %q", statusAPIAvailabilityQuery)
+	}
 }
 
 func TestStatusCacheEmptyWakeVectorIsFreshNoSample(t *testing.T) {

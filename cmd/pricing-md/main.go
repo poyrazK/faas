@@ -52,7 +52,9 @@ func render() string {
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.\n")
-	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).\n\n")
+	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).")
+	fmt.Fprintf(&b, " Functions default to %s on every plan; any app or function can set its own value from %s up to twice the plan default.\n\n",
+		formatDuration(api.FunctionIdleTimeoutDefaultSeconds), formatDuration(api.IdleTimeoutFloorSeconds))
 	b.WriteString("## Developer environments\n\n")
 	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum.\n\n",
 		formatDuration(int(api.DeveloperLeaseDefault.Seconds())), formatDuration(int(api.DeveloperLeaseMin.Seconds())))

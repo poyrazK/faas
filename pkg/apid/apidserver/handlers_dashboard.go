@@ -2894,7 +2894,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	// projection: the persisted profile is the source of truth for the
 	// inferred runtime, start command, port, and health path. This remains
 	// available after the build spool is cleaned up.
-	if plan := s.deploymentResponse(dep, app).BuildPlan; plan != nil {
+	if plan := s.deploymentResponse(r.Context(), dep, app).BuildPlan; plan != nil {
 		data.BuildPlan = &dashboard.BuildPlanView{
 			Framework:  plan.Framework,
 			Runtime:    plan.Runtime,

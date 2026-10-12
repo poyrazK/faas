@@ -236,6 +236,16 @@ func CheckCapForStaging(l api.Limits, stats SmallFileStats) (sizeMB int, err err
 	return sizeMB, nil
 }
 
+// BaseMkfsCommand is MkfsCommand for a shared runtime base. Bases use
+// 4 KiB blocks and a size that is a multiple of 2 MiB, so a node can attach
+// them as a virtio-pmem root mounted with DAX (ADR-908): the kernel refuses
+// DAX on any other block size, and Firecracker maps pmem in 2 MiB units.
+func BaseMkfsCommand(stagingDir, outImage string, sizeMB int) []string {
+	sizeMB += sizeMB % 2
+	cmd := MkfsCommand(stagingDir, outImage, sizeMB)
+	return append(cmd[:2:2], append([]string{"-b", "4096"}, cmd[2:]...)...)
+}
+
 // MkfsCommand builds the argv that creates a populated ext4 image from a staging
 // directory WITHOUT mounting it — mke2fs's `-d` feature, so no root/loop device
 // is needed (spec §4.6). `-F` forces creation over a non-block-device file.

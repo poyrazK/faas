@@ -121,7 +121,7 @@ func inspectAutomationEvent(ctx context.Context, c *api.Client, p automationEven
 	}
 	action, _, err := selectEventRecoveryAction(p.Source, id, *selected)
 	if err != nil {
-		return automationEventPlanItem{}, "routing_action_unsupported", nil
+		return automationEventPlanItem{}, "routing_action_unsupported", nil //nolint:nilerr // Unsupported actions are a preflight rejection, not a transport failure.
 	}
 	return automationEventPlanItem{ID: id, Subscription: selected.SubscriptionID, Generation: selected.Routing.Generation, ReplayCount: selected.Routing.ReplayCount, Action: action}, "", nil
 }
@@ -191,9 +191,12 @@ func cmdAutomationsEventRecoveryPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not create event plan", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := persistRecoveryRecord(f, p); err != nil {
 		return printErr("Could not persist event plan", err)
+	}
+	if err := f.Close(); err != nil {
+		return printErr("Could not close event plan", err)
 	}
 	return 0
 }
@@ -204,7 +207,7 @@ func readAutomationEventPlan(path string) (automationEventPlan, error) {
 	if err != nil {
 		return p, fmt.Errorf("open event plan: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return p, fmt.Errorf("inspect event plan: %w", err)
@@ -314,7 +317,7 @@ func cmdAutomationsEventRecover(args []string) int {
 	if err != nil {
 		return printErr("Could not create event journal", err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	appID, err := loadAutomationRunScope(ctx, c, p.App, p.Name)
@@ -343,6 +346,9 @@ func cmdAutomationsEventRecover(args []string) int {
 	}
 	if err := persistRecoveryRecord(journal, map[string]any{"kind": "completed", "at": time.Now().UTC()}); err != nil {
 		return printErr("Could not persist completion", err)
+	}
+	if err := journal.Close(); err != nil {
+		return printErr("Could not close event journal", err)
 	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(outcomes)); code != 0 {

@@ -5,6 +5,7 @@ package workerpool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,10 @@ type Spec struct {
 	Args        []string
 	Env         []string
 	HandlerPath string
+	// MarkerAnywhere scans the whole handler file for the protocol marker.
+	// Compiled handlers (Go) carry it in their data section rather than on a
+	// leading comment line, so the 4 KiB source prefix check cannot see it.
+	MarkerAnywhere bool
 }
 
 var (
@@ -40,7 +45,7 @@ var (
 // InvokeIfSupported invokes a marked, newline-framed adapter through a reused
 // worker. handled=false asks the caller to retain the legacy one-shot path.
 func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (handled bool, err error) {
-	if !supportsPersistentProtocol(spec.HandlerPath) {
+	if !supportsPersistentProtocol(spec) {
 		return false, nil
 	}
 	return true, poolFor(spec).invoke(ctx, request, response)
@@ -51,7 +56,7 @@ func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (h
 // init snapshot, so a restored VM does not pay interpreter and module-import
 // startup on its first request.
 func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error) {
-	if !supportsPersistentProtocol(spec.HandlerPath) {
+	if !supportsPersistentProtocol(spec) {
 		return false, nil
 	}
 	p := poolFor(spec)
@@ -69,20 +74,50 @@ func poolFor(spec Spec) *pool {
 	return value.(*pool)
 }
 
-func supportsPersistentProtocol(path string) bool {
+func supportsPersistentProtocol(spec Spec) bool {
+	path := spec.HandlerPath
 	if cached, ok := supportCache.Load(path); ok {
 		return cached.(bool)
 	}
-	f, err := os.Open(path) //nolint:forbidigo // HandlerPath is the runner-owned generated adapter path; this reads only its protocol marker.
+	f, err := os.Open(path) //nolint:forbidigo // HandlerPath is the runner-owned handler path; this reads only its protocol marker.
 	if err != nil {
 		supportCache.Store(path, false)
 		return false
 	}
 	defer func() { _ = f.Close() }()
-	prefix, err := io.ReadAll(io.LimitReader(f, 4096))
-	supported := err == nil && strings.Contains(string(prefix), protocolMarker)
+	var supported bool
+	if spec.MarkerAnywhere {
+		supported, err = containsMarker(f)
+		supported = err == nil && supported
+	} else {
+		prefix, readErr := io.ReadAll(io.LimitReader(f, 4096))
+		supported = readErr == nil && strings.Contains(string(prefix), protocolMarker)
+	}
 	supportCache.Store(path, supported)
 	return supported
+}
+
+// containsMarker streams r looking for protocolMarker, carrying a marker-sized
+// overlap between chunks so a match split across a read boundary is found.
+func containsMarker(r io.Reader) (bool, error) {
+	marker := []byte(protocolMarker)
+	buf := make([]byte, 64*1024)
+	carry := 0
+	for {
+		n, err := r.Read(buf[carry:])
+		window := buf[:carry+n]
+		if bytes.Contains(window, marker) {
+			return true, nil
+		}
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		carry = min(len(marker)-1, len(window))
+		copy(buf, window[len(window)-carry:])
+	}
 }
 
 type pool struct {
@@ -91,9 +126,41 @@ type pool struct {
 	idle    []*worker
 	live    int
 	changed chan struct{}
+	// generation advances on Recycle; a worker from an older generation is
+	// closed instead of being reused.
+	generation uint64
 }
 
 func newPool(spec Spec) *pool { return &pool{spec: spec, changed: make(chan struct{})} }
+
+// Recycle closes every worker started before the call, in every pool, and
+// returns how many it closed. Later invocations start fresh workers. A
+// snapshot restore calls it before the instance serves traffic: a restored
+// worker would otherwise resume with the in-process random state it held at
+// capture, shared with every sibling restored from the same snapshot
+// (GHSA-24j2-p895-mwc9, ADR-687). Busy workers are closed when released.
+func Recycle() int {
+	closed := 0
+	pools.Range(func(_, value any) bool {
+		closed += value.(*pool).recycle()
+		return true
+	})
+	return closed
+}
+
+func (p *pool) recycle() int {
+	p.mu.Lock()
+	p.generation++
+	stale := p.idle
+	p.idle = nil
+	p.live -= len(stale)
+	p.notifyLocked()
+	p.mu.Unlock()
+	for _, w := range stale {
+		w.close()
+	}
+	return len(stale)
+}
 
 func (p *pool) acquire(ctx context.Context) (*worker, error) {
 	for {
@@ -109,6 +176,7 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 		}
 		if p.live < maxWorkers {
 			p.live++ // Reserve before starting: concurrent misses cannot oversubscribe.
+			generation := p.generation
 			p.mu.Unlock()
 			w, err := startWorker(ctx, p.spec)
 			if err != nil {
@@ -116,8 +184,10 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 				p.live--
 				p.notifyLocked()
 				p.mu.Unlock()
+				return nil, err
 			}
-			return w, err
+			w.generation = generation
+			return w, nil
 		}
 		changed := p.changed
 		p.mu.Unlock()
@@ -135,17 +205,18 @@ func (p *pool) notifyLocked() {
 }
 
 func (p *pool) release(w *worker, healthy bool) {
-	if !healthy {
-		w.close()
-	}
 	p.mu.Lock()
-	if healthy {
+	reuse := healthy && w.generation == p.generation
+	if reuse {
 		p.idle = append(p.idle, w)
 	} else {
 		p.live--
 	}
 	p.notifyLocked()
 	p.mu.Unlock()
+	if !reuse {
+		w.close()
+	}
 }
 
 func (p *pool) invoke(ctx context.Context, request, response any) error {
@@ -190,10 +261,11 @@ func (p *pool) invoke(ctx context.Context, request, response any) error {
 }
 
 type worker struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	once   sync.Once
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stdout     *bufio.Reader
+	once       sync.Once
+	generation uint64
 }
 
 func startWorker(ctx context.Context, spec Spec) (*worker, error) {

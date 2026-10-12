@@ -57,6 +57,7 @@ func workflowRunDiagnosticsRead(ctx context.Context, q *sqlc.Queries, db sqlc.DB
 	stepMap := make(map[string]WorkflowStep, len(steps))
 	for _, step := range steps {
 		stepMap[step.StepName] = WorkflowStep{StepName: step.StepName, Status: step.Status, Attempt: int(step.Attempt), RetryBase: int(step.RetryBase),
+			Error:         workflowResumeTextPtr(step.Error),
 			ForEachParent: workflowResumeTextPtr(step.ForeachParent), ForEachIndex: workflowResumeIntPtr(step.ForeachIndex), ForEachCount: workflowResumeIntPtr(step.ForeachCount),
 			SkipReason: workflowResumeTextPtr(step.SkipReason), NextRetryAt: workflowResumeTimePtr(step.NextRetryAt), NextCheckAt: workflowResumeTimePtr(step.NextCheckAt),
 		}

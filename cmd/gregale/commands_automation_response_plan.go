@@ -88,8 +88,11 @@ func saveAutomationResponsePlan(path string, p automationResponsePlan) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return persistRecoveryRecord(f, p)
+	defer func() { _ = f.Close() }()
+	if err := persistRecoveryRecord(f, p); err != nil {
+		return err
+	}
+	return f.Close()
 }
 func readAutomationResponsePlan(path string) (automationResponsePlan, error) {
 	var p automationResponsePlan
@@ -97,7 +100,7 @@ func readAutomationResponsePlan(path string) (automationResponsePlan, error) {
 	if err != nil {
 		return p, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return p, err

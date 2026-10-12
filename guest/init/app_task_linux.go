@@ -121,6 +121,9 @@ func runAppTaskGuest(log *slog.Logger) error {
 	if err := startEventPublishProxy(log); err != nil {
 		log.Warn("app task event publish proxy unavailable", "err", err)
 	}
+	if err := startOutboundRelay(log); err != nil {
+		log.Warn("app task outbound relay unavailable", "err", err)
+	}
 	ln, err := listenAppTaskHook()
 	if err != nil {
 		log.Warn("app task listener unavailable", "err", err)
@@ -185,6 +188,7 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {

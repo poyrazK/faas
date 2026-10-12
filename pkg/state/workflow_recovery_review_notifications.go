@@ -259,10 +259,10 @@ func recoveryReviewNotificationAllowed(ctx context.Context, s WorkflowRecoveryRe
 	}
 	var payload api.WorkflowRecoveryReviewReadyWebhookPayload
 	if err := json.Unmarshal(row.Payload, &payload); err != nil {
-		return false, "invalid_payload", nil
+		return false, "invalid_payload", nil //nolint:nilerr // Invalid retained payloads are terminal delivery rejections, not retriable store failures.
 	}
 	if _, err := uuid.Parse(payload.ReviewID); err != nil || payload.EventID != recoveryReviewNotificationID(payload.ReviewID) || !sameMemUUID(payload.AppID, row.AppID) {
-		return false, "invalid_scope", nil
+		return false, "invalid_scope", nil //nolint:nilerr // Invalid retained payloads are terminal delivery rejections, not retriable store failures.
 	}
 	r, allowed, reason, err := recoveryReviewNeedsNotification(ctx, s, row.AccountID, row.AppID, payload.ReviewID, now)
 	if err != nil || !allowed {

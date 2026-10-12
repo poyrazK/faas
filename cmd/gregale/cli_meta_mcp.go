@@ -49,12 +49,25 @@ func mcpCLICommand() cliCommand {
 		}
 	}
 	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Scaffold, deploy and verify stateless MCP servers", Subcommands: []cliSub{
-		{Name: "init", Short: "Create a Node, Go, or Python MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}, {Name: "language", Short: "starter language (default node)", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}}}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --language go --path ./my-mcp-go", "gregale mcp init --language python --path ./my-mcp-python"}},
-		{Name: "deploy", Short: "Deploy the worktree, enable streaming and verify MCP discovery", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
-		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
-		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
-		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp resources --app my-mcp"}},
-		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'"}},
+		{Name: "init", Short: "Create an MCP starter in Node, Go or Python", Flags: []cliFlag{
+			{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true},
+			{Name: "language", Short: "starter language alias", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}},
+			{Name: "runtime", Short: "starter language (node, go or python; default node)", Value: "RUNTIME", ClosedSet: []string{"node", "go", "python"}},
+		}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --path ./my-mcp --runtime go", "gregale mcp init --path ./my-mcp --runtime python"}},
+		{Name: "deploy", Short: "Pin the candidate catalog to its revision, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
+		{Name: "status", Short: "Qualify serving MCP replicas and watch hosting health or catalog changes", Flags: []cliFlag{
+			{Name: "app", Short: "Gregale MCP app slug", Value: "SLUG", Req: true},
+			{Name: "endpoint", Short: "literal MCP endpoint path (default /mcp)", Value: "PATH"},
+			{Name: "token-env", Short: "MCP client bearer token environment variable", Value: "ENV"},
+			{Name: "release-policy", Short: "role-specific catalog baselines and token environments", Value: "PATH"},
+			{Name: "timeout", Short: "overall replica qualification deadline (default 10s)", Value: "DURATION"},
+			{Name: "watch", Short: "poll until interrupted and report status changes", Bool: true},
+			{Name: "interval", Short: "poll interval with --watch (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp status --app my-mcp", "gregale mcp status --app my-mcp --token-env MCP_READER_TOKEN", "gregale mcp status --app my-mcp --release-policy release.json --json", "gregale mcp status --app my-mcp --watch --interval 15s --json"}},
+		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
+		{Name: "tools", Short: "Discover tool schemas without invoking tools", Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
+		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Flags: remote, Examples: []string{"gregale mcp resources --app my-mcp"}},
+		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Flags: remote, Examples: []string{"gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'"}},
 		{Name: "resource-watch", Short: "Watch one resource URI for content updates", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},

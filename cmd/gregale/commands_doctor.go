@@ -900,6 +900,7 @@ func scanStatelessShape(path string) []string {
 // no glyph). Skipped checks carry their reason so the summary never
 // implies that an unperformed check passed.
 func renderDoctorHuman(w io.Writer, rep doctorReport) {
+	renderDoctorReadiness(w, rep)
 	if rep.Image != nil {
 		renderDoctorImage(w, rep.Image)
 	} else {

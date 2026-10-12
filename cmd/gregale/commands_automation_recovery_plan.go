@@ -80,11 +80,11 @@ func writeAutomationRecoveryPlanFile(path string, p automationRecoveryPlan) erro
 	if err != nil {
 		return fmt.Errorf("create plan: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := persistRecoveryRecord(f, p); err != nil {
 		return err
 	}
-	return nil
+	return f.Close()
 }
 
 func readAutomationRecoveryPlan(path string) (automationRecoveryPlan, error) {
@@ -93,7 +93,7 @@ func readAutomationRecoveryPlan(path string) (automationRecoveryPlan, error) {
 	if err != nil {
 		return p, fmt.Errorf("open plan: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return p, fmt.Errorf("inspect plan file: %w", err)
@@ -126,11 +126,11 @@ func persistRecoveryRecord(f *os.File, value any) error {
 	if err != nil {
 		return fmt.Errorf("open recovery directory: %w", err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	if err := dir.Sync(); err != nil {
 		return fmt.Errorf("sync recovery directory: %w", err)
 	}
-	return nil
+	return dir.Close()
 }
 
 type automationRecoveryJournalEntry struct {
@@ -213,12 +213,15 @@ func cmdAutomationsRecoveryPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not create recovery journal", err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	report, err := executeAutomationRecoveryPlan(ctx, client, p, journal)
 	if err != nil {
 		return printErr("Recovery stopped; inspect the journal and retry the original plan with a new journal", err)
+	}
+	if err := journal.Close(); err != nil {
+		return printErr("Could not close recovery journal", err)
 	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(report)); code != 0 {

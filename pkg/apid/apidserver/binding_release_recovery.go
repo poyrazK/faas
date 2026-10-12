@@ -135,7 +135,7 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 		})
 	}
 	s.notifyCanaryTraffic(r, app, updated)
-	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), Recovery: receipt})
+	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(ctx, updated, app), AuditID: int64ToAuditIDString(auditID), Recovery: receipt})
 }
 
 func recoveryScope(scope string) string {

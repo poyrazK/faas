@@ -672,13 +672,16 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// fast-forward 7.5h of backoff in <1s).
 	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{
 		MaxAttempts: 1, // the dispatcher owns the retry ladder
-		BaseBackoff: 0,
-		PerAttempt:  d.PerAttempt,
-		HTTPClient:  d.HTTPClient,
-		Sleeper:     d.Sleeper,
-		Logger:      d.log,
-		HeaderSet:   webhookout.HeaderSetWebhook,
-		Format:      webhookout.DeliveryFormat(hook.DeliveryFormat),
+		// The ledger attempt numbers the request: X-Faas-Webhook-Attempt
+		// read 1 on every retry (production-us hunt #9).
+		FirstAttempt: row.Attempt + 1,
+		BaseBackoff:  0,
+		PerAttempt:   d.PerAttempt,
+		HTTPClient:   d.HTTPClient,
+		Sleeper:      d.Sleeper,
+		Logger:       d.log,
+		HeaderSet:    webhookout.HeaderSetWebhook,
+		Format:       webhookout.DeliveryFormat(hook.DeliveryFormat),
 	})
 	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
@@ -738,9 +741,27 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
 	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), nextAttemptAt, meta); d.markRecorded(row, err) {
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", singleAttemptError(res.Err)), nextAttemptAt, meta); d.markRecorded(row, err) {
 		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
 	}
+}
+
+// singleAttemptError drops webhookout's retry-budget wrapper. This dispatcher
+// sends one request per call and owns the retry ladder, so "retryable
+// failure after MaxAttempts" misdescribed a delivery still scheduled to
+// retry; the receiver's own failure is what the ledger should show.
+func singleAttemptError(err error) error {
+	if !errors.Is(err, webhookout.ErrAttemptsExhausted) {
+		return err
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, inner := range joined.Unwrap() {
+			if !errors.Is(inner, webhookout.ErrAttemptsExhausted) {
+				return inner
+			}
+		}
+	}
+	return err
 }
 
 func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string, meta ...state.AppWebhookAttemptMetadata) bool {

@@ -24,7 +24,7 @@
 // reads capacity as ONE input to ChoosePlacement, never the only
 // input. The per-node AdmissionCeilingMB check inside
 // ChoosePlacement and the ledger's per-node floor
-// (Engine.applyLiveCapacityMB's `max(report, ledger.ResidentRAMForNode)`)
+// (Engine.applyLiveCapacityMB's `max(report, ledger.AdmissionUsedMB)`)
 // are the load-bearing enforcement. A stale-low or hostile vmmd
 // cannot shrink the live accounting and force schedd to
 // over-admit. ADR-005 cold-boot safety is preserved by

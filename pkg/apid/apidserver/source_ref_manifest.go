@@ -106,6 +106,11 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err := m.ValidateForPlan(plan); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
+	if skip, err := m.RepositoryDeployFunctions(app.Type == state.AppTypeFunction); err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+	} else if skip {
+		return nil, nil
+	}
 	if err := resolveSourceOperations(sourcePath, name, app.Slug, plan, m); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid operation schema", err.Error())
 	}

@@ -183,10 +183,10 @@ func recoveryReviewCompletionAllowed(ctx context.Context, s WorkflowRecoveryRevi
 	}
 	var payload api.WorkflowRecoveryReviewFinishedWebhookPayload
 	if err := json.Unmarshal(row.Payload, &payload); err != nil {
-		return false, "invalid_payload", nil
+		return false, "invalid_payload", nil //nolint:nilerr // Invalid retained payloads are terminal delivery rejections, not retriable store failures.
 	}
 	if _, err := uuid.Parse(payload.ReviewID); err != nil || payload.EventID != recoveryReviewCompletionID(payload.ReviewID) || !sameMemUUID(payload.AppID, row.AppID) {
-		return false, "invalid_scope", nil
+		return false, "invalid_scope", nil //nolint:nilerr // Invalid retained payloads are terminal delivery rejections, not retriable store failures.
 	}
 	r, err := s.GetWorkflowRecoveryPolicyReview(ctx, row.AccountID, row.AppID, payload.ReviewID)
 	if errors.Is(err, ErrNotFound) {

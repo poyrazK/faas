@@ -1,4 +1,4 @@
-// Shared by the inspector and local CLI; no filesystem or authentication state.
+// Shared by the inspector, local CLI and hosted verification; no filesystem or authentication state.
 export function matchesJSON(actual, expected) {
   if (Object.is(actual, expected)) return true
   if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object' || Array.isArray(actual) !== Array.isArray(expected)) return false
@@ -32,12 +32,12 @@ function captureValue(json, pointer, name) {
   if ((value !== null && !['string', 'number', 'boolean'].includes(typeof value)) || (typeof value === 'string' && value.length > 4096)) throw new VariableFailure(`Cannot capture ${name}: use a scalar JSON value of at most 4096 characters.`)
   return value
 }
-export async function replayRequest(request, { url, identities, signal, variables = new Map() }) {
+export async function replayRequest(request, { url, identities, signal, variables = new Map(), refreshToken, fetcher = fetch, rejectContractMismatch = false }) {
   try {
     signal?.throwIfAborted()
     const path = substitute(request.path, variables, true)
     const target = new URL(path, url)
-    if (target.origin !== new URL(url).origin || !target.pathname.startsWith('/rest/v1/') || target.hash || target.username || target.password) throw new VariableFailure('Resolved request must use the local /rest/v1/ API.')
+    if (target.origin !== new URL(url).origin || !target.pathname.startsWith('/rest/v1/') || target.hash || target.username || target.password) throw new VariableFailure('Resolved request must use the configured /rest/v1/ API.')
     if ('expectedSchemaFingerprint' in request) {
       if (typeof request.expectedSchemaFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(request.expectedSchemaFingerprint)) throw new VariableFailure('Invalid expected schema fingerprint.')
       target.pathname = `/__gregale/contract/${request.expectedSchemaFingerprint}${target.pathname}`
@@ -46,7 +46,7 @@ export async function replayRequest(request, { url, identities, signal, variable
     const body = 'body' in request ? substitute(request.body, variables) : undefined
     // Resolve inputs before clearing names, allowing a step to recapture a variable.
     for (const name of Object.keys(request.capture ?? {})) variables.delete(name)
-    const response = await fetch(target, { method: request.method, ...('body' in request ? { body: JSON.stringify(body) } : {}), headers: { Authorization: `Bearer ${identities[request.identity].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000), redirect: 'error' })
+    const response = await fetcher(target, { method: request.method, ...('body' in request ? { body: JSON.stringify(body) } : {}), headers: { Authorization: `Bearer ${identities[request.identity].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(refreshToken ? { 'X-Gregale-Refresh-Token': refreshToken } : {}) }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000), redirect: 'error' })
     // Bound response reads even when used independently of the gateway.
     const reader = response.body?.getReader(); const chunks = []; let size = 0
     try {
@@ -60,7 +60,8 @@ export async function replayRequest(request, { url, identities, signal, variable
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
     let json, validJSON = false
     try { json = JSON.parse(new TextDecoder().decode(bytes)); validJSON = true } catch {}
-    const statusMatches = response.status === request.expect.status
+    const contractMismatch = rejectContractMismatch && (json?.error?.code === 'schema_contract_mismatch' || json?.code === 'schema_contract_mismatch' || json?.message === 'schema_contract_mismatch')
+    const statusMatches = !contractMismatch && response.status === request.expect.status
     const jsonMatches = !('json' in request.expect) || (validJSON && matchesJSON(json, expected))
     const captured = []
     if (statusMatches && jsonMatches && Object.keys(request.capture ?? {}).length) {
@@ -68,7 +69,7 @@ export async function replayRequest(request, { url, identities, signal, variable
       const values = Object.entries(request.capture).map(([name, pointer]) => [name, captureValue(json, pointer, name)])
       for (const [name, value] of values) { variables.set(name, value); captured.push(name) }
     }
-    return { ...(request.capture ? { captured } : {}), name: request.name, passed: statusMatches && jsonMatches, status: response.status, expected_status: request.expect.status, json_matches: jsonMatches }
+    return { ...(contractMismatch ? { contract_mismatch: true } : {}), ...(request.capture ? { captured } : {}), name: request.name, passed: statusMatches && jsonMatches, status: response.status, expected_status: request.expect.status, json_matches: jsonMatches }
   } catch (error) {
     for (const name of Object.keys(request.capture ?? {})) variables.delete(name)
     signal?.throwIfAborted()

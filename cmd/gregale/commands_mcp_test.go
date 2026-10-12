@@ -127,6 +127,24 @@ func TestMCPArgumentsAndPreflight(t *testing.T) {
 	}
 }
 
+func TestMCPDeploySecretsFileRejectsGlobalCatalogPin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.env")
+	if err := os.WriteFile(path, []byte("API_TOKEN=opaque\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMCPDeploySecretsFile(path); err != nil {
+		t.Fatalf("non-catalog secret rejected: %v", err)
+	}
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := os.WriteFile(path, []byte("MCP_CATALOG_EXPECTED_SHA256="+digest+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := validateMCPDeploySecretsFile(path)
+	if err == nil || strings.Contains(err.Error(), digest) || !strings.Contains(err.Error(), "mcp deploy pins it on the candidate revision") {
+		t.Fatalf("catalog pin secret error = %v", err)
+	}
+}
+
 func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
 	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
 	var output, stderr bytes.Buffer

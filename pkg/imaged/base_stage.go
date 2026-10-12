@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -1245,6 +1246,8 @@ func (h *Handler) EnsureRuntimeBase(ctx context.Context, runtime, arch string, e
 	if arch == "" {
 		return BaseStageResult{}, errors.New("imaged: EnsureRuntimeBase: empty arch")
 	}
+	// binary has no base of its own; it stages go124's (ADR-987).
+	runtime = api.FunctionBaseRuntime(runtime)
 	var row RuntimeBaseRef
 	found := false
 	for _, candidate := range DefaultRuntimeBaseRefs {
