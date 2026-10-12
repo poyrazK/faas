@@ -54,7 +54,7 @@ func TestStreamingPlanGuardDoesNotBlockForeignKeyChecks(t *testing.T) {
 		if _, err := update.Exec(ctx, `UPDATE apps SET ram_mb = 256, streaming_enabled = streaming_enabled WHERE id = $1`, streamingApp); err != nil {
 			t.Fatalf("app update: %v", err)
 		}
-		return lockTimesOut(t, pool, `INSERT INTO request_id_journal (id, account_id, app_id, request_id, received_at, expires_at)
+		return lockTimesOut(ctx, t, pool, `INSERT INTO request_id_journal (id, account_id, app_id, request_id, received_at, expires_at)
 			VALUES ($1, $2, $3, 'req-1', now(), now() + interval '1 hour')`, uuid.NewString(), accountID, streamingApp)
 	}
 	if journalBlocked() {
@@ -69,7 +69,7 @@ func TestStreamingPlanGuardDoesNotBlockForeignKeyChecks(t *testing.T) {
 	if _, err := optIn.Exec(ctx, `UPDATE apps SET streaming_enabled = true WHERE id = $1`, plainApp); err != nil {
 		t.Fatalf("opt in: %v", err)
 	}
-	if !lockTimesOut(t, pool, `UPDATE accounts SET plan = 'free' WHERE id = $1`, accountID) {
+	if !lockTimesOut(ctx, t, pool, `UPDATE accounts SET plan = 'free' WHERE id = $1`, accountID) {
 		t.Fatal("an account downgrade did not wait for a concurrent streaming opt-in")
 	}
 	_ = optIn.Rollback(ctx)
@@ -101,15 +101,15 @@ func mustExec(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
 
 // lockTimesOut runs sql in its own transaction with a short lock_timeout and
 // reports whether it had to give up waiting for a lock.
-func lockTimesOut(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) bool {
+func lockTimesOut(parent context.Context, t *testing.T, pool *pgxpool.Pool, sql string, args ...any) bool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '1s'`); err != nil {
 		t.Fatal(err)
 	}
