@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 957 — dependency latency compared by deployment, not by time window.
 
@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -43,7 +45,7 @@ func TestBuildDebugDependencyDeploymentComparison(t *testing.T) {
 	// An older deployment must not be chosen as the comparison baseline.
 	rows = append(rows, dependencyRow(t, "dep-79", "v79", v80.Add(-time.Hour), "/checkout", 500))
 
-	got := buildDebugDependencyDeploymentComparison(rows, "", "GET /checkout", debugDependencyComparisonMaxItems)
+	got := apidserver.BuildDebugDependencyDeploymentComparison(rows, "", "GET /checkout", apidserver.DebugDependencyComparisonMaxItems)
 	if got == nil {
 		t.Fatal("comparison = nil")
 	}
@@ -71,7 +73,7 @@ func TestBuildDebugDependencyDeploymentComparison(t *testing.T) {
 	}
 
 	// Comparing an explicit older deployment picks the one before it.
-	older := buildDebugDependencyDeploymentComparison(rows, "dep-80", "GET /checkout", 0)
+	older := apidserver.BuildDebugDependencyDeploymentComparison(rows, "dep-80", "GET /checkout", 0)
 	if older == nil || older.CurrentDeploymentID != "dep-80" || older.PreviousDeploymentID != "dep-79" {
 		t.Fatalf("explicit comparison = %+v", older)
 	}
@@ -89,39 +91,39 @@ func TestSuspectedDependencyBetweenDetectorDeployments(t *testing.T) {
 		// A newer deployment the detector is not comparing must be ignored.
 		rows = append(rows, dependencyRow(t, "dep-82", "v82", v82, "/checkout", 20))
 	}
-	comparison := buildDebugDependencyComparisonBetween(rows, "dep-81", "dep-80", "GET /checkout", 0)
+	comparison := apidserver.BuildDebugDependencyComparisonBetween(rows, "dep-81", "dep-80", "GET /checkout", 0)
 	if comparison == nil || comparison.CurrentDeploymentID != "dep-81" || comparison.PreviousDeploymentID != "dep-80" {
 		t.Fatalf("comparison = %+v", comparison)
 	}
-	suspect := suspectedDependency(comparison)
+	suspect := apidserver.SuspectedDependency(comparison)
 	if suspect == nil || suspect.Type != "app_dependency" || suspect.Kind != "postgresql" || suspect.Name != "SELECT orders" ||
 		suspect.P95BaseMS != 80 || suspect.P95MS != 190 {
 		t.Fatalf("suspect = %+v", suspect)
 	}
-	raw := encodeSuspectedDependency(suspect)
-	if got := parseSuspectedDependency(raw); got == nil || *got != *suspect {
+	raw := apidserver.EncodeSuspectedDependency(suspect)
+	if got := apidserver.ParseSuspectedDependency(raw); got == nil || *got != *suspect {
 		t.Fatalf("round trip = %+v from %s", got, raw)
 	}
-	if buildDebugDependencyComparisonBetween(rows, "dep-81", "dep-79", "GET /checkout", 0) != nil {
+	if apidserver.BuildDebugDependencyComparisonBetween(rows, "dep-81", "dep-79", "GET /checkout", 0) != nil {
 		t.Fatal("missing baseline deployment produced a comparison")
 	}
 }
 
 func TestSuspectedDependencySkipsApplicationSpansAndNil(t *testing.T) {
-	if suspectedDependency(nil) != nil || encodeSuspectedDependency(nil) != nil || parseSuspectedDependency(nil) != nil {
+	if apidserver.SuspectedDependency(nil) != nil || apidserver.EncodeSuspectedDependency(nil) != nil || apidserver.ParseSuspectedDependency(nil) != nil {
 		t.Fatal("nil inputs must stay nil")
 	}
 	comparison := &api.DebugDependencyDeploymentComparison{Dependencies: []api.DebugDependencyLatencyItem{
 		{Type: "application", Name: "render", Regression: true, BaselineP95MS: 10, CurrentP95MS: 90},
 		{Type: "app_dependency", Kind: "redis", Name: "GET", Regression: false},
 	}}
-	if got := suspectedDependency(comparison); got != nil {
+	if got := apidserver.SuspectedDependency(comparison); got != nil {
 		t.Fatalf("suspect = %+v, want none", got)
 	}
-	if parseSuspectedDependency([]byte(`{"type":"app_dependency"}`)) != nil {
+	if apidserver.ParseSuspectedDependency([]byte(`{"type":"app_dependency"}`)) != nil {
 		t.Fatal("suspect without a name accepted")
 	}
-	if parseSuspectedDependency([]byte(`not json`)) != nil {
+	if apidserver.ParseSuspectedDependency([]byte(`not json`)) != nil {
 		t.Fatal("invalid json accepted")
 	}
 }
@@ -129,13 +131,13 @@ func TestSuspectedDependencySkipsApplicationSpansAndNil(t *testing.T) {
 func TestBuildDebugDependencyDeploymentComparisonNeedsTwoDeployments(t *testing.T) {
 	created := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
 	rows := []sqlc.ListRequestTelemetryDependencySpansRow{dependencyRow(t, "dep-1", "v1", created, "/checkout", 50)}
-	if got := buildDebugDependencyDeploymentComparison(rows, "", "", 0); got != nil {
+	if got := apidserver.BuildDebugDependencyDeploymentComparison(rows, "", "", 0); got != nil {
 		t.Fatalf("single deployment comparison = %+v", got)
 	}
-	if got := buildDebugDependencyDeploymentComparison(rows, "missing", "", 0); got != nil {
+	if got := apidserver.BuildDebugDependencyDeploymentComparison(rows, "missing", "", 0); got != nil {
 		t.Fatalf("unknown deployment comparison = %+v", got)
 	}
-	if got := buildDebugDependencyDeploymentComparison(nil, "", "", 0); got != nil {
+	if got := apidserver.BuildDebugDependencyDeploymentComparison(nil, "", "", 0); got != nil {
 		t.Fatalf("empty comparison = %+v", got)
 	}
 }

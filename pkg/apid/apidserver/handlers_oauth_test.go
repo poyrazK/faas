@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,7 +24,7 @@ import (
 // handler passed the session's github_login through to the verify
 // call — i.e. the §11 ownership proof was actually checked.
 type fakeGithubdClient struct {
-	GithubdClient
+	apidserver.GithubdClient
 
 	verified      bool
 	accountLogin  string
@@ -48,7 +49,7 @@ func (f *fakeGithubdClient) VerifyInstallation(_ context.Context, installID int6
 // PR-B: callers that want the §11 ownership proof path should use
 // wrapWithGithubLogin to re-mint the cookie with github_login
 // populated — the plain Issue path leaves it empty.
-func newOAuthTestServer(t *testing.T, gh GithubdClient) (http.Handler, *http.Cookie) {
+func newOAuthTestServer(t *testing.T, gh apidserver.GithubdClient) (http.Handler, *http.Cookie) {
 	h, c, _ := newOAuthTestServerWithLogin(t, gh, "")
 	return h, c
 }
@@ -60,7 +61,7 @@ func newOAuthTestServer(t *testing.T, gh GithubdClient) (http.Handler, *http.Coo
 // callers can re-mint the cookie via SealGithubLogin — each
 // EphemeralManager signs with a per-instance key, so a cookie
 // minted by a different manager won't Verify.
-func newOAuthTestServerWithLogin(t *testing.T, gh GithubdClient, login string) (http.Handler, *http.Cookie, *session.Manager) {
+func newOAuthTestServerWithLogin(t *testing.T, gh apidserver.GithubdClient, login string) (http.Handler, *http.Cookie, *session.Manager) {
 	t.Helper()
 	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "test-client")
 	store := state.NewMemStore()
@@ -72,17 +73,17 @@ func newOAuthTestServerWithLogin(t *testing.T, gh GithubdClient, login string) (
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	cookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
-	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}, mgr
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
+	return srv.Handler(), &http.Cookie{Name: apidserver.SessionCookie, Value: cookie}, mgr
 }
 
 // wrapWithGithubLogin re-mints the cookie so the session envelope
@@ -107,7 +108,7 @@ func wrapWithGithubLogin(t *testing.T, h http.Handler, c *http.Cookie, login str
 	if err != nil {
 		t.Fatalf("seal github login: %v", err)
 	}
-	return h, &http.Cookie{Name: sessionCookie, Value: cookie}
+	return h, &http.Cookie{Name: apidserver.SessionCookie, Value: cookie}
 }
 
 // TestOAuthCallback_VerifiedRedirectsToBindPicker is the happy setup path:
@@ -264,12 +265,12 @@ func TestOAuthCallback_RejectsZeroInstallID(t *testing.T) {
 func TestOAuthCallback_RequiresSessionAuth(t *testing.T) {
 	gh := &fakeGithubdClient{verified: true}
 	store := state.NewMemStore()
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler()
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler()
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/callback?installation_id=1", nil)

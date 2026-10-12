@@ -30,7 +30,7 @@
 // The handlers themselves manage the PII redaction (the
 // operator surface is admin-only by spec; the projected
 // AccountEmail is the regulatory capture, not a re-derivation).
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -42,6 +42,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestObsSecurity_AuditLogSearch_AccountEmailSurfaces pins the
@@ -56,11 +57,11 @@ import (
 // The grep test on the SAME body (without ?include_pii=1)
 // pins that no other PII column appears.
 func TestObsSecurity_AuditLogSearch_AccountEmailSurfaces(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
 	acctID := uuid.New()
-	seedAuditLogRow(t, e.store, "auth.login", &acctID, "user@example.com", "user@example.com", nil)
+	apidserver.SeedAuditLogRow(t, (*e.Store()), "auth.login", &acctID, "user@example.com", "user@example.com", nil)
 
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -87,21 +88,21 @@ func TestObsSecurity_AuditLogSearch_AccountEmailSurfaces(t *testing.T) {
 // ReceivedAt, Data. A regression that json.Marshal-s a
 // wider struct would surface at least one marker.
 func TestObsSecurity_AuditLogSearch_NoSealedBlobs(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
 	acctID := uuid.New()
-	seedAuditLogRow(t, e.store, "auth.login", &acctID, "user@example.com", "user@example.com", []byte(`{"ip":"1.2.3.4"}`))
+	apidserver.SeedAuditLogRow(t, (*e.Store()), "auth.login", &acctID, "user@example.com", "user@example.com", []byte(`{"ip":"1.2.3.4"}`))
 
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search: got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, marker := range obsSealedBlobMarkers {
+	for _, marker := range *apidserver.ObsSealedBlobMarkers {
 		if strings.Contains(body, marker) {
 			t.Errorf("audit-log/search body contains sealed-blob marker %q\nbody=%s", marker, body)
 		}
 	}
-	for _, marker := range obsJailInternalMarkers {
+	for _, marker := range *apidserver.ObsJailInternalMarkers {
 		if strings.Contains(body, marker) {
 			t.Errorf("audit-log/search body contains jail-internal marker %q\nbody=%s", marker, body)
 		}
@@ -115,13 +116,13 @@ func TestObsSecurity_AuditLogSearch_NoSealedBlobs(t *testing.T) {
 // sealed-blob marker grep below pins the absence of the
 // projected surface ever carrying the wider Account struct.
 func TestObsSecurity_Events_DataProjectedVerbatim(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
 	ctx := context.Background()
-	if err := e.store.AppendEvent(ctx, "system:schedd", "wake.requested", nil, []byte(`{"wake_id":"abc-123","sidecar_name":"sidecar-A"}`)); err != nil {
+	if err := (*e.Store()).AppendEvent(ctx, "system:schedd", "wake.requested", nil, []byte(`{"wake_id":"abc-123","sidecar_name":"sidecar-A"}`)); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, "GET", "/v1/admin/obs/events", nil, nil)
+	rec := e.Do(t, "GET", "/v1/admin/obs/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events: got %d", rec.Code)
 	}
@@ -148,8 +149,8 @@ func TestObsSecurity_Events_DataProjectedVerbatim(t *testing.T) {
 // response is Content-Type: text/event-stream with no
 // body content (the client sees EOF on the first read).
 func TestObsSecurity_NodesEvents_FrameShapeAbsent(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
+	rec := e.Do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes/events: got %d", rec.Code)
 	}

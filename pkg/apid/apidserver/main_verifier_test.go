@@ -1,6 +1,6 @@
 // Tests for the PR-B (issue #678 / ADR-056) verifier wiring in
 // cmd/apid/main.go. Sister file: main_test.go (runWithDeps lifecycle).
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -20,15 +21,17 @@ import (
 // verifier hook can install on. Without the populated cluster,
 // wire.LoadClientTLSConfig returns (nil, nil) — the single-box
 // back-compat path — and the hook never installs.
-func preLoadedConfigForVerifierTest(t *testing.T) *Config {
+func preLoadedConfigForVerifierTest(t *testing.T) *apidserver.Config {
 	t.Helper()
 	dir := t.TempDir()
 	ca, cert, key := writePKIMaterial(t, dir)
-	return &Config{
+	return &apidserver.
 		// Enable all three listeners so the Load*TLSWithVerifier
 		// calls fire. Pre-PR-B env-var fallbacks resolve the same
 		// fields, but preLoadedConfig bypasses both the env helpers
 		// and the TOML round-trip — direct struct fields are enough.
+		Config{
+
 		GithubdClientTLSCAPath:   ca,
 		GithubdClientTLSCertPath: cert,
 		GithubdClientTLSKeyPath:  key,
@@ -63,9 +66,9 @@ func preLoadedConfigForVerifierTest(t *testing.T) *Config {
 // them, so advisory + bridge calls are skipped — that's the
 // pre-PR-B single-box back-compat shape).
 func TestRunWithDeps_PassesNodeVerifierToDialSites(t *testing.T) {
-	withTestHMACFiles(t)
-	withBillingKeysForTest(t)
-	withTestMailTransport(t)
+	apidserver.WithTestHMACFiles(t)
+	apidserver.WithBillingKeysForTest(t)
+	apidserver.WithTestMailTransport(t)
 
 	stub := &captureTestVerifier{}
 
@@ -74,30 +77,33 @@ func TestRunWithDeps_PassesNodeVerifierToDialSites(t *testing.T) {
 		captured = map[string]*tls.Config{}
 	)
 
-	deps := defaultDeps()
-	withTestStore(&deps)
-	deps.preLoadedConfig = preLoadedConfigForVerifierTest(t)
-	deps.config = deps.preLoadedConfig // runWithDeps reads deps.config, not deps.preLoadedConfig
+	deps := apidserver.DefaultDeps()
+	apidserver.WithTestStore(&deps)
+	(*deps.PreLoadedConfig()) = preLoadedConfigForVerifierTest(t)
+	(*deps.Config()) = (*deps.PreLoadedConfig()) // runWithDeps reads deps.config, not deps.preLoadedConfig
+	(*
 	// Hand the test a stub verifier. preLoadedNodeVerifier overrides
 	// the cfg.NodeName gate inside runWithDeps, so even with
 	// preLoadedConfig.NodeName == "" the verifier flows through.
-	deps.preLoadedNodeVerifier = stub
+	deps.PreLoadedNodeVerifier()) = stub
+	(*
 	// Capture every dial-site *tls.Config. nil-tolerated on the
 	// receiving end (runWithDeps no-ops when captureDialTLS is nil).
-	deps.captureDialTLS = func(name string, cfg *tls.Config) {
+	deps.CaptureDialTLS()) = func(name string, cfg *tls.Config) {
 		mu.Lock()
 		captured[name] = cfg
 		mu.Unlock()
 	}
+	(*
 	// Make the main bind fail so runWithDeps returns quickly after
 	// exercising the verifier block + all Load*TLSWithVerifier
 	// calls. Every captured dial-site tlsCfg is observable before
 	// this error fires.
-	deps.listen = func(_, _ string) (net.Listener, error) {
+	deps.Listen()) = func(_, _ string) (net.Listener, error) {
 		return nil, errors.New("bind aborted")
 	}
 
-	err := runWithDeps(context.Background(), discardLogger(), deps)
+	err := apidserver.RunWithDeps(context.Background(), apidserver.DiscardLogger(), deps)
 	if err == nil || err.Error() != "bind aborted" {
 		// The bind failure is the expected signal; other errors mean
 		// runWithDeps tripped earlier (verifier construction, TLS
@@ -141,30 +147,31 @@ func TestRunWithDeps_PassesNodeVerifierToDialSites(t *testing.T) {
 // tlsCfg MUST have a nil VerifyPeerCertificate — this pins the
 // single-box back-compat path that PR-B is careful not to regress.
 func TestRunWithDeps_NilPreLoadedNodeVerifier_NoHookInstalled(t *testing.T) {
-	withTestHMACFiles(t)
-	withBillingKeysForTest(t)
-	withTestMailTransport(t)
+	apidserver.WithTestHMACFiles(t)
+	apidserver.WithBillingKeysForTest(t)
+	apidserver.WithTestMailTransport(t)
 
 	var (
 		mu       sync.Mutex
 		captured = map[string]*tls.Config{}
 	)
 
-	deps := defaultDeps()
-	withTestStore(&deps)
-	deps.preLoadedConfig = preLoadedConfigForVerifierTest(t)
-	deps.config = deps.preLoadedConfig // runWithDeps reads deps.config, not deps.preLoadedConfig
-	deps.preLoadedNodeVerifier = nil   // explicit
-	deps.captureDialTLS = func(name string, cfg *tls.Config) {
+	deps := apidserver.DefaultDeps()
+	apidserver.WithTestStore(&deps)
+	(*deps.PreLoadedConfig()) = preLoadedConfigForVerifierTest(t)
+	(*deps.Config()) = (*deps.PreLoadedConfig()) // runWithDeps reads deps.config, not deps.preLoadedConfig
+	(*deps.PreLoadedNodeVerifier()) = nil
+	(* // explicit
+	deps.CaptureDialTLS()) = func(name string, cfg *tls.Config) {
 		mu.Lock()
 		captured[name] = cfg
 		mu.Unlock()
 	}
-	deps.listen = func(_, _ string) (net.Listener, error) {
+	(*deps.Listen()) = func(_, _ string) (net.Listener, error) {
 		return nil, errors.New("bind aborted")
 	}
 
-	err := runWithDeps(context.Background(), discardLogger(), deps)
+	err := apidserver.RunWithDeps(context.Background(), apidserver.DiscardLogger(), deps)
 	if err == nil || err.Error() != "bind aborted" {
 		t.Fatalf("runWithDeps: err=%v, want bind aborted", err)
 	}

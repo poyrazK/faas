@@ -16,6 +16,8 @@ T = TypeVar("T", bound="MCPTaskCompatibilityReportRequest")
 
 @_attrs_define
 class MCPTaskCompatibilityReportRequest:
+    """Bounded aggregate handler inventory published by the task observer."""
+
     handlers: list[MCPTaskHandlerCompatibility]
     truncated: bool | Unset = False
 

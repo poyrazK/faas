@@ -1,9 +1,10 @@
 from typing import Literal
 
-EventRecoveryNotificationJobHealthKind = Literal["admission", "execution"]
+EventRecoveryNotificationJobHealthKind = Literal["admission", "attention", "execution"]
 
 EVENT_RECOVERY_NOTIFICATION_JOB_HEALTH_KIND_VALUES: set[EventRecoveryNotificationJobHealthKind] = {
     "admission",
+    "attention",
     "execution",
 }
 

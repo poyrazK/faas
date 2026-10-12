@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryRequestMode = Literal["execution", "routing"]
+EventRecoveryRequestMode = Literal["execution", "routing", "workflow"]
 
 EVENT_RECOVERY_REQUEST_MODE_VALUES: set[EventRecoveryRequestMode] = {
     "execution",
     "routing",
+    "workflow",
 }
 
 

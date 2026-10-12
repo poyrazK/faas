@@ -1,5 +1,5 @@
 // ADR-521: deploy bundles only bounded schemas from the selected source archive.
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -74,7 +75,7 @@ func TestOperationSourceSchemaArchiveBoundary(t *testing.T) {
 				{HTTPTransactionVersion: 1, Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"generating"}},
 				{App: "other", Name: "other", Method: "POST", Path: "/other", Owner: api.OperationOwnerPlatformTenant, InputSchema: "missing.json", OutputSchema: "also-missing.json", ProgressStages: []string{"generating"}},
 			}}
-			err := resolveSourceOperations(operationSchemaArchive(t, entries), "apps/export/gregale.yaml", "exports", api.PlanPro, m)
+			err := apidserver.ResolveSourceOperations(operationSchemaArchive(t, entries), "apps/export/gregale.yaml", "exports", api.PlanPro, m)
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v, want failure %v", err, tc.fail)
 			}

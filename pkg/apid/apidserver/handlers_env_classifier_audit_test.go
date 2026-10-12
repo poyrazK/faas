@@ -40,7 +40,7 @@
 // code path for every branch, so unit-pinning the sentinels +
 // integration-pinning the host_hash_failed branch is sufficient.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -52,6 +52,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -60,9 +61,9 @@ import (
 // when not found. (The package-level `findEventByKind` helper at
 // handlers_audit_test.go:1003 takes a raw rows slice; this wrapper
 // fetches via the testEnv.)
-func findAuditEventByKind(t *testing.T, e testEnv, kind string) *state.Event {
+func findAuditEventByKind(t *testing.T, e apidserver.TestEnv, kind string) *state.Event {
 	t.Helper()
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
@@ -91,9 +92,9 @@ func decodeEventPayload(t *testing.T, ev *state.Event, into any) {
 // listAllAuditKinds returns a compact dump of every event Kind in
 // the test account so a failure can be triaged without reaching
 // for grep.
-func listAllAuditKinds(t *testing.T, e testEnv) []string {
+func listAllAuditKinds(t *testing.T, e apidserver.TestEnv) []string {
 	t.Helper()
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
@@ -120,20 +121,20 @@ func listAllAuditKinds(t *testing.T, e testEnv) []string {
 //   - data_upstream.classifier_failed's Subject is the account UUID
 //     (account-attribution invariant).
 func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithDataPlacement(true).WithHostHashFunc(func(host string) (string, error) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithDataPlacement(true).WithHostHashFunc(func(host string) (string, error) {
 		return "", errors.New("simulated salt missing")
 	})
-	app := createApp(t, e, "host-hash-failed-app")
+	app := apidserver.CreateApp(t, e, "host-hash-failed-app")
 
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/DATABASE_URL",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/DATABASE_URL",
 		api.PutAppEnvRequest{Value: "postgres://u:p@db.example.com:5432/mydb"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PUT status = %d, want 200 (partial-success contract); body=%s", rec.Code, rec.Body.String())
 	}
 
 	// Env row landed.
-	envs, err := e.store.ListAppEnv(context.Background(), e.acct.ID, app.ID)
+	envs, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("ListAppEnv: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
 
 	// The precise audit class is normalized to the bounded Prometheus
 	// reason vocabulary: host_hash_failed → salt_missing.
-	metrics := scrapeOpsMetrics(t, e.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, (*e.Ops()))
 	if !strings.Contains(metrics, `apid_test_data_upstream_classifier_failures_total{reason="salt_missing"} 1`) {
 		t.Fatalf("classifier failure metric missing salt_missing sample:\n%s", metrics)
 	}
@@ -175,7 +176,7 @@ func TestSetEnv_ClassifierFailure_HostHashFailed_EmitsAuditEvent(t *testing.T) {
 	if failed.Subject == nil {
 		t.Fatalf("data_upstream.classifier_failed Subject is nil; account attribution lost")
 	}
-	wantSubj := uuid.MustParse(e.acct.ID)
+	wantSubj := uuid.MustParse((*e.Acct()).ID)
 	if *failed.Subject != wantSubj {
 		t.Errorf("data_upstream.classifier_failed Subject = %s, want %s", failed.Subject, wantSubj)
 	}

@@ -16,6 +16,9 @@ func newRecoveryNotificationHealth() *api.EventRecoveryNotificationsHealth {
 func appendRecoveryNotificationHealth(out *api.EventRecoveryNotificationsHealth, report api.EventRecoveryNotifications, now time.Time) {
 	out.ObservedJobs++
 	for _, notice := range report.Notifications {
+		if notice.Kind == "attention" {
+			continue
+		} // These counters cover admission and completion only.
 		if notice.CaptureStatus == "pending" || notice.CaptureStatus == "not_applicable" {
 			continue
 		}

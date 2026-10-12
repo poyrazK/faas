@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,19 +41,19 @@ func (s operationalSummaryTestStore) ListAppPendingRestarts(context.Context, str
 }
 
 func TestAppOperationalSummaryKeepsUnknownHealthAndOpenRecovery(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "operations-summary")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "operations-summary")
 	now := time.Now().UTC()
-	store := operationalSummaryTestStore{Store: e.store, RouteMonitorStore: e.store,
+	store := operationalSummaryTestStore{Store: (*e.Store()), RouteMonitorStore: (*e.Store()),
 		report: api.RouteMonitorReport{AppID: app.ID, DeploymentID: "serving", Enabled: true, Status: "unknown", Reason: "insufficient_requests", Coverage: "observed_only", CheckedAt: now,
 			Routes: []api.RouteMonitorFinding{{Windows: []api.RouteMonitorWindow{{Start: now.Add(-3 * time.Minute), End: now.Add(-2 * time.Minute)}}}}},
 		incident:  &api.AppOperationalIncident{ID: uuid.NewString(), DeploymentID: "serving", OpenedAt: now.Add(-time.Hour)},
 		rollbacks: []api.RollbackOperation{{ID: "rollback", AppID: app.ID, Status: "blocked", Code: "binding_verification_missing", Scope: "default", TargetDeploymentID: "target", CurrentDeploymentID: "serving", Reason: "PRIVATE_REASON", Blockers: []api.BindingCheckFinding{{Message: "PRIVATE_BLOCKER"}}}},
 		restarts:  []api.RuntimeConfigRestartStatusResponse{{WakeID: "restart", Status: "retrying", Attempts: 3, FailureReason: "requests_active", RequestedAt: now}},
 	}
-	e.s.store = store
-	before, _ := e.store.ListInstancesForApp(t.Context(), app.ID)
-	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/operational-summary", nil, nil)
+	(*(*e.S()).Store()) = store
+	before, _ := (*e.Store()).ListInstancesForApp(t.Context(), app.ID)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/operational-summary", nil, nil)
 	var got api.AppOperationalSummary
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 		t.Fatalf("summary: %d %s", rec.Code, rec.Body)
@@ -67,7 +69,7 @@ func TestAppOperationalSummaryKeepsUnknownHealthAndOpenRecovery(t *testing.T) {
 			t.Fatalf("private diagnostics exposed: %s", rec.Body)
 		}
 	}
-	after, _ := e.store.ListInstancesForApp(t.Context(), app.ID)
+	after, _ := (*e.Store()).ListInstancesForApp(t.Context(), app.ID)
 	if len(before) != len(after) {
 		t.Fatal("summary read created an instance")
 	}
@@ -77,17 +79,17 @@ func TestAppOperationalSummaryKeepsUnknownHealthAndOpenRecovery(t *testing.T) {
 }
 
 func TestAppOperationalSummaryAvailabilityAndBounds(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "operations-bounds")
-	store := operationalSummaryTestStore{Store: e.store, RouteMonitorStore: e.store, report: api.RouteMonitorReport{Status: "disabled"}}
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "operations-bounds")
+	store := operationalSummaryTestStore{Store: (*e.Store()), RouteMonitorStore: (*e.Store()), report: api.RouteMonitorReport{Status: "disabled"}}
 	for i := 0; i <= api.AppOperationalRecoveryLimit; i++ {
 		store.rollbacks = append(store.rollbacks, api.RollbackOperation{ID: uuid.NewString(), Status: "preparing"})
 		store.restarts = append(store.restarts, api.RuntimeConfigRestartStatusResponse{WakeID: uuid.NewString(), Status: "queued"})
 	}
-	e.s.store = store
+	(*(*e.S()).Store()) = store
 	read := func() api.AppOperationalSummary {
 		t.Helper()
-		rec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/operational-summary", nil, nil)
+		rec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/operational-summary", nil, nil)
 		var got api.AppOperationalSummary
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 			t.Fatalf("summary: %d %s", rec.Code, rec.Body)
@@ -99,7 +101,7 @@ func TestAppOperationalSummaryAvailabilityAndBounds(t *testing.T) {
 		t.Fatalf("bounds hidden: %+v", got.Recovery)
 	}
 	store.err = errors.New("PRIVATE_STORE_ERROR")
-	e.s.store = store
+	(*(*e.S()).Store()) = store
 	got = read()
 	if got.Monitoring.Available || got.Recovery.RollbacksAvailable || got.Recovery.RestartsAvailable || got.Monitoring.Status != "unknown" || len(got.Recovery.Rollbacks) != 0 || len(got.Recovery.Restarts) != 0 {
 		t.Fatalf("unavailable evidence reported as known: %+v", got)
@@ -107,51 +109,51 @@ func TestAppOperationalSummaryAvailabilityAndBounds(t *testing.T) {
 }
 
 func TestAppOperationalSummaryReadScopeAndOwnership(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "operations-owned")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "operations-owned")
 	key, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "read-operations", []string{api.ScopeAppsRead}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "read-operations", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
 	}
-	e.key = key
+	(*e.Key()) = key
 	path := "/v1/apps/" + app.Slug + "/operational-summary"
-	if rec := e.do(t, "GET", path, nil, nil); rec.Code != 200 {
+	if rec := e.Do(t, "GET", path, nil, nil); rec.Code != 200 {
 		t.Fatalf("read-only scope rejected: %d %s", rec.Code, rec.Body)
 	}
-	if rec := e.do(t, "GET", path+"?customer_details=true", nil, nil); rec.Code != 400 {
+	if rec := e.Do(t, "GET", path+"?customer_details=true", nil, nil); rec.Code != 400 {
 		t.Fatal("identity-detail query accepted")
 	}
-	other, err := e.store.CreateAccount(t.Context(), "other-operations@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(t.Context(), "other-operations@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	key, hash, _ = api.GenerateAPIKey()
-	if _, err = e.store.CreateAPIKey(t.Context(), other.ID, hash, "other-read", []string{api.ScopeAppsRead}); err != nil {
+	if _, err = (*e.Store()).CreateAPIKey(t.Context(), other.ID, hash, "other-read", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
 	}
-	e.key = key
-	if rec := e.do(t, "GET", path, nil, nil); rec.Code != 404 {
+	(*e.Key()) = key
+	if rec := e.Do(t, "GET", path, nil, nil); rec.Code != 404 {
 		t.Fatalf("cross-account app disclosed: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func TestAppOperationalSummaryRequiresCompletedMFA(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	if err := e.store.MarkMFAEnrolled(t.Context(), e.acct.ID); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	if err := (*e.Store()).MarkMFAEnrolled(t.Context(), (*e.Acct()).ID); err != nil {
 		t.Fatal(err)
 	}
 	sid := uuid.NewString()
-	if _, err := e.store.CreateSession(t.Context(), sid, e.acct.ID, "192.0.2.10", "operations-test"); err != nil {
+	if _, err := (*e.Store()).CreateSession(t.Context(), sid, (*e.Acct()).ID, "192.0.2.10", "operations-test"); err != nil {
 		t.Fatal(err)
 	}
-	token, err := e.s.sessions.IssueWithSession(sid, e.acct.ID, true)
+	token, err := (*(*e.S()).Sessions()).IssueWithSession(sid, (*e.Acct()).ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/v1/apps/mfa-app/operational-summary", nil)
-	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
-	e.h.ServeHTTP(recorder, request)
+	request.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: token})
+	(*e.H()).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("pending MFA read permitted: %d %s", recorder.Code, recorder.Body)
 	}

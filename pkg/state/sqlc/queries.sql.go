@@ -17871,6 +17871,47 @@ func (q *Queries) FinishReadinessSubscription(ctx context.Context, db DBTX, arg 
 	return id, err
 }
 
+const finishWorkflowRunCancellation = `-- name: FinishWorkflowRunCancellation :one
+UPDATE workflow_runs SET status='failed',last_error=$1::text,
+ finished_at=now(),updated_at=now(),cancelled_at=now()
+WHERE id=$2::uuid RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, operation_id, resume_count, cancelled_at, platform_tenant_id, create_idempotency_key, create_request_fingerprint, deployment_id
+`
+
+type FinishWorkflowRunCancellationParams struct {
+	Reason string
+	RunID  pgtype.UUID
+}
+
+func (q *Queries) FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error) {
+	row := db.QueryRow(ctx, finishWorkflowRunCancellation, arg.Reason, arg.RunID)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.WorkflowName,
+		&i.Status,
+		&i.CurrentStep,
+		&i.Input,
+		&i.Output,
+		&i.DefinitionSnapshot,
+		&i.ScheduledFor,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeaseUntil,
+		&i.OperationID,
+		&i.ResumeCount,
+		&i.CancelledAt,
+		&i.PlatformTenantID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestFingerprint,
+		&i.DeploymentID,
+	)
+	return i, err
+}
+
 const firstCustomerOperationWorkflowEvent = `-- name: FirstCustomerOperationWorkflowEvent :one
 SELECT id, run_id, event_name, payload, received_at FROM workflow_events WHERE run_id=$1::uuid AND event_name=$2::text
 ORDER BY received_at,id LIMIT 1

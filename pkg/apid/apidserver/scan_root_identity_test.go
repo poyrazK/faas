@@ -1,9 +1,10 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
@@ -21,7 +22,7 @@ func TestScopeGenericRootWorkloadUsesScannedProjectIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			scopeGenericRootWorkload(&result, "template-project")
+			apidserver.ScopeGenericRootWorkload(&result, "template-project")
 			if len(result.Workloads) != 1 || result.Workloads[0].Name != "template-project" {
 				t.Fatalf("scoped workloads = %#v", result.Workloads)
 			}
@@ -68,7 +69,7 @@ func TestScopeGenericRootWorkloadUsesProjectIdentity(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := reposcan.Result{Workloads: append([]reposcan.Workload(nil), test.workloads...)}
-			scopeGenericRootWorkload(&result, "hello-node")
+			apidserver.ScopeGenericRootWorkload(&result, "hello-node")
 			if len(result.Workloads) != len(test.wantNames) {
 				t.Fatalf("workload count = %d, want %d", len(result.Workloads), len(test.wantNames))
 			}

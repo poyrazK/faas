@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -39,24 +41,24 @@ func (s *platformTenantActivityTestStore) ListRequestTelemetryByPlatformTenant(_
 }
 
 func TestListPlatformTenantActivityPagesTenantScopedTelemetry(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "customer-activity", "Customer Activity", 100)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "customer-activity", "Customer Activity", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	appID, deploymentID := uuid.New(), uuid.New()
 	firstAt := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Microsecond)
 	store := &platformTenantActivityTestStore{
-		Store: e.store, PlatformTenantStore: e.store,
+		Store: (*e.Store()), PlatformTenantStore: (*e.Store()),
 		rows: []sqlc.ListRequestTelemetryByPlatformTenantRow{
 			platformTenantActivityTestRow(uuid.New(), appID, deploymentID, firstAt, 503, 3),
 			platformTenantActivityTestRow(uuid.New(), appID, deploymentID, firstAt.Add(-time.Minute), 503, 4),
 		},
 	}
-	e.s.store = store
+	(*(*e.S()).Store()) = store
 
 	path := "/v1/account/platform-tenants/" + tenant.ID + "/activity?since=2h&app_id=" + appID.String() + "&status=503&limit=1"
-	first := e.do(t, http.MethodGet, path, nil, nil)
+	first := e.Do(t, http.MethodGet, path, nil, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first page: %d %s", first.Code, first.Body.String())
 	}
@@ -72,7 +74,7 @@ func TestListPlatformTenantActivityPagesTenantScopedTelemetry(t *testing.T) {
 	}
 
 	query := url.Values{"since": {"2h"}, "app_id": {appID.String()}, "status": {"503"}, "limit": {"1"}, "cursor": {page.NextCursor}}
-	second := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+query.Encode(), nil, nil)
+	second := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+query.Encode(), nil, nil)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second page: %d %s", second.Code, second.Body.String())
 	}
@@ -86,7 +88,7 @@ func TestListPlatformTenantActivityPagesTenantScopedTelemetry(t *testing.T) {
 	if len(store.args) != 2 {
 		t.Fatalf("query count = %d, want 2", len(store.args))
 	}
-	wantAccountID, wantTenantID := uuid.MustParse(e.acct.ID), uuid.MustParse(tenant.ID)
+	wantAccountID, wantTenantID := uuid.MustParse((*e.Acct()).ID), uuid.MustParse(tenant.ID)
 	for _, arg := range store.args {
 		if !arg.AccountID.Valid || uuid.UUID(arg.AccountID.Bytes) != wantAccountID || !arg.PlatformTenantID.Valid || uuid.UUID(arg.PlatformTenantID.Bytes) != wantTenantID || arg.AppIDFilter != appID.String() || arg.StatusFilter != 503 || arg.Limit != 2 {
 			t.Fatalf("query was not account/tenant/filter scoped: %+v", arg)
@@ -97,22 +99,22 @@ func TestListPlatformTenantActivityPagesTenantScopedTelemetry(t *testing.T) {
 	}
 
 	query.Set("status", "500")
-	mismatch := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+query.Encode(), nil, nil)
+	mismatch := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+query.Encode(), nil, nil)
 	if mismatch.Code != http.StatusBadRequest || len(store.args) != 2 {
 		t.Fatalf("mismatched cursor status=%d query_count=%d body=%s", mismatch.Code, len(store.args), mismatch.Body.String())
 	}
 }
 
 func TestListPlatformTenantActivityRejectsInvalidWindowAndFilters(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "customer-activity-invalid", "Customer Activity", 100)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "customer-activity-invalid", "Customer Activity", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &platformTenantActivityTestStore{Store: e.store, PlatformTenantStore: e.store}
-	e.s.store = store
+	store := &platformTenantActivityTestStore{Store: (*e.Store()), PlatformTenantStore: (*e.Store())}
+	(*(*e.S()).Store()) = store
 	for _, rawQuery := range []string{"since=0h", "since=9223372036854775807d", "status=99", "status=2147483648", "limit=201", "app_id=not-a-uuid"} {
-		rec := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+rawQuery, nil, nil)
+		rec := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+rawQuery, nil, nil)
 		if rec.Code != http.StatusBadRequest || len(store.args) != 0 {
 			t.Errorf("query %q status=%d queries=%d body=%s", rawQuery, rec.Code, len(store.args), rec.Body.String())
 		}

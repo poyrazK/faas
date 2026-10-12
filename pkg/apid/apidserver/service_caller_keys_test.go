@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"crypto/ed25519"
@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/servicecaller"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -40,17 +41,17 @@ func TestServiceCallerKeysEndpointIsPublicAndPublishesOnlyVerifierKeys(t *testin
 		t.Fatal(err)
 	}
 
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "apps.example.test", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "apps.example.test", apidserver.NoopNotifier{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/service-caller-keys", nil)
 	response := httptest.NewRecorder()
-	srv.handler().ServeHTTP(response, req)
+	srv.Handler().ServeHTTP(response, req)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 	if got := response.Header().Get("Content-Type"); got != "application/jwk-set+json" {
 		t.Errorf("Content-Type = %q", got)
 	}
-	if got := response.Header().Get("Cache-Control"); got != serviceCallerKeysCacheControl {
+	if got := response.Header().Get("Cache-Control"); got != apidserver.ServiceCallerKeysCacheControl {
 		t.Errorf("Cache-Control = %q", got)
 	}
 	if strings.Contains(response.Body.String(), privatePEM) {
@@ -78,10 +79,10 @@ func TestServiceCallerKeysEndpointIsPublicAndPublishesOnlyVerifierKeys(t *testin
 
 func TestServiceCallerKeysEndpointReturnsEmptySetAndFailsClosedOnCorruptStore(t *testing.T) {
 	store := state.NewMemStore()
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "apps.example.test", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "apps.example.test", apidserver.NoopNotifier{})
 	request := func() *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
-		srv.handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/service-caller-keys", nil))
+		srv.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/service-caller-keys", nil))
 		return response
 	}
 	response := request()

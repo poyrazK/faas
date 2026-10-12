@@ -18,7 +18,7 @@
 // exercised here because env routes explicitly skip requireMFA per
 // ADR-045 §Decision (env vars are non-sensitive by contract).
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -38,18 +39,18 @@ import (
 // only — the value NEVER appears (mirrors the secret surface minus the
 // seal; the value is gone from the wire by design).
 func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-rt-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-rt-app")
 
 	// PUT — value echoed back via the response ({"key":"FOO"}).
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
 		api.PutAppEnvRequest{Value: "debug"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// GET — list shape returns key + timestamps, no value field.
-	listRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
 	if listRec.Code != 200 {
 		t.Fatalf("GET list: %d %s", listRec.Code, listRec.Body.String())
 	}
@@ -75,13 +76,13 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 
 	// DELETE.
-	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL", nil, nil)
+	delRec := e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL", nil, nil)
 	if delRec.Code != 204 {
 		t.Fatalf("DELETE: %d %s", delRec.Code, delRec.Body.String())
 	}
 
 	// List now empty.
-	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
+	listRec = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
 	if listRec.Code != 200 {
 		t.Fatalf("GET list after delete: %d", listRec.Code)
 	}
@@ -91,7 +92,7 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 
 	// Store-level: row exists post-PUT, gone post-DELETE.
-	rows, err := e.store.ListAppEnv(context.Background(), e.acct.ID, app.ID)
+	rows, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("store list: %v", err)
 	}
@@ -101,52 +102,52 @@ func TestEnv_PutGetDeleteRoundTrip(t *testing.T) {
 }
 
 func TestEnvScopedMutationPreservesNeighborSnapshots(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := createApp(t, e, "env-scoped-snapshots")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.CreateApp(t, e, "env-scoped-snapshots")
 	deployments := map[string]state.Deployment{}
 	for _, scope := range []string{"production", "staging"} {
-		deployment, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope,
+		deployment, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope,
 			Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc", Status: state.DeployLive})
 		if err != nil {
 			t.Fatal(err)
 		}
 		deployments[scope] = deployment
-		if _, err := e.store.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: deployment.ID,
+		if _, err := (*e.Store()).CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: deployment.ID,
 			FCVersion: "1.13.0", StorageKey: state.SnapMemKey(deployment.ID)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	response := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", api.PutAppEnvRequest{Value: "production"}, nil)
+	response := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", api.PutAppEnvRequest{Value: "production"}, nil)
 	if response.Code != 200 {
 		t.Fatalf("set scoped variable: %d %s", response.Code, response.Body.String())
 	}
-	if _, err := e.store.LatestSnapshot(t.Context(), deployments["production"].ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).LatestSnapshot(t.Context(), deployments["production"].ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old production cache remained usable: %v", err)
 	}
-	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
+	if _, err := (*e.Store()).LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
 		t.Fatalf("production mutation invalidated staging: %v", err)
 	}
-	response = e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", nil, nil)
+	response = e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/MODE?scope=production", nil, nil)
 	if response.Code != 204 {
 		t.Fatalf("delete scoped variable: %d %s", response.Code, response.Body.String())
 	}
-	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
+	if _, err := (*e.Store()).LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
 		t.Fatalf("production removal invalidated staging: %v", err)
 	}
-	response = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/SHARED", api.PutAppEnvRequest{Value: "default"}, nil)
+	response = e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/SHARED", api.PutAppEnvRequest{Value: "default"}, nil)
 	if response.Code != 200 {
 		t.Fatalf("set shared variable: %d %s", response.Code, response.Body.String())
 	}
-	if _, err := e.store.LatestSnapshot(t.Context(), deployments["staging"].ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).LatestSnapshot(t.Context(), deployments["staging"].ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("default overlay failed to invalidate staging: %v", err)
 	}
 }
 
 func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-snapshot-invalidate-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-snapshot-invalidate-app")
 	ctx := context.Background()
-	dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+	dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
 		Kind:        state.DeploymentKindImage,
@@ -156,7 +157,7 @@ func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+		if _, err := (*e.Store()).CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID,
 			Tier:         tier,
 			FCVersion:    "test",
@@ -166,7 +167,7 @@ func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
 		}
 	}
 
-	invalidated, err := e.s.invalidateAppSnapshots(ctx, app.ID)
+	invalidated, err := (*e.S()).InvalidateAppSnapshots(ctx, app.ID)
 	if err != nil {
 		t.Fatalf("invalidateAppSnapshots: %v", err)
 	}
@@ -174,18 +175,18 @@ func TestInvalidateAppSnapshotsMarksWarmAndInitStale(t *testing.T) {
 		t.Fatalf("invalidated = %d, want warm + init", invalidated)
 	}
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		if _, err := e.store.LatestSnapshotForTier(ctx, dep.ID, tier); !errors.Is(err, state.ErrNotFound) {
+		if _, err := (*e.Store()).LatestSnapshotForTier(ctx, dep.ID, tier); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("LatestSnapshotForTier(%s) err = %v, want not found after invalidation", tier, err)
 		}
 	}
 }
 
 func TestInvalidateAppSnapshotsCoversMultipleDeployments(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-snapshot-multi-deployment-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-snapshot-multi-deployment-app")
 	ctx := context.Background()
 	for i, status := range []state.DeploymentStatus{state.DeployLive, state.DeploySuperseded} {
-		dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+		dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 			AppID:       app.ID,
 			ImageDigest: fmt.Sprintf("sha256:%064x", i+1),
 			Kind:        state.DeploymentKindImage,
@@ -194,7 +195,7 @@ func TestInvalidateAppSnapshotsCoversMultipleDeployments(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateDeployment(%d): %v", i, err)
 		}
-		if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+		if _, err := (*e.Store()).CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID,
 			Tier:         state.SnapshotTierWarm,
 			FCVersion:    "test",
@@ -204,7 +205,7 @@ func TestInvalidateAppSnapshotsCoversMultipleDeployments(t *testing.T) {
 		}
 	}
 
-	invalidated, err := e.s.invalidateAppSnapshots(ctx, app.ID)
+	invalidated, err := (*e.S()).InvalidateAppSnapshots(ctx, app.ID)
 	if err != nil {
 		t.Fatalf("invalidateAppSnapshots: %v", err)
 	}
@@ -214,10 +215,10 @@ func TestInvalidateAppSnapshotsCoversMultipleDeployments(t *testing.T) {
 }
 
 func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-snapshot-http-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-snapshot-http-app")
 	ctx := context.Background()
-	dep, err := e.store.CreateDeployment(ctx, state.Deployment{
+	dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
 		Kind:        state.DeploymentKindImage,
@@ -226,7 +227,7 @@ func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+	if _, err := (*e.Store()).CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: dep.ID,
 		Tier:         state.SnapshotTierWarm,
 		FCVersion:    "test",
@@ -234,11 +235,11 @@ func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
-	rec := e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}, nil)
+	rec := e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/LOG_LEVEL", api.PutAppEnvRequest{Value: "debug"}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT env: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := e.store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("LatestSnapshotForTier after env mutation = %v, want not found", err)
 	}
 }
@@ -248,21 +249,21 @@ func TestEnvMutationInvalidatesRestorableSnapshot(t *testing.T) {
 // plan_limit_env_vars. Re-PUTs of an existing key are NOT new rows
 // (covered in the count-distinct-from-re-upsert test below).
 func TestEnv_QuotaExceeded_Free403(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app := createApp(t, e, "env-quota-app")
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.CreateApp(t, e, "env-quota-app")
 	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
 
 	// PUT Free's quota worth of distinct keys.
 	for i := 0; i < freeLimit; i++ {
 		key := keyName(i)
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
 			api.PutAppEnvRequest{Value: "v"}, nil)
 		if rec.Code != 200 {
 			t.Fatalf("PUT %s: %d %s", key, rec.Code, rec.Body.String())
 		}
 	}
 	// The next distinct key must 403.
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+keyName(freeLimit),
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+keyName(freeLimit),
 		api.PutAppEnvRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
 		t.Fatalf("over-quota PUT: %d %s, want 403", rec.Code, rec.Body.String())
@@ -277,27 +278,27 @@ func TestEnv_QuotaExceeded_Free403(t *testing.T) {
 // the same name — the quota logic in checkEnvQuota subtracts 1 when
 // the key already exists.
 func TestEnv_QuotaCountedDistinctFromReUpsert(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app := createApp(t, e, "env-reupsert-app")
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.CreateApp(t, e, "env-reupsert-app")
 
 	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
 	// Fill to quota with distinct keys.
 	for i := 0; i < freeLimit; i++ {
 		key := keyName(i)
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key,
 			api.PutAppEnvRequest{Value: "v1"}, nil)
 		if rec.Code != 200 {
 			t.Fatalf("PUT %s: %d %s", key, rec.Code, rec.Body.String())
 		}
 	}
 	// Re-PUT one of them with a new value — must succeed (not 403).
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+keyName(3),
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+keyName(3),
 		api.PutAppEnvRequest{Value: "v2"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("re-PUT %s: %d %s, want 200", keyName(3), rec.Code, rec.Body.String())
 	}
 	// And the next distinct key still 403.
-	rec = e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/NEW_KEY",
+	rec = e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/NEW_KEY",
 		api.PutAppEnvRequest{Value: "v"}, nil)
 	if rec.Code != 403 {
 		t.Fatalf("over-quota distinct: %d %s, want 403", rec.Code, rec.Body.String())
@@ -308,11 +309,11 @@ func TestEnv_QuotaCountedDistinctFromReUpsert(t *testing.T) {
 // enforced BEFORE the row reaches the store. Free's EnvValueMaxBytes
 // is 4 KiB; a 5 KiB value must 413.
 func TestEnv_ValueTooLarge_RejectsBeforeStore(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app := createApp(t, e, "env-toobig-app")
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.CreateApp(t, e, "env-toobig-app")
 	// 5 KiB > 4 KiB.
 	big := strings.Repeat("x", 5*1024)
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/BIG",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/BIG",
 		api.PutAppEnvRequest{Value: big}, nil)
 	if rec.Code != 413 {
 		t.Fatalf("PUT big: %d %s, want 413", rec.Code, rec.Body.String())
@@ -321,7 +322,7 @@ func TestEnv_ValueTooLarge_RejectsBeforeStore(t *testing.T) {
 		t.Errorf("PUT body = %s, want env_value_too_large", rec.Body.String())
 	}
 	// And the row must NOT have landed.
-	rows, err := e.store.ListAppEnv(context.Background(), e.acct.ID, app.ID)
+	rows, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("store list: %v", err)
 	}
@@ -335,8 +336,8 @@ func TestEnv_ValueTooLarge_RejectsBeforeStore(t *testing.T) {
 // regex is identical (intentional — both surfaces share the same
 // ASCII identifier grammar).
 func TestEnv_InvalidKey_400(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-badkey-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-badkey-app")
 	cases := []struct {
 		name string
 		key  string
@@ -348,7 +349,7 @@ func TestEnv_InvalidKey_400(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+tc.key,
+			rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+tc.key,
 				api.PutAppEnvRequest{Value: "v"}, nil)
 			if rec.Code != 400 {
 				t.Fatalf("PUT %q: %d %s, want 400", tc.key, rec.Code, rec.Body.String())
@@ -364,13 +365,13 @@ func TestEnv_InvalidKey_400(t *testing.T) {
 // env_var_not_found, not 404. The URL resource IS the env var; this
 // matches the secret surface so SDK callers reuse the same branch.
 func TestEnv_DeleteNotFound_400(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-delmiss-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-delmiss-app")
 
 	// First DELETE: 404 because the key was never set. Wait — the route
 	// returns 400 env_var_not_found even on the first miss; that's by
 	// design (see deleteEnv comment).
-	rec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/MISSING", nil, nil)
+	rec := e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/MISSING", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("DELETE missing: %d %s, want 400", rec.Code, rec.Body.String())
 	}
@@ -379,13 +380,13 @@ func TestEnv_DeleteNotFound_400(t *testing.T) {
 	}
 
 	// PUT then DELETE then DELETE — second DELETE is the 400.
-	e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/PRESENT",
+	e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/PRESENT",
 		api.PutAppEnvRequest{Value: "v"}, nil)
-	rec = e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/PRESENT", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/PRESENT", nil, nil)
 	if rec.Code != 204 {
 		t.Fatalf("first DELETE: %d, want 204", rec.Code)
 	}
-	rec = e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/PRESENT", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/PRESENT", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("second DELETE: %d %s, want 400", rec.Code, rec.Body.String())
 	}
@@ -397,19 +398,19 @@ func TestEnv_DeleteNotFound_400(t *testing.T) {
 // the pkg/state.UpsertAppEnv contract pins it on the store side and
 // the handler relies on loadApp's 404 to fail closed.
 func TestEnv_AppOwnershipBoundary(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	appA := createApp(t, e, "env-a")
-	appB := createApp(t, e, "env-b")
+	e := apidserver.Setup(t, api.PlanHobby)
+	appA := apidserver.CreateApp(t, e, "env-a")
+	appB := apidserver.CreateApp(t, e, "env-b")
 
 	// PUT against appA.
-	rec := e.do(t, "PUT", "/v1/apps/"+appA.Slug+"/env/FOO",
+	rec := e.Do(t, "PUT", "/v1/apps/"+appA.Slug+"/env/FOO",
 		api.PutAppEnvRequest{Value: "a"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PUT appA: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// GET against appB: must be empty.
-	listRec := e.do(t, "GET", "/v1/apps/"+appB.Slug+"/env", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/"+appB.Slug+"/env", nil, nil)
 	if listRec.Code != 200 {
 		t.Fatalf("GET appB: %d", listRec.Code)
 	}
@@ -424,13 +425,13 @@ func TestEnv_AppOwnershipBoundary(t *testing.T) {
 
 	// DELETE against appB for the same key: must 400 (env_var_not_found
 	// because the row is on appA, not on appB).
-	rec = e.do(t, "DELETE", "/v1/apps/"+appB.Slug+"/env/FOO", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/"+appB.Slug+"/env/FOO", nil, nil)
 	if rec.Code != 400 {
 		t.Errorf("cross-app DELETE: %d %s, want 400", rec.Code, rec.Body.String())
 	}
 
 	// Row still present on appA.
-	rows, err := e.store.ListAppEnv(context.Background(), e.acct.ID, appA.ID)
+	rows, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, appA.ID)
 	if err != nil {
 		t.Fatalf("store list appA: %v", err)
 	}
@@ -457,18 +458,18 @@ func TestEnv_AppOwnershipBoundary(t *testing.T) {
 //  2. Pin a before/after env row count AND a value-equality check, so
 //     a refactor that drops even one row trips the test.
 func TestEnv_RedeployPreservesEnv(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-redeploy-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-redeploy-app")
 
 	// PUT two env rows.
-	e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
+	e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
 		api.PutAppEnvRequest{Value: "debug"}, nil)
-	e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/FEATURE_X",
+	e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/FEATURE_X",
 		api.PutAppEnvRequest{Value: "on"}, nil)
 
 	// Sanity: 2 rows before the redeploy call. Anchors the before-count
 	// assertion so the test fails loud if the PUTs above regress.
-	before, err := e.store.ListAppEnv(context.Background(), e.acct.ID, app.ID)
+	before, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("store list before: %v", err)
 	}
@@ -479,7 +480,7 @@ func TestEnv_RedeployPreservesEnv(t *testing.T) {
 	// Trigger a new deployment. We don't need a real source tarball
 	// — the handler validates the request shape; the env rows live
 	// outside the deployment cycle.
-	rec := e.do(t, "POST", "/v1/apps/"+app.Slug+"/deployments",
+	rec := e.Do(t, "POST", "/v1/apps/"+app.Slug+"/deployments",
 		map[string]any{"source": "https://example.com/new.tar.gz"}, nil)
 	// Accept 202 (deferred build, valid request) or 4xx (handler
 	// rejects the fake source URL). Reject 5xx — that means the test
@@ -496,7 +497,7 @@ func TestEnv_RedeployPreservesEnv(t *testing.T) {
 	// Env rows must still be present. Compare the after-count AND
 	// the key/value contents against the snapshot taken before the
 	// redeploy — a refactor that drops any row trips this assertion.
-	after, err := e.store.ListAppEnv(context.Background(), e.acct.ID, app.ID)
+	after, err := (*e.Store()).ListAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("store list after: %v", err)
 	}

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -118,15 +119,15 @@ func nativeEncryptionJournalHeaders(w http.ResponseWriter) {
 
 // adr: 555
 func TestObjectEncryptionMultipartWorkerMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	encryptionMultipartWorker(t, e.s, e.store, e.acct, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	encryptionMultipartWorker(t, (*e.S()), (*e.Store()), (*e.Acct()), nil)
 }
 func TestObjectEncryptionMultipartWorkerPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	encryptionMultipartWorker(t, e.s, e.store, e.acct, e.pool)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	encryptionMultipartWorker(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Pool()))
 }
 
-func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account state.Account, pool *pgxpool.Pool) {
+func encryptionMultipartWorker(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, pool *pgxpool.Pool) {
 	ctx := t.Context()
 	fixture := &encryptionJournalHTTP{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fixture.serve(t, w, r) }))
@@ -146,7 +147,7 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ExecuteObjectMultipartOperation(ctx, sessions, b, u); err != nil {
+	if err = (*s.Object()).ExecuteObjectMultipartOperation(ctx, sessions, b, u); err != nil {
 		t.Fatal(err)
 	}
 	u, err = sessions.GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
@@ -189,7 +190,7 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ExecuteObjectMultipartOperation(ctx, sessions, b, u); !errors.Is(err, objectstorage.ErrUnavailable) {
+	if err = (*s.Object()).ExecuteObjectMultipartOperation(ctx, sessions, b, u); !errors.Is(err, objectstorage.ErrUnavailable) {
 		t.Fatal("lost completion acknowledged", err)
 	}
 	u, err = sessions.GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
@@ -205,8 +206,8 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
 	// Reconstruct both the owner and native clients. Ingress is disabled by default.
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(registry())
+	if err = (*fresh.Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	done, err := st.(state.ObjectMultipartUploadStore).GetObjectMultipartUpload(ctx, account.ID, b.AppID, b.ID, u.ID)
@@ -227,7 +228,7 @@ func encryptionMultipartWorker(t *testing.T, s *server, st state.Store, account 
 	}
 }
 
-func seedEncryptionJournalStorage(t *testing.T, s *server, st state.Store, account state.Account, endpoint string) (func() *objectstorage.Registry, state.ObjectBucket, objectstorage.Backend, api.ObjectStoragePolicy) {
+func seedEncryptionJournalStorage(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, endpoint string) (func() *objectstorage.Registry, state.ObjectBucket, objectstorage.Backend, api.ObjectStoragePolicy) {
 	t.Helper()
 	ctx := t.Context()
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: 100, MaxBucketBytes: 100, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 100, MaxMonthlyEgressBytes: 100, MaxMonthlyAuthorizations: 100, MaxReportAgeSeconds: 3600}
@@ -241,7 +242,7 @@ func seedEncryptionJournalStorage(t *testing.T, s *server, st state.Store, accou
 		return r
 	}
 	s.WithObjectStorage(registry())
-	backend, err := s.objectStorage.Default("us-east-1")
+	backend, err := (*s.ObjectStorage()).Default("us-east-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,15 +276,15 @@ func seedEncryptionJournalStorage(t *testing.T, s *server, st state.Store, accou
 }
 
 func TestObjectEncryptionWriteRecoveryMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	encryptionWriteRecovery(t, e.s, e.store, e.acct, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	encryptionWriteRecovery(t, (*e.S()), (*e.Store()), (*e.Acct()), nil)
 }
 func TestObjectEncryptionWriteRecoveryPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	encryptionWriteRecovery(t, e.s, e.store, e.acct, e.pool)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	encryptionWriteRecovery(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Pool()))
 }
 
-func encryptionWriteRecovery(t *testing.T, s *server, st state.Store, account state.Account, pool *pgxpool.Pool) {
+func encryptionWriteRecovery(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, pool *pgxpool.Pool) {
 	var mu sync.Mutex
 	var stored http.Header
 	writes, keyChecks := 0, 0
@@ -354,7 +355,7 @@ func encryptionWriteRecovery(t *testing.T, s *server, st state.Store, account st
 	disabled, corrupt = true, true
 	mu.Unlock()
 	// Ordinary receipt/size matches cannot settle the deliberately corrupted proof.
-	if _, err = s.object.ProbeObjectUpload(t.Context(), c); err == nil {
+	if _, err = (*s.Object()).ProbeObjectUpload(t.Context(), c); err == nil {
 		t.Fatal("corrupted encrypted proof accepted")
 	}
 	mu.Lock()
@@ -368,8 +369,8 @@ func encryptionWriteRecovery(t *testing.T, s *server, st state.Store, account st
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(registry())
+	if err = (*fresh.Object()).ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	done, err := st.(state.ObjectTrackedUploadStore).GetObjectUploadReceipt(t.Context(), account.ID, b.AppID, "", "subject", c.ID)

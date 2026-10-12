@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardAsyncInvocationDetail_ShowsLifecycleWithoutRequestOrResultBodies(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -75,7 +76,7 @@ func TestDashboardAsyncInvocationDetail_ShowsLifecycleWithoutRequestOrResultBodi
 }
 
 func TestDashboardAsyncInvocationDetail_IsAccountScopedAndAsyncOnly(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	alice, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail alice: %v", err)

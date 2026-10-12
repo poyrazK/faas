@@ -1,30 +1,32 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObjectEncryptionDiscoveryMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	objectEncryptionDiscovery(t, e.s, e.store, e.acct, func(method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
-		return e.do(t, method, path, body, headers)
+	e := apidserver.Setup(t, api.PlanPro)
+	objectEncryptionDiscovery(t, (*e.S()), (*e.Store()), (*e.Acct()), func(method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+		return e.Do(t, method, path, body, headers)
 	})
 }
 func TestObjectEncryptionDiscoveryPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	objectEncryptionDiscovery(t, e.s, e.store, e.acct, func(method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
-		return e.do(t, method, path, body, headers)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	objectEncryptionDiscovery(t, (*e.S()), (*e.Store()), (*e.Acct()), func(method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+		return e.Do(t, method, path, body, headers)
 	})
 }
-func objectEncryptionDiscovery(t *testing.T, s *server, st state.Store, account state.Account, do func(string, string, any, map[string]string) *httptest.ResponseRecorder) {
+func objectEncryptionDiscovery(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, do func(string, string, any, map[string]string) *httptest.ResponseRecorder) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("discovery contacted a native provider")
 		w.WriteHeader(500)
@@ -54,7 +56,7 @@ func objectEncryptionDiscovery(t *testing.T, s *server, st state.Store, account 
 	if _, err = access.SetObjectBucketAccessGrant(t.Context(), account.ID, b.ID, key.ID, state.ObjectBucketPermissionWrite); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	r := do("GET", path, nil, headers)

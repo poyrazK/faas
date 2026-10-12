@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -38,11 +39,11 @@ func (f *fakeMailBounce) HandleMailBounce(_ context.Context, b meter.MailBounce)
 // dependencies are the signed-secret field, durable replay store,
 // mailBounce seam, and audit shim. Use the production constructor so
 // replay coverage cannot silently drift from the handler's wiring.
-func resendServerForTest(t *testing.T, secret string, bouncer *fakeMailBounce) *server {
+func resendServerForTest(t *testing.T, secret string, bouncer *fakeMailBounce) *apidserver.Server {
 	t.Helper()
-	s := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "", noopNotifier{})
-	s.resendWebhookSecret = secret
-	s.mailBounce = bouncer
+	s := apidserver.NewServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "", apidserver.NoopNotifier{})
+	(*s.ResendWebhookSecret()) = secret
+	(*s.MailBounce()) = bouncer
 	return s
 }
 
@@ -73,7 +74,7 @@ func TestResendWebhook_HappyPath(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_1"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_1"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("happy path: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -108,7 +109,7 @@ func TestResendWebhook_BadSignature(t *testing.T) {
 	// Sign with one secret, verify with another.
 	other := mail.RandomResendSecretForTest()
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, other, "msg_bad"))
+	s.ResendWebhook(rec, signResendReq(t, body, other, "msg_bad"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad signature: status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -128,7 +129,7 @@ func TestResendWebhook_UnsetSecret(t *testing.T) {
 
 	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, mail.RandomResendSecretForTest(), "msg_unset"))
+	s.ResendWebhook(rec, signResendReq(t, body, mail.RandomResendSecretForTest(), "msg_unset"))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unset secret: status = %d, want 503; body=%s", rec.Code, rec.Body.String())
@@ -150,7 +151,7 @@ func TestResendWebhook_ReplayIgnored(t *testing.T) {
 
 	// First delivery: success.
 	rec1 := httptest.NewRecorder()
-	s.resendWebhook(rec1, signResendReq(t, body, secret, "msg_replay"))
+	s.ResendWebhook(rec1, signResendReq(t, body, secret, "msg_replay"))
 	if rec1.Code != http.StatusOK {
 		t.Fatalf("first delivery: status = %d, want 200", rec1.Code)
 	}
@@ -159,7 +160,7 @@ func TestResendWebhook_ReplayIgnored(t *testing.T) {
 	// ErrReplay; the handler emits audit + 200 and does NOT
 	// re-invoke the bouncer.
 	rec2 := httptest.NewRecorder()
-	s.resendWebhook(rec2, signResendReq(t, body, secret, "msg_replay"))
+	s.ResendWebhook(rec2, signResendReq(t, body, secret, "msg_replay"))
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("replay: status = %d, want 200 (idempotent ack)", rec2.Code)
 	}
@@ -179,7 +180,7 @@ func TestResendWebhook_UnknownEventType(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_delivered"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_delivered"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delivered event: status = %d, want 200", rec.Code)
@@ -198,7 +199,7 @@ func TestResendWebhook_ComplaintRecognised(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_complaint"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_complaint"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("complaint: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -225,7 +226,7 @@ func TestResendWebhook_StaleTimestamp(t *testing.T) {
 	req.Header.Set(mail.ResendTimestampHeader, old)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, req)
+	s.ResendWebhook(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("stale ts: status = %d, want 400", rec.Code)
@@ -246,7 +247,7 @@ func TestResendWebhook_BadJSON(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_bad_json"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_bad_json"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad JSON: status = %d, want 400", rec.Code)
@@ -263,7 +264,7 @@ func TestResendWebhook_BouncerErrorIs500(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_err"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_err"))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("bouncer error: status = %d, want 500; body=%s", rec.Code, rec.Body.String())
@@ -277,10 +278,10 @@ func TestResendWebhook_NilBouncerIs500(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
 	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
 	s := resendServerForTest(t, secret, nil)
-	s.mailBounce = nil // explicit nil for clarity
+	(*s.MailBounce()) = nil // explicit nil for clarity
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_nil"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_nil"))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("nil bouncer: status = %d, want 500", rec.Code)
@@ -298,7 +299,7 @@ func TestResendWebhook_SoftBounceIgnoredIs200(t *testing.T) {
 	s := resendServerForTest(t, secret, bouncer)
 
 	rec := httptest.NewRecorder()
-	s.resendWebhook(rec, signResendReq(t, body, secret, "msg_soft"))
+	s.ResendWebhook(rec, signResendReq(t, body, secret, "msg_soft"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("soft-bounce: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -319,7 +320,7 @@ func TestResendReason_Mapping(t *testing.T) {
 		"email.unknown":    "",
 	}
 	for in, want := range cases {
-		if got := resendReason(in); got != want {
+		if got := apidserver.ResendReason(in); got != want {
 			t.Fatalf("resendReason(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -331,7 +332,7 @@ func TestResendReason_Mapping(t *testing.T) {
 // would otherwise go silently wrong.
 func TestResendWebhook_PayloadShape(t *testing.T) {
 	body := []byte(`{"type":"email.bounced","data":{"email":"x@y","created_at":"2026-08-29T10:00:00Z"}}`)
-	var ev resendEvent
+	var ev apidserver.ResendEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

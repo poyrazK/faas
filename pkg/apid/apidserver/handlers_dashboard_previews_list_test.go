@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -48,16 +49,16 @@ func seedPreviewForDashboard(t *testing.T, store *state.MemStore, accountID, slu
 // dashboard chrome (header nav) is present so the page is not a
 // bare fragment.
 func TestRenderPreviewsList_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	seedPreviewForDashboard(t, e.store, e.acct.ID, "pr-42-acme", "acme", 42)
-	seedPreviewForDashboard(t, e.store, e.acct.ID, "pr-7-foo", "foo", 7)
-	seedPreviewForDashboard(t, e.store, e.acct.ID, "pr-99-bar", "bar", 99)
+	e := apidserver.Setup(t, api.PlanPro)
+	seedPreviewForDashboard(t, (*e.Store()), (*e.Acct()).ID, "pr-42-acme", "acme", 42)
+	seedPreviewForDashboard(t, (*e.Store()), (*e.Acct()).ID, "pr-7-foo", "foo", 7)
+	seedPreviewForDashboard(t, (*e.Store()), (*e.Acct()).ID, "pr-99-bar", "bar", 99)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := httpsec.WithNonce(context.Background(), "test-nonce")
 	r := httptest.NewRequest("GET", "/dashboard/previews", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
-	e.s.renderPreviewsList(w, r, log, e.acct)
+	(*e.S()).RenderPreviewsList(w, r, log, (*e.Acct()))
 
 	body := w.Body.String()
 	if w.Code != http.StatusOK {
@@ -97,12 +98,12 @@ func TestRenderPreviewsList_HappyPath(t *testing.T) {
 // branch: an account with zero previews renders the helpful
 // "No previews yet" copy rather than an empty table.
 func TestRenderPreviewsList_EmptyState(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := httpsec.WithNonce(context.Background(), "test-nonce")
 	r := httptest.NewRequest("GET", "/dashboard/previews", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
-	e.s.renderPreviewsList(w, r, log, e.acct)
+	(*e.S()).RenderPreviewsList(w, r, log, (*e.Acct()))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -121,18 +122,18 @@ func TestRenderPreviewsList_EmptyState(t *testing.T) {
 // seeded under account A must not appear in account B's render.
 // Same wire-shape invariant as the apid destroy handler.
 func TestRenderPreviewsList_CrossAccountIsolation(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	// Seed a preview under a fresh, second account on the same
 	// store. The default setup() account (e.acct) must not see
 	// it on the previews page.
-	otherAcct, err := e.store.CreateAccount(context.Background(), "other-owner@example.com", api.PlanPro)
+	otherAcct, err := (*e.Store()).CreateAccount(context.Background(), "other-owner@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount(other): %v", err)
 	}
-	seedPreviewForDashboard(t, e.store, otherAcct.ID, "pr-9-other", "their-app", 9)
+	seedPreviewForDashboard(t, (*e.Store()), otherAcct.ID, "pr-9-other", "their-app", 9)
 
 	// Sanity: the other-account preview IS persisted.
-	if got, _ := e.store.AppBySlug(context.Background(), "pr-9-other"); got.ID == "" {
+	if got, _ := (*e.Store()).AppBySlug(context.Background(), "pr-9-other"); got.ID == "" {
 		t.Fatal("cross-account preview did not persist (the test rig itself is broken)")
 	}
 
@@ -140,7 +141,7 @@ func TestRenderPreviewsList_CrossAccountIsolation(t *testing.T) {
 	ctx := httpsec.WithNonce(context.Background(), "test-nonce")
 	r := httptest.NewRequest("GET", "/dashboard/previews", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
-	e.s.renderPreviewsList(w, r, log, e.acct)
+	(*e.S()).RenderPreviewsList(w, r, log, (*e.Acct()))
 
 	body := w.Body.String()
 	if strings.Contains(body, "pr-9-other") {
@@ -159,23 +160,23 @@ func TestRenderPreviewsList_CrossAccountIsolation(t *testing.T) {
 // deleted rows are the janitor's tombstone (must not re-appear
 // after the customer tears them down via /v1/preview/{slug}/destroy).
 func TestRenderPreviewsList_SkipsProductionAndDeletedRows(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	// Production app: must not appear.
-	mustSeedApp(t, e, "prod-app")
+	apidserver.MustSeedApp(t, e, "prod-app")
 	// Preview row that the customer already tore down.
-	preview := seedPreviewForDashboard(t, e.store, e.acct.ID, "pr-1-torn", "parent", 1)
-	if _, err := e.store.SoftDeleteAppCascade(context.Background(), preview.ID); err != nil {
+	preview := seedPreviewForDashboard(t, (*e.Store()), (*e.Acct()).ID, "pr-1-torn", "parent", 1)
+	if _, err := (*e.Store()).SoftDeleteAppCascade(context.Background(), preview.ID); err != nil {
 		t.Fatalf("SoftDeleteAppCascade: %v", err)
 	}
 	// A live preview to keep the page non-empty (so the test
 	// can distinguish "no rows" from "no production rows").
-	seedPreviewForDashboard(t, e.store, e.acct.ID, "pr-2-live", "parent", 2)
+	seedPreviewForDashboard(t, (*e.Store()), (*e.Acct()).ID, "pr-2-live", "parent", 2)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := httpsec.WithNonce(context.Background(), "test-nonce")
 	r := httptest.NewRequest("GET", "/dashboard/previews", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
-	e.s.renderPreviewsList(w, r, log, e.acct)
+	(*e.S()).RenderPreviewsList(w, r, log, (*e.Acct()))
 
 	body := w.Body.String()
 	if strings.Contains(body, ">prod-app<") {
@@ -201,11 +202,11 @@ func TestPreviewHostnameFor_PureUnit(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		if got := previewHostnameFor(c.slug, "gregale.dev"); got != c.want {
+		if got := apidserver.PreviewHostnameFor(c.slug, "gregale.dev"); got != c.want {
 			t.Errorf("previewHostnameFor(%q) = %q, want %q", c.slug, got, c.want)
 		}
 	}
-	if got := previewHostnameFor("pr-42-acme", "apps.gregale.dev"); got != "pr-42-acme.gregale.dev" {
+	if got := apidserver.PreviewHostnameFor("pr-42-acme", "apps.gregale.dev"); got != "pr-42-acme.gregale.dev" {
 		t.Fatalf("previewHostnameFor legacy domain = %q, want current gregale.dev hostname", got)
 	}
 }

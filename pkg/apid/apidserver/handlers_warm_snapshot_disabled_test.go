@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Tests for the app.warm_snapshot_disabled audit emit
 // (issue #470 / PR C / ADR-074 §3.2). The handler writes the row
@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,10 +23,10 @@ import (
 // already set. mustSeedApp leaves it false (default), so the
 // audit emit's true→false flip precondition needs a starting
 // state of true.
-func seedWarmEnabledApp(t *testing.T, e testEnv, slug string) {
+func seedWarmEnabledApp(t *testing.T, e apidserver.TestEnv, slug string) {
 	t.Helper()
-	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID:           e.acct.ID,
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID:           (*e.Acct()).ID,
 		Slug:                slug,
 		Type:                state.AppTypeApp,
 		Status:              state.AppActive,
@@ -43,17 +44,17 @@ func seedWarmEnabledApp(t *testing.T, e testEnv, slug string) {
 // ONE app.warm_snapshot_disabled row (in addition to the standard
 // app.updated row). Subject = &acct.ID per ADR-074.
 func TestUpdateApp_WarmSnapshotDisabledEmitsAudit(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	seedWarmEnabledApp(t, e, "warm-disabled-emit")
 
 	fals := false
-	rec := e.do(t, "PATCH", "/v1/apps/warm-disabled-emit",
+	rec := e.Do(t, "PATCH", "/v1/apps/warm-disabled-emit",
 		api.UpdateAppRequest{WarmSnapshotEnabled: &fals}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PATCH false: status %d: %s", rec.Code, rec.Body)
 	}
 
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
@@ -108,18 +109,18 @@ func TestUpdateApp_WarmSnapshotDisabledEmitsAudit(t *testing.T) {
 // app.updated row lands. This locks the operator-no-intent-to-flip
 // branch from ADR-074 §3.2.
 func TestUpdateApp_WarmSnapshotDisabledNoEmit(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "warm-no-emit")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "warm-no-emit")
 
 	// PATCH an unrelated field; WarmSnapshotEnabled stays nil.
 	newRAM := 512
-	rec := e.do(t, "PATCH", "/v1/apps/warm-no-emit",
+	rec := e.Do(t, "PATCH", "/v1/apps/warm-no-emit",
 		api.UpdateAppRequest{RAMMB: &newRAM}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PATCH: status %d: %s", rec.Code, rec.Body)
 	}
 
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
@@ -144,17 +145,17 @@ func TestUpdateApp_WarmSnapshotDisabledNoEmit(t *testing.T) {
 // already-false branch: PATCH warm_snapshot_enabled=false on an
 // app that was ALREADY false must NOT emit (no flip happened).
 func TestUpdateApp_WarmSnapshotAlreadyFalseNoEmit(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "warm-already-false") // default WarmSnapshotEnabled=false
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "warm-already-false") // default WarmSnapshotEnabled=false
 
 	fals := false
-	rec := e.do(t, "PATCH", "/v1/apps/warm-already-false",
+	rec := e.Do(t, "PATCH", "/v1/apps/warm-already-false",
 		api.UpdateAppRequest{WarmSnapshotEnabled: &fals}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PATCH false: status %d: %s", rec.Code, rec.Body)
 	}
 
-	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}

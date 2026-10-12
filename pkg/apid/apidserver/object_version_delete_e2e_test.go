@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -55,8 +56,8 @@ func TestObjectVersionDeleteControlEndToEndPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	management := func() *httptest.Server {
-		s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-		srv := httptest.NewServer(s.handler())
+		s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+		srv := httptest.NewServer(s.Handler())
 		t.Cleanup(srv.Close)
 		return srv
 	}
@@ -79,9 +80,9 @@ func TestObjectVersionDeleteControlEndToEndPG(t *testing.T) {
 	if _, e = f.pool.Exec(ctx, `UPDATE object_deletions SET lease_until=CASE WHEN lease_token='' THEN NULL ELSE now()-interval '1 second' END,retry_at=now() WHERE id=$1`, deletionID); e != nil {
 		t.Fatal(e)
 	}
-	recovery := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
+	recovery := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
 	f.enabled.Store(false)
-	if e = recovery.object.ReconcileObjectDeletions(ctx, nil); e != nil {
+	if e = (*recovery.Object()).ReconcileObjectDeletions(ctx, nil); e != nil {
 		t.Fatal(e)
 	}
 	receipt, e = client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, deletionID)

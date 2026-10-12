@@ -1,5 +1,5 @@
 // adr: 521
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -65,8 +66,8 @@ func TestOperationHistoryHTTPClosedAdmissionAndCustomerAuthority(t *testing.T) {
 	if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "account", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	handler := srv.handler() // default closed admission
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	handler := srv.Handler() // default closed admission
 	base := "/v1/platform-tenant-self/customer-operations"
 	query := url.Values{"app_id": {app.ID}, "scope": {dep.Scope}}.Encode()
 	read := func(bearer, path string) *httptest.ResponseRecorder {

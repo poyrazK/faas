@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,13 +12,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
-	srv, mailer, store := v1AuthTestHarness(t)
-	h := srv.handler()
-	rec := v1AuthJSONRequest(t, h, "/v1/auth/signup",
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	rec := apidserver.V1AuthJSONRequest(t, h, "/v1/auth/signup",
 		`{"email":"verify-me@example.com","password":"correct-horse-battery-staple"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("signup status = %d: %s", rec.Code, rec.Body.String())
@@ -30,7 +31,7 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	if acct.EmailVerified() {
 		t.Fatal("password signup created a verified account")
 	}
-	msgs := mailer.snapshot()
+	msgs := mailer.Snapshot()
 	if len(msgs) != 1 {
 		t.Fatalf("verification emails = %d, want 1", len(msgs))
 	}
@@ -41,7 +42,7 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	}
 	token := strings.Fields(msgs[0].TextBody[i+len(marker):])[0]
 
-	verifyReq := httptest.NewRequest(http.MethodGet, emailVerificationPath+"?token="+token, nil)
+	verifyReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
 	verifyRec := httptest.NewRecorder()
 	h.ServeHTTP(verifyRec, verifyReq)
 	if verifyRec.Code != http.StatusOK {
@@ -55,7 +56,7 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatal("verification link did not verify account")
 	}
 
-	replayReq := httptest.NewRequest(http.MethodGet, emailVerificationPath+"?token="+token, nil)
+	replayReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
 	replayRec := httptest.NewRecorder()
 	h.ServeHTTP(replayRec, replayReq)
 	if replayRec.Code != http.StatusGone {
@@ -85,8 +86,8 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 		if _, err := store.CreateAPIKey(context.Background(), res.Account.ID, hash, "verification-property", api.ScopesAdminOnly); err != nil {
 			t.Fatal(err)
 		}
-		srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-		h := srv.handler()
+		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+		h := srv.Handler()
 		cases := []struct {
 			method string
 			path   string
@@ -147,17 +148,17 @@ func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mailer := &recordingMailer{}
-	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}, "", mailer, nil, nil, nil, 0, "")
+	mailer := &apidserver.RecordingMailer{}
+	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}, "", mailer, nil, nil, nil, 0, "")
 	req := httptest.NewRequest(http.MethodPost, "/login/forgot", strings.NewReader("email=unverified-reset%40example.com"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("forgot status = %d", rec.Code)
 	}
-	if got := len(mailer.snapshot()); got != 0 {
+	if got := len(mailer.Snapshot()); got != 0 {
 		t.Fatalf("password reset emails = %d, want 0", got)
 	}
 }
@@ -172,8 +173,8 @@ func TestOAuthProofVerifiesExistingPasswordAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	acct, err := srv.verifyOAuthAccountEmail(context.Background(), res.Account)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	acct, err := srv.VerifyOAuthAccountEmail(context.Background(), res.Account)
 	if err != nil {
 		t.Fatal(err)
 	}

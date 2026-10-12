@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"crypto/sha256"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -34,21 +35,21 @@ func renderDashboardKeyDelete(t *testing.T, h http.Handler, sid *http.Cookie, ke
 	}
 	var csrfCookie *http.Cookie
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == dashboardKeyDeleteCSRFCookie {
+		if cookie.Name == apidserver.DashboardKeyDeleteCSRFCookie {
 			csrfCookie = cookie
 			break
 		}
 	}
 	if csrfCookie == nil {
-		t.Fatalf("GET /dashboard/account: missing %s cookie", dashboardKeyDeleteCSRFCookie)
+		t.Fatalf("GET /dashboard/account: missing %s cookie", apidserver.DashboardKeyDeleteCSRFCookie)
 	}
 	action := "/dashboard/account/keys/" + keyID + "/delete"
-	token := extractInputValue(rec.Body.String(), middleware.FormFieldName, action)
+	token := apidserver.ExtractInputValue(rec.Body.String(), middleware.FormFieldName, action)
 	return csrfCookie, token, rec.Body.String()
 }
 
 func TestDashboardDeleteKey_RendersNamedCSRFAndTypedConfirmation(t *testing.T) {
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +59,7 @@ func TestDashboardDeleteKey_RendersNamedCSRFAndTypedConfirmation(t *testing.T) {
 	if token == "" {
 		t.Fatal("key-delete form is missing csrf_token")
 	}
-	prefix := api.APIKeyPrefix + hexPrefix(key.Hash)
+	prefix := api.APIKeyPrefix + apidserver.HexPrefix(key.Hash)
 	for _, want := range []string{`name="confirmation"`, "required", prefix} {
 		if !strings.Contains(body, want) {
 			t.Errorf("account page missing %q", want)
@@ -67,7 +68,7 @@ func TestDashboardDeleteKey_RendersNamedCSRFAndTypedConfirmation(t *testing.T) {
 }
 
 func TestDashboardDeleteKey_RevokesOnlySelectedKey(t *testing.T) {
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -75,9 +76,9 @@ func TestDashboardDeleteKey_RevokesOnlySelectedKey(t *testing.T) {
 	selected := seedDashboardAPIKey(t, store, acct, "selected")
 	sibling := seedDashboardAPIKey(t, store, acct, "sibling")
 	csrfCookie, token, _ := renderDashboardKeyDelete(t, h, sid, selected.ID)
-	rec := dashboardPOST(t, h, sid, "/dashboard/account/keys/"+selected.ID+"/delete", map[string]string{
-		middleware.FormFieldName: token,
-		dashboardKeyConfirmField: api.APIKeyPrefix + hexPrefix(selected.Hash),
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/account/keys/"+selected.ID+"/delete", map[string]string{
+		middleware.FormFieldName:            token,
+		apidserver.DashboardKeyConfirmField: api.APIKeyPrefix + apidserver.HexPrefix(selected.Hash),
 	}, csrfCookie)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
@@ -116,16 +117,16 @@ func TestDashboardDeleteKey_RevokesOnlySelectedKey(t *testing.T) {
 }
 
 func TestDashboardDeleteKey_RejectsWrongConfirmation(t *testing.T) {
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := seedDashboardAPIKey(t, store, acct, "keep-me")
 	csrfCookie, token, _ := renderDashboardKeyDelete(t, h, sid, key.ID)
-	rec := dashboardPOST(t, h, sid, "/dashboard/account/keys/"+key.ID+"/delete", map[string]string{
-		middleware.FormFieldName: token,
-		dashboardKeyConfirmField: "wrong-prefix",
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/account/keys/"+key.ID+"/delete", map[string]string{
+		middleware.FormFieldName:            token,
+		apidserver.DashboardKeyConfirmField: "wrong-prefix",
 	}, csrfCookie)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
@@ -140,16 +141,16 @@ func TestDashboardDeleteKey_RejectsWrongConfirmation(t *testing.T) {
 }
 
 func TestDashboardDeleteKey_RequiresNamedCSRFCookie(t *testing.T) {
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := seedDashboardAPIKey(t, store, acct, "keep-me")
 	_, token, _ := renderDashboardKeyDelete(t, h, sid, key.ID)
-	rec := dashboardPOST(t, h, sid, "/dashboard/account/keys/"+key.ID+"/delete", map[string]string{
-		middleware.FormFieldName: token,
-		dashboardKeyConfirmField: api.APIKeyPrefix + hexPrefix(key.Hash),
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/account/keys/"+key.ID+"/delete", map[string]string{
+		middleware.FormFieldName:            token,
+		apidserver.DashboardKeyConfirmField: api.APIKeyPrefix + apidserver.HexPrefix(key.Hash),
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
@@ -157,7 +158,7 @@ func TestDashboardDeleteKey_RequiresNamedCSRFCookie(t *testing.T) {
 }
 
 func TestDashboardDeleteKey_CollapsesForeignKeyToNotFound(t *testing.T) {
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -169,9 +170,9 @@ func TestDashboardDeleteKey_CollapsesForeignKeyToNotFound(t *testing.T) {
 	}
 	foreign := seedDashboardAPIKey(t, store, other, "foreign")
 	csrfCookie, token, _ := renderDashboardKeyDelete(t, h, sid, owned.ID)
-	rec := dashboardPOST(t, h, sid, "/dashboard/account/keys/"+foreign.ID+"/delete", map[string]string{
-		middleware.FormFieldName: token,
-		dashboardKeyConfirmField: api.APIKeyPrefix + hexPrefix(foreign.Hash),
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/account/keys/"+foreign.ID+"/delete", map[string]string{
+		middleware.FormFieldName:            token,
+		apidserver.DashboardKeyConfirmField: api.APIKeyPrefix + apidserver.HexPrefix(foreign.Hash),
 	}, csrfCookie)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404\nbody = %s", rec.Code, rec.Body.String())

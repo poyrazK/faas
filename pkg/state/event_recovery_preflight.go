@@ -92,6 +92,13 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 		return api.EventRecoveryPreflight{}, err
 	}
 	out := newRecoveryPreflight(job, now, timeFromPgtype(row.NextAttemptAt), timeFromPgtype(row.WindowStartedAt), int(row.WindowCount))
+	if job.Selection.WorkflowRuns != nil {
+		err = workflowRecoveryPreflightRead(ctx, q, tx, account, job, now, false, &out)
+		if err != nil {
+			return out, err
+		}
+		return out, tx.Commit(ctx)
+	}
 	items, err := q.EventRecoveryPreflight(ctx, tx, sqlc.EventRecoveryPreflightParams{RetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), AccountID: mustPgUUID(account), JobID: mustPgUUID(id), NowAt: pgtypeFromTime(now), PageLimit: api.EventRecoveryRecipientsMax + 1})
 	if err != nil {
 		return out, err
@@ -101,6 +108,9 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 	}
 	for _, item := range items {
 		reason, scope := item.Reason, ""
+		if job.Selection.WorkflowRouting != nil || job.Selection.WorkflowRuns != nil {
+			reason = "unknown"
+		}
 		if reason == "eligible" && item.CapacityTracked {
 			limits, ok := api.LimitsFor(api.Plan(item.Plan))
 			if !ok {
@@ -148,6 +158,9 @@ func (m *MemStore) preflightCapacityLocked(job *memEventRecoveryJob) recoveryPre
 	return out
 }
 func (m *MemStore) preflightItemLocked(job *memEventRecoveryJob, item memEventRecoveryItem, work *PublishedEventWork, capacity recoveryPreflightCapacity, now time.Time) (string, string, error) {
+	if job.Job.Selection.WorkflowRouting != nil || job.Job.Selection.WorkflowRuns != nil {
+		return "unknown", "", nil
+	}
 	if !m.eventRecoveryAppLocked(job.AccountID, job.Job.AppID) {
 		return "target_unavailable", "", nil
 	}
@@ -265,11 +278,22 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 	}
 	holds := m.eventRecoveryReceiptHoldsLocked(account, now)
 	capacity := m.preflightCapacityLocked(job)
+	if job.Job.Selection.WorkflowRuns != nil {
+		out.AppID, out.WorkflowName = job.Job.AppID, job.Job.Selection.WorkflowRuns.Name
+	}
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
 		reason, scope, err := m.preflightItemLocked(job, item, receipts[item.OutboxID], capacity, now)
+		if job.Job.Selection.WorkflowRuns != nil {
+			row, e := m.workflowRecoveryPreflightItemLocked(ctx, job, item, now, false)
+			if e != nil {
+				return out, e
+			}
+			appendWorkflowRecoveryPreflight(&out, row, false)
+			continue
+		}
 		if err != nil {
 			return out, err
 		}

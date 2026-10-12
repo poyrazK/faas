@@ -91,8 +91,8 @@ class SourceRefDeployRequest:
     """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
     defaulting to false."""
     mcp_task_migration_override: bool | Unset = UNSET
-    """One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need
-    handler versions it does not provide."""
+    """Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
+    handler versions."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
     boost."""

@@ -34,6 +34,10 @@ class EventRecoveryItem:
     failure_code: str
     retryable: bool
     state: EventRecoveryItemState
+    workflow_run_id: UUID | Unset = UNSET
+    """Native workflow target; event identity fields are empty for these items."""
+    expected_resume_count: int | Unset = UNSET
+    """Original reviewed count; queued means the next resume was admitted."""
     parent_job_id: UUID | Unset = UNSET
     """Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is
     pruned."""
@@ -45,10 +49,14 @@ class EventRecoveryItem:
     replay_generation: int | Unset = UNSET
     """Frozen admitted generation including zero for new replay children."""
     execution: EventRecoveryExecution | Unset = UNSET
-    """Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take
-    precedence and survive execution-history pruning until recovery job retention. Later replays never replace them.
-    Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and
-    items not admitted."""
+    """Read-only observation of the exact admitted replay or workflow resume. Invocation mode prefers saved
+    confirmed terminal results, retained with the recovery job. Workflow mode prefers saved terminal results for the
+    admitted resume, then live retained run and resume evidence. Missing evidence without a saved result is unknown.
+    Native failed/dead runs both report failed. Pending and running workflow states report queued and running;
+    awaiting_event also reports running. Without a saved result, later native resumes report superseded with no
+    completion time. Saved native results survive workflow-history pruning for the recovery job retention period;
+    the first confirmed terminal result wins across later resumes. Omitted for routing recovery and items not
+    admitted."""
     reason: EventRecoveryItemReason | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +77,12 @@ class EventRecoveryItem:
         retryable = self.retryable
 
         state: str = self.state
+
+        workflow_run_id: str | Unset = UNSET
+        if not isinstance(self.workflow_run_id, Unset):
+            workflow_run_id = str(self.workflow_run_id)
+
+        expected_resume_count = self.expected_resume_count
 
         parent_job_id: str | Unset = UNSET
         if not isinstance(self.parent_job_id, Unset):
@@ -109,6 +123,10 @@ class EventRecoveryItem:
                 "state": state,
             }
         )
+        if workflow_run_id is not UNSET:
+            field_dict["workflow_run_id"] = workflow_run_id
+        if expected_resume_count is not UNSET:
+            field_dict["expected_resume_count"] = expected_resume_count
         if parent_job_id is not UNSET:
             field_dict["parent_job_id"] = parent_job_id
         if parent_position is not UNSET:
@@ -148,6 +166,15 @@ class EventRecoveryItem:
         retryable = d.pop("retryable")
 
         state = check_event_recovery_item_state(d.pop("state"))
+
+        _workflow_run_id = d.pop("workflow_run_id", UNSET)
+        workflow_run_id: UUID | Unset
+        if isinstance(_workflow_run_id, Unset):
+            workflow_run_id = UNSET
+        else:
+            workflow_run_id = UUID(_workflow_run_id)
+
+        expected_resume_count = d.pop("expected_resume_count", UNSET)
 
         _parent_job_id = d.pop("parent_job_id", UNSET)
         parent_job_id: UUID | Unset
@@ -198,6 +225,8 @@ class EventRecoveryItem:
             failure_code=failure_code,
             retryable=retryable,
             state=state,
+            workflow_run_id=workflow_run_id,
+            expected_resume_count=expected_resume_count,
             parent_job_id=parent_job_id,
             parent_position=parent_position,
             invocation_id=invocation_id,

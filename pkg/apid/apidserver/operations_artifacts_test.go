@@ -1,5 +1,5 @@
 // ADR-521: customer operations preserve ownership, execution fences and independent delivery.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -70,7 +71,7 @@ type operationArtifactFixtureStore interface {
 	state.ObjectStorageAccountingStore
 }
 
-func operationArtifactFixture(t *testing.T, s *server, store operationArtifactFixtureStore, acct state.Account, app state.App, scope string) (*operationArtifactTestProvider, api.OperationArtifactRequest) {
+func operationArtifactFixture(t *testing.T, s *apidserver.Server, store operationArtifactFixtureStore, acct state.Account, app state.App, scope string) (*operationArtifactTestProvider, api.OperationArtifactRequest) {
 	t.Helper()
 	ctx := t.Context()
 	body := []byte("id,count\nalice,1\n")
@@ -86,7 +87,7 @@ func operationArtifactFixture(t *testing.T, s *server, store operationArtifactFi
 	}
 	s.WithOperationArtifactStorage(retained)
 	s.WithObjectStorage(registry)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, []byte(`true`)); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, []byte(`true`)); err != nil {
 		t.Fatal(err)
 	}
 	backend, err := registry.Default("us-east-1")

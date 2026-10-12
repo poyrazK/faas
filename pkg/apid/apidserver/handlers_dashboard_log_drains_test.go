@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -68,7 +69,7 @@ func TestParseAppLogDrainsPath(t *testing.T) {
 		{path: "logs-app/log-drains/health", ok: false},
 		{path: "logs-app/other-log-drains", ok: false},
 	} {
-		got, ok := parseAppLogDrainsPath(tc.path)
+		got, ok := apidserver.ParseAppLogDrainsPath(tc.path)
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("parseAppLogDrainsPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 		}
@@ -77,7 +78,7 @@ func TestParseAppLogDrainsPath(t *testing.T) {
 
 func TestDashboardLogDrainPageItemDefaultsAndMasksState(t *testing.T) {
 	lastFailure := time.Now().UTC().Add(-time.Minute)
-	item := dashboardLogDrainPageItem(
+	item := apidserver.DashboardLogDrainPageItem(
 		state.AppLogDrain{ID: "drain-1", Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/ingest", Enabled: false},
 		state.AppLogDrainHealth{
 			DrainID: "drain-1", Status: api.AppLogDrainHealthStatusDegraded, Active: true,
@@ -92,7 +93,7 @@ func TestDashboardLogDrainPageItemDefaultsAndMasksState(t *testing.T) {
 		t.Fatalf("health counters were not projected: %+v", item)
 	}
 
-	unknown := dashboardLogDrainPageItem(state.AppLogDrain{ID: "drain-2", Enabled: true}, state.AppLogDrainHealth{})
+	unknown := apidserver.DashboardLogDrainPageItem(state.AppLogDrain{ID: "drain-2", Enabled: true}, state.AppLogDrainHealth{})
 	if unknown.Status != api.AppLogDrainHealthStatusUnknown || unknown.Active {
 		t.Fatalf("missing health presentation = status %q active %v, want unknown/false", unknown.Status, unknown.Active)
 	}

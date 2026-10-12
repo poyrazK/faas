@@ -1,5 +1,5 @@
 // adr: 380
-package apidserver
+package apidserver_test
 
 import (
 	"archive/zip"
@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/focus"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedFOCUSInvoice(e testEnv, id, accountID string, end time.Time) {
-	memSeedInvoice(e.store, state.Invoice{
+func seedFOCUSInvoice(e apidserver.TestEnv, id, accountID string, end time.Time) {
+	memSeedInvoice((*e.Store()), state.Invoice{
 		ID: id, AccountID: accountID, Provider: "polar", ProviderInvoiceID: "provider-" + id,
 		Status: "paid", PeriodStart: end.AddDate(0, 0, -20), PeriodEnd: end,
 		SubtotalCents: 1200, TaxCents: 190, TotalCents: 1190, Currency: "eur", CreatedAt: end, UpdatedAt: end,
@@ -26,13 +27,13 @@ func seedFOCUSInvoice(e testEnv, id, accountID string, end time.Time) {
 }
 
 func TestFOCUSExportAccountAndMonthIsolation(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	sept := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
-	seedFOCUSInvoice(e, "own", e.acct.ID, sept)
+	seedFOCUSInvoice(e, "own", (*e.Acct()).ID, sept)
 	seedFOCUSInvoice(e, "foreign", "another-account", sept)
-	seedFOCUSInvoice(e, "old", e.acct.ID, sept.AddDate(0, -1, 0))
-	seedFOCUSInvoice(e, "boundary", e.acct.ID, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
-	rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
+	seedFOCUSInvoice(e, "old", (*e.Acct()).ID, sept.AddDate(0, -1, 0))
+	seedFOCUSInvoice(e, "boundary", (*e.Acct()).ID, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
 	}
@@ -55,10 +56,10 @@ func TestFOCUSExportAccountAndMonthIsolation(t *testing.T) {
 }
 
 func TestFOCUSExportFormatsAndEmptyHistory(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	for _, format := range []string{"", "zip", "csv", "metadata"} {
 		t.Run(format, func(t *testing.T) {
-			rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format="+format, nil, nil)
+			rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format="+format, nil, nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
 			}
@@ -84,26 +85,26 @@ func TestFOCUSExportFormatsAndEmptyHistory(t *testing.T) {
 }
 
 func TestFOCUSExportRejectsBadQueries(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	for _, query := range []string{
 		"", "month=2026-13", "month=0000-01", "month=2026-9", "month=2026-09&format=parquet",
 		"month=2026-09&account_id=another", "month=2026-09&month=2026-10", "month=2026-09&format=csv&format=zip", "month=2026-09&format=%GG",
 	} {
 		t.Run(query, func(t *testing.T) {
-			rec := e.do(t, http.MethodGet, "/v1/billing/focus?"+query, nil, nil)
-			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+			rec := e.Do(t, http.MethodGet, "/v1/billing/focus?"+query, nil, nil)
+			apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 		})
 	}
 }
 
 func TestFOCUSExportDoesNotSilentlyTruncate(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	end := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	for i := range api.MaxFOCUSExportInvoices + 1 {
-		seedFOCUSInvoice(e, fmt.Sprintf("invoice-%04d", i), e.acct.ID, end)
+		seedFOCUSInvoice(e, fmt.Sprintf("invoice-%04d", i), (*e.Acct()).ID, end)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
-	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+	rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
 	if strings.Contains(rec.Body.String(), "BilledCost,") || rec.Header().Get("Content-Disposition") != "" {
 		t.Fatal("overflow produced a partial CSV")
 	}
@@ -114,11 +115,11 @@ func TestFOCUSExportDoesNotSilentlyTruncate(t *testing.T) {
 }
 
 func TestFOCUSExportInvalidInvoiceFailsBeforeDownload(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	seedInvoiceDirect(t, e.store, e.acct.ID, "polar", "bad", time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC), 100)
+	e := apidserver.Setup(t, api.PlanPro)
+	seedInvoiceDirect(t, (*e.Store()), (*e.Acct()).ID, "polar", "bad", time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC), 100)
 	// This historical fixture has no created/updated times. Never invent them.
-	rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, nil)
-	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
 	if rec.Header().Get("Content-Disposition") != "" {
 		t.Fatal("invalid invoice began a successful download")
 	}
@@ -130,18 +131,18 @@ func TestFOCUSExportAuthenticationScopeAndMFA(t *testing.T) {
 		want  int
 	}{{"usage:read", http.StatusOK}, {"apps:read", http.StatusForbidden}, {"deploy:write", http.StatusForbidden}} {
 		t.Run(tc.scope, func(t *testing.T) {
-			e := setupWithScopes(t, []string{tc.scope})
-			rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, nil)
+			e := apidserver.SetupWithScopes(t, []string{tc.scope})
+			rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, nil)
 			if rec.Code != tc.want {
 				t.Fatalf("scope=%s status=%d body=%s", tc.scope, rec.Code, rec.Body)
 			}
 		})
 	}
-	e := setup(t, api.PlanFree)
-	rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, map[string]string{"Authorization": ""})
-	assertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
-	h, acct, mgr, sid := setupMW(t, api.PlanPro, true)
-	cookie := reissueWithMFAFlag(t, mgr, sid, acct.ID, true)
-	rec = cookieDo(t, h, cookie, http.MethodGet, "/v1/billing/focus?month=2026-09", nil)
-	assertProblem(t, rec, http.StatusForbidden, api.CodeMFARequired)
+	e := apidserver.Setup(t, api.PlanFree)
+	rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09", nil, map[string]string{"Authorization": ""})
+	apidserver.AssertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
+	h, acct, mgr, sid := apidserver.SetupMW(t, api.PlanPro, true)
+	cookie := apidserver.ReissueWithMFAFlag(t, mgr, sid, acct.ID, true)
+	rec = apidserver.CookieDo(t, h, cookie, http.MethodGet, "/v1/billing/focus?month=2026-09", nil)
+	apidserver.AssertProblem(t, rec, http.StatusForbidden, api.CodeMFARequired)
 }

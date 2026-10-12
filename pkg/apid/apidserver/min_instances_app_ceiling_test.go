@@ -1,11 +1,12 @@
 // adr: 071 — the min_instances floor stays reachable.
 
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,7 +29,7 @@ func TestValidateUpdateAppKeepsMinInstancesUnderTheAppCeiling(t *testing.T) {
 		{"ceiling lowered to the floor", state.App{MaxConcurrency: 4, MinInstances: 2}, api.UpdateAppRequest{MaxConcurrency: n(2)}, true},
 		{"unset app ceiling uses the plan", state.App{}, api.UpdateAppRequest{MinInstances: n(3)}, true},
 	} {
-		prob := validateUpdateApp(&tc.req, acct, limits, tc.app)
+		prob := apidserver.ValidateUpdateApp(&tc.req, acct, limits, tc.app)
 		if tc.ok && prob != nil {
 			t.Fatalf("%s: rejected: %+v", tc.name, prob)
 		}
