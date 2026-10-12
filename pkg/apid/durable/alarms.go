@@ -93,6 +93,11 @@ func (s *Service) DeliverAlarm(ctx context.Context, alarm durableentity.Alarm) (
 	if id != alarm.Entity {
 		return durableentity.ErrAlarmObsolete
 	}
+	if s.TenantQuotas != nil {
+		if err := s.TenantQuotas.AdmitInvocation(callCtx, id); err != nil {
+			return err
+		}
+	}
 	result, err = s.Engine.InvokeAlarm(callCtx, alarm, s.Owner, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.dispatchDurableEntityHandler(ctx, acct, app, scope, alarm.Entity, request, view, "alarm")
 	})

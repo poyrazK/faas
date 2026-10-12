@@ -537,6 +537,8 @@ list:
 - A new list applies to calls settled from then on. Earlier lists stay, so
   recorded costs never change.
 - Each call's cost is rounded up to a whole millicent.
+- A model the list does not name is priced from the built-in catalog (see
+  below). Add a `*` entry, even at zero, to price only the models you list.
 
 **Cost limits.** `PUT /v1/outbound/integrations/{id}/ai` also takes
 `daily_cost_limit_millicents` and `monthly_cost_limit_millicents` (UTC day
@@ -647,7 +649,8 @@ Notes per provider:
 ## OpenAI-format routes
 
 `gregale ai routes create --name any-chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4 --target <gemini-id>:gemini-2.5-flash`
-creates a route that accepts OpenAI chat completions. Each target can be:
+creates a route that accepts OpenAI chat completions and embeddings. Each
+target can be:
 
 - **`openai`:** receives the request as is.
 - **`azure_openai`:** receives it at `/openai/v1/chat/completions`, with the
@@ -656,21 +659,131 @@ creates a route that accepts OpenAI chat completions. Each target can be:
   translated back.
 - **`gemini`:** translated to `generateContent`, with the response translated
   back.
+- **`bedrock`:** translated to Converse (`/model/{id}/converse`, or
+  `converse-stream`, whose binary event stream is translated into SSE). The
+  target model is a Bedrock model ID, inference profile or ARN.
+- **`vertex`:** Claude models go to `rawPredict` with the Anthropic
+  translation, other models to Gemini `generateContent`. Prefix the model
+  with `anthropic/` or `google/` to choose the publisher explicitly. The
+  integration's allowed path prefixes must name exactly one
+  `/v1/projects/{project}/locations/{location}`; route creation refuses a
+  Vertex target without one.
 
 The translation covers:
 
 - system and developer messages;
 - text and image parts (Gemini takes `data:` images only);
 - tools, tool calls, tool results and `tool_choice`;
-- `stop`, `temperature`, `top_p`, the output ceiling and streaming.
+- `stop`, `temperature`, `top_p`, the output ceiling and streaming;
+- `response_format` (see below).
+
+**Structured output.** `json_schema` becomes Anthropic's
+`output_config.format`, Gemini's `responseJsonSchema` and Bedrock's
+`outputConfig.textFormat`. `json_object` becomes Gemini JSON mode. Anthropic
+and Bedrock always need a schema, so `json_object` is refused for them with
+`400 outbound_ai_translation_unsupported`; its `detail` says why. The schema
+is passed through unchanged, so each provider's JSON Schema subset applies.
+
+**Embeddings.** `POST $GREGALE_OUTBOUND_URL/r/<route-id>/v1/embeddings` takes a
+string or an array of strings:
+
+- OpenAI receives it as is, and Azure OpenAI at `/openai/v1/embeddings`.
+- Gemini receives `batchEmbedContents`, and Vertex AI Google models
+  `predict`. `dimensions` becomes the output dimensionality.
+- Anthropic and Bedrock targets are refused.
+
+`encoding_format: base64`, the OpenAI SDK default, is supported. Use one
+embeddings model per route: vectors from a fallback target with another model
+are not comparable. `X-Gregale-AI-Route-Target` names the target that served.
+Vertex embeddings report token counts and count toward budgets. Gemini
+embeddings report none, so they settle as usage unknown.
 
 Callers see OpenAI JSON and `chat.completion.chunk` events, with a usage chunk
 only when they ask for one. `n` above 1 gets
-`400 outbound_ai_translation_unsupported`.
+`400 outbound_ai_translation_unsupported`. That problem's `detail` says what
+could not be translated.
 
 Point any OpenAI SDK at `$GREGALE_OUTBOUND_URL/r/<route-id>/v1`. Usage and cost
 are still read from each provider's native response.
 `outbound_ai_translations_total` counts translated attempts.
+
+## Built-in price catalog
+
+See [ADR-994](../adr/994-ai-gateway-price-catalog-end-users-affinity.md).
+outboundd and apid embed `pkg/outbound/aiprices/catalog.json`: list prices for
+about 700 models across the six providers, in EUR millicents per million
+tokens. A call's model is priced from the integration's price list first, then
+from the catalog for the integration's provider. Reservations and settlement
+use the same price.
+
+- The file records its LiteLLM source commit, generation date and USD-to-EUR
+  rate. Prices are base-tier list prices; batch, priority, long-context tiers
+  and negotiated discounts are not modelled.
+- A dated or versioned model the catalog lacks is priced as its family
+  (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
+  `claude-sonnet-4-5`). Bedrock cross-region prefixes and ARNs are stripped.
+- `gregale ai catalog <provider> [--model NAME]` (or
+  `GET /v1/outbound/ai-price-catalog?provider=&model=`) shows the prices.
+- To refresh the catalog, download LiteLLM's
+  `model_prices_and_context_window.json` at a pinned commit into its own
+  directory, run `python3 -I scripts/gen_ai_price_catalog.py` with that
+  commit and the current ECB rate, and review the diff in a PR.
+
+## Per-end-user limits
+
+Apps that serve their own users can name each call's end user with
+`X-Gregale-AI-User`:
+
+- The value is 1 to 64 letters, digits or `. _ : @ + = / | -`.
+- An invalid or repeated header gets `400 outbound_ai_user_invalid`.
+- The gateway never forwards it to the provider.
+- Send an opaque ID or a hash, not an e-mail address. The value is stored in
+  the per-user rollup for 31 days and, with the request log on, in the log for
+  7 days.
+
+`gregale ai policy <id> --user-daily-tokens 200000 --user-daily-cost 2` sets
+`user_daily_token_limit` and `user_daily_cost_limit_millicents`. They cap
+every named end user's UTC day as hard caps: settled usage, plus that user's
+in-flight reservations, plus the call's own reservation. A call over a cap
+gets `429` with `X-Gregale-Outbound-Rejection: user_daily_token_limit` or
+`user_daily_cost_limit`. Calls without the header are limited only by the
+integration and app budgets.
+
+`gregale ai users <id> [--date D] [--user ID]` (or
+`GET .../ai-usage/users`) lists a day's end users by cost. Each integration
+tracks up to 10,000 distinct end users per UTC day. Later ones are counted
+under `~other`, and per-user caps do not apply to them.
+
+**Alerts.** With per-user limits set, an end user's day alerts at 80% and 100%
+of each limit, once per user, day and threshold:
+
+- the budget is `user_daily_tokens` or `user_daily_cost`;
+- the `outbound.ai_budget.threshold` webhook carries `end_user` and goes only
+  to the app whose call crossed the threshold;
+- `gregale ai alerts` shows the end user;
+- these alerts are kept for 31 days.
+
+**Export.** `gregale ai users export <id> --from 2026-10-01 --to 2026-10-31 >
+ai-users.csv` (or `GET .../ai-usage/users/export?from=&to=&format=csv`)
+streams every end user's row for each day in the range, ordered by day and end
+user. The columns are `usage_date, end_user, requests, error_requests,
+input_tokens, output_tokens, tokens, cost_millicents`. The API's default
+format is NDJSON.
+
+**App helpers.** The Node and Python SDKs build the relay URL and headers:
+
+```ts
+import OpenAI from 'openai';
+import { aiGatewayURL, aiGatewayHeaders, opaqueAIUserId } from '@gregale/sdk-node';
+
+const client = new OpenAI({ baseURL: `${aiGatewayURL({ route: routeId })}/v1`, apiKey: 'unused' });
+const user = opaqueAIUserId(email, process.env.USER_ID_SECRET);
+await client.chat.completions.create(body, { headers: aiGatewayHeaders({ user, session: chatId }) });
+```
+
+Python offers `ai_gateway_url`, `ai_gateway_headers` and `opaque_ai_user_id`
+from `faas_sdk`. `opaqueAIUserId` turns an e-mail address into a stable
+`u_…` ID. Pass a secret so the ID cannot be traced back to the address.
 
 ## Provider key pools
 
@@ -678,7 +791,10 @@ are still read from each provider's native response.
 key. Pipe the value in; the CLI never accepts it as a flag. An integration may
 hold up to 8 extra keys in addition to its primary credential.
 
-- outboundd picks keys round-robin.
+- outboundd picks keys round-robin. A call with `X-Gregale-AI-Session`, or
+  else `X-Gregale-AI-User`, picks its key by rendezvous hash instead, so one
+  conversation keeps using the same key and that provider account's prompt
+  cache. Removing a key moves only the sessions that were on it.
 - A key that returns `429` cools down for its `Retry-After`, or 30 seconds,
   and the call moves at once to the next key. This costs neither a retry nor
   the retry budget.
@@ -710,7 +826,7 @@ for 90 days. `outbound_ai_budget_alerts_total` counts them.
 **Request log.** `gregale ai policy <id> --request-log on` makes every settled
 AI call write one metadata row:
 
-- caller, route, model and status;
+- caller, end user, route, model and status;
 - usage outcome, tokens and cost;
 - duration, time to first byte and attempts.
 

@@ -992,7 +992,7 @@ func TestLoadHost_AllKindsCovered(t *testing.T) {
 // the platform ceiling. Mirrors the compileLimitRules clamping
 // posture.
 func TestCompileBudgetRules_ClampsOutOfRangeValues(t *testing.T) {
-	maxMs := int(api.RequestBudgetMax.Milliseconds())
+	maxMs := int(api.RequestBudgetPlanMax.Milliseconds())
 	cases := []struct {
 		name     string
 		budgetMs int

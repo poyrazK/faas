@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"hash/fnv"
 	"net/http"
 	"sort"
 	"sync"
@@ -40,15 +41,23 @@ func keyPoolKey(integrationID, keyID string) string { return integrationID + "/"
 
 // order returns the keys to try for one call: available keys in round-robin
 // order, then cooling keys by soonest expiry, so a call still goes out when
-// every key is cooling.
-func (s *keyPoolState) order(integrationID string, keys []ManagedKey, now time.Time) []ManagedKey {
+// every key is cooling. A call with an affinity key (ADR-994) instead ranks
+// the keys by rendezvous hash, so one session or end user keeps landing on
+// the same key and the provider prompt cache of that key's account; a pool
+// change moves only the sessions of the keys added or removed.
+func (s *keyPoolState) order(integrationID string, keys []ManagedKey, now time.Time, affinity string) []ManagedKey {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cooldowns == nil {
 		s.cooldowns, s.next = make(map[string]time.Time), make(map[string]uint64)
 	}
-	start := int(s.next[integrationID] % uint64(len(keys)))
-	s.next[integrationID]++
+	start := 0
+	if affinity != "" {
+		keys = rendezvousOrder(keys, affinity)
+	} else {
+		start = int(s.next[integrationID] % uint64(len(keys)))
+		s.next[integrationID]++
+	}
 	var available []ManagedKey
 	type cooling struct {
 		key   ManagedKey
@@ -74,6 +83,29 @@ func (s *keyPoolState) order(integrationID string, keys []ManagedKey, now time.T
 		available = append(available, entry.key)
 	}
 	return available
+}
+
+// rendezvousOrder ranks keys by a per-affinity hash of their IDs, highest
+// first.
+func rendezvousOrder(keys []ManagedKey, affinity string) []ManagedKey {
+	type scored struct {
+		key   ManagedKey
+		score uint64
+	}
+	ranked := make([]scored, 0, len(keys))
+	for _, key := range keys {
+		hash := fnv.New64a()
+		_, _ = hash.Write([]byte(affinity))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(key.ID))
+		ranked = append(ranked, scored{key, hash.Sum64()})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+	out := make([]ManagedKey, 0, len(ranked))
+	for _, entry := range ranked {
+		out = append(out, entry.key)
+	}
+	return out
 }
 
 func (s *keyPoolState) cool(integrationID, keyID string, until time.Time) {

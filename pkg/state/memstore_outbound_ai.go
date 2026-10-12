@@ -33,6 +33,8 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	offer.AIDailyCostLimit = copyInt64Ptr(policy.DailyCostLimit)
 	offer.AIMonthlyCostLimit = copyInt64Ptr(policy.MonthlyCostLimit)
 	offer.AIRequestLogEnabled = policy.RequestLogEnabled
+	offer.AIUserDailyTokenLimit = copyInt64Ptr(policy.UserDailyTokenLimit)
+	offer.AIUserDailyCostLimit = copyInt64Ptr(policy.UserDailyCostLimit)
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }
