@@ -115,10 +115,20 @@ A node without a fresh measurement falls back to its reservations. The
 placement chooser floors vmmd's live report with the same figure
 (`NodeLedger.AdmissionUsedMB`), so placement and admission agree.
 
-On the n2 node's 8,593 MB ceiling with 1 GiB VMs measuring 260 MB, the
-ledger admits 16 instead of 8 (unit tests in
-`pkg/sched/admission_measured_test.go`, including random admit/release
-traffic).
+`TestMetalMeasuredAdmissionDensity` (`pkg/fcvm`) runs the ledger against
+real VMs. It boots 1 GiB Node VMs through vmmd's Manager and admits each
+one by their cgroups' `memory.current`. On the n2 node, against an
+8,593 MB ceiling, two runs gave:
+
+- 16 VMs admitted, where reservations allow 8. The 17th was refused by
+  the overcommit cap.
+- Measured charge 5,987–6,016 MB. Host MemAvailable fell from 10.0 GB to
+  3.9 GB, with memory PSI 0.
+- Five VMs then grew by 320 MB each. The measured charge rose to 7,914 MB,
+  host MemAvailable stayed at 2.4 GB, PSI stayed 0, and all 16 VMs served.
+
+Unit tests in `pkg/sched/admission_measured_test.go` cover the same rule,
+including random admit/release traffic.
 
 Not built yet, and why the flag stays off:
 
