@@ -490,7 +490,13 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
+`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+document) are not supported: the gateway treats them as anonymous requests and
+answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
+PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
+through `s3.gregale.dev`: the edge normalizes those segments before the gateway
+verifies the signature, so every request for such a key fails with 403
+`SignatureDoesNotMatch`. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
 Ordinary deletion and mutable null-version deletion use durable receipts and
 marker admission; see the deletion recovery limitations below.
