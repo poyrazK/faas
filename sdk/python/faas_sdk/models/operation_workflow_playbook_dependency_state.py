@@ -9,9 +9,13 @@ from ..models.operation_workflow_playbook_dependency_state_status import (
     OperationWorkflowPlaybookDependencyStateStatus,
     check_operation_workflow_playbook_dependency_state_status,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
+    from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+        OperationWorkflowReadinessOutcomeEscalationReference,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookDependencyState")
@@ -38,6 +42,9 @@ class OperationWorkflowPlaybookDependencyState:
     readiness: OperationWorkflowPlaybookStepReadiness
     """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
     authority."""
+    regression: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
+    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code
@@ -52,6 +59,10 @@ class OperationWorkflowPlaybookDependencyState:
 
         readiness = self.readiness.to_dict()
 
+        regression: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.regression, Unset):
+            regression = self.regression.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -64,12 +75,17 @@ class OperationWorkflowPlaybookDependencyState:
                 "readiness": readiness,
             }
         )
+        if regression is not UNSET:
+            field_dict["regression"] = regression
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
+        from ..models.operation_workflow_readiness_outcome_escalation_reference import (
+            OperationWorkflowReadinessOutcomeEscalationReference,
+        )
 
         d = dict(src_dict)
         outcome_code = d.pop("outcome_code")
@@ -84,6 +100,13 @@ class OperationWorkflowPlaybookDependencyState:
 
         readiness = OperationWorkflowPlaybookStepReadiness.from_dict(d.pop("readiness"))
 
+        _regression = d.pop("regression", UNSET)
+        regression: OperationWorkflowReadinessOutcomeEscalationReference | Unset
+        if isinstance(_regression, Unset):
+            regression = UNSET
+        else:
+            regression = OperationWorkflowReadinessOutcomeEscalationReference.from_dict(_regression)
+
         operation_workflow_playbook_dependency_state = cls(
             outcome_code=outcome_code,
             item_index=item_index,
@@ -91,6 +114,7 @@ class OperationWorkflowPlaybookDependencyState:
             status=status,
             owner=owner,
             readiness=readiness,
+            regression=regression,
         )
 
         return operation_workflow_playbook_dependency_state

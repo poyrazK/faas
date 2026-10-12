@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowPlaybookCompletionReview } from './OperationWorkflowPlaybookCompletionReview.js';
 import type { OperationWorkflowPlaybookCompletionReviewEvent } from './OperationWorkflowPlaybookCompletionReviewEvent.js';
+import type { OperationWorkflowPlaybookDependencyRecovery } from './OperationWorkflowPlaybookDependencyRecovery.js';
 import type { OperationWorkflowPlaybookDependencyRegression } from './OperationWorkflowPlaybookDependencyRegression.js';
 import type { OperationWorkflowPlaybookEvidenceEvent } from './OperationWorkflowPlaybookEvidenceEvent.js';
 import type { OperationWorkflowPlaybookOutcomeEscalation } from './OperationWorkflowPlaybookOutcomeEscalation.js';
@@ -21,6 +22,7 @@ import type { OperationWorkflowReadinessVerificationWatch } from './OperationWor
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  dependency_recovery?: OperationWorkflowPlaybookDependencyRecovery;
   dependency_regression?: OperationWorkflowPlaybookDependencyRegression;
   playbook_step?: OperationWorkflowPlaybookStepAssignment;
   playbook_review?: OperationWorkflowPlaybookCompletionReview;
@@ -51,7 +53,7 @@ export type OperationWorkflowReadinessNotification = {
   /**
    * OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
    */
-  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed';
+  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed' | 'playbook_dependency_recovered';
   /**
    * OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
    */

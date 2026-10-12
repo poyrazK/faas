@@ -79243,6 +79243,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        dependency_recovery:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyRecovery'
         dependency_regression:
           $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyRegression'
         playbook_step:
@@ -79301,6 +79303,7 @@ components:
           - playbook_outcome_deadline_reached
           - playbook_outcome_step_assigned
           - playbook_dependency_regressed
+          - playbook_dependency_recovered
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -81405,6 +81408,9 @@ components:
       description: OperationWorkflowPlaybookDependencyState. One sampled human follow-up step observation, distinct from application reports and queue coordination.
       required: [outcome_code, item_index, label, status, owner, readiness]
       properties:
+        regression:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
+          description: OperationWorkflowPlaybookDependencyState.regression. Latest delivered regression affecting this waiting step; cleared atomically after observed recovery.
         outcome_code:
           type: string
           description: OperationWorkflowPlaybookDependencyState.outcome_code. Exact pinned outcome list.
@@ -81425,6 +81431,25 @@ components:
           description: OperationWorkflowPlaybookDependencyState.owner. Current checklist step owner; inbox overrides remain separate.
         readiness:
           $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
+    OperationWorkflowPlaybookDependencyRecovery:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookDependencyRecovery. Durable sampled waiting-to-ready observation for previously regressed steps, linked to the latest regression notice. Original reviews, queue assignments and clocks remain unchanged.
+      required: [checked_at, regression, ready_steps]
+      properties:
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookDependencyRecovery.checked_at. Successful case observation before revision-fenced publication.
+        regression:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
+          description: OperationWorkflowPlaybookDependencyRecovery.regression. Original notice identity within the same inbox; the referenced row may have expired.
+        ready_steps:
+          type: array
+          maxItems: 272
+          description: OperationWorkflowPlaybookDependencyRecovery.ready_steps. Recovered subset grouped by current checklist owner and regression notice; completed reviews remain complete.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookDependencyState'
     OperationWorkflowPlaybookDependencyRegression:
       type: object
       additionalProperties: false

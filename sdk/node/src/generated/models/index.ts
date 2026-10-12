@@ -1209,6 +1209,7 @@ export type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkfl
 export type { OperationWorkflowPlaybookCompletionOutcome } from './OperationWorkflowPlaybookCompletionOutcome.js';
 export type { OperationWorkflowPlaybookCompletionReview } from './OperationWorkflowPlaybookCompletionReview.js';
 export type { OperationWorkflowPlaybookCompletionReviewEvent } from './OperationWorkflowPlaybookCompletionReviewEvent.js';
+export type { OperationWorkflowPlaybookDependencyRecovery } from './OperationWorkflowPlaybookDependencyRecovery.js';
 export type { OperationWorkflowPlaybookDependencyRegression } from './OperationWorkflowPlaybookDependencyRegression.js';
 export type { OperationWorkflowPlaybookDependencyState } from './OperationWorkflowPlaybookDependencyState.js';
 export type { OperationWorkflowPlaybookEvidence } from './OperationWorkflowPlaybookEvidence.js';

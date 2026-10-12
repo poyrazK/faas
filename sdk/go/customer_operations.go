@@ -360,3 +360,5 @@ type OperationWorkflowPlaybookStepReadiness = api.OperationWorkflowPlaybookStepR
 
 type OperationWorkflowPlaybookDependencyState = api.OperationWorkflowPlaybookDependencyState
 type OperationWorkflowPlaybookDependencyRegression = api.OperationWorkflowPlaybookDependencyRegression
+
+type OperationWorkflowPlaybookDependencyRecovery = api.OperationWorkflowPlaybookDependencyRecovery

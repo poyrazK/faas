@@ -38,6 +38,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery       `json:"dependency_recovery,omitempty"`
 	DependencyRegression *OperationWorkflowPlaybookDependencyRegression     `json:"dependency_regression,omitempty"`
 	PlaybookStep         *OperationWorkflowPlaybookStepAssignment           `json:"playbook_step,omitempty"`
 	PlaybookReview       *OperationWorkflowPlaybookCompletionReview         `json:"playbook_review,omitempty"`

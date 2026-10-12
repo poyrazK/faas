@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,6 +67,13 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 			labels = append(labels, step.OutcomeCode+": "+step.Label)
 		}
 		e.Summary = "Follow-up dependency regression: " + strings.Join(labels, ", ")
+	}
+	if recovery := n.DependencyRecovery; recovery != nil {
+		labels := []string{}
+		for _, step := range recovery.ReadySteps {
+			labels = append(labels, step.OutcomeCode+": "+step.Label)
+		}
+		e.Summary = "Follow-up dependency recovery: " + strings.Join(labels, ", ") + "; regression notice " + fmt.Sprint(recovery.Regression.Sequence)
 	}
 	if n.Change != nil {
 		links(e, n.Change.CurrentOperationID)

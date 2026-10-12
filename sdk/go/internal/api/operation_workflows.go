@@ -402,15 +402,22 @@ type OperationWorkflowPlaybookStepReadiness struct {
 }
 
 type OperationWorkflowPlaybookDependencyState struct {
-	OutcomeCode string                                 `json:"outcome_code"`
-	ItemIndex   int                                    `json:"item_index"`
-	Label       string                                 `json:"label"`
-	Status      string                                 `json:"status"`
-	Owner       string                                 `json:"owner"`
-	Readiness   OperationWorkflowPlaybookStepReadiness `json:"readiness"`
+	Regression  *OperationWorkflowReadinessOutcomeEscalationReference `json:"regression,omitempty"`
+	OutcomeCode string                                                `json:"outcome_code"`
+	ItemIndex   int                                                   `json:"item_index"`
+	Label       string                                                `json:"label"`
+	Status      string                                                `json:"status"`
+	Owner       string                                                `json:"owner"`
+	Readiness   OperationWorkflowPlaybookStepReadiness                `json:"readiness"`
 }
 type OperationWorkflowPlaybookDependencyRegression struct {
 	CheckedAt             time.Time                                  `json:"checked_at"`
 	ReopenedPrerequisites []OperationWorkflowPlaybookDependencyState `json:"reopened_prerequisites"`
 	AffectedSteps         []OperationWorkflowPlaybookDependencyState `json:"affected_steps"`
+}
+
+type OperationWorkflowPlaybookDependencyRecovery struct {
+	CheckedAt  time.Time                                            `json:"checked_at"`
+	Regression OperationWorkflowReadinessOutcomeEscalationReference `json:"regression"`
+	ReadySteps []OperationWorkflowPlaybookDependencyState           `json:"ready_steps"`
 }
