@@ -34,14 +34,18 @@ func readPlaybookCompletionOutcome(ctx context.Context, store readinessSubscript
 		status = "unavailable"
 	}
 	result := &api.OperationWorkflowPlaybookCompletionOutcome{Resolution: resolution, Alignment: "unavailable", Explanation: "Current application evidence cannot determine whether the declared resolution matches the expected result.", Observation: api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence, DeadlineAt: &escalation.DeadlineAt, DeadlineReached: !at.Before(escalation.DeadlineAt)}}
+	classifyPlaybookOutcomeAcceptance(&result.Observation, escalation.Current.AcceptancePolicy)
 	switch {
 	case resolution == "follow_up_canceled":
 		result.Alignment, result.Explanation = "not_applicable", "The follow-up was canceled; no business success is asserted."
 	case status == "unavailable":
 	case resolution == "expected_outcome_achieved" && status == "achieved":
 		result.Alignment, result.Explanation = "matches", "The application currently reports the frozen expected terminal outcome."
-	case resolution == "alternative_accepted" && status == "different_outcome":
+	case resolution == "alternative_accepted" && status == "different_outcome" && (result.Observation.AcceptancePolicy == nil || result.Observation.Acceptance == "acceptable_alternative"):
 		result.Alignment, result.Explanation = "matches", "The application currently reports a different terminal outcome, accepted by the reviewer."
+		if result.Observation.AcceptancePolicy != nil {
+			result.Explanation = "The application reports a terminal alternative explicitly allowed by the pinned playbook policy."
+		}
 	default:
 		result.Alignment, result.Explanation = "mismatch", "The declared resolution differs from the current application-reported business result."
 	}

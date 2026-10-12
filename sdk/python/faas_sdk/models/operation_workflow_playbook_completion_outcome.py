@@ -33,8 +33,9 @@ class OperationWorkflowPlaybookCompletionOutcome:
     reports."""
     alignment: OperationWorkflowPlaybookCompletionOutcomeAlignment
     """OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted
-    alternative matches a different terminal result; cancellation makes no business assertion. Nonterminal evidence
-    mismatches; incomparable evidence is unavailable."""
+    alternative matches a different terminal result permitted by an explicit pinned policy (legacy absence permits
+    reviewer acceptance); cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable
+    evidence is unavailable."""
     explanation: str
     """OperationWorkflowPlaybookCompletionOutcome.explanation. Server explanation of disposition alignment; does
     not prevent human closure."""

@@ -12,7 +12,7 @@ export type OperationWorkflowPlaybookCompletionOutcome = {
    */
   resolution: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled';
   /**
-   * OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted alternative matches a different terminal result; cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable evidence is unavailable.
+   * OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted alternative matches a different terminal result permitted by an explicit pinned policy (legacy absence permits reviewer acceptance); cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable evidence is unavailable.
    */
   alignment: 'matches' | 'mismatch' | 'unavailable' | 'not_applicable';
   /**

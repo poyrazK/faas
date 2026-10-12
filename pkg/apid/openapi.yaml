@@ -81238,6 +81238,12 @@ components:
       description: OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
       required: [status, reason, evidence]
       properties:
+        acceptance_policy:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeAcceptancePolicy'
+        acceptance:
+          type: string
+          enum: [expected, acceptable_alternative, unexpected, pending, unavailable]
+          description: OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy. Omitted for legacy playbooks; alternatives never change the primary expected-outcome status.
         deadline_at:
           type: string
           format: date-time
@@ -81338,6 +81344,21 @@ components:
           type: string
           format: date-time
           description: OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation, retained through corrections or evidence loss; does not prove when the business result occurred.
+    OperationWorkflowPlaybookOutcomeAcceptancePolicy:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy reviewer acceptance.
+      required: [alternative_outcome_codes]
+      properties:
+        alternative_outcome_codes:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: OperationWorkflowPlaybookOutcomeAcceptancePolicy.alternative_outcome_codes. Distinct application-defined terminal outcome slugs, excluding the primary expected outcome. Sorted canonically; never overrides application reports or the primary deadline target.
+          items:
+            type: string
+            maxLength: 64
+            pattern: '^[a-z][a-z0-9-]{0,63}$'
     OperationWorkflowPlaybookCompletionOutcome:
       type: object
       additionalProperties: false
@@ -81351,7 +81372,7 @@ components:
         alignment:
           type: string
           enum: [matches, mismatch, unavailable, not_applicable]
-          description: OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted alternative matches a different terminal result; cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable evidence is unavailable.
+          description: OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted alternative matches a different terminal result permitted by an explicit pinned policy (legacy absence permits reviewer acceptance); cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable evidence is unavailable.
         explanation:
           type: string
           description: OperationWorkflowPlaybookCompletionOutcome.explanation. Server explanation of disposition alignment; does not prevent human closure.
@@ -81451,6 +81472,8 @@ components:
         and links are never executed by Gregale.
       required: [id, version, summary, match_kind, match_code]
       properties:
+        outcome_acceptance:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeAcceptancePolicy'
         outcome_deadline:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeDeadlinePolicy'
           description: OperationWorkflowPlaybook.outcome_deadline. Optional application attention policy requiring expected_outcome_code. Frozen with guidance; deadline starts at checklist creation, not watch enrollment.

@@ -83,18 +83,19 @@ type OperationWorkflowPlaybookEvidenceCheck struct {
 }
 
 type OperationWorkflowPlaybook struct {
-	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy `json:"outcome_deadline,omitempty" yaml:"outcome_deadline,omitempty" toml:"outcome_deadline"`
-	ExpectedOutcomeCode  string                                          `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
-	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement  `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
-	ID                   string                                          `json:"id" yaml:"id" toml:"id"`
-	Version              int                                             `json:"version" yaml:"version" toml:"version"`
-	MatchKind            string                                          `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
-	MatchCode            string                                          `json:"match_code" yaml:"match_code" toml:"match_code"`
-	Summary              string                                          `json:"summary" yaml:"summary" toml:"summary"`
-	Owner                string                                          `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
-	RequiredEvidence     []string                                        `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
-	RunbookURL           string                                          `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
-	ActionURL            string                                          `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
+	OutcomeAcceptance    *OperationWorkflowPlaybookOutcomeAcceptancePolicy `json:"outcome_acceptance,omitempty" yaml:"outcome_acceptance,omitempty" toml:"outcome_acceptance"`
+	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy   `json:"outcome_deadline,omitempty" yaml:"outcome_deadline,omitempty" toml:"outcome_deadline"`
+	ExpectedOutcomeCode  string                                            `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
+	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement    `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
+	ID                   string                                            `json:"id" yaml:"id" toml:"id"`
+	Version              int                                               `json:"version" yaml:"version" toml:"version"`
+	MatchKind            string                                            `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
+	MatchCode            string                                            `json:"match_code" yaml:"match_code" toml:"match_code"`
+	Summary              string                                            `json:"summary" yaml:"summary" toml:"summary"`
+	Owner                string                                            `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
+	RequiredEvidence     []string                                          `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
+	RunbookURL           string                                            `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
+	ActionURL            string                                            `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
 }
 type OperationWorkflowPlaybookGuidance struct {
 	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
@@ -264,11 +265,13 @@ type OperationWorkflowPlaybookEvidenceEvent struct {
 
 // Business results are observed separately from human progress and do not establish causation.
 type OperationWorkflowPlaybookBusinessOutcome struct {
-	DeadlineAt      *time.Time                                `json:"deadline_at,omitempty"`
-	DeadlineReached bool                                      `json:"deadline_reached,omitempty"`
-	Status          string                                    `json:"status"`
-	Reason          string                                    `json:"reason"`
-	Evidence        OperationWorkflowReadinessBusinessOutcome `json:"evidence"`
+	AcceptancePolicy *OperationWorkflowPlaybookOutcomeAcceptancePolicy `json:"acceptance_policy,omitempty"`
+	Acceptance       string                                            `json:"acceptance,omitempty"`
+	DeadlineAt       *time.Time                                        `json:"deadline_at,omitempty"`
+	DeadlineReached  bool                                              `json:"deadline_reached,omitempty"`
+	Status           string                                            `json:"status"`
+	Reason           string                                            `json:"reason"`
+	Evidence         OperationWorkflowReadinessBusinessOutcome         `json:"evidence"`
 }
 type OperationWorkflowPlaybookOutcomeChange struct {
 	BeforeStatus              string                                   `json:"before_status"`
@@ -322,4 +325,9 @@ type OperationWorkflowPlaybookCompletionReviewEvent struct {
 	Resolution           string                                   `json:"resolution"`
 	Previous             OperationWorkflowPlaybookBusinessOutcome `json:"previous"`
 	Current              OperationWorkflowPlaybookBusinessOutcome `json:"current"`
+}
+
+// Explicit empty alternatives means only the expected terminal outcome is acceptable.
+type OperationWorkflowPlaybookOutcomeAcceptancePolicy struct {
+	AlternativeOutcomeCodes []string `json:"alternative_outcome_codes" yaml:"alternative_outcome_codes" toml:"alternative_outcome_codes"`
 }

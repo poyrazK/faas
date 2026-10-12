@@ -1,6 +1,10 @@
 package state
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"slices"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 func projectWorkflowPlaybookBusinessOutcomes(out *api.OperationWorkflowCase) {
 	for i := range out.PlaybookProgress {
@@ -23,6 +27,7 @@ func projectWorkflowPlaybookBusinessOutcomes(out *api.OperationWorkflowCase) {
 			evidence.Explanation = "The pinned playbook is invalid; its business expectation cannot be evaluated."
 		}
 		p.BusinessOutcome = &api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence, DeadlineAt: p.OutcomeDeadlineAt, DeadlineReached: p.OutcomeDeadlineAt != nil && !out.EvidenceCheckedAt.Before(*p.OutcomeDeadlineAt)}
+		classifyPlaybookOutcomeAcceptance(p.BusinessOutcome, p.Playbook.OutcomeAcceptance)
 	}
 	out.Limitations = append(out.Limitations, "Playbook business results follow the frozen expected terminal outcome in the exact workflow contract. They neither close human checklists nor establish that playbook work caused an application outcome.")
 }
@@ -35,7 +40,7 @@ func playbookBusinessOutcomeKey(out *api.OperationWorkflowPlaybookBusinessOutcom
 	if out.Status == "achieved" || out.Status == "different_outcome" {
 		code = out.Evidence.ReportedOutcomeCode
 	}
-	return readinessDigest([]string{out.Status, out.Reason, code})
+	return readinessDigest([]string{out.Status, out.Reason, code, out.Acceptance})
 }
 
 // Retention loss must not turn an older report into a newly observed business result.
@@ -54,5 +59,27 @@ func guardPlaybookWatchOutcome(w *api.OperationWorkflowPlaybookEvidenceWatch, cu
 	if observed.Status != "unavailable" {
 		w.OutcomeStateRevision = max(w.OutcomeStateRevision, observed.Evidence.StateRevision)
 	}
+	classifyPlaybookOutcomeAcceptance(&observed, observed.AcceptancePolicy)
 	w.BusinessOutcome = &observed
+}
+
+func classifyPlaybookOutcomeAcceptance(out *api.OperationWorkflowPlaybookBusinessOutcome, policy *api.OperationWorkflowPlaybookOutcomeAcceptancePolicy) {
+	out.AcceptancePolicy = policy
+	out.Acceptance = ""
+	if policy == nil {
+		return
+	}
+	switch out.Status {
+	case "achieved":
+		out.Acceptance = "expected"
+	case "different_outcome":
+		out.Acceptance = "unexpected"
+		if slices.Contains(policy.AlternativeOutcomeCodes, out.Evidence.ReportedOutcomeCode) {
+			out.Acceptance = "acceptable_alternative"
+		}
+	case "pending":
+		out.Acceptance = "pending"
+	default:
+		out.Acceptance = "unavailable"
+	}
 }

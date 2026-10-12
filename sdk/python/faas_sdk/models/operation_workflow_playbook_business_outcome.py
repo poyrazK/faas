@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_playbook_business_outcome_acceptance import (
+    OperationWorkflowPlaybookBusinessOutcomeAcceptance,
+    check_operation_workflow_playbook_business_outcome_acceptance,
+)
 from ..models.operation_workflow_playbook_business_outcome_status import (
     OperationWorkflowPlaybookBusinessOutcomeStatus,
     check_operation_workflow_playbook_business_outcome_status,
@@ -13,6 +17,9 @@ from ..models.operation_workflow_playbook_business_outcome_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_outcome_acceptance_policy import (
+        OperationWorkflowPlaybookOutcomeAcceptancePolicy,
+    )
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
 
 
@@ -39,6 +46,13 @@ class OperationWorkflowPlaybookBusinessOutcome:
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
     immutable; current checks are live reads."""
+    acceptance_policy: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
+    playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy
+    reviewer acceptance."""
+    acceptance: OperationWorkflowPlaybookBusinessOutcomeAcceptance | Unset = UNSET
+    """OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy.
+    Omitted for legacy playbooks; alternatives never change the primary expected-outcome status."""
     deadline_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured."""
     deadline_reached: bool | Unset = UNSET
@@ -51,6 +65,14 @@ class OperationWorkflowPlaybookBusinessOutcome:
         reason = self.reason
 
         evidence = self.evidence.to_dict()
+
+        acceptance_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.acceptance_policy, Unset):
+            acceptance_policy = self.acceptance_policy.to_dict()
+
+        acceptance: str | Unset = UNSET
+        if not isinstance(self.acceptance, Unset):
+            acceptance = self.acceptance
 
         deadline_at: str | Unset = UNSET
         if not isinstance(self.deadline_at, Unset):
@@ -67,6 +89,10 @@ class OperationWorkflowPlaybookBusinessOutcome:
                 "evidence": evidence,
             }
         )
+        if acceptance_policy is not UNSET:
+            field_dict["acceptance_policy"] = acceptance_policy
+        if acceptance is not UNSET:
+            field_dict["acceptance"] = acceptance
         if deadline_at is not UNSET:
             field_dict["deadline_at"] = deadline_at
         if deadline_reached is not UNSET:
@@ -76,6 +102,9 @@ class OperationWorkflowPlaybookBusinessOutcome:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_outcome_acceptance_policy import (
+            OperationWorkflowPlaybookOutcomeAcceptancePolicy,
+        )
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
 
         d = dict(src_dict)
@@ -84,6 +113,20 @@ class OperationWorkflowPlaybookBusinessOutcome:
         reason = d.pop("reason")
 
         evidence = OperationWorkflowReadinessBusinessOutcome.from_dict(d.pop("evidence"))
+
+        _acceptance_policy = d.pop("acceptance_policy", UNSET)
+        acceptance_policy: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset
+        if isinstance(_acceptance_policy, Unset):
+            acceptance_policy = UNSET
+        else:
+            acceptance_policy = OperationWorkflowPlaybookOutcomeAcceptancePolicy.from_dict(_acceptance_policy)
+
+        _acceptance = d.pop("acceptance", UNSET)
+        acceptance: OperationWorkflowPlaybookBusinessOutcomeAcceptance | Unset
+        if isinstance(_acceptance, Unset):
+            acceptance = UNSET
+        else:
+            acceptance = check_operation_workflow_playbook_business_outcome_acceptance(_acceptance)
 
         _deadline_at = d.pop("deadline_at", UNSET)
         deadline_at: datetime.datetime | Unset
@@ -98,6 +141,8 @@ class OperationWorkflowPlaybookBusinessOutcome:
             status=status,
             reason=reason,
             evidence=evidence,
+            acceptance_policy=acceptance_policy,
+            acceptance=acceptance,
             deadline_at=deadline_at,
             deadline_reached=deadline_reached,
         )

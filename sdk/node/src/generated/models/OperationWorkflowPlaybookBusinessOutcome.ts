@@ -2,11 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookOutcomeAcceptancePolicy } from './OperationWorkflowPlaybookOutcomeAcceptancePolicy.js';
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 /**
  * OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
  */
 export type OperationWorkflowPlaybookBusinessOutcome = {
+  acceptance_policy?: OperationWorkflowPlaybookOutcomeAcceptancePolicy;
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy. Omitted for legacy playbooks; alternatives never change the primary expected-outcome status.
+   */
+  acceptance?: 'expected' | 'acceptable_alternative' | 'unexpected' | 'pending' | 'unavailable';
   /**
    * OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured.
    */

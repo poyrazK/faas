@@ -1223,6 +1223,7 @@ export type { OperationWorkflowPlaybookEvidenceRequirement } from './models/Oper
 export type { OperationWorkflowPlaybookEvidenceWatch } from './models/OperationWorkflowPlaybookEvidenceWatch.js';
 export type { OperationWorkflowPlaybookEvidenceWatchRequest } from './models/OperationWorkflowPlaybookEvidenceWatchRequest.js';
 export type { OperationWorkflowPlaybookGuidance } from './models/OperationWorkflowPlaybookGuidance.js';
+export type { OperationWorkflowPlaybookOutcomeAcceptancePolicy } from './models/OperationWorkflowPlaybookOutcomeAcceptancePolicy.js';
 export type { OperationWorkflowPlaybookOutcomeChange } from './models/OperationWorkflowPlaybookOutcomeChange.js';
 export type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './models/OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
 export type { OperationWorkflowPlaybookOutcomeEscalation } from './models/OperationWorkflowPlaybookOutcomeEscalation.js';

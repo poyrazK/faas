@@ -818,7 +818,7 @@ export interface OperationWorkflowCase { playbook_progress: OperationWorkflowPla
 
 export interface OperationWorkflowPlaybookEvidenceRequirement { label: string; kind: 'milestone' | 'prerequisite' | 'verification'; operation: string; milestone?: string; prerequisite_operation?: string; from_state?: string; to_state?: string; group_id?: string; path_id?: string; blocker_code?: string }
 export interface OperationWorkflowPlaybookEvidenceCheck { requirement: OperationWorkflowPlaybookEvidenceRequirement; status: 'satisfied' | 'missing' | 'stale' | 'invalidated' | 'unavailable'; reason: string; checked_at: string; state_revision?: number; reporting_operation_id?: string; review_suggested: boolean; evidence?: OperationWorkflowInstanceMilestoneRef; prerequisite?: OperationWorkflowRetainedMilestone }
-export interface OperationWorkflowPlaybook { outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy; expected_outcome_code?: string; evidence_requirements?: OperationWorkflowPlaybookEvidenceRequirement[]; id: string; version: number; match_kind: 'blocker' | 'missing_milestone' | 'missing_dependency' | 'pending_verification' | 'requirement'; match_code: string; summary: string; owner?: string; required_evidence?: string[]; runbook_url?: string; action_url?: string }
+export interface OperationWorkflowPlaybook { outcome_acceptance?: OperationWorkflowPlaybookOutcomeAcceptancePolicy; outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy; expected_outcome_code?: string; evidence_requirements?: OperationWorkflowPlaybookEvidenceRequirement[]; id: string; version: number; match_kind: 'blocker' | 'missing_milestone' | 'missing_dependency' | 'pending_verification' | 'requirement'; match_code: string; summary: string; owner?: string; required_evidence?: string[]; runbook_url?: string; action_url?: string }
 export interface OperationWorkflowPlaybookGuidance { playbook: OperationWorkflowPlaybook; contract_version: number; reporting_operation_id: string }
 
 export interface OperationWorkflowPlaybookProgressStartRequest { playbook_id: string; playbook_version: number; contract_version: number; reporting_operation_id: string }
@@ -838,7 +838,7 @@ export interface OperationWorkflowPlaybookEvidenceWatch { outcome_deadline?: Ope
 export interface OperationWorkflowPlaybookEvidenceChange { before_status: string; before_reason: string; after: OperationWorkflowPlaybookEvidenceCheck }
 export interface OperationWorkflowPlaybookEvidenceEvent { deadline_at?: string; business_outcome?: OperationWorkflowPlaybookBusinessOutcome; outcome_change?: OperationWorkflowPlaybookOutcomeChange; watch_id: string; progress_id: string; platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; contract_version: number; playbook_id: string; playbook_version: number; checked_at: string; changes: OperationWorkflowPlaybookEvidenceChange[] }
 
-export interface OperationWorkflowPlaybookBusinessOutcome { deadline_at?: string; deadline_reached?: boolean; status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable'; reason: string; evidence: OperationWorkflowReadinessBusinessOutcome }
+export interface OperationWorkflowPlaybookBusinessOutcome { acceptance_policy?: OperationWorkflowPlaybookOutcomeAcceptancePolicy; acceptance?: 'expected' | 'acceptable_alternative' | 'unexpected' | 'pending' | 'unavailable'; deadline_at?: string; deadline_reached?: boolean; status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable'; reason: string; evidence: OperationWorkflowReadinessBusinessOutcome }
 export interface OperationWorkflowPlaybookOutcomeChange { before_status: string; before_reason: string; before_reported_outcome_code?: string; after: OperationWorkflowPlaybookBusinessOutcome }
 
 export interface OperationWorkflowPlaybookOutcomeDeadlinePolicy { acknowledge_after_seconds?: number; fallback_owner?: string; after_seconds: number; owner: string; follow_up_after_seconds: number; note?: string }
@@ -848,3 +848,5 @@ export interface OperationWorkflowPlaybookCompletionOutcome { resolution: 'expec
 
 export interface OperationWorkflowPlaybookCompletionReview { id: string; revision: number; owner: string; status: 'active' | 'expired' | 'stopped'; expires_at: string; state_revision: number; current: OperationWorkflowPlaybookBusinessOutcome }
 export interface OperationWorkflowPlaybookCompletionReviewEvent { review_id: string; source_notification_id: string; source_sequence: number; resolution: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled'; previous: OperationWorkflowPlaybookBusinessOutcome; current: OperationWorkflowPlaybookBusinessOutcome }
+
+export interface OperationWorkflowPlaybookOutcomeAcceptancePolicy { alternative_outcome_codes: string[] }
