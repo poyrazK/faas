@@ -141,6 +141,9 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 // FAAS_TEST_REFERENCE_SSD=1 turns the measurement into the p95 < 350 ms
 // release gate. Other hosts still exercise restore correctness and report the
 // distribution, but their timings do not enter the SSD acceptance cohort.
+// FAAS_TEST_PRODUCTION_DEFAULTS=1 configures the VMM as vmmd does by default:
+// free page reporting (ADR-907), per-account pmem bases (ADR-908), restore
+// prefetch at concurrency 3 (ADR-225) and prepared networks (ADR-149).
 func TestMetalParkWakeCycle(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 
@@ -156,11 +159,27 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create snapshot storage: %v", err)
 	}
-	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 30*time.Second).WithStorage(store),
-		Paths{Kernel: kernel}, fcVersion, nil, nil)
+	v := newMetalVMM(t, 30*time.Second).WithStorage(store)
+	account := ""
+	productionDefaults := os.Getenv("FAAS_TEST_PRODUCTION_DEFAULTS") == "1"
+	if productionDefaults {
+		v = v.WithFreePageReporting(FreePageReportingSupported(fcVersion)).WithRestorePrefetch(true).WithRestoreConcurrency(3)
+		if PmemBaseSupported(fcVersion) {
+			v = v.WithPmemBase(PmemBaseDirAuto)
+		}
+		account = "acct-cycle"
+	}
+	m := NewManager(wire.ExecRunner{}, v, Paths{Kernel: kernel}, fcVersion, nil, nil)
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx := context.Background()
+	if productionDefaults {
+		if err := m.EnablePreparedNetworks(ctx, 4); err != nil {
+			t.Logf("prepared networks unavailable on this host: %v", err)
+		} else {
+			t.Cleanup(func() { _ = m.ClosePreparedNetworks() })
+		}
+	}
 	snapDir := t.TempDir()
 	snap := &Snapshot{
 		FCVersion:         fcVersion,
@@ -171,7 +190,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 
 	// Prime: cold boot once, then park to produce the first snapshot.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: "cycle", Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
+		Instance: "cycle", AccountID: account, Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
@@ -188,7 +207,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	for i := 0; i < cycles; i++ {
 		start := time.Now()
 		inst, err := m.WakeWithNetworkReady(ctx, WakeRequest{
-			Instance: "cycle", Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+			Instance: "cycle", AccountID: account, Plan: "pro", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 		}, func(ready WakeNetworkReady) {
 			hookCalls++
 			if ready.Instance != "cycle" {
