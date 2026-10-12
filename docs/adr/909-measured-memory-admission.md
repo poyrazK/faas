@@ -98,6 +98,40 @@ counts:
 Their ratio on production nodes, over real traffic, is the evidence this ADR
 needs before admission itself changes.
 
+## Enforcement behind a flag (implemented 2026-10-12)
+
+`measured_admission = true` in schedd's config switches RAM admission to
+the shadow figures. It is off by default, so invariant 2 holds unless the
+owner turns it on. With it on, a request fits a node iff
+`used + request ≤ ceiling`, where `used` is the larger of:
+
+- the node's measured charge from the latest tick (no older than
+  `MeasuredAdmissionSampleMaxAgeMillis`, 2 s), plus the full reservation of
+  every instance admitted after that tick, which the measurement cannot see;
+- the node's reservations minus the overcommit allowance, so Σ(plan + 8)
+  stays under `MeasuredAdmissionMaxOvercommitPercent` (200%) of the ceiling.
+
+A node without a fresh measurement falls back to its reservations. The
+placement chooser floors vmmd's live report with the same figure
+(`NodeLedger.AdmissionUsedMB`), so placement and admission agree.
+
+On the n2 node's 8,593 MB ceiling with 1 GiB VMs measuring 260 MB, the
+ledger admits 16 instead of 8 (unit tests in
+`pkg/sched/admission_measured_test.go`, including random admit/release
+traffic).
+
+Not built yet, and why the flag stays off:
+
+- The charge is the latest sample plus 25% headroom, not the 10-minute p95
+  of proposal 1. A VM that grows right after a sample is covered only by
+  the headroom and the plan cap.
+- Eviction under memory pressure (proposal 3) does not exist. Without it,
+  a burst past the measured charges falls to the kernel OOM killer.
+- The warm floor still books full reservations (`HeadroomMB`), so it never
+  pre-warms into the overcommit.
+- Measurements come from vmmd. A vmmd that under-reports can over-admit
+  its own node up to the overcommit cap; vmmd already runs as root there.
+
 ## More reclaim levers, measured (2026-10-12)
 
 - **virtio-mem at scale:** six Node VMs served requests round robin while

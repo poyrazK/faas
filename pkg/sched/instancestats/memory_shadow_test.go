@@ -5,7 +5,9 @@ package instancestats
 import (
 	"math"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,6 +37,36 @@ func TestMemoryShadow(t *testing.T) {
 	for node, w := range want {
 		if got[node] != w {
 			t.Errorf("%s = %+v, want %+v", node, got[node], w)
+		}
+	}
+}
+
+func TestReaderMeasuredMB(t *testing.T) {
+	r := NewReader()
+	now := time.Unix(1_800_000_000, 0)
+	if _, _, ok := r.MeasuredMB("n1", now); ok {
+		t.Fatal("measurement before the first tick")
+	}
+	p := &Poller{Reader: r}
+	p.publishMemoryShadow([]state.Instance{
+		{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+	}, []InstanceStat{{InstanceID: "a", RSSMB: 200}}, now)
+	maxAge := time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis) * time.Millisecond
+	cases := []struct {
+		name   string
+		node   string
+		at     time.Time
+		wantMB int
+		wantOK bool
+	}{
+		{"fresh", "n1", now.Add(maxAge), 250, true},
+		{"stale", "n1", now.Add(maxAge + time.Millisecond), 0, false},
+		{"unmeasured node", "n2", now, 0, false},
+	}
+	for _, tc := range cases {
+		mb, asOf, ok := r.MeasuredMB(tc.node, tc.at)
+		if mb != tc.wantMB || ok != tc.wantOK || (ok && !asOf.Equal(now)) {
+			t.Errorf("%s: MeasuredMB = %d, %v, %v; want %d, %v, %v", tc.name, mb, asOf, ok, tc.wantMB, now, tc.wantOK)
 		}
 	}
 }

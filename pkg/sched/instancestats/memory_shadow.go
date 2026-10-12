@@ -2,14 +2,15 @@ package instancestats
 
 import (
 	"math"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // NodeMemoryShadow compares, for one node, what admission books today with
-// what admission by measured memory would book (ADR-909, proposed). It is
-// reported only; admission is unchanged.
+// what admission by measured memory books (ADR-909). Admission uses
+// MeasuredMB only when schedd enables measured admission.
 type NodeMemoryShadow struct {
 	ReservedMB int
 	MeasuredMB int
@@ -40,14 +41,40 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat) map[string]No
 	return out
 }
 
-func (p *Poller) publishMemoryShadow(instances []state.Instance, rows []InstanceStat) {
+// publishMemoryShadow records the shadow for admission and metrics. asOf is
+// when the tick started, before it listed the instances.
+func (p *Poller) publishMemoryShadow(instances []state.Instance, rows []InstanceStat, asOf time.Time) {
+	shadow := memoryShadow(instances, rows)
+	if p.Reader != nil {
+		p.Reader.replaceMemoryShadow(shadow, asOf)
+	}
 	if p.Metrics == nil {
 		return
 	}
-	shadow := memoryShadow(instances, rows)
 	byNode := make(map[string][2]int, len(shadow))
 	for node, s := range shadow {
 		byNode[node] = [2]int{s.ReservedMB, s.MeasuredMB}
 	}
 	p.Metrics.ReplaceNodeMemoryShadow(byNode)
+}
+
+type memoryShadowSnapshot struct {
+	byNode map[string]NodeMemoryShadow
+	asOf   time.Time
+}
+
+func (r *Reader) replaceMemoryShadow(byNode map[string]NodeMemoryShadow, asOf time.Time) {
+	r.shadow.Store(&memoryShadowSnapshot{byNode: byNode, asOf: asOf})
+}
+
+// MeasuredMB is the node's ADR-909 measured charge from the latest tick and
+// the time that tick read the instances. ok is false when the node was not
+// measured or the measurement is older than MeasuredAdmissionSampleMaxAgeMillis.
+func (r *Reader) MeasuredMB(nodeID string, now time.Time) (int, time.Time, bool) {
+	snap := r.shadow.Load()
+	if snap == nil || now.Sub(snap.asOf) > time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis)*time.Millisecond {
+		return 0, time.Time{}, false
+	}
+	s, ok := snap.byNode[nodeID]
+	return s.MeasuredMB, snap.asOf, ok
 }

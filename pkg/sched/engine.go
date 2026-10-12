@@ -4412,7 +4412,7 @@ func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInp
 }
 
 // applyLiveCapacityMB returns the chooser's per-node used_mb input:
-// max(live report, ledger) when the report is fresh, 0 (sentinel)
+// max(live report, ledger.AdmissionUsedMB) when the report is fresh, 0 (sentinel)
 // when stale or absent. The ledger floor closes the stale-low /
 // hostile-report gap — a vmmd that under-reports its cgroup
 // memory.current cannot shrink the live accounting and force schedd
@@ -4440,7 +4440,7 @@ func (e *Engine) applyLiveCapacityMB(_ context.Context, nodeID string) int64 {
 		return 0
 	}
 	used := int64(live.UsedMB)
-	if ledger := int64(e.ledger.ResidentRAMForNode(nodeID)); ledger > used {
+	if ledger := int64(e.ledger.AdmissionUsedMB(nodeID)); ledger > used {
 		used = ledger
 	}
 	if used < 0 {
