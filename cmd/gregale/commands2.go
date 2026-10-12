@@ -7687,12 +7687,31 @@ func mapFailureMessage(err string) string {
 // detection sites (commits 7-13) emit typed *api.Problem and the
 // CLI renderer calls mapFailureProblem to lift the hint/why/fix
 // without re-classifying the failure.
+//
+// Production-us hunt #9 (H9-92): this returned only the hint, so a deploy
+// whose app listened on the wrong port printed "your app isn't accepting
+// traffic on the port we expect" with neither the cause nor the fix the
+// catalog carries.
 func mapFailureProblem(p *api.Problem) string {
 	if p == nil || p.Code == "" {
 		return ""
 	}
 	_ = whycopy.Decorate(p, p.Code, nil)
-	return p.Hint
+	if p.Hint == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(p.Hint)
+	if why := strings.TrimSpace(p.Why); why != "" {
+		b.WriteString("\n  why: " + why)
+	}
+	if fix := strings.TrimSpace(p.Fix); fix != "" {
+		b.WriteString("\n  fix:")
+		for _, line := range strings.Split(fix, "\n") {
+			b.WriteString("\n    " + strings.TrimSpace(line))
+		}
+	}
+	return b.String()
 }
 
 // cmdUsageDaily: GET /v1/usage/daily?day=YYYY-MM-DD. Per-(app, day)
