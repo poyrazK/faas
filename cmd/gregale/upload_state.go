@@ -44,16 +44,18 @@ type resumableUploadState struct {
 // uploadStatePath is keyed by the app and absolute archive path so rerunning
 // the same deploy resumes naturally while separate archives can progress in
 // parallel. The path itself is stored only as diagnostic metadata.
-func uploadStatePath(appSlug, archivePath string) (string, error) {
-	abs, err := filepath.Abs(archivePath)
-	if err != nil {
-		return "", fmt.Errorf("absolutize upload archive: %w", err)
-	}
+// uploadStatePath names the resumable state of one upload by what is being
+// uploaded, not where the archive lives: `deploy --path` packs the directory
+// into a fresh temp file on every run, so a path-keyed state never matched
+// and every retry re-uploaded the whole archive (production-us hunt #9: a
+// 76 MiB source restarted from 0% on each retry, leaving a new state file and
+// an open server session each time).
+func uploadStatePath(appSlug, archiveSHA256, optionsSHA256 string) (string, error) {
 	dir, err := uploadStateDir()
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + abs))
+	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + strings.ToLower(archiveSHA256) + "\x00" + optionsSHA256))
 	return filepath.Join(dir, hex.EncodeToString(key[:])+".json"), nil
 }
 

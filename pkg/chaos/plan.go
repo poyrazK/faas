@@ -26,6 +26,10 @@ const (
 	KindTCPReset          = "tcp_reset"
 	KindTCPConnectTimeout = "tcp_connect_timeout"
 	KindTCPConnectRefused = "tcp_connect_refused"
+	KindDNSLatency        = "dns_latency"
+	KindDNSTimeout        = "dns_timeout"
+	KindDNSServFail       = "dns_servfail"
+	KindDNSNXDomain       = "dns_nxdomain"
 	DirectionUpstream     = "upstream"
 	DirectionDownstream   = "downstream"
 	DirectionBoth         = "both"
@@ -73,6 +77,7 @@ func (p Plan) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(p.Rules))
 	validatedTCP := make([]Rule, 0, len(p.Rules))
+	validatedDNS := make([]Rule, 0, len(p.Rules))
 	for i, rule := range p.Rules {
 		if !validWorkloadName(rule.To) {
 			return fmt.Errorf("rule %d has an invalid target workload", i+1)
@@ -100,6 +105,32 @@ func (p Plan) Validate() error {
 				}
 			}
 			validatedTCP = append(validatedTCP, rule)
+			continue
+		}
+		if rule.IsDNS() {
+			if rule.Port != 0 || rule.Direction != "" || rule.RateKiBPerSecond != 0 || rule.ResetAfterMS != 0 || rule.StatusCode != 0 {
+				return fmt.Errorf("rule %d TCP and HTTP fields are not valid for DNS faults", i+1)
+			}
+			switch rule.Kind {
+			case KindDNSLatency:
+				if rule.LatencyMS < 1 || rule.LatencyMS > MaxLatency.Milliseconds() {
+					return fmt.Errorf("rule %d latency_ms must be between 1 and %d", i+1, MaxLatency.Milliseconds())
+				}
+			case KindDNSTimeout, KindDNSServFail, KindDNSNXDomain:
+				if rule.LatencyMS != 0 {
+					return fmt.Errorf("rule %d latency_ms is only valid for dns_latency", i+1)
+				}
+			default:
+				return fmt.Errorf("rule %d has unsupported DNS fault kind %q", i+1, rule.Kind)
+			}
+			for _, previous := range validatedDNS {
+				sameTarget := rule.To == previous.To
+				sameCaller := rule.From == "" || previous.From == "" || rule.From == previous.From
+				if sameTarget && sameCaller && rule.IsDNSTerminalFault() && previous.IsDNSTerminalFault() {
+					return fmt.Errorf("rule %d conflicts with %s for an overlapping DNS query", i+1, previous.Kind)
+				}
+			}
+			validatedDNS = append(validatedDNS, rule)
 			continue
 		}
 		if rule.Port != 0 || rule.Direction != "" || rule.RateKiBPerSecond != 0 || rule.ResetAfterMS != 0 {

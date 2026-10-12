@@ -18,7 +18,10 @@ T = TypeVar("T", bound="ScenarioTestChaosMatchesResponse")
 
 @_attrs_define
 class ScenarioTestChaosMatchesResponse:
-    """Run-scoped counts of HTTP requests and TCP connections that matched the current or most recently cleared plan."""
+    """Run-scoped counts of HTTP requests, private-service DNS lookups, and TCP connections that matched the current or
+    most recently cleared plan.
+
+    """
 
     matches: list[ScenarioTestChaosMatch]
     generation: UUID | Unset = UNSET

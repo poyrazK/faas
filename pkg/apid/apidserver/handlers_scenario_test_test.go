@@ -54,6 +54,18 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 		t.Fatalf("chaos receipt = (%+v, %v)", chaosReceipt, err)
 	}
 	for _, rule := range []api.ScenarioTestChaosRule{
+		{Kind: chaos.KindDNSLatency, LatencyMS: 250},
+		{Kind: chaos.KindDNSTimeout},
+		{Kind: chaos.KindDNSServFail},
+		{Kind: chaos.KindDNSNXDomain},
+	} {
+		rule.From, rule.To, rule.Percent = "api", "worker", 100
+		rec := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{DurationMS: 1000, Rules: []api.ScenarioTestChaosRule{rule}}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("DNS plan %s: %d %s", rule.Kind, rec.Code, rec.Body.String())
+		}
+	}
+	for _, rule := range []api.ScenarioTestChaosRule{
 		{Kind: chaos.KindTCPLatency, LatencyMS: 250},
 		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: 64, Direction: chaos.DirectionDownstream},
 		{Kind: chaos.KindTCPTimeout},
