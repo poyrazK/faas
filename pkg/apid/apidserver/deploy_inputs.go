@@ -561,6 +561,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			RollbackOn5xx:             rollout.RollbackOn5xx,
 			DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
 			OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+			OverrideEnv:               append(json.RawMessage(nil), rollout.OverrideEnv...),
+			MCPTaskMigrationOverride:  rollout.MCPTaskMigrationOverride,
 			CanaryPreset:              rollout.CanaryPreset,
 			CanaryStep:                rollout.CanaryStep,
 			CanaryTotalSteps:          rollout.CanaryTotalSteps,

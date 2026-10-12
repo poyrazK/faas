@@ -460,13 +460,18 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 
 func TestDeploymentResponse_EchoesMainDependencies(t *testing.T) {
 	dependencies := []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}
-	dep := state.Deployment{OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)}
-	response := (&server{}).deploymentResponse(dep, state.App{})
-	if !response.HasOverrides {
-		t.Fatal("HasOverrides = false, want true for persisted main dependencies")
-	}
-	if !reflect.DeepEqual(response.OverrideMainDependsOn, dependencies) {
-		t.Fatalf("OverrideMainDependsOn = %+v, want %+v", response.OverrideMainDependsOn, dependencies)
+	for _, dep := range []state.Deployment{
+		{OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
+		{Status: state.DeployLive, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
+		{Status: state.DeployFailed, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
+	} {
+		response := (&server{}).deploymentResponse(dep, state.App{})
+		if !response.HasOverrides {
+			t.Fatal("HasOverrides = false, want true for persisted main dependencies")
+		}
+		if !reflect.DeepEqual(response.OverrideMainDependsOn, dependencies) {
+			t.Fatalf("OverrideMainDependsOn = %+v, want %+v", response.OverrideMainDependsOn, dependencies)
+		}
 	}
 }
 

@@ -5796,7 +5796,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	var workerDrain *api.DeploymentWorkerDrainStatus
 	// Live worker deployments can also drain during scale-in. The audit
 	// summary survives instance deletion and scheduler restarts.
-	if d.Status == state.DeployLive || d.Status.IsTerminal() {
+	if s.store != nil && (d.Status == state.DeployLive || d.Status.IsTerminal()) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		drain, err := s.store.DeploymentWorkerDrainStatus(ctx, d.ID)
 		cancel()
@@ -5807,7 +5807,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		}
 	}
 	var promotionHold *api.DeploymentPromotionHold
-	if !d.Status.IsTerminal() && d.Status != state.DeployLive {
+	if s.store != nil && !d.Status.IsTerminal() && d.Status != state.DeployLive {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
 		cancel()
