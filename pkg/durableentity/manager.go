@@ -137,7 +137,7 @@ func (m *Manager) readManifest(ctx context.Context, id ID) (manifest, string, er
 }
 
 func validManifest(id ID, value manifest) bool {
-	if (value.Schema < 1 || value.Schema > 6) || value.Schema == 1 && value.Generation != 0 || value.ID != id || value.Epoch == 0 || !validUUID(value.Revision) || !validStorageMetadata(value) || !validAlarmDelivery(value) || !validOutboxDelivery(value) {
+	if (value.Schema < 1 || value.Schema > 7) || value.Schema == 1 && value.Generation != 0 || value.ID != id || value.Epoch == 0 || !validUUID(value.Revision) || !validStorageMetadata(value) || !validAlarmDelivery(value) || !validOutboxDelivery(value) || !validRetirement(value) {
 		return false
 	}
 	if value.OwnerID == "" {
@@ -164,6 +164,9 @@ func validUUID(value string) bool {
 func (m *Manager) putManifest(ctx context.Context, value manifest, etag string) error {
 	// Schema 6 fences older writers that cannot preserve relay reservations.
 	value.Schema = 6
+	if value.Retirement != nil {
+		value.Schema = 7
+	}
 	sealStorageUsage(&value)
 	value.Revision = uuid.NewString()
 	body, err := json.Marshal(value)

@@ -845,8 +845,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
 
-- [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
+- [ADR-866: Durable entity developer workflow](866-durable-entity-developer-workflow.md)
+- [ADR-867: Durable entity operational visibility](867-durable-entity-operational-visibility.md)
+- [ADR-868: Durable entity generated clients](868-durable-entity-generated-clients.md)
+- [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
+- [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)

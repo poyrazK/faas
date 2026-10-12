@@ -353,7 +353,10 @@ SHA-256 checksum headers before writing upstream. SigV4 `aws-chunked` PUT and
 UploadPart bodies support signed payload chunks, signed checksum trailers, and
 the unsigned-payload checksum trailer form used by current AWS SDKs. The
 gateway verifies every frame, decoded length, trailer signature, and checksum
-before allowing a complete object or part to reach the provider. Ordinary PUT
+before allowing a complete object or part to reach the provider. Multipart
+initiation accepts `x-amz-checksum-algorithm` (CRC32, CRC32C, CRC64NVME, SHA-1,
+SHA-256), which botocore sends by default; each part's checksum is verified on
+upload, and no composite object checksum is stored. Ordinary PUT
 and multipart initiation accept the standard HTTP metadata fields,
 `x-amz-meta-*`, and URL-encoded `x-amz-tagging`; multipart sessions persist this
 metadata so provider recovery and eventual completion retain it. GET/HEAD
@@ -1659,7 +1662,9 @@ version listing for Enabled marker preparation and recovery. See the
 and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html).
 
 S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
-invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
+invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
+ID after signing, so an unsigned one is ignored and that delete receives a
+generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
 Enabled deletion returns an owned marker version ID. A dispatched uncertain
 intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact

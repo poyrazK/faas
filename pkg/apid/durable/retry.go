@@ -19,7 +19,7 @@ func (s *Service) Retry(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
-	if !s.durableEntityRetryAvailable(w, acct, app) {
+	if !s.RetryAvailable(w, acct, app) {
 		return
 	}
 	var request api.DurableEntityRetryRequest
@@ -49,7 +49,7 @@ func (s *Service) Retry(w http.ResponseWriter, r *http.Request, acct state.Accou
 	httpkit.WriteJSON(w, http.StatusOK, api.DurableEntityRetryResponse{Version: request.ExpectedVersion, Target: request.Target, Rearmed: true})
 }
 
-func (s *Service) durableEntityRetryAvailable(w http.ResponseWriter, acct state.Account, app state.App) bool {
+func (s *Service) RetryAvailable(w http.ResponseWriter, acct state.Account, app state.App) bool {
 	if s.Engine == nil || !s.Apps[app.ID] {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entities_unavailable", "Durable entities unavailable", "this app is not enabled for the durable entity preview"))
 		return false
