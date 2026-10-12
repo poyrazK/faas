@@ -4,12 +4,17 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
 import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
+import type { OperationWorkflowReviewResponseDecisionReview } from './OperationWorkflowReviewResponseDecisionReview.js';
 import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 /**
  * OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
  */
 export type OperationWorkflowReviewResponse = {
+  /**
+   * OperationWorkflowReviewResponse.decision_review. Latched review requirement after the condition captured by an explicit decision changed.
+   */
+  decision_review?: OperationWorkflowReviewResponseDecisionReview;
   /**
    * OperationWorkflowReviewResponse.decision. Explicit human decision with reviewed condition and accountable reason.
    */

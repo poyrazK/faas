@@ -81,6 +81,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			}
 			if req.ReviewResponse.Decision == nil {
 				response.Decision = n.ReviewResponse.Decision
+				response.DecisionReview = n.ReviewResponse.DecisionReview
 			}
 			response.Health = n.ReviewResponse.Health
 			response.CreatedAt = n.ReviewResponse.CreatedAt

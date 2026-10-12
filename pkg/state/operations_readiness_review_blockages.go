@@ -183,7 +183,7 @@ func applyReviewResponseBlockage(r *readinessSubscriptionRecord, n api.Operation
 	}
 	if observation.Failed {
 		n = withReviewResponseHealth(n, observation, r.ReviewBlockages[n.ID], nil)
-		return n, nil, true
+		return applyReviewResponseDecisionReview(r, n)
 	}
 	if r.ReviewBlockages == nil {
 		r.ReviewBlockages = map[string][]string{}
@@ -239,7 +239,8 @@ func applyReviewResponseBlockage(r *readinessSubscriptionRecord, n api.Operation
 	if len(cleared) > 0 {
 		publish("review_response_recovered", "The listed response-plan blockers have cleared in a fresh source observation; other blockers may remain. Inspect the linked reviews before resuming work; the response still requires an explicit decision to resolve.", []string{}, cleared)
 	}
-	return n, notices, true
+	updated, decisionNotices, _ := applyReviewResponseDecisionReview(r, n)
+	return updated, append(notices, decisionNotices...), true
 }
 
 // Include reopened transitive ancestors even when the immediate prerequisite was already blocked.

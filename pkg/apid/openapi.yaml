@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        decision_review:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionReviewEvent'
+          description: OperationWorkflowReadinessNotification.decision_review. Latched review requirement after the condition captured by an explicit decision changed.
         review_blockage:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseBlockageEvent'
           description: OperationWorkflowReadinessNotification.review_blockage. Newly observed blockers or positively verified recoveries for an active response plan.
@@ -79360,6 +79363,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_decision_review_required
           - review_response_recovered
           - review_response_blocked
           - review_response_check_in_overdue
@@ -80649,6 +80653,48 @@ components:
           pattern: '^[a-f0-9]{64}$'
           description: OperationWorkflowReviewResponseDecisionRequest.health_fingerprint. Digest from the sampled health the operator reviewed; absent, legacy or changed observations conflict.
       required: [kind, reason, health_fingerprint]
+    OperationWorkflowReviewResponseDecisionReview:
+      type: object
+      additionalProperties: false
+      description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.decision_at. Time of the decision that needs revalidation.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.required_at. First sampled condition change, committed with its one-time inbox alert.
+        changes:
+          type: array
+          items: {type: string}
+          description: OperationWorkflowReviewResponseDecisionReview.changes. Differences from the immutable reviewed snapshot, including unavailable sources without claiming business failure.
+        health:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
+          description: OperationWorkflowReviewResponseDecisionReview.health. Frozen first changed health observation; live response health may continue changing.
+      required: [decision_at, required_at, changes, health]
+    OperationWorkflowReviewResponseDecisionReviewEvent:
+      type: object
+      additionalProperties: false
+      description: One durable revalidation alert per explicit decision, routed to the current response owner without changing intent, deadlines or application execution.
+      properties:
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseDecisionReviewEvent.source_notification_id. Original risk alert identity.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseDecisionReviewEvent.source_sequence. Original alert sequence in this inbox.
+        decision:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecision'
+          description: OperationWorkflowReviewResponseDecisionReviewEvent.decision. Immutable prior human intent and reviewed condition.
+        review:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionReview'
+          description: OperationWorkflowReviewResponseDecisionReviewEvent.review. First changed condition and its differences.
+      required: [source_notification_id, source_sequence, decision, review]
     OperationWorkflowReviewResponseDecision:
       type: object
       additionalProperties: false
@@ -80865,6 +80911,9 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        decision_review:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionReview'
+          description: OperationWorkflowReviewResponse.decision_review. Latched review requirement after the condition captured by an explicit decision changed.
         decision:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseDecision'
           description: OperationWorkflowReviewResponse.decision. Explicit human decision with reviewed condition and accountable reason.

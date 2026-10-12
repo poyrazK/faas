@@ -15,6 +15,9 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_change import OperationWorkflowReviewResponseChange
     from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+    from ..models.operation_workflow_review_response_decision_review import (
+        OperationWorkflowReviewResponseDecisionReview,
+    )
     from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
     from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
@@ -52,6 +55,9 @@ class OperationWorkflowReviewResponse:
     """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
     """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
+    decision_review: OperationWorkflowReviewResponseDecisionReview | Unset = UNSET
+    """First changed observation for one explicit response decision. Remains latched until a new explicit decision;
+    ordinary edits, acknowledgment and subsequent recovery do not clear it."""
     decision: OperationWorkflowReviewResponseDecision | Unset = UNSET
     """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
     remains application-owned."""
@@ -104,6 +110,10 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = self.history_truncated
 
+        decision_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision_review, Unset):
+            decision_review = self.decision_review.to_dict()
+
         decision: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision, Unset):
             decision = self.decision.to_dict()
@@ -146,6 +156,8 @@ class OperationWorkflowReviewResponse:
                 "history_truncated": history_truncated,
             }
         )
+        if decision_review is not UNSET:
+            field_dict["decision_review"] = decision_review
         if decision is not UNSET:
             field_dict["decision"] = decision
         if health is not UNSET:
@@ -169,6 +181,9 @@ class OperationWorkflowReviewResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_review_response_change import OperationWorkflowReviewResponseChange
         from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+        from ..models.operation_workflow_review_response_decision_review import (
+            OperationWorkflowReviewResponseDecisionReview,
+        )
         from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
         from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
@@ -202,6 +217,13 @@ class OperationWorkflowReviewResponse:
             history.append(history_item)
 
         history_truncated = d.pop("history_truncated")
+
+        _decision_review = d.pop("decision_review", UNSET)
+        decision_review: OperationWorkflowReviewResponseDecisionReview | Unset
+        if isinstance(_decision_review, Unset):
+            decision_review = UNSET
+        else:
+            decision_review = OperationWorkflowReviewResponseDecisionReview.from_dict(_decision_review)
 
         _decision = d.pop("decision", UNSET)
         decision: OperationWorkflowReviewResponseDecision | Unset
@@ -255,6 +277,7 @@ class OperationWorkflowReviewResponse:
             updated_by=updated_by,
             history=history,
             history_truncated=history_truncated,
+            decision_review=decision_review,
             decision=decision,
             health=health,
             fallback_owner=fallback_owner,

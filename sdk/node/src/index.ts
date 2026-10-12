@@ -360,3 +360,5 @@ export type { OperationWorkflowReviewResponseBlockageEvent } from './customer-op
 export type { OperationWorkflowReviewResponseHealth, OperationWorkflowReviewResponseSourceHealth } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseDecisionRequest, OperationWorkflowReviewResponseDecision } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseDecisionReview, OperationWorkflowReviewResponseDecisionReviewEvent } from './customer-operations.js';

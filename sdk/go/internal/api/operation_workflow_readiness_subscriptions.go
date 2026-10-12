@@ -40,31 +40,32 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	ReviewBlockage       *OperationWorkflowReviewResponseBlockageEvent      `json:"review_blockage,omitempty"`
-	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent       `json:"review_check_in,omitempty"`
-	ReviewResponse       *OperationWorkflowReviewResponse                   `json:"review_response,omitempty"`
-	BusinessImpact       *OperationWorkflowReadinessImpactEvent             `json:"business_impact,omitempty"`
-	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery       `json:"dependency_recovery,omitempty"`
-	DependencyRegression *OperationWorkflowPlaybookDependencyRegression     `json:"dependency_regression,omitempty"`
-	PlaybookStep         *OperationWorkflowPlaybookStepAssignment           `json:"playbook_step,omitempty"`
-	PlaybookReview       *OperationWorkflowPlaybookCompletionReview         `json:"playbook_review,omitempty"`
-	PlaybookReviewEvent  *OperationWorkflowPlaybookCompletionReviewEvent    `json:"playbook_review_event,omitempty"`
-	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation        `json:"playbook_escalation,omitempty"`
-	PlaybookEvidence     *OperationWorkflowPlaybookEvidenceEvent            `json:"playbook_evidence,omitempty"`
-	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent `json:"escalation_response,omitempty"`
-	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation       `json:"outcome_escalation,omitempty"`
-	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch    `json:"business_outcome_watch,omitempty"`
-	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent    `json:"business_outcome,omitempty"`
-	VerificationWatch    *OperationWorkflowReadinessVerificationWatch       `json:"verification_watch,omitempty"`
-	Verification         *OperationWorkflowReadinessVerificationEvent       `json:"verification,omitempty"`
-	Reminder             *OperationWorkflowReadinessDueReminder             `json:"reminder,omitempty"`
-	Coordination         *OperationWorkflowReadinessCoordination            `json:"coordination,omitempty"`
-	ID                   string                                             `json:"id"`
-	Sequence             int64                                              `json:"sequence"`
-	Kind                 string                                             `json:"kind"`
-	CreatedAt            time.Time                                          `json:"created_at"`
-	Explanation          string                                             `json:"explanation"`
-	Change               *OperationWorkflowReadinessChange                  `json:"change,omitempty"`
+	DecisionReview       *OperationWorkflowReviewResponseDecisionReviewEvent `json:"decision_review,omitempty"`
+	ReviewBlockage       *OperationWorkflowReviewResponseBlockageEvent       `json:"review_blockage,omitempty"`
+	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent        `json:"review_check_in,omitempty"`
+	ReviewResponse       *OperationWorkflowReviewResponse                    `json:"review_response,omitempty"`
+	BusinessImpact       *OperationWorkflowReadinessImpactEvent              `json:"business_impact,omitempty"`
+	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery        `json:"dependency_recovery,omitempty"`
+	DependencyRegression *OperationWorkflowPlaybookDependencyRegression      `json:"dependency_regression,omitempty"`
+	PlaybookStep         *OperationWorkflowPlaybookStepAssignment            `json:"playbook_step,omitempty"`
+	PlaybookReview       *OperationWorkflowPlaybookCompletionReview          `json:"playbook_review,omitempty"`
+	PlaybookReviewEvent  *OperationWorkflowPlaybookCompletionReviewEvent     `json:"playbook_review_event,omitempty"`
+	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation         `json:"playbook_escalation,omitempty"`
+	PlaybookEvidence     *OperationWorkflowPlaybookEvidenceEvent             `json:"playbook_evidence,omitempty"`
+	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent  `json:"escalation_response,omitempty"`
+	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation        `json:"outcome_escalation,omitempty"`
+	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch     `json:"business_outcome_watch,omitempty"`
+	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent     `json:"business_outcome,omitempty"`
+	VerificationWatch    *OperationWorkflowReadinessVerificationWatch        `json:"verification_watch,omitempty"`
+	Verification         *OperationWorkflowReadinessVerificationEvent        `json:"verification,omitempty"`
+	Reminder             *OperationWorkflowReadinessDueReminder              `json:"reminder,omitempty"`
+	Coordination         *OperationWorkflowReadinessCoordination             `json:"coordination,omitempty"`
+	ID                   string                                              `json:"id"`
+	Sequence             int64                                               `json:"sequence"`
+	Kind                 string                                              `json:"kind"`
+	CreatedAt            time.Time                                           `json:"created_at"`
+	Explanation          string                                              `json:"explanation"`
+	Change               *OperationWorkflowReadinessChange                   `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -507,24 +508,25 @@ type OperationWorkflowReviewResponseLink struct {
 	InstanceID               string           `json:"instance_id"`
 }
 type OperationWorkflowReviewResponse struct {
-	Decision            *OperationWorkflowReviewResponseDecision `json:"decision,omitempty"`
-	Health              *OperationWorkflowReviewResponseHealth   `json:"health,omitempty"`
-	FallbackOwner       string                                   `json:"fallback_owner,omitempty"`
-	CheckInInitialOwner string                                   `json:"check_in_initial_owner,omitempty"`
-	CheckInOwnerChanged bool                                     `json:"check_in_owner_changed,omitempty"`
-	CheckInNotifiedAt   *time.Time                               `json:"check_in_notified_at,omitempty"`
-	Owner               string                                   `json:"owner"`
-	Plan                string                                   `json:"plan"`
-	Status              string                                   `json:"status"`
-	CheckInAt           *time.Time                               `json:"check_in_at,omitempty"`
-	Reviews             []OperationWorkflowReviewResponseLink    `json:"reviews"`
-	CreatedAt           time.Time                                `json:"created_at"`
-	CreatedBy           string                                   `json:"created_by"`
-	UpdatedAt           time.Time                                `json:"updated_at"`
-	UpdatedBy           string                                   `json:"updated_by"`
-	ResolutionCheckedAt *time.Time                               `json:"resolution_checked_at,omitempty"`
-	History             []OperationWorkflowReviewResponseChange  `json:"history"`
-	HistoryTruncated    bool                                     `json:"history_truncated"`
+	DecisionReview      *OperationWorkflowReviewResponseDecisionReview `json:"decision_review,omitempty"`
+	Decision            *OperationWorkflowReviewResponseDecision       `json:"decision,omitempty"`
+	Health              *OperationWorkflowReviewResponseHealth         `json:"health,omitempty"`
+	FallbackOwner       string                                         `json:"fallback_owner,omitempty"`
+	CheckInInitialOwner string                                         `json:"check_in_initial_owner,omitempty"`
+	CheckInOwnerChanged bool                                           `json:"check_in_owner_changed,omitempty"`
+	CheckInNotifiedAt   *time.Time                                     `json:"check_in_notified_at,omitempty"`
+	Owner               string                                         `json:"owner"`
+	Plan                string                                         `json:"plan"`
+	Status              string                                         `json:"status"`
+	CheckInAt           *time.Time                                     `json:"check_in_at,omitempty"`
+	Reviews             []OperationWorkflowReviewResponseLink          `json:"reviews"`
+	CreatedAt           time.Time                                      `json:"created_at"`
+	CreatedBy           string                                         `json:"created_by"`
+	UpdatedAt           time.Time                                      `json:"updated_at"`
+	UpdatedBy           string                                         `json:"updated_by"`
+	ResolutionCheckedAt *time.Time                                     `json:"resolution_checked_at,omitempty"`
+	History             []OperationWorkflowReviewResponseChange        `json:"history"`
+	HistoryTruncated    bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
 	Decision      *OperationWorkflowReviewResponseDecision `json:"decision,omitempty"`
@@ -595,4 +597,18 @@ type OperationWorkflowReviewResponseDecision struct {
 	At     time.Time                             `json:"at"`
 	Actor  string                                `json:"actor"`
 	Health OperationWorkflowReviewResponseHealth `json:"health"`
+}
+
+// Review requirements remain latched until an explicit decision replaces the reviewed intent.
+type OperationWorkflowReviewResponseDecisionReview struct {
+	DecisionAt time.Time                             `json:"decision_at"`
+	RequiredAt time.Time                             `json:"required_at"`
+	Changes    []string                              `json:"changes"`
+	Health     OperationWorkflowReviewResponseHealth `json:"health"`
+}
+type OperationWorkflowReviewResponseDecisionReviewEvent struct {
+	SourceNotificationID string                                        `json:"source_notification_id"`
+	SourceSequence       int64                                         `json:"source_sequence"`
+	Decision             OperationWorkflowReviewResponseDecision       `json:"decision"`
+	Review               OperationWorkflowReviewResponseDecisionReview `json:"review"`
 }
