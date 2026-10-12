@@ -1,4 +1,4 @@
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
 # Includes the retained checkpoint server implementation alongside current main.
-158891
+158901
