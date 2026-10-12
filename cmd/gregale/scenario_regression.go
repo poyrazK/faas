@@ -154,8 +154,9 @@ func testPlanWorkload(plan testRunPlan) (*testLoadWorkload, error) {
 		VUs, Iterations, Rate, Requests int
 		Duration, Pacing                time.Duration
 		Stages                          []testLoadStage
+		Streams                         []testLoadStreamSpec `json:"Streams,omitempty"`
 	}{1, label, p.Scenario.Local != nil, 15 * time.Minute, steps, fields,
-		p.Load.VUs, p.Load.Iterations, p.Load.Rate, p.Load.RequestLimit, p.Load.Duration, p.Load.Pacing, p.Load.Stages}
+		p.Load.VUs, p.Load.Iterations, p.Load.Rate, p.Load.RequestLimit, p.Load.Duration, p.Load.Pacing, p.Load.Stages, p.Load.Streams}
 	if p.Scenario.Timeout != "" {
 		signature.Timeout, _ = time.ParseDuration(p.Scenario.Timeout)
 	}

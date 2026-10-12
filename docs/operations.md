@@ -1847,6 +1847,129 @@ application must lock/check those rows and authorize the action independently.
 No database migration is required. Existing contracts retain their behavior;
 deploy a new immutable contract version to change edge requirements.
 
+### Retained milestone prerequisites
+
+Use `requires_retained_milestones` to require previously reported facts from
+transaction-backed steps of the same workflow. For an order workflow containing
+`receive-payment` / `payment-received` and `fulfill-order` steps:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    requires_retained_milestones:
+      - {operation: receive-payment, milestone: payment-received}
+```
+
+Each edge accepts up to 16 unique operation/milestone pairs. Each pair must bind
+to a declared workflow step; the edge must name its target operation. Raise the
+workflow `version` when adding or changing these rules. The lookup covers at most
+32 distinct prerequisite pairs across the selected workflow contract.
+
+The existing readiness endpoint, action preview, and selected-instance overview
+return `retained_milestones` results. A `verified` result includes the latest
+matching fact identity and timestamps; `awaiting_verification` adds
+`retained_milestone_required` and keeps `ready` false. Matching includes account,
+app, tenant, environment scope, business subject, workflow instance, pinned
+contract version, source operation, and milestone name. Page cursors never limit
+this lookup. Planned milestones cannot satisfy a retained prerequisite. Facts
+from an older contract version do not carry forward automatically.
+
+Verification means a matching application-reported transaction-backed fact is
+currently retained. It does not verify an external provider or infer business
+truth from arbitrary payload fields. A missing or expired fact does not prove the
+event never occurred. Account views without a selected tenant or a reported
+state identifying that tenant leave evidence unverified. The dashboard and CLI
+show the source milestone, verification status, and evidence identity. SDK
+readiness guards check these requirements before staging the proposed transition;
+applications still check authorization and their business row under their own
+transaction lock. Reporting APIs remain application-owned and do not enforce
+this observational prerequisite as a state-change admission rule.
+
+### Invalidating retained prerequisites
+
+A transition can declare `retained_milestone_invalidations` to make a prerequisite
+unusable after a later business fact. Both sources must be declared
+transaction-backed steps of the same workflow:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    requires_retained_milestones:
+      - {operation: receive-payment, milestone: payment-received}
+    retained_milestone_invalidations:
+      - prerequisite: {operation: receive-payment, milestone: payment-received}
+        invalidated_by: {operation: refund-payment, milestone: payment-refunded}
+```
+
+Raise the workflow contract version when adding or changing these rules. An edge
+accepts up to 16 unique prerequisite/source pairs. The prerequisite must already
+appear in `requires_retained_milestones`, and it cannot invalidate itself. The
+32-source lookup bound includes both prerequisite and invalidating sources.
+
+For prerequisites with invalidation rules, readiness uses the latest retained
+fact for each source by application `occurred_at`, at or before the evaluation
+clock. Publication time and fact identities break ties within one source. A
+matching invalidator with an equal or later occurrence time makes the prerequisite
+`invalidated`; readiness reports `retained_milestone_invalidated`, the prerequisite
+fact reference, and an `invalidation` containing the source and fact reference.
+Equal timestamps invalidate conservatively. A payment fact occurring after the
+refund can satisfy the prerequisite again. Late publication of an older payment
+cannot restore eligibility. Future occurrences do not count yet. Edges without
+invalidation or freshness rules retain their existing publication-ordered evidence selection.
+
+The same account, app, tenant, environment, subject, instance, and contract version
+checks apply to both facts. Multiple invalidators are allowed; the latest
+applicable fact explains the result. An invalidator without retained eligible
+prerequisite evidence leaves the result `awaiting_verification`. All facts follow
+normal Operation retention; this projection is not a permanent revocation ledger
+and expired invalidators stop contributing. SDK guards reject invalidated results.
+Applications continue to check their authoritative business row and authorization
+before committing a transition.
+
+### Retained prerequisite freshness
+
+Use a versioned freshness rule when evidence has a business expiry, such as an
+inventory reservation that remains usable for 15 minutes:
+
+```yaml
+requires_retained_milestones:
+  - operation: reserve-inventory
+    milestone: inventory-reserved
+retained_milestone_freshness:
+  - prerequisite:
+      operation: reserve-inventory
+      milestone: inventory-reserved
+    max_age: 15m
+```
+
+This block belongs to the consuming transition. Selectors must already be required
+retained prerequisites. At most 16 unique rules are allowed per edge; `max_age`
+must be a positive whole-second duration, bounded to 10 years (315360000 seconds).
+Resolved API definitions use `max_age_seconds`. Rules are canonicalized and pinned
+in the immutable workflow contract; changes require a new workflow version.
+
+Freshness selects the latest eligible business occurrence, excluding future facts;
+late publication of an older event cannot renew a prerequisite. Evidence expires
+inclusively at `occurred_at + max_age_seconds`. Readiness returns `expired` and
+`retained_milestone_expired`, with the fact identity, `evaluated_at`, `expires_at`,
+whole elapsed `age_seconds`, and rounded-up `remaining_seconds` (zero once expired).
+Missing evidence stays `awaiting_verification`, carrying the policy and evaluation
+time without derived expiry fields. Invalidation takes precedence over expiry,
+while freshness details remain available for diagnostics.
+
+Readiness, action previews, and workflow overviews share one store evaluation
+clock per response. Dashboard and CLI guidance explain renewal; Go, Node, and
+Python guards reject expired or incomplete freshness evidence. Planned facts
+cannot renew retained prerequisites. The application commits and publishes a new
+prerequisite fact with its actual business occurrence time, then rechecks readiness.
+Existing ownership, subject, instance, version, and retention boundaries apply.
+Readiness is a point-in-time observation, not a lease: applications must still
+verify their reservation and locked business rows before writing.
+
 ### Business action previews
 
 A preview returns declared action candidates from a selected workflow instance's
@@ -2428,3 +2551,501 @@ For a known current visit, `warning_at` is the observed entry time plus the budg
 Use `reason=sla_at_risk` in the attention API, dashboard or CLI to select known visits that reached their warning threshold and have not yet breached. These visits also enter the default attention queue. Summaries include `sla_at_risk_workflow_count` separately from breached and unknown counts, respecting the existing scope, customer, workflow, owner, code, target-operation and priority filters. SLA risk does not invent blocker ownership or urgency. Cursor pages evaluate warning and due times at the original queue evaluation time; refresh to observe elapsed-time changes.
 
 Selected workflow views and performance contributors expose the warning percentage/time alongside due time and remaining seconds. Historical performance breach counts remain breach counts; early warnings are current-visit observations. Warnings do not enforce readiness, send notifications, or perform application actions.
+
+### Retained prerequisite recovery plans
+
+Missing, expired, and invalidated readiness results include an optional `recovery`
+object derived from the pinned prerequisite selector. It identifies `reason`,
+`operation`, `milestone`, and three ordered steps: `perform_operation`,
+`publish_milestone`, then `recheck_readiness`. Verified evidence omits recovery.
+For invalidation, `after_occurred_at` is the exclusive invalidator occurrence
+threshold; for expiry it is the prior prerequisite occurrence. Any freshness
+limit must still be satisfied when readiness is checked again.
+
+The application authorizes and performs the actual business action, commits its
+milestone with the true occurrence time, and publishes it before rechecking the
+original transition. The new fact must match the existing ownership, subject,
+workflow instance, and contract version. Never backdate or fabricate a fact to
+satisfy a recovery plan. Missing retained evidence does not prove the business
+action never happened: inspect authoritative rows before retrying an action.
+
+Plans are bounded by the existing 16 retained prerequisites per edge, with exactly
+three steps per result. They do not recursively resolve producer dependencies or
+assert that a producer can run from the current state. The application must check
+that operation's own requirements. API previews and overviews return these same
+plans; shared dashboard/CLI guidance and Go, Node, and Python SDK types expose
+them. No new lookup, manifest rule, migration, or execution permission is added.
+
+### Alternative retained prerequisite groups
+
+Declare named `retained_milestone_groups` on a transition when different retained
+business facts can satisfy the same requirement. For example:
+
+```yaml
+transitions:
+  - from: payment-pending
+    to: fulfilled
+    operation: fulfill-order
+    retained_milestone_groups:
+      - id: settlement
+        any_of:
+          - {operation: receive-payment, milestone: payment-received}
+          - {operation: approve-credit, milestone: credit-approved}
+```
+
+Any one verified alternative satisfies a group. Every group must be satisfied,
+alongside all mandatory `requires_retained_milestones` and the edge's other
+requirements. An edge accepts up to 8 uniquely named groups, each with 2–16 unique
+operation/milestone selectors. Group IDs and alternatives are canonicalized; changes
+require a new workflow version. The existing 32-distinct-source lookup bound
+covers mandatory facts, alternatives, and invalidation sources across the workflow.
+All alternatives must bind to declared transaction-backed workflow steps.
+
+Freshness and invalidation rules can target either mandatory selectors or group
+alternatives. Evaluation uses the same ownership, subject, workflow instance,
+contract version, retention, and server clock as mandatory prerequisites. Planned
+facts cannot satisfy alternatives. Failed alternatives retain their evidence and
+recovery diagnostics but do not block a group with a verified alternative.
+
+Readiness returns `retained_milestone_groups` with each group's `id`, `satisfied`,
+and complete `alternatives` findings. An unsatisfied group adds
+`retained_milestone_group_unmet`; mandatory findings remain in `retained_milestones`.
+Dashboard/CLI guidance names a satisfied path or explains that recovery paths are
+choices, not cumulative actions. SDK guards require complete matching group
+findings and at least one usable proof, including that alternative's pinned
+freshness policy. Missing or contradictory group findings fail the guard.
+
+Flat groups express alternatives between individual retained facts; named
+compound paths are described below. No business choices are inferred. Gregale evaluates every option
+and does not execute a path. Applications still authorize actions and check locked
+business rows; readiness remains a point-in-time observation. No database or
+application-schema migration is required.
+
+### Compound retained prerequisite paths
+
+Use named `paths` instead of a flat `any_of` list when an alternative business
+path needs multiple facts together:
+
+```yaml
+retained_milestone_groups:
+  - id: settlement
+    paths:
+      - id: card
+        all_of:
+          - {operation: receive-payment, milestone: payment-received}
+          - {operation: check-fraud, milestone: fraud-check-passed}
+      - id: business-credit
+        all_of:
+          - {operation: approve-credit, milestone: credit-approved}
+          - {operation: accept-purchase-order, milestone: purchase-order-accepted}
+```
+
+Every fact within a path must be verified at the same readiness evaluation time.
+The group passes when at least one complete path passes. Payment received plus
+purchase order accepted cannot combine across paths to satisfy settlement.
+Existing mandatory prerequisites and every other group still apply. Flat `any_of`
+groups retain their existing behavior; a group cannot combine both forms.
+
+Each group accepts 2–8 uniquely named paths with nonempty `all_of` lists. Selectors
+must be unique within each path and bound to transaction-backed workflow steps.
+The sum of fact occurrences across all paths is bounded to 16 per group, including
+shared selectors counted once in each path. This preserves the existing expanded
+evidence budget. The workflow-wide lookup remains bounded to 32 distinct sources.
+Path IDs and selectors are canonicalized; changes require a new workflow version.
+
+Freshness and invalidation policies apply to each selector, including shared facts.
+`retained_milestone_groups[].paths` returns every path's `id`, `satisfied`, and
+`requirements` findings, including fact identities and recovery plans. Compound
+groups omit flat `alternatives`; flat groups omit `paths`. A failed path does not
+block a different complete path. Guidance identifies a satisfied path or lists
+what each blocked path needs. SDK guards verify complete matching facts for one
+whole path and reject missing or contradictory path findings.
+
+Recovery choices belong to the application: authorize and check business rows
+before performing any actions, publish actual facts, then recheck readiness.
+Gregale does not choose or execute a path. Arbitrary recursive Boolean expressions
+are unsupported, and no database or application-schema migration is required.
+
+### Report the selected business path
+
+Applications can supply `selected_paths` in a readiness request and transition
+report. Each entry identifies `group_id` and `path_id` in the pinned edge:
+
+```javascript
+await tx.guardedWorkflowTransition({
+  ...proposal,
+  selected_paths: [{group_id: 'settlement', path_id: 'card'}],
+}, facts, checkReadiness);
+```
+
+Readiness still evaluates every path for diagnostics, but only the selected path
+can satisfy that group. A valid credit path cannot make the chosen card path ready.
+Without a selection the read-only check continues to show available paths.
+Unknown group/path pairs deny readiness through `path_selection_invalid`.
+Malformed IDs, duplicate group selections, and more than 8 selections are rejected.
+
+Guarded transitions require an explicit selection for every compound group and
+verify that its complete evidence passes. SDK guards compare the response's
+`selected_path_id` against the proposed choice and queue that same choice with
+the transition. Choices are copied before passing the request to a checker to
+prevent callback mutation from changing what the guard verifies. Flat groups keep
+their existing behavior and cannot receive named-path selections.
+
+For direct reporting, Node `tx.workflowTransition` accepts selections as its fifth
+argument; Go `tx.WorkflowTransition` accepts variadic
+`faas.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
+accepts `selected_paths=[OperationWorkflowPathSelection(...)]`. Guards obtain
+choices from the readiness proposal. Direct reporting validates choices against
+the pinned contract, while retained-evidence readiness remains observational.
+Choices must belong to a declared business transition; metadata-only updates and
+initial state snapshots cannot carry them. Omission remains supported for legacy
+reporting and does not imply a path choice.
+
+Choices commit in the application outbox, publish with the report, participate in
+its canonical fingerprint, and appear in receipts and retained workflow history.
+Publication requires the returned choices to match before acknowledging the row.
+The dashboard and CLI history identify each selected group/path. Choices describe
+that transition, not a persistent preference for later edges; metadata reports
+omit them and do not remove prior transition history.
+
+Before upgrading the platform, apply `20261010114245301_customer_operation_selected_paths.sql`. Application database owners
+must reinstall the SDK's additive customer Operation schema before upgrading the
+adapters. The new `selected_paths` JSON column defaults to an empty array, so old
+pending reports remain publishable. Gregale records the application's decision
+without choosing a path, authorizing actions, or changing business state.
+
+### Explain a selected business path
+
+A selected path can reference a business decision committed in the same application
+transaction. Queue the decision before the transition and use the SDK helper to
+copy its stable fact ID, reason, decision code, rule ID, and rule version:
+
+```typescript
+tx.businessDecision('credit-decided', {
+  workflow: 'order-approval', instance_id: runID,
+  code: 'credit-approved', description: 'Customer passed the business credit policy.',
+  rule_id: 'business-credit', rule_version: 'v3',
+});
+const choice = tx.workflowPathDecision('payment', 'business-credit', 'credit-decided');
+tx.workflowTransition('order-approval', runID, 'pending', 'approved', [choice]);
+```
+
+Declare the decision milestone as a step of this workflow with its instance pointer
+bound to `/decision/instance_id`, in the same pinned contract version as the edge.
+The SDK precommit validator verifies the referenced fact before the business write
+commits. Publication requires that same fact to have been published for this
+Operation. The reference must appear in the transition's `evidence_milestones`.
+Both validation paths check the decision payload, workflow instance, and contract
+version; a copied reason that differs from the fact is rejected.
+
+Go uses `choice, err := tx.WorkflowPathDecision(group, path, milestone)` after
+`tx.BusinessDecision`, then passes `choice` to `tx.WorkflowTransition`. Python uses
+`choice = tx.workflow_path_decision(group, path, milestone)` after
+`tx.business_decision`, then `tx.workflow_transition(..., selected_paths=[choice])`.
+Helpers require exactly one queued decision fact with the requested milestone name.
+
+The optional wire fields on each selection are `decision_milestone_id`,
+`decision_code`, `decision_description`, `decision_rule_id`, and
+`decision_rule_version`. Supply all five together, or omit all five. The validated
+explanation remains in receipts and workflow history and appears in dashboard and
+CLI views even when the original fact leaves the current page. Readiness checks
+validate the bounded selection shape; decision evidence is verified during report
+validation and publication. Applications still own decisions and authorization.
+Existing selections remain compatible. This uses the existing selected-path JSON
+columns; no additional platform migration or customer schema installation is needed.
+
+### Declare the decision rule for a business path
+
+A named retained prerequisite path can declare an optional `decision` requirement:
+
+```yaml
+retained_milestone_groups:
+  - id: payment
+    paths:
+      - id: business-credit
+        all_of:
+          - operation: approve-credit
+            milestone: credit-approved
+        decision:
+          milestone: credit-decided
+          code: credit-approved
+          rule_id: business-credit
+          rule_version: v3
+      - id: card
+        all_of:
+          - operation: charge-card
+            milestone: payment-confirmed
+```
+
+Declare `credit-decided` as a milestone in this Operation and a step of the same
+workflow contract version, with its instance pointer bound to
+`/decision/instance_id`. A requirement contains an exact milestone, decision code,
+rule ID, and rule version. Changing these expectations requires a new workflow
+contract version. Optional requirements are copied into pinned contracts.
+
+Readiness compares each path's requirement with planned `decisions` and
+`milestones`. A path passes only when both its retained facts and decision rule
+match. Each constrained path returns `decision.requirement`, `decision.reported`
+when a decision was supplied, and `decision.satisfied`. Guidance names the expected
+and reported code and rule version. A selected path that fails its decision rule
+cannot be replaced by a valid sibling. Without a selection, readiness continues
+to explore which complete paths can pass; planned evidence is not committed proof.
+
+Pass the typed business decision payload among the facts supplied to an SDK
+`guardedWorkflowTransition` / `GuardedWorkflowTransition` /
+`guarded_workflow_transition` call. The guard validates decision diagnostics against
+those facts and automatically attaches the matching staged fact reference to the
+chosen constrained path. If a reference was already supplied, it must match the
+staged fact exactly. Exactly one staged milestone may have the required name.
+The existing precommit and publication validators then verify the actual linked
+fact and reason against the pinned path rule.
+
+For direct transitions, queue the decision and build the selection using the
+[SDK decision reference helper](#explain-a-selected-business-path). A group with
+any decision-constrained path requires an explicit path choice for a business
+transition report. Selecting a constrained path also requires its matching linked
+decision; selecting an unconstrained sibling requires no decision. This applies
+when the contract opts into path rules; older contracts retain their behavior.
+Applications continue to own selection, authorization, and execution. No new
+platform migration or customer outbox schema update is required.
+
+### Compare retained workflow revisions
+
+Each entry in a selected workflow's `workflow_state_history` and
+`workflow_instance.transitions` now includes a derived `comparison`. It compares
+with the preceding retained entry for that tenant and workflow run on the same
+page, using consecutive application revisions and the same pinned contract.
+
+A `compared` result contains a concise summary and structured changes to reported
+state, blockers, selected paths, and decision code, reason, or rule version. Each
+change identifies its kind and key and includes public before/after snapshot text.
+The comparison links the previous report and Operation and includes deduplicated
+reported milestone and decision references from both revisions. Expected resolution
+verification references are labeled `verification_expected`; they are not proof
+that verification succeeded. Evidence links describe reported support, not causality.
+
+The dashboard shows summaries, before/after values, and links to the relevant
+Operations. CLI output includes `workflow-revision-comparison`,
+`workflow-revision-change`, and `workflow-revision-evidence` lines. All SDKs expose
+the comparison models through the existing business history response.
+
+`baseline_unavailable` marks the first entry for a run on a page. `revision_gap`
+marks missing intervening revisions. `ambiguous_revision` marks duplicate revisions
+visible on the page. `contract_changed` identifies a version change without
+comparing business snapshots across contracts. These results do not invent missing
+changes. Page boundaries and retention remain explicit limitations: following the
+next cursor does not fetch an extra prior report or reconstruct expired history.
+Account operator comparisons never mix tenants.
+
+Path selections are per business transition. An omitted selection on a metadata
+update does not mean the application removed its prior path. A later selection
+without a selection on the preceding revision is shown as `path_selected`, with
+no claimed previous choice. Removing a blocker from a report does not prove the
+business issue was resolved. A path change does not prove which prerequisite
+expired or caused it; applications must report those facts explicitly.
+
+The derived response is bounded to 64 changes and 64 evidence references per
+comparison, based on existing report limits. It is read-only, uses the existing
+retained page, and requires no migration or customer outbox schema update.
+
+### Report the application's reason for a workflow change
+
+A workflow transition or same-state metadata update may carry one optional
+`change_reason`: a business decision milestone ID and a validated snapshot of its
+`decision` payload. Queue the decision and workflow update in the same application
+transaction, then attach the reason to the most recently queued update:
+
+```typescript
+tx.businessDecision('review-decided', {
+  workflow: 'order-approval', instance_id: runID,
+  code: 'credit-limit-exceeded', description: 'The customer exceeded the business credit limit.',
+  rule_id: 'business-credit', rule_version: 'v3',
+});
+tx.workflowTransition('order-approval', runID, 'pending', 'manual-review');
+tx.workflowChangeReason('review-decided');
+```
+
+Declare `review-decided` as a workflow step in the same pinned contract version,
+with its instance pointer bound to `/decision/instance_id`. Go uses
+`tx.WorkflowChangeReason(milestone)` after `tx.BusinessDecision` and the workflow
+update; Python uses `tx.workflow_change_reason(milestone)` after
+`tx.business_decision` and the update. For guarded transitions, include the decision
+payload among the guard's planned facts, await a successful guard, and attach the
+reason before committing. The helper requires exactly one queued decision with
+that milestone name and permits one reason per report.
+
+Initial snapshots cannot carry change reasons. Same-state blocker, deadline,
+outcome, or dependency updates may include exactly the reason fact as evidence;
+other metadata evidence remains disallowed. Business transitions retain their
+existing evidence requirements and limits. The reason refers to this update only;
+it is not inherited automatically by later reports.
+
+Precommit validation checks the actual decision from the same transaction.
+Publication checks the referenced fact from this Operation. Both require matching
+workflow instance, pinned contract version, decision code, reason, and rule fields.
+A reason that differs from the fact is rejected. The reason is part of canonical
+report identity and receipt acknowledgment, and all SDK publishers preserve it
+through replay. Omission preserves existing report identities and behavior.
+
+Workflow history, latest state, and revision comparison objects expose
+`change_reason`. Dashboard and CLI show it as the application's reported reason
+and link its fact identity. Comparisons retain the reason even when the preceding
+revision is missing, without inventing the missing change or inferring independent
+causality. This is business context supplied by the application, not execution
+permission or proof from an external service.
+
+Apply the additive platform `customer_operation_change_reason` migration and
+reinstall the SDK customer Operation schema before upgrading the outbox adapters.
+Both columns default to JSON null for existing rows. The migration is provided in
+this change; it is not applied automatically to running databases.
+
+### Application-defined workflow playbooks
+
+Workflow contracts can declare advisory playbooks for exact blocker codes,
+missing milestones or dependency workflows, pending verification blocker codes,
+and unmet readiness reason codes. Add `playbooks` to an existing
+`operation_workflows` entry alongside its `name`, `version`, and `steps`:
+
+```yaml
+playbooks:
+  - id: stock-review
+    version: 1
+    match_kind: blocker
+    match_code: stock
+    summary: Confirm inventory availability with the warehouse team.
+    owner: warehouse
+    required_evidence:
+      - Inventory reservation reference
+      - Warehouse confirmation
+    runbook_url: https://docs.example.com/runbooks/inventory
+    action_url: https://app.example.com/inventory/review
+```
+
+Each workflow contract permits 32 unique playbooks. IDs are unique within the
+workflow; explicit rule versions start at 1. Guidance is read from the immutable
+operation definition that produced the current workflow report and its matching
+workflow contract version. Publish revised guidance through a new definition;
+existing reports continue using their original definition until the application
+reports from the new one. Repeated steps may repeat an identical rule, but
+conflicting definitions of an ID are rejected.
+
+The workflow case API returns `guidance`, `guidance_status`, and
+`guidance_truncated`. Missing or stale reports never match guidance; unavailable
+reporting definitions are not replaced by a newer deployment's playbooks.
+Terminal reports do not match active blockers or prerequisites. A responsible
+team is a suggestion and does not change follow-up ownership. Evidence lists are
+human checklists, not automatically verified requirements. Runbook and action
+links require absolute HTTPS URLs without embedded credentials. Gregale does
+not fetch or execute them; the application authenticates, authorizes and handles
+any resulting action.
+
+### Durable playbook checklist progress
+
+A matched playbook can now start an advisory checklist through
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress` or the corresponding
+`/v1/platform-tenant-self/workflow-readiness/playbook-progress` endpoint.
+Use the same exact case query selectors as the case overview, without pagination.
+Account requests require `tenant_id`, write scope and MFA. Customer identity is
+always authentication-derived and requires operations-manage scope.
+The start body includes `playbook_id`, `playbook_version`, `contract_version` and
+`reporting_operation_id` from matched guidance. Missing, stale, terminal or changed
+matches cannot start new work. Repeated starts for the same case, definition,
+workflow version and rule version return the existing checklist without resetting it.
+
+The checklist freezes the whole rule, required evidence labels, original reporting
+operation and immutable definition. Deployment changes and newer reports never
+upgrade a started checklist. Read all retained checklists in the case overview's
+`playbook_progress` field, including those no longer matching current guidance.
+At most 100 checklists are stored per exact case. They survive subscription deletion,
+are removed with their owning application/customer/account, and have no timed expiry.
+
+Update one item with `PATCH .../playbook-progress/{id}` and a body containing
+`revision`, zero-based `item_index`, `status` (`pending` or `completed`), a required
+review `note`, and an explicit `evidence` array. Each reference has `operation_id`
+and optional `milestone_id`. Operation evidence must belong to the same account,
+customer, application, environment and business subject. Milestone references must
+also be retained facts for the pinned workflow, instance and contract version.
+Each edit accepts up to eight evidence references and a note of at most 1,024 UTF-8
+bytes; request bodies are capped at 32,768 bytes. Completed items require at least
+one reference. The authenticated reviewer and server
+clock are assigned by Gregale; callers cannot impersonate a reviewer. A concurrent
+revision change returns 409 without overwriting committed work. Pending edits can
+reopen an item. Labels and pinned guidance cannot be edited.
+
+Case overviews show counts and remaining items. The dashboard supports starts and
+item reviews, and Go, Node and Python SDKs expose both write endpoints. The timeline
+includes starts and the latest 64 item review snapshots per checklist; truncation is
+explicit. Evidence is validated on edits, not continuously, and retention may later
+remove referenced facts. Human review and checklist completion do not change
+application-owned blockers, readiness, authorization, execution or business outcomes.
+
+### Check whether pinned playbooks still apply
+
+Every checklist returned in a workflow case overview now includes an optional
+`applicability` observation. Its status distinguishes `applicable`, `trigger_absent`,
+`terminal_reported`, `contract_changed`, `guidance_changed`, `evidence_unavailable`,
+`definition_unavailable` and `evidence_incomplete`. The observation includes a server
+check clock, current report identity and revision where available, reporting-definition
+change information, a review suggestion, and the number of pending checklist items.
+The dashboard renders the observation and links to its reporting operation. Go, Node
+and Python SDKs expose the same response metadata.
+
+Checks use the current exact-case application report and its immutable reporting
+definition, sharing the evidence used to match case guidance. Missing, stale or
+incomparable state cannot establish applicability or trigger absence. A changed
+workflow contract requires review. Within the same workflow version, compare the
+whole canonical rule, including its rule version, evidence labels and links; changed
+or removed guidance is reported even if its old trigger still appears. A new reporting
+definition with identical guidance can still be applicable and is explicitly flagged.
+
+Positive trigger matches can be observed in incomplete evaluations; `evidence_complete`
+records that limitation. An absent trigger is reported only with complete relevant
+coverage: full current blockers, full internal verification observations, or all
+current-state evaluated transitions as appropriate. Verification uses the complete
+internal observations rather than the public proof preview. A workflow with no
+current-state transitions has no transition-based trigger in that retained evaluation.
+Terminal reports remain distinct from both successful outcomes and trigger absence.
+
+The live applicability field is an advisory read, is not stored, does not advance
+checklist revisions, and is omitted from start/update responses. Human review decisions
+can separately retain the observation reviewed as durable decision context.
+They never close or reopen checklist items, replace frozen guidance, alter reviews,
+change application-owned blockers/readiness, or infer business success. Existing
+attached evidence is not revalidated by this trigger check. Refresh the case before
+acting; the application continues to own verification, outcome interpretation and execution.
+
+### Review changed or obsolete playbook work
+
+Record a human coordination decision with
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews` or its
+`/v1/platform-tenant-self` equivalent, using the exact case query selectors without
+pagination. Existing account write/MFA and customer operations-manage authorization
+apply. Send `revision`, `decision` (`continue`, `retire` or `replace`) and a required
+`reason` of at most 1,024 UTF-8 bytes without control characters. Reviewer identity,
+server time and an applicability observation are recorded by Gregale, not the caller.
+
+`continue` records the reviewed choice and keeps coordination active, including when
+application evidence is unavailable; it is a human choice, not execution permission.
+`retire` and `replace` permanently close source coordination and reject subsequent
+item edits or review decisions with 409. Pending items, completion counts, notes,
+evidence and pinned guidance remain intact. Neither closure nor an explicit decision
+to continue asserts readiness, verification or business success. Existing records
+with no `disposition` are treated as active.
+
+For `replace`, first start an appropriate checklist from current matching guidance.
+Then send its `replacement_progress_id` and `replacement_revision`. The target must
+be distinct, active, applicable at the observation, and in the same exact case.
+Its revision and active state are rechecked atomically with the source update under
+the shared writer lock; concurrent retirement or editing produces a conflict. Closed
+sources cannot later be replacement targets, preventing cycles. A replacement can
+later itself be replaced; all earlier links remain retained. No item evidence or
+completion is copied. Other decisions reject replacement parameters.
+
+Both decisions and item edits advance the same checklist revision. The source stores
+`latest_review` and the latest 32 `reviews`, with `reviews_truncated` when older choices
+are pruned. Review observations are retained context; live applicability remains
+separate, and application evidence is not transactionally locked with human writes.
+Case overviews derive `replaces_progress_ids` from retained predecessor decisions;
+these inverse links are not stored or accepted in requests. Dashboard controls show
+closure, review context and links, and SDKs expose the review endpoint. Timeline
+entries retain the decision, reason, reviewer, clock and replacement identity.

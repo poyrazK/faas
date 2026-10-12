@@ -1804,6 +1804,38 @@ type CustomerOperationWorkflowStateReport struct {
 	OutcomeOnly        bool
 	DependsOn          []byte
 	DependenciesOnly   bool
+	SelectedPaths      []byte
+	ChangeReason       []byte
+}
+
+type CustomerWorkflowPlaybookProgress struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
+	CaseKey   string
+	Revision  int64
+	Payload   []byte
+}
+
+type CustomerWorkflowReadinessNotification struct {
+	SubscriptionID pgtype.UUID
+	Sequence       int64
+	Payload        []byte
+}
+
+type CustomerWorkflowReadinessSubscription struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	TenantID         pgtype.UUID
+	Operator         bool
+	Scope            string
+	Payload          []byte
+	CreatedAt        pgtype.Timestamptz
+	NextEvaluationAt pgtype.Timestamptz
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
 }
 
 type DataUpstream struct {

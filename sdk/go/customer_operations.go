@@ -78,37 +78,59 @@ type (
 	OperationSubject                         = api.OperationSubject
 )
 
+type OperationWorkflowRetainedMilestoneFreshnessRule = api.OperationWorkflowRetainedMilestoneFreshnessRule
+type OperationWorkflowRetainedMilestoneFreshness = api.OperationWorkflowRetainedMilestoneFreshness
+type OperationWorkflowRetainedMilestoneInvalidationRule = api.OperationWorkflowRetainedMilestoneInvalidationRule
+type OperationWorkflowRetainedMilestoneInvalidation = api.OperationWorkflowRetainedMilestoneInvalidation
+
 type (
-	OperationWorkflowDependency              = api.OperationWorkflowDependency
-	OperationWorkflowReadinessRequest        = api.OperationWorkflowReadinessRequest
-	OperationWorkflowTransitionReadiness     = api.OperationWorkflowTransitionReadiness
-	OperationWorkflowReadinessResponse       = api.OperationWorkflowReadinessResponse
-	OperationWorkflowReadinessOverview       = api.OperationWorkflowReadinessOverview
-	OperationWorkflowDependencyTrace         = api.OperationWorkflowDependencyTrace
-	OperationWorkflowDependencyFinding       = api.OperationWorkflowDependencyFinding
-	OperationWorkflowDependencyImpact        = api.OperationWorkflowDependencyImpact
-	OperationWorkflowDependentInstance       = api.OperationWorkflowDependentInstance
-	OperationWorkflowRelatedInstance         = api.OperationWorkflowRelatedInstance
-	OperationWorkflowOutcomeEntry            = api.OperationWorkflowOutcomeEntry
-	OperationWorkflowOutcomesResponse        = api.OperationWorkflowOutcomesResponse
-	OperationWorkflowOutcomeOptions          = api.OperationWorkflowOutcomeOptions
-	OperationWorkflowOutcomeGroup            = api.OperationWorkflowOutcomeGroup
-	OperationWorkflowOutcomeSummary          = api.OperationWorkflowOutcomeSummary
-	OperationWorkflowOutcomeSummaryOptions   = api.OperationWorkflowOutcomeSummaryOptions
-	OperationWorkflowAttentionEntry          = api.OperationWorkflowAttentionEntry
-	OperationWorkflowAttentionResponse       = api.OperationWorkflowAttentionResponse
-	OperationWorkflowAttentionOptions        = api.OperationWorkflowAttentionOptions
-	OperationWorkflowAttentionStats          = api.OperationWorkflowAttentionStats
-	OperationWorkflowAttentionGroup          = api.OperationWorkflowAttentionGroup
-	OperationWorkflowAttentionSummary        = api.OperationWorkflowAttentionSummary
-	OperationWorkflowAttentionSummaryOptions = api.OperationWorkflowAttentionSummaryOptions
-	OperationWorkflowBlockerResolution       = api.OperationWorkflowBlockerResolution
-	OperationWorkflowBlocker                 = api.OperationWorkflowBlocker
-	OperationWorkflowDecision                = api.OperationWorkflowDecision
-	OperationWorkflowInstanceSnapshot        = api.OperationWorkflowInstanceSnapshot
-	OperationWorkflowInstanceTransition      = api.OperationWorkflowInstanceTransition
-	OperationWorkflowInstanceStep            = api.OperationWorkflowInstanceStep
-	OperationWorkflowInstanceMilestoneRef    = api.OperationWorkflowInstanceMilestoneRef
+	OperationWorkflowDependency                     = api.OperationWorkflowDependency
+	OperationWorkflowReadinessSnapshot              = api.OperationWorkflowReadinessSnapshot
+	OperationWorkflowReadinessSnapshotEntry         = api.OperationWorkflowReadinessSnapshotEntry
+	OperationWorkflowReadinessComparisonRequest     = api.OperationWorkflowReadinessComparisonRequest
+	OperationWorkflowReadinessSubscriptionRequest   = api.OperationWorkflowReadinessSubscriptionRequest
+	OperationWorkflowReadinessSubscription          = api.OperationWorkflowReadinessSubscription
+	OperationWorkflowReadinessSubscriptionsResponse = api.OperationWorkflowReadinessSubscriptionsResponse
+	OperationWorkflowReadinessNotification          = api.OperationWorkflowReadinessNotification
+	OperationWorkflowReadinessInboxResponse         = api.OperationWorkflowReadinessInboxResponse
+	OperationWorkflowReadinessEvidence              = api.OperationWorkflowReadinessEvidence
+	OperationWorkflowReadinessEvidenceChange        = api.OperationWorkflowReadinessEvidenceChange
+	OperationWorkflowReadinessChange                = api.OperationWorkflowReadinessChange
+	OperationWorkflowReadinessComparisonResponse    = api.OperationWorkflowReadinessComparisonResponse
+	OperationWorkflowReadinessQueueOptions          = api.OperationWorkflowReadinessQueueOptions
+	OperationWorkflowReadinessQueueEntry            = api.OperationWorkflowReadinessQueueEntry
+	OperationWorkflowReadinessQueueResponse         = api.OperationWorkflowReadinessQueueResponse
+	OperationWorkflowReadinessRequest               = api.OperationWorkflowReadinessRequest
+	OperationWorkflowRetainedMilestoneRequirement   = api.OperationWorkflowRetainedMilestoneRequirement
+	OperationWorkflowRetainedMilestone              = api.OperationWorkflowRetainedMilestone
+	OperationWorkflowTransitionReadiness            = api.OperationWorkflowTransitionReadiness
+	OperationWorkflowReadinessResponse              = api.OperationWorkflowReadinessResponse
+	OperationWorkflowReadinessOverview              = api.OperationWorkflowReadinessOverview
+	OperationWorkflowDependencyTrace                = api.OperationWorkflowDependencyTrace
+	OperationWorkflowDependencyFinding              = api.OperationWorkflowDependencyFinding
+	OperationWorkflowDependencyImpact               = api.OperationWorkflowDependencyImpact
+	OperationWorkflowDependentInstance              = api.OperationWorkflowDependentInstance
+	OperationWorkflowRelatedInstance                = api.OperationWorkflowRelatedInstance
+	OperationWorkflowOutcomeEntry                   = api.OperationWorkflowOutcomeEntry
+	OperationWorkflowOutcomesResponse               = api.OperationWorkflowOutcomesResponse
+	OperationWorkflowOutcomeOptions                 = api.OperationWorkflowOutcomeOptions
+	OperationWorkflowOutcomeGroup                   = api.OperationWorkflowOutcomeGroup
+	OperationWorkflowOutcomeSummary                 = api.OperationWorkflowOutcomeSummary
+	OperationWorkflowOutcomeSummaryOptions          = api.OperationWorkflowOutcomeSummaryOptions
+	OperationWorkflowAttentionEntry                 = api.OperationWorkflowAttentionEntry
+	OperationWorkflowAttentionResponse              = api.OperationWorkflowAttentionResponse
+	OperationWorkflowAttentionOptions               = api.OperationWorkflowAttentionOptions
+	OperationWorkflowAttentionStats                 = api.OperationWorkflowAttentionStats
+	OperationWorkflowAttentionGroup                 = api.OperationWorkflowAttentionGroup
+	OperationWorkflowAttentionSummary               = api.OperationWorkflowAttentionSummary
+	OperationWorkflowAttentionSummaryOptions        = api.OperationWorkflowAttentionSummaryOptions
+	OperationWorkflowBlockerResolution              = api.OperationWorkflowBlockerResolution
+	OperationWorkflowBlocker                        = api.OperationWorkflowBlocker
+	OperationWorkflowDecision                       = api.OperationWorkflowDecision
+	OperationWorkflowInstanceSnapshot               = api.OperationWorkflowInstanceSnapshot
+	OperationWorkflowInstanceTransition             = api.OperationWorkflowInstanceTransition
+	OperationWorkflowInstanceStep                   = api.OperationWorkflowInstanceStep
+	OperationWorkflowInstanceMilestoneRef           = api.OperationWorkflowInstanceMilestoneRef
 )
 
 const (
@@ -163,3 +185,144 @@ type OperationWorkflowPerformanceInstance = api.OperationWorkflowPerformanceInst
 type OperationWorkflowPerformanceInstancesResponse = api.OperationWorkflowPerformanceInstancesResponse
 
 type OperationWorkflowStateSLA = api.OperationWorkflowStateSLA
+
+type OperationWorkflowPrerequisiteRecovery = api.OperationWorkflowPrerequisiteRecovery
+
+type OperationWorkflowRetainedMilestoneGroup = api.OperationWorkflowRetainedMilestoneGroup
+type OperationWorkflowRetainedMilestoneGroupResult = api.OperationWorkflowRetainedMilestoneGroupResult
+
+type OperationWorkflowRetainedMilestonePath = api.OperationWorkflowRetainedMilestonePath
+type OperationWorkflowRetainedMilestonePathResult = api.OperationWorkflowRetainedMilestonePathResult
+
+type OperationWorkflowPathSelection = api.OperationWorkflowPathSelection
+
+type OperationWorkflowPathDecisionResult = api.OperationWorkflowPathDecisionResult
+
+type OperationWorkflowConditionComparison = api.OperationWorkflowConditionComparison
+type OperationWorkflowConditionChange = api.OperationWorkflowConditionChange
+type OperationWorkflowConditionEvidence = api.OperationWorkflowConditionEvidence
+type OperationWorkflowRevisionComparison = api.OperationWorkflowRevisionComparison
+type OperationWorkflowRevisionChange = api.OperationWorkflowRevisionChange
+type OperationWorkflowRevisionEvidence = api.OperationWorkflowRevisionEvidence
+
+type OperationWorkflowOutcomeLink = api.OperationWorkflowOutcomeLink
+
+type OperationWorkflowConditionOutcomeSummary = api.OperationWorkflowConditionOutcomeSummary
+type OperationWorkflowConditionOutcomeGroup = api.OperationWorkflowConditionOutcomeGroup
+type OperationWorkflowDecisionOutcomeSummary = api.OperationWorkflowDecisionOutcomeSummary
+type OperationWorkflowDecisionOutcomeGroup = api.OperationWorkflowDecisionOutcomeGroup
+
+type OperationWorkflowDecisionOutcomeEvidence = api.OperationWorkflowDecisionOutcomeEvidence
+
+type OperationWorkflowRuleComparisonSummary = api.OperationWorkflowRuleComparisonSummary
+type OperationWorkflowRuleComparison = api.OperationWorkflowRuleComparison
+type OperationWorkflowRuleVersionStatistics = api.OperationWorkflowRuleVersionStatistics
+type OperationWorkflowRuleVersionOutcome = api.OperationWorkflowRuleVersionOutcome
+
+type OperationWorkflowRuleVersionCohort = api.OperationWorkflowRuleVersionCohort
+type OperationWorkflowRuleVersionOverlap = api.OperationWorkflowRuleVersionOverlap
+
+type OperationWorkflowActiveConditionSummary = api.OperationWorkflowActiveConditionSummary
+type OperationWorkflowActiveConditionGroup = api.OperationWorkflowActiveConditionGroup
+
+type OperationWorkflowConditionFreshness = api.OperationWorkflowConditionFreshness
+
+type OperationWorkflowConditionRefreshOwnerGroup = api.OperationWorkflowConditionRefreshOwnerGroup
+
+type OperationWorkflowConditionRefreshPriority = api.OperationWorkflowConditionRefreshPriority
+
+type OperationWorkflowConditionRefreshProgress = api.OperationWorkflowConditionRefreshProgress
+type OperationWorkflowConditionRefreshProgressCount = api.OperationWorkflowConditionRefreshProgressCount
+type OperationWorkflowConditionRefreshProgressInstance = api.OperationWorkflowConditionRefreshProgressInstance
+type OperationWorkflowConditionRefreshProgressChange = api.OperationWorkflowConditionRefreshProgressChange
+
+type OperationWorkflowConditionCoverage = api.OperationWorkflowConditionCoverage
+type OperationWorkflowConditionCoverageInstance = api.OperationWorkflowConditionCoverageInstance
+type OperationWorkflowConditionCoverageEntry = api.OperationWorkflowConditionCoverageEntry
+
+type OperationWorkflowMissingConditionGroup = api.OperationWorkflowMissingConditionGroup
+
+type OperationWorkflowMissingConditionProgress = api.OperationWorkflowMissingConditionProgress
+type OperationWorkflowMissingConditionProgressCount = api.OperationWorkflowMissingConditionProgressCount
+type OperationWorkflowMissingConditionProgressInstance = api.OperationWorkflowMissingConditionProgressInstance
+type OperationWorkflowMissingConditionProgressChange = api.OperationWorkflowMissingConditionProgressChange
+
+type OperationWorkflowTransitionReporting = api.OperationWorkflowTransitionReporting
+
+type OperationWorkflowGapQueuePriority = api.OperationWorkflowGapQueuePriority
+type OperationWorkflowGapQueueGuidance = api.OperationWorkflowGapQueueGuidance
+
+type OperationWorkflowGapProgressGroup = api.OperationWorkflowGapProgressGroup
+
+type OperationWorkflowNewMissingConditionProgress = api.OperationWorkflowNewMissingConditionProgress
+type OperationWorkflowNewMissingConditionProgressCount = api.OperationWorkflowNewMissingConditionProgressCount
+type OperationWorkflowNewMissingConditionProgressInstance = api.OperationWorkflowNewMissingConditionProgressInstance
+type OperationWorkflowNewMissingConditionProgressChange = api.OperationWorkflowNewMissingConditionProgressChange
+
+type OperationWorkflowReadinessCoordination = api.OperationWorkflowReadinessCoordination
+
+type OperationWorkflowReadinessCoordinationRequest = api.OperationWorkflowReadinessCoordinationRequest
+
+type OperationWorkflowReadinessNotificationCheck = api.OperationWorkflowReadinessNotificationCheck
+
+type OperationWorkflowReadinessFollowUpOptions = api.OperationWorkflowReadinessFollowUpOptions
+
+type OperationWorkflowReadinessFollowUp = api.OperationWorkflowReadinessFollowUp
+
+type OperationWorkflowReadinessFollowUpsResponse = api.OperationWorkflowReadinessFollowUpsResponse
+
+type OperationWorkflowReadinessDueReminder = api.OperationWorkflowReadinessDueReminder
+
+// OperationWorkflowReadinessHandoff is an advisory brief for checked notification evidence.
+type OperationWorkflowReadinessHandoff = api.OperationWorkflowReadinessHandoff
+
+// Evidence-backed follow-up completion remains shared coordination.
+type OperationWorkflowReadinessCompletionRequest = api.OperationWorkflowReadinessCompletionRequest
+type OperationWorkflowReadinessCompletion = api.OperationWorkflowReadinessCompletion
+type OperationWorkflowReadinessBusinessOutcome = api.OperationWorkflowReadinessBusinessOutcome
+type OperationWorkflowReadinessCompletionEvidence = api.OperationWorkflowReadinessCompletionEvidence
+
+// Verification watches observe retained application evidence only.
+type OperationWorkflowReadinessVerificationWatch = api.OperationWorkflowReadinessVerificationWatch
+type OperationWorkflowReadinessVerificationWatchItem = api.OperationWorkflowReadinessVerificationWatchItem
+type OperationWorkflowReadinessVerificationChange = api.OperationWorkflowReadinessVerificationChange
+type OperationWorkflowReadinessVerificationEvent = api.OperationWorkflowReadinessVerificationEvent
+
+type OperationWorkflowReadinessBusinessOutcomeWatch = api.OperationWorkflowReadinessBusinessOutcomeWatch
+type OperationWorkflowReadinessBusinessOutcomeEvent = api.OperationWorkflowReadinessBusinessOutcomeEvent
+
+type OperationWorkflowReadinessOutcomeEscalationPolicy = api.OperationWorkflowReadinessOutcomeEscalationPolicy
+type OperationWorkflowReadinessOutcomeEscalationReference = api.OperationWorkflowReadinessOutcomeEscalationReference
+type OperationWorkflowReadinessOutcomeEscalation = api.OperationWorkflowReadinessOutcomeEscalation
+
+type OperationWorkflowReadinessEscalationResponse = api.OperationWorkflowReadinessEscalationResponse
+type OperationWorkflowReadinessAssignmentChange = api.OperationWorkflowReadinessAssignmentChange
+type OperationWorkflowReadinessEscalationResponseEvent = api.OperationWorkflowReadinessEscalationResponseEvent
+
+type OperationWorkflowCoordinationTimelineOptions = api.OperationWorkflowCoordinationTimelineOptions
+type OperationWorkflowCoordinationTimelineEvent = api.OperationWorkflowCoordinationTimelineEvent
+type OperationWorkflowCoordinationTimelineSource = api.OperationWorkflowCoordinationTimelineSource
+type OperationWorkflowCoordinationTimeline = api.OperationWorkflowCoordinationTimeline
+
+type OperationWorkflowCase = api.OperationWorkflowCase
+type OperationWorkflowCaseAction = api.OperationWorkflowCaseAction
+
+type OperationWorkflowPlaybook = api.OperationWorkflowPlaybook
+type OperationWorkflowPlaybookGuidance = api.OperationWorkflowPlaybookGuidance
+
+type OperationWorkflowPlaybookProgressStartRequest = api.OperationWorkflowPlaybookProgressStartRequest
+
+type OperationWorkflowPlaybookEvidence = api.OperationWorkflowPlaybookEvidence
+
+type OperationWorkflowPlaybookProgressUpdateRequest = api.OperationWorkflowPlaybookProgressUpdateRequest
+
+type OperationWorkflowPlaybookProgressItem = api.OperationWorkflowPlaybookProgressItem
+
+type OperationWorkflowPlaybookProgressChange = api.OperationWorkflowPlaybookProgressChange
+
+type OperationWorkflowPlaybookProgress = api.OperationWorkflowPlaybookProgress
+
+type OperationWorkflowPlaybookApplicability = api.OperationWorkflowPlaybookApplicability
+
+type OperationWorkflowPlaybookReviewRequest = api.OperationWorkflowPlaybookReviewRequest
+type OperationWorkflowPlaybookReview = api.OperationWorkflowPlaybookReview

@@ -15,7 +15,7 @@ T = TypeVar("T", bound="InjectScenarioTestChaosRequest")
 
 @_attrs_define
 class InjectScenarioTestChaosRequest:
-    """Bounded fault plan applied only to service calls within one scenario test namespace."""
+    """Bounded HTTP, private-service DNS, and TCP fault plan applied only within one scenario test namespace."""
 
     duration_ms: int
     rules: list[ScenarioTestChaosRule]

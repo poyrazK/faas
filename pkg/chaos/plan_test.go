@@ -49,3 +49,25 @@ func TestSelectIsStableForTraceIDsAndPercentBoundaries(t *testing.T) {
 		t.Fatalf("20%% selection did not select a fraction of requests: selected=%d skipped=%d", selected, skipped)
 	}
 }
+
+func TestDNSRuleValidationAndConflictBounds(t *testing.T) {
+	for _, rule := range []Rule{
+		{To: "cache", Kind: KindDNSLatency, Percent: 100, LatencyMS: 250},
+		{To: "cache", Kind: KindDNSTimeout, Percent: 100},
+		{To: "cache", Kind: KindDNSServFail, Percent: 100},
+		{To: "cache", Kind: KindDNSNXDomain, Percent: 100},
+	} {
+		if err := (Plan{DurationMS: 5_000, Rules: []Rule{rule}}).Validate(); err != nil {
+			t.Errorf("valid DNS rule %+v rejected: %v", rule, err)
+		}
+	}
+	for _, invalid := range []Plan{
+		{DurationMS: 5_000, Rules: []Rule{{To: "cache", Kind: KindDNSLatency, Percent: 100, LatencyMS: 30_001}}},
+		{DurationMS: 5_000, Rules: []Rule{{To: "cache", Kind: KindDNSTimeout, Percent: 100, Port: 53}}},
+		{DurationMS: 5_000, Rules: []Rule{{To: "cache", Kind: KindDNSServFail, Percent: 100}, {From: "worker", To: "cache", Kind: KindDNSNXDomain, Percent: 100}}},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Errorf("invalid DNS plan accepted: %+v", invalid)
+		}
+	}
+}

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -31,13 +31,21 @@ type testDiagnosticsClient interface {
 	ListAppDebugRequestsWithOptions(context.Context, string, api.DebugTelemetryListOptions) (api.DebugTelemetryListResponse, error)
 }
 
-func collectTestDiagnostics(ctx context.Context, client testDiagnosticsClient, slugs map[string]string) map[string]testWorkloadDiagnostics {
+func collectTestDiagnostics(ctx context.Context, client testDiagnosticsClient, slugs map[string]string, redactions ...[]string) map[string]testWorkloadDiagnostics {
+	var secrets []string
+	if len(redactions) > 0 {
+		secrets = testDiagnosticRedactions(redactions[0])
+	}
 	results := make(map[string]testWorkloadDiagnostics, len(slugs))
-	for name, slug := range slugs {
+	for _, name := range testEndpointRecoveryNames(slugs) {
+		if len(results) >= testFailureDiagnosticMaxWorkloads {
+			break
+		}
+		slug := slugs[name]
 		result := testWorkloadDiagnostics{}
 		wakes, err := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{})
 		if err != nil {
-			result.CollectionError = fmt.Sprintf("wake timeline: %v", err)
+			result.CollectionError = "wake timeline unavailable"
 		} else {
 			result.Wakes = wakes.Rows
 			if len(result.Wakes) > 20 {
@@ -49,9 +57,12 @@ func collectTestDiagnostics(ctx context.Context, client testDiagnosticsClient, s
 			if result.CollectionError != "" {
 				result.CollectionError += "; "
 			}
-			result.CollectionError += fmt.Sprintf("request telemetry: %v", err)
+			result.CollectionError += "request telemetry unavailable"
 		} else {
-			for _, request := range requests.Requests {
+			for i, request := range requests.Requests {
+				if i >= 30 {
+					break
+				}
 				traceID := ""
 				if request.TraceID != nil {
 					traceID = *request.TraceID
@@ -62,6 +73,27 @@ func collectTestDiagnostics(ctx context.Context, client testDiagnosticsClient, s
 					Route: request.Route, Status: request.Status,
 				})
 			}
+		}
+		for i := range result.Wakes {
+			row := &result.Wakes[i]
+			row.WakeID = redactTestDiagnosticText(row.WakeID, secrets, 128)
+			row.Kind = redactTestDiagnosticText(row.Kind, secrets, 128)
+			row.State = redactTestDiagnosticText(row.State, secrets, 128)
+			row.At = redactTestDiagnosticText(row.At, secrets, 128)
+			row.Trigger = ""
+			row.TriggerClass = redactTestDiagnosticText(row.TriggerClass, secrets, 128)
+			row.Method = redactTestDiagnosticText(row.Method, secrets, 128)
+			row.Tier = redactTestDiagnosticText(row.Tier, secrets, 128)
+		}
+		for i := range result.Requests {
+			row := &result.Requests[i]
+			row.RequestID = redactTestDiagnosticText(row.RequestID, secrets, 128)
+			row.TraceID = redactTestDiagnosticText(row.TraceID, secrets, 128)
+			row.ReceivedAt = redactTestDiagnosticText(row.ReceivedAt, secrets, 128)
+			row.WakeID = redactTestDiagnosticText(row.WakeID, secrets, 128)
+			row.InstanceID = redactTestDiagnosticText(row.InstanceID, secrets, 128)
+			row.Method = redactTestDiagnosticText(row.Method, secrets, 16)
+			row.Route = redactTestDiagnosticText(strings.SplitN(strings.SplitN(row.Route, "?", 2)[0], "#", 2)[0], secrets, 128)
 		}
 		results[name] = result
 	}

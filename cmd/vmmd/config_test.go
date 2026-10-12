@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
 func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
@@ -1042,12 +1043,13 @@ func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
 	}
 }
 
-// adr: 908 — per-account pmem bases are off unless vmmd.toml or the
-// environment names their directory; the environment overrides TOML.
+// adr: 908 — per-account pmem bases are on by default ("auto"); vmmd.toml
+// or the environment can name a directory or turn them off, and the
+// environment overrides TOML.
 func TestLoadConfig_PmemBaseDir(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
-	if err != nil || cfg.PmemBaseDir != "" {
-		t.Fatalf("default PmemBaseDir = %q, err %v; want off", cfg.PmemBaseDir, err)
+	if err != nil || cfg.PmemBaseDir != fcvm.PmemBaseDirAuto {
+		t.Fatalf("default PmemBaseDir = %q, err %v; want %q", cfg.PmemBaseDir, err, fcvm.PmemBaseDirAuto)
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
 	if err := os.WriteFile(path, []byte("pmem_base_dir = \"/srv/fc/pmem\"\n"), 0o600); err != nil {

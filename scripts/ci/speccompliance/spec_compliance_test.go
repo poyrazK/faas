@@ -344,6 +344,7 @@ var dtoExclude = map[string]bool{
 	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
 	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
 	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowReadinessQueueOptions":      true, // Go query builder; parameters are described on each queue route.
 	"OperationWorkflowAttentionOptions":           true,
 	"OperationWorkflowAttentionSummaryOptions":    true,
 	"OperationWorkflowOutcomeOptions":             true,
@@ -1245,12 +1246,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_condition_coverage.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_missing_progress.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_new_missing_progress.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_readiness.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_readiness_subscriptions.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_retained_milestones.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),

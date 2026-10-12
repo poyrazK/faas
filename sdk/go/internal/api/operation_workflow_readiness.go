@@ -4,6 +4,7 @@ import "time"
 
 // Readiness checks declared requirements against retained reports, not execution authority.
 type OperationWorkflowReadinessRequest struct {
+	SelectedPaths   []OperationWorkflowPathSelection    `json:"selected_paths,omitempty"`
 	AppID           string                              `json:"app_id,omitempty"`
 	TenantID        string                              `json:"tenant_id,omitempty"`
 	Scope           string                              `json:"scope"`
@@ -22,21 +23,27 @@ type OperationWorkflowReadinessRequest struct {
 }
 
 type OperationWorkflowTransitionReadiness struct {
-	Transition                 OperationWorkflowInstanceTransition  `json:"transition"`
-	Declared                   bool                                 `json:"declared"`
-	Ready                      bool                                 `json:"ready"`
-	Reasons                    []string                             `json:"reasons"`
-	Advisories                 []string                             `json:"advisories"`
-	StateRevision              int64                                `json:"state_revision,omitempty"`
-	ContractVersion            int                                  `json:"contract_version"`
-	InvariantBlockers          []OperationWorkflowBlocker           `json:"invariant_blockers,omitempty"`
-	Blockers                   []OperationWorkflowBlocker           `json:"blockers"`
-	UnmetDependencies          []OperationWorkflowRelatedInstance   `json:"unmet_dependencies"`
-	MissingDependencyWorkflows []string                             `json:"missing_dependency_workflows,omitempty"`
-	UnmetEffects               []OperationWorkflowUnmetEffect       `json:"unmet_effects,omitempty"`
-	UnmetInvariants            []OperationWorkflowUnmetInvariant    `json:"unmet_invariants,omitempty"`
-	MissingPolicies            []OperationWorkflowPolicyRequirement `json:"missing_policies,omitempty"`
-	MissingMilestones          []string                             `json:"missing_milestones"`
+	Reporting                     *OperationWorkflowTransitionReporting           `json:"reporting,omitempty"`
+	PendingVerifications          []OperationWorkflowResolutionVerification       `json:"pending_verifications,omitempty"`
+	PendingVerificationCount      int64                                           `json:"pending_verification_count"`
+	PendingVerificationsTruncated bool                                            `json:"pending_verifications_truncated"`
+	RetainedMilestoneGroups       []OperationWorkflowRetainedMilestoneGroupResult `json:"retained_milestone_groups,omitempty"`
+	RetainedMilestones            []OperationWorkflowRetainedMilestone            `json:"retained_milestones,omitempty"`
+	Transition                    OperationWorkflowInstanceTransition             `json:"transition"`
+	Declared                      bool                                            `json:"declared"`
+	Ready                         bool                                            `json:"ready"`
+	Reasons                       []string                                        `json:"reasons"`
+	Advisories                    []string                                        `json:"advisories"`
+	StateRevision                 int64                                           `json:"state_revision,omitempty"`
+	ContractVersion               int                                             `json:"contract_version"`
+	InvariantBlockers             []OperationWorkflowBlocker                      `json:"invariant_blockers,omitempty"`
+	Blockers                      []OperationWorkflowBlocker                      `json:"blockers"`
+	UnmetDependencies             []OperationWorkflowRelatedInstance              `json:"unmet_dependencies"`
+	MissingDependencyWorkflows    []string                                        `json:"missing_dependency_workflows,omitempty"`
+	UnmetEffects                  []OperationWorkflowUnmetEffect                  `json:"unmet_effects,omitempty"`
+	UnmetInvariants               []OperationWorkflowUnmetInvariant               `json:"unmet_invariants,omitempty"`
+	MissingPolicies               []OperationWorkflowPolicyRequirement            `json:"missing_policies,omitempty"`
+	MissingMilestones             []string                                        `json:"missing_milestones"`
 }
 
 type OperationWorkflowReadinessResponse struct {
@@ -52,4 +59,167 @@ type OperationWorkflowReadinessOverview struct {
 	Items           []OperationWorkflowTransitionReadiness `json:"items"`
 	TransitionCount int                                    `json:"transition_count"`
 	HasMore         bool                                   `json:"has_more"`
+}
+
+// OperationWorkflowTransitionReporting describes current-state reporting, not transition guards.
+type OperationWorkflowTransitionReporting struct {
+	EvaluatedAt            time.Time                                 `json:"evaluated_at"`
+	State                  string                                    `json:"state"`
+	ReportingOperationID   string                                    `json:"reporting_operation_id"`
+	Status                 string                                    `json:"status"`
+	ExpectedConditionCount int64                                     `json:"expected_condition_count"`
+	ReportedConditionCount int64                                     `json:"reported_condition_count"`
+	MissingConditionCount  int64                                     `json:"missing_condition_count"`
+	OverdueConditionCount  int64                                     `json:"overdue_condition_count"`
+	Conditions             []OperationWorkflowConditionCoverageEntry `json:"conditions"`
+	ConditionsTruncated    bool                                      `json:"conditions_truncated"`
+}
+
+// Queue options select a bounded live sample, without supplying planned evidence.
+type OperationWorkflowReadinessQueueOptions struct {
+	AppID, Scope, TenantID, Workflow, TargetOperation, Owner, Requirement string
+	Unassigned                                                            bool
+	Limit                                                                 int
+}
+
+// Queue entries summarize one declared current-state transition. Detail remains in the workflow view.
+type OperationWorkflowReadinessQueueEntry struct {
+	PendingVerifications          []OperationWorkflowResolutionVerification `json:"pending_verifications,omitempty"`
+	PendingVerificationsTruncated bool                                      `json:"pending_verifications_truncated"`
+
+	PlatformTenantID           string                              `json:"platform_tenant_id,omitempty"`
+	Subject                    OperationSubject                    `json:"subject"`
+	Workflow                   string                              `json:"workflow"`
+	InstanceID                 string                              `json:"instance_id"`
+	OperationID                string                              `json:"operation_id"`
+	StateRevision              int64                               `json:"state_revision"`
+	ContractVersion            int                                 `json:"contract_version"`
+	Transition                 OperationWorkflowInstanceTransition `json:"transition"`
+	EvaluatedAt                time.Time                           `json:"evaluated_at"`
+	Ready                      bool                                `json:"ready"`
+	Reasons                    []string                            `json:"reasons"`
+	Advisories                 []string                            `json:"advisories"`
+	Owners                     []string                            `json:"owners"`
+	Unassigned                 bool                                `json:"unassigned"`
+	Blockers                   []OperationWorkflowBlocker          `json:"blockers"`
+	MissingMilestones          []string                            `json:"missing_milestones"`
+	MissingDependencyWorkflows []string                            `json:"missing_dependency_workflows"`
+	PendingVerificationCount   int64                               `json:"pending_verification_count"`
+	ReportingStatus            string                              `json:"reporting_status"`
+	MissingReportCount         int64                               `json:"missing_report_count"`
+	OverdueReportCount         int64                               `json:"overdue_report_count"`
+}
+
+// Counts describe the evaluated sample; this is not an account-wide backlog or execution grant.
+type OperationWorkflowReadinessQueueResponse struct {
+	Snapshot                     OperationWorkflowReadinessSnapshot     `json:"snapshot"`
+	Items                        []OperationWorkflowReadinessQueueEntry `json:"items"`
+	SampledAt                    time.Time                              `json:"sampled_at"`
+	EvaluatedAt                  time.Time                              `json:"evaluated_at"`
+	MatchingWorkflowCount        int64                                  `json:"matching_workflow_count"`
+	SampledWorkflowCount         int64                                  `json:"sampled_workflow_count"`
+	ExcludedChangedWorkflowCount int64                                  `json:"excluded_changed_workflow_count"`
+	NoTransitionWorkflowCount    int64                                  `json:"no_transition_workflow_count"`
+	DeclaredTransitionCount      int64                                  `json:"declared_transition_count"`
+	EvaluatedTransitionCount     int64                                  `json:"evaluated_transition_count"`
+	MatchingTransitionCount      int64                                  `json:"matching_transition_count"`
+	ReadyTransitionCount         int64                                  `json:"ready_transition_count"`
+	UnmetTransitionCount         int64                                  `json:"unmet_transition_count"`
+	WorkflowSampleTruncated      bool                                   `json:"workflow_sample_truncated"`
+	TransitionSampleTruncated    bool                                   `json:"transition_sample_truncated"`
+	HasMore                      bool                                   `json:"has_more"`
+}
+
+// Snapshot is caller-held comparison evidence, never execution authority.
+type OperationWorkflowReadinessSnapshot struct {
+	Version    int                                       `json:"version"`
+	Query      string                                    `json:"query"`
+	CapturedAt time.Time                                 `json:"captured_at"`
+	Items      []OperationWorkflowReadinessSnapshotEntry `json:"items"`
+}
+
+// Compact summaries cover returned rows, not every transition in the queue sample.
+type OperationWorkflowReadinessSnapshotEntry struct {
+	Evidence                   []OperationWorkflowReadinessEvidence `json:"evidence"`
+	EvidenceComplete           bool                                 `json:"evidence_complete,omitempty"`
+	PlatformTenantID           string                               `json:"platform_tenant_id,omitempty"`
+	Subject                    OperationSubject                     `json:"subject"`
+	Workflow                   string                               `json:"workflow"`
+	InstanceID                 string                               `json:"instance_id"`
+	OperationID                string                               `json:"operation_id"`
+	StateRevision              int64                                `json:"state_revision"`
+	ContractVersion            int                                  `json:"contract_version"`
+	Operation                  string                               `json:"operation"`
+	FromState                  string                               `json:"from_state"`
+	ToState                    string                               `json:"to_state"`
+	EvaluatedAt                time.Time                            `json:"evaluated_at"`
+	Ready                      bool                                 `json:"ready"`
+	Reasons                    []string                             `json:"reasons"`
+	Advisories                 []string                             `json:"advisories"`
+	BlockerCodes               []string                             `json:"blocker_codes"`
+	MissingMilestones          []string                             `json:"missing_milestones"`
+	MissingDependencyWorkflows []string                             `json:"missing_dependency_workflows"`
+	PendingVerificationCount   int64                                `json:"pending_verification_count"`
+	RequirementsFingerprint    string                               `json:"requirements_fingerprint"`
+	BlockersFingerprint        string                               `json:"blockers_fingerprint"`
+	PrerequisitesFingerprint   string                               `json:"prerequisites_fingerprint"`
+	VerificationsFingerprint   string                               `json:"verifications_fingerprint"`
+	ReportingFingerprint       string                               `json:"reporting_fingerprint"`
+}
+
+// Comparison rereads only the distinct workflows represented in the saved snapshot.
+type OperationWorkflowReadinessComparisonRequest struct {
+	AppID    string                             `json:"app_id,omitempty"`
+	TenantID string                             `json:"tenant_id,omitempty"`
+	Scope    string                             `json:"scope"`
+	Baseline OperationWorkflowReadinessSnapshot `json:"baseline"`
+	Change   string                             `json:"change,omitempty"`
+	Limit    int                                `json:"limit,omitempty"`
+}
+type OperationWorkflowReadinessChange struct {
+	EvidenceChanges            []OperationWorkflowReadinessEvidenceChange `json:"evidence_changes"`
+	EvidenceComparisonComplete bool                                       `json:"evidence_comparison_complete"`
+	CurrentOperationID         string                                     `json:"current_operation_id,omitempty"`
+	CurrentState               string                                     `json:"current_state,omitempty"`
+	Baseline                   OperationWorkflowReadinessSnapshotEntry    `json:"baseline"`
+	Current                    *OperationWorkflowReadinessQueueEntry      `json:"current,omitempty"`
+	Status                     string                                     `json:"status"`
+	AddedReasons               []string                                   `json:"added_reasons"`
+	ResolvedReasons            []string                                   `json:"resolved_reasons"`
+	ChangedCategories          []string                                   `json:"changed_categories"`
+	Explanation                string                                     `json:"explanation"`
+}
+type OperationWorkflowReadinessComparisonResponse struct {
+	BaselineAt              time.Time                          `json:"baseline_at"`
+	EvaluatedAt             time.Time                          `json:"evaluated_at"`
+	BaselineTransitionCount int64                              `json:"baseline_transition_count"`
+	ComparedTransitionCount int64                              `json:"compared_transition_count"`
+	NewlyReadyCount         int64                              `json:"newly_ready_count"`
+	NewlyBlockedCount       int64                              `json:"newly_blocked_count"`
+	ChangedCount            int64                              `json:"changed_count"`
+	UnchangedCount          int64                              `json:"unchanged_count"`
+	UnavailableCount        int64                              `json:"unavailable_count"`
+	MatchingChangeCount     int64                              `json:"matching_change_count"`
+	Items                   []OperationWorkflowReadinessChange `json:"items"`
+	Snapshot                OperationWorkflowReadinessSnapshot `json:"snapshot"`
+	HasMore                 bool                               `json:"has_more"`
+}
+
+// Evidence is a compact retained observation, not execution authority. Keys preserve group/path and obligation identity.
+type OperationWorkflowReadinessEvidence struct {
+	Category                string `json:"category"`
+	Key                     string `json:"key"`
+	Name                    string `json:"name"`
+	Status                  string `json:"status"`
+	Owner                   string `json:"owner,omitempty"`
+	OperationID             string `json:"operation_id,omitempty"`
+	InvalidationOperationID string `json:"invalidation_operation_id,omitempty"`
+	Fingerprint             string `json:"fingerprint"`
+}
+
+// Absence is only classified when both evidence inventories are complete.
+type OperationWorkflowReadinessEvidenceChange struct {
+	Kind   string                              `json:"kind"`
+	Before *OperationWorkflowReadinessEvidence `json:"before,omitempty"`
+	After  *OperationWorkflowReadinessEvidence `json:"after,omitempty"`
 }

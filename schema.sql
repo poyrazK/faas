@@ -17398,6 +17398,10 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     outcome_only boolean DEFAULT false NOT NULL,
     depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     dependencies_only boolean DEFAULT false NOT NULL,
+    selected_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    change_reason jsonb DEFAULT 'null'::jsonb NOT NULL,
+    CONSTRAINT customer_operation_workflow_change_reason_check CHECK ((jsonb_typeof(change_reason) = ANY (ARRAY['object'::text, 'null'::text]))),
+    CONSTRAINT customer_operation_workflow_selected_paths_check CHECK (((jsonb_typeof(selected_paths) = 'array'::text) AND (jsonb_array_length(selected_paths) <= 8))),
     CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
     CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
     CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
@@ -17438,6 +17442,59 @@ CREATE TABLE public.customer_operation_workflow_states (
     CONSTRAINT customer_operation_workflow_states_subject_id_check CHECK ((((octet_length(subject_id) >= 1) AND (octet_length(subject_id) <= 256)) AND (subject_id !~ '[\x00-\x1f\x7f]'::text))),
     CONSTRAINT customer_operation_workflow_states_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT customer_operation_workflow_states_workflow_check CHECK ((workflow ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: customer_workflow_playbook_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_playbook_progress (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    case_key text NOT NULL,
+    revision bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_playbook_progress_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_playbook_progress_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_notifications (
+    subscription_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_readiness_notifications_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_notifications_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_subscriptions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid,
+    operator boolean NOT NULL,
+    scope text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_evaluation_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT customer_workflow_readiness_subscriptions_check CHECK ((operator OR (tenant_id IS NOT NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_subscriptions_scope_check CHECK ((((length(scope) >= 1) AND (length(scope) <= 40)) AND (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))
 );
 
 
@@ -30848,6 +30905,30 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_pkey PRIMARY KEY (subscription_id, sequence);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37730,6 +37811,27 @@ CREATE INDEX customer_operations_tenant_idx ON public.customer_operations USING 
 --
 
 CREATE INDEX customer_operations_tenant_subject_history_idx ON public.customer_operations USING btree (account_id, app_id, platform_tenant_id, ((record #>> '{subject,type}'::text[])), ((record #>> '{subject,id}'::text[])), created_at DESC, id DESC) WHERE (record ? 'subject'::text);
+
+
+--
+-- Name: customer_workflow_playbook_progress_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_playbook_progress_case ON public.customer_workflow_playbook_progress USING btree (account_id, app_id, tenant_id, case_key, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_workflow_readiness_subscriptions USING btree (next_evaluation_at, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions USING btree (account_id, app_id, operator, scope);
 
 
 --
@@ -48555,6 +48657,62 @@ ALTER TABLE ONLY public.customer_operations
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.customer_workflow_readiness_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
