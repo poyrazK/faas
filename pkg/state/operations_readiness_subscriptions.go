@@ -22,21 +22,22 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
-	ImpactSources      [][]impactReviewSource                     `json:"impact_sources,omitempty"`
-	ImpactTruncated    []bool                                     `json:"impact_truncated,omitempty"`
-	PlaybookCursor     string                                     `json:"playbook_cursor,omitempty"`
-	ResponseCursor     int64                                      `json:"response_cursor,omitempty"`
-	OutcomeCursor      int64                                      `json:"outcome_cursor,omitempty"`
-	VerificationCursor int64                                      `json:"verification_cursor,omitempty"`
-	Subscription       api.OperationWorkflowReadinessSubscription `json:"subscription"`
-	Baseline           api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
-	Seen               map[string]string                          `json:"seen"`
-	Account            string                                     `json:"-"`
-	Tenant             string                                     `json:"-"`
-	Operator           bool                                       `json:"-"`
-	Lease              string                                     `json:"-"`
-	LeaseUntil         time.Time                                  `json:"-"`
-	NextEvaluation     time.Time                                  `json:"-"`
+	ReviewResponseCursor int64                                      `json:"review_response_cursor,omitempty"`
+	ImpactSources        [][]impactReviewSource                     `json:"impact_sources,omitempty"`
+	ImpactTruncated      []bool                                     `json:"impact_truncated,omitempty"`
+	PlaybookCursor       string                                     `json:"playbook_cursor,omitempty"`
+	ResponseCursor       int64                                      `json:"response_cursor,omitempty"`
+	OutcomeCursor        int64                                      `json:"outcome_cursor,omitempty"`
+	VerificationCursor   int64                                      `json:"verification_cursor,omitempty"`
+	Subscription         api.OperationWorkflowReadinessSubscription `json:"subscription"`
+	Baseline             api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
+	Seen                 map[string]string                          `json:"seen"`
+	Account              string                                     `json:"-"`
+	Tenant               string                                     `json:"-"`
+	Operator             bool                                       `json:"-"`
+	Lease                string                                     `json:"-"`
+	LeaseUntil           time.Time                                  `json:"-"`
+	NextEvaluation       time.Time                                  `json:"-"`
 }
 type readinessSubscriptionBackend interface {
 	readinessFollowUpBackend

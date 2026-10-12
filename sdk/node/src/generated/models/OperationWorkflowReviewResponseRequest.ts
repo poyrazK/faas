@@ -8,6 +8,10 @@ import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWork
  */
 export type OperationWorkflowReviewResponseRequest = {
   /**
+   * OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to preserve existing policy, or send empty to clear it. Explicit ownership changes protect the current check-in from automatic takeover.
+   */
+  fallback_owner?: string;
+  /**
    * OperationWorkflowReviewResponseRequest.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */
   owner: string;

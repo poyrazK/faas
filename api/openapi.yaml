@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        review_check_in:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseCheckInEvent'
+          description: OperationWorkflowReadinessNotification.review_check_in. One-time missed response check-in with immutable plan/link/ownership context; source resolution and rescheduling fence stale publication.
         review_response:
           $ref: '#/components/schemas/OperationWorkflowReviewResponse'
           description: OperationWorkflowReadinessNotification.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
@@ -79354,6 +79357,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_check_in_overdue
           - business_impact_changed
           - newly_ready
           - newly_blocked
@@ -80553,12 +80557,51 @@ components:
       - created_at
       - coordination
       - overdue
+    OperationWorkflowReviewResponseCheckInEvent:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponseCheckInEvent. Frozen response plan, linked reviews and routing at one missed check-in, separate from business outcome and alert acknowledgment.
+      required: [source_notification_id, source_sequence, checked_at, check_in_at, previous_owner, owner, reassigned, response]
+      properties:
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseCheckInEvent.source_notification_id. Original risk alert identity.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseCheckInEvent.source_sequence. Original alert sequence within this inbox.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseCheckInEvent.checked_at. Periodic evaluation time.
+        check_in_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseCheckInEvent.check_in_at. Original missed response check-in; handoff does not reset it.
+        previous_owner:
+          type: string
+          description: OperationWorkflowReviewResponseCheckInEvent.previous_owner. Response owner before the overdue check.
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseCheckInEvent.owner. Effective responsible team after guarded fallback.
+        reassigned:
+          type: boolean
+          description: OperationWorkflowReviewResponseCheckInEvent.reassigned. Whether guarded fallback changed both response responsibility and inbox ownership.
+        response:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponse'
+          description: OperationWorkflowReviewResponseCheckInEvent.response. Immutable response snapshot with its plan, links and bounded change history. This is informational context, not a new editable response.
     OperationWorkflowReviewResponseRequest:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to preserve existing policy, or send empty to clear it. Explicit ownership changes protect the current check-in from automatic takeover.
         owner:
           type: string
           minLength: 1
@@ -80654,6 +80697,20 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins.
+        check_in_initial_owner:
+          type: string
+          description: OperationWorkflowReviewResponse.check_in_initial_owner. Team assigned when this check-in was explicitly scheduled; unknown for legacy windows.
+        check_in_owner_changed:
+          type: boolean
+          description: OperationWorkflowReviewResponse.check_in_owner_changed. Ownership changed during this check-in period; prevents automatic takeover even if the owner later reverts.
+        check_in_notified_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponse.check_in_notified_at. One-time overdue notice marker for the current check-in; cleared only by a newly scheduled active check-in.
         owner:
           type: string
           minLength: 1
@@ -80710,6 +80767,13 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        fallback_owner:
+          type: string
+          description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
+        reason:
+          type: string
+          enum: [human_update, check_in_overdue]
+          description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string
           minLength: 1

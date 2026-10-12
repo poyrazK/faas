@@ -381,3 +381,5 @@ type OperationWorkflowReviewResponseLink = api.OperationWorkflowReviewResponseLi
 type OperationWorkflowReviewResponse = api.OperationWorkflowReviewResponse
 
 type OperationWorkflowReviewResponseChange = api.OperationWorkflowReviewResponseChange
+
+type OperationWorkflowReviewResponseCheckInEvent = api.OperationWorkflowReviewResponseCheckInEvent

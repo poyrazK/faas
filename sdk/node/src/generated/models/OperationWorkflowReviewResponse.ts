@@ -9,6 +9,22 @@ import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowRev
  */
 export type OperationWorkflowReviewResponse = {
   /**
+   * OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins.
+   */
+  fallback_owner?: string;
+  /**
+   * OperationWorkflowReviewResponse.check_in_initial_owner. Team assigned when this check-in was explicitly scheduled; unknown for legacy windows.
+   */
+  check_in_initial_owner?: string;
+  /**
+   * OperationWorkflowReviewResponse.check_in_owner_changed. Ownership changed during this check-in period; prevents automatic takeover even if the owner later reverts.
+   */
+  check_in_owner_changed?: boolean;
+  /**
+   * OperationWorkflowReviewResponse.check_in_notified_at. One-time overdue notice marker for the current check-in; cleared only by a newly scheduled active check-in.
+   */
+  check_in_notified_at?: string;
+  /**
    * OperationWorkflowReviewResponse.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */
   owner: string;

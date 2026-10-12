@@ -21,6 +21,9 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if req.Completion != nil || !text(input.Owner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || (strings.TrimSpace(input.Plan) == "" || len(input.Plan) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(input.Plan) || strings.IndexFunc(input.Plan, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0) || (input.Status != "active" && input.Status != "resolved") || len(input.Reviews) > 16 {
 		return nil, ErrInvalidArgument
 	}
+	if input.FallbackOwner != nil && *input.FallbackOwner != "" && (!text(*input.FallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.FallbackOwner == input.Owner) {
+		return nil, ErrInvalidArgument
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if input.CheckInAt != nil {
 		normalized := input.CheckInAt.UTC().Truncate(time.Microsecond)
@@ -49,6 +52,12 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if input.CheckInAt != nil {
 		check := input.CheckInAt.UTC().Truncate(time.Microsecond)
 		response.CheckInAt = &check
+	}
+	if alert.ReviewResponse != nil {
+		response.FallbackOwner = alert.ReviewResponse.FallbackOwner
+	}
+	if input.FallbackOwner != nil {
+		response.FallbackOwner = *input.FallbackOwner
 	}
 	if alert.ReviewResponse != nil {
 		response.Reviews = slices.Clone(alert.ReviewResponse.Reviews)

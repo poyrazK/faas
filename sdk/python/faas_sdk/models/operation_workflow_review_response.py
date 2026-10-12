@@ -50,6 +50,17 @@ class OperationWorkflowReviewResponse:
     """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
     """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins."""
+    check_in_initial_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponse.check_in_initial_owner. Team assigned when this check-in was explicitly
+    scheduled; unknown for legacy windows."""
+    check_in_owner_changed: bool | Unset = UNSET
+    """OperationWorkflowReviewResponse.check_in_owner_changed. Ownership changed during this check-in period;
+    prevents automatic takeover even if the owner later reverts."""
+    check_in_notified_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReviewResponse.check_in_notified_at. One-time overdue notice marker for the current check-
+    in; cleared only by a newly scheduled active check-in."""
     check_in_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponse.check_in_at. Required future check-in for active responses; absent when
     resolved. Replaces inbox attention time without changing the original alert response deadline."""
@@ -85,6 +96,16 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = self.history_truncated
 
+        fallback_owner = self.fallback_owner
+
+        check_in_initial_owner = self.check_in_initial_owner
+
+        check_in_owner_changed = self.check_in_owner_changed
+
+        check_in_notified_at: str | Unset = UNSET
+        if not isinstance(self.check_in_notified_at, Unset):
+            check_in_notified_at = self.check_in_notified_at.isoformat()
+
         check_in_at: str | Unset = UNSET
         if not isinstance(self.check_in_at, Unset):
             check_in_at = self.check_in_at.isoformat()
@@ -109,6 +130,14 @@ class OperationWorkflowReviewResponse:
                 "history_truncated": history_truncated,
             }
         )
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
+        if check_in_initial_owner is not UNSET:
+            field_dict["check_in_initial_owner"] = check_in_initial_owner
+        if check_in_owner_changed is not UNSET:
+            field_dict["check_in_owner_changed"] = check_in_owner_changed
+        if check_in_notified_at is not UNSET:
+            field_dict["check_in_notified_at"] = check_in_notified_at
         if check_in_at is not UNSET:
             field_dict["check_in_at"] = check_in_at
         if resolution_checked_at is not UNSET:
@@ -152,6 +181,19 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = d.pop("history_truncated")
 
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
+        check_in_initial_owner = d.pop("check_in_initial_owner", UNSET)
+
+        check_in_owner_changed = d.pop("check_in_owner_changed", UNSET)
+
+        _check_in_notified_at = d.pop("check_in_notified_at", UNSET)
+        check_in_notified_at: datetime.datetime | Unset
+        if isinstance(_check_in_notified_at, Unset):
+            check_in_notified_at = UNSET
+        else:
+            check_in_notified_at = datetime.datetime.fromisoformat(_check_in_notified_at)
+
         _check_in_at = d.pop("check_in_at", UNSET)
         check_in_at: datetime.datetime | Unset
         if isinstance(_check_in_at, Unset):
@@ -177,6 +219,10 @@ class OperationWorkflowReviewResponse:
             updated_by=updated_by,
             history=history,
             history_truncated=history_truncated,
+            fallback_owner=fallback_owner,
+            check_in_initial_owner=check_in_initial_owner,
+            check_in_owner_changed=check_in_owner_changed,
+            check_in_notified_at=check_in_notified_at,
             check_in_at=check_in_at,
             resolution_checked_at=resolution_checked_at,
         )

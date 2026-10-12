@@ -31,6 +31,7 @@ func evaluateReadinessOutcomeWatches(ctx context.Context, store readinessSubscri
 		candidates = candidates[:api.OperationWorkflowReadinessOutcomeWatchesPerPassMax]
 	}
 	updates := readinessEscalationResponseUpdates(page.Items, r)
+	updates = append(updates, reviewResponseCheckInUpdates(page.Items, r)...)
 	cursor := r.OutcomeCursor
 	var firstErr error
 	for _, n := range candidates {

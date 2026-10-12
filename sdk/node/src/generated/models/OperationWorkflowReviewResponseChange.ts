@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowReviewResponseChange = {
   /**
+   * OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
+   */
+  fallback_owner?: string;
+  /**
+   * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
+   */
+  reason?: 'human_update' | 'check_in_overdue';
+  /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */
   owner: string;

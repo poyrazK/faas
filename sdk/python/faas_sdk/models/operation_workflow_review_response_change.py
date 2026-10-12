@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_review_response_change_reason import (
+    OperationWorkflowReviewResponseChangeReason,
+    check_operation_workflow_review_response_change_reason,
+)
 from ..models.operation_workflow_review_response_change_status import (
     OperationWorkflowReviewResponseChangeStatus,
     check_operation_workflow_review_response_change_status,
@@ -32,6 +36,11 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change."""
+    reason: OperationWorkflowReviewResponseChangeReason | Unset = UNSET
+    """OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent
+    in older history."""
     check_in_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseChange.check_in_at. Required future check-in for active responses; absent
     when resolved. Replaces inbox attention time without changing the original alert response deadline."""
@@ -46,6 +55,12 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        fallback_owner = self.fallback_owner
+
+        reason: str | Unset = UNSET
+        if not isinstance(self.reason, Unset):
+            reason = self.reason
 
         check_in_at: str | Unset = UNSET
         if not isinstance(self.check_in_at, Unset):
@@ -62,6 +77,10 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
+        if reason is not UNSET:
+            field_dict["reason"] = reason
         if check_in_at is not UNSET:
             field_dict["check_in_at"] = check_in_at
 
@@ -80,6 +99,15 @@ class OperationWorkflowReviewResponseChange:
 
         actor = d.pop("actor")
 
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
+        _reason = d.pop("reason", UNSET)
+        reason: OperationWorkflowReviewResponseChangeReason | Unset
+        if isinstance(_reason, Unset):
+            reason = UNSET
+        else:
+            reason = check_operation_workflow_review_response_change_reason(_reason)
+
         _check_in_at = d.pop("check_in_at", UNSET)
         check_in_at: datetime.datetime | Unset
         if isinstance(_check_in_at, Unset):
@@ -93,6 +121,8 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            fallback_owner=fallback_owner,
+            reason=reason,
             check_in_at=check_in_at,
         )
 

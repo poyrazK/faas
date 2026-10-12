@@ -1309,6 +1309,7 @@ export type { OperationWorkflowRetainedMilestonePathResult } from './models/Oper
 export type { OperationWorkflowRetainedMilestoneRequirement } from './models/OperationWorkflowRetainedMilestoneRequirement.js';
 export type { OperationWorkflowReviewResponse } from './models/OperationWorkflowReviewResponse.js';
 export type { OperationWorkflowReviewResponseChange } from './models/OperationWorkflowReviewResponseChange.js';
+export type { OperationWorkflowReviewResponseCheckInEvent } from './models/OperationWorkflowReviewResponseCheckInEvent.js';
 export type { OperationWorkflowReviewResponseLink } from './models/OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './models/OperationWorkflowReviewResponseLinkRequest.js';
 export type { OperationWorkflowReviewResponseRequest } from './models/OperationWorkflowReviewResponseRequest.js';

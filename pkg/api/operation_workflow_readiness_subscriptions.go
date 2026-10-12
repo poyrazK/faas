@@ -40,6 +40,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent       `json:"review_check_in,omitempty"`
 	ReviewResponse       *OperationWorkflowReviewResponse                   `json:"review_response,omitempty"`
 	BusinessImpact       *OperationWorkflowReadinessImpactEvent             `json:"business_impact,omitempty"`
 	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery       `json:"dependency_recovery,omitempty"`
@@ -479,11 +480,12 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
-	Owner     string                                       `json:"owner"`
-	Plan      string                                       `json:"plan"`
-	Status    string                                       `json:"status"`
-	CheckInAt *time.Time                                   `json:"check_in_at,omitempty"`
-	Reviews   []OperationWorkflowReviewResponseLinkRequest `json:"reviews,omitempty"`
+	FallbackOwner *string                                      `json:"fallback_owner,omitempty"`
+	Owner         string                                       `json:"owner"`
+	Plan          string                                       `json:"plan"`
+	Status        string                                       `json:"status"`
+	CheckInAt     *time.Time                                   `json:"check_in_at,omitempty"`
+	Reviews       []OperationWorkflowReviewResponseLinkRequest `json:"reviews,omitempty"`
 }
 type OperationWorkflowReviewResponseLinkRequest struct {
 	SubscriptionID string `json:"subscription_id"`
@@ -503,6 +505,10 @@ type OperationWorkflowReviewResponseLink struct {
 	InstanceID               string           `json:"instance_id"`
 }
 type OperationWorkflowReviewResponse struct {
+	FallbackOwner       string                                  `json:"fallback_owner,omitempty"`
+	CheckInInitialOwner string                                  `json:"check_in_initial_owner,omitempty"`
+	CheckInOwnerChanged bool                                    `json:"check_in_owner_changed,omitempty"`
+	CheckInNotifiedAt   *time.Time                              `json:"check_in_notified_at,omitempty"`
 	Owner               string                                  `json:"owner"`
 	Plan                string                                  `json:"plan"`
 	Status              string                                  `json:"status"`
@@ -517,10 +523,24 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated    bool                                    `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
-	Owner     string     `json:"owner"`
-	Plan      string     `json:"plan"`
-	Status    string     `json:"status"`
-	CheckInAt *time.Time `json:"check_in_at,omitempty"`
-	At        time.Time  `json:"at"`
-	Actor     string     `json:"actor"`
+	FallbackOwner string     `json:"fallback_owner,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+	Owner         string     `json:"owner"`
+	Plan          string     `json:"plan"`
+	Status        string     `json:"status"`
+	CheckInAt     *time.Time `json:"check_in_at,omitempty"`
+	At            time.Time  `json:"at"`
+	Actor         string     `json:"actor"`
+}
+
+// Check-in events preserve the original deadline and response snapshot at escalation.
+type OperationWorkflowReviewResponseCheckInEvent struct {
+	SourceNotificationID string                          `json:"source_notification_id"`
+	SourceSequence       int64                           `json:"source_sequence"`
+	CheckedAt            time.Time                       `json:"checked_at"`
+	CheckInAt            time.Time                       `json:"check_in_at"`
+	PreviousOwner        string                          `json:"previous_owner"`
+	Owner                string                          `json:"owner"`
+	Reassigned           bool                            `json:"reassigned"`
+	Response             OperationWorkflowReviewResponse `json:"response"`
 }

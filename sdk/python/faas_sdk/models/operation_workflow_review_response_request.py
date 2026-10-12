@@ -35,6 +35,10 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to
+    preserve existing policy, or send empty to clear it. Explicit ownership changes protect the current check-in
+    from automatic takeover."""
     check_in_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseRequest.check_in_at. Required future check-in for active responses; absent
     when resolved. Replaces inbox attention time without changing the original alert response deadline."""
@@ -49,6 +53,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        fallback_owner = self.fallback_owner
 
         check_in_at: str | Unset = UNSET
         if not isinstance(self.check_in_at, Unset):
@@ -70,6 +76,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
         if check_in_at is not UNSET:
             field_dict["check_in_at"] = check_in_at
         if reviews is not UNSET:
@@ -87,6 +95,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
 
         _check_in_at = d.pop("check_in_at", UNSET)
         check_in_at: datetime.datetime | Unset
@@ -108,6 +118,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            fallback_owner=fallback_owner,
             check_in_at=check_in_at,
             reviews=reviews,
         )

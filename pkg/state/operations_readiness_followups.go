@@ -75,8 +75,15 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			response.History = slices.Clone(n.ReviewResponse.History)
 			response.HistoryTruncated = n.ReviewResponse.HistoryTruncated
 		}
+		if response.Status == "active" && (n.ReviewResponse == nil || n.ReviewResponse.Status != "active" || n.ReviewResponse.CheckInAt == nil || !n.ReviewResponse.CheckInAt.Equal(*response.CheckInAt)) {
+			response.CheckInInitialOwner = response.Owner
+		} else if n.ReviewResponse != nil {
+			response.CheckInInitialOwner = n.ReviewResponse.CheckInInitialOwner
+			response.CheckInOwnerChanged = n.ReviewResponse.CheckInOwnerChanged || n.ReviewResponse.Owner != response.Owner
+			response.CheckInNotifiedAt = n.ReviewResponse.CheckInNotifiedAt
+		}
 		response.UpdatedAt, response.UpdatedBy = now, actor
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true
