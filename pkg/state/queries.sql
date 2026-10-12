@@ -10231,7 +10231,7 @@ SELECT session_user::text AS login, current_user::text AS effective_user,
  has_schema_privilege(current_user,'public','CREATE') AS schema_create,
  (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
  OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- (has_database_privilege(current_user,current_database(),'CREATE')
+ ((sqlc.arg(access)::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
  OR has_database_privilege(current_user,current_database(),'TEMPORARY')
  OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
  AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
@@ -15961,7 +15961,7 @@ WHERE r.id=sqlc.arg(run_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
  AND r.operation_id IS NULL;
 
 -- name: GetWorkflowDiagnosticsSteps :many
-SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at,error
 FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid ORDER BY step_name;
 
 -- name: GetWorkflowRecoveryTarget :one

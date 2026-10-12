@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestSecretReferenceCLIExplicitEnvironmentTransport(t *testing.T) {
 		} {
 			t.Run(environment+"/"+tc.op, func(t *testing.T) {
 				resetJSONOut(t)
-				f := authedFakeAPI(t, tc.response, tc.status)
+				f := authedFakeAPI(t, strings.ReplaceAll(tc.response, `"environment":"production"`, `"environment":"`+environment+`"`), tc.status)
 				args := []string{"refs", tc.op, "--app", "shop-api", "--environment", environment}
 				if tc.argument != "" {
 					args = append(args, tc.argument)
@@ -26,7 +27,12 @@ func TestSecretReferenceCLIExplicitEnvironmentTransport(t *testing.T) {
 				if cmdSecrets(args) != 0 {
 					t.Fatal("reference command failed")
 				}
-				if f.sawMethod != tc.method || f.sawPath != "/v1/apps/shop-api/secret-references"+tc.suffix || f.sawQuery != "environment="+environment {
+				expectedPath, expectedQuery := "/v1/apps/shop-api/secret-references"+tc.suffix, "environment="+environment
+				if tc.op == "list" {
+					// Human listing also checks source metadata in this exact environment.
+					expectedPath, expectedQuery = "/v1/apps/shop-api/secrets", "scope="+environment
+				}
+				if f.sawMethod != tc.method || f.sawPath != expectedPath || f.sawQuery != expectedQuery {
 					t.Fatalf("transport: %s %s", f.sawMethod, f.sawPath)
 				}
 				if tc.op == "set" {

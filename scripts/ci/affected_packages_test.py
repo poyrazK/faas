@@ -16,7 +16,7 @@ M = ap.MODULE
 PKGS = {
     "pkg/state": {"path": f"{M}/pkg/state", "imports": {"context"}},
     "pkg/api": {"path": f"{M}/pkg/api", "imports": {f"{M}/pkg/state"}},
-    "cmd/apid": {"path": f"{M}/cmd/apid", "imports": {f"{M}/pkg/api"}},
+    "pkg/apid/apidserver": {"path": f"{M}/pkg/apid/apidserver", "imports": {f"{M}/pkg/api"}},
     "pkg/util": {"path": f"{M}/pkg/util", "imports": set()},
     "cmd/e2e": {"path": f"{M}/cmd/e2e", "imports": {f"{M}/pkg/state"}},
     "migrations": {"path": f"{M}/migrations", "imports": set()},
@@ -37,7 +37,7 @@ class SelectTest(unittest.TestCase):
     def test_changed_packages_are_tested_and_direct_importers_vetted(self):
         _, changed, vet, test = ap.select(["pkg/state/store.go"], PKGS)
         self.assertEqual(changed, ["pkg/state"])
-        # pkg/api imports pkg/state directly; cmd/apid only transitively.
+        # pkg/api imports pkg/state directly; pkg/apid/apidserver only transitively.
         self.assertEqual(vet, ["cmd/e2e", "pkg/api", "pkg/state"])
         # tests/property depends on pkg/state transitively, so the §6.2
         # invariants run too.
@@ -76,16 +76,16 @@ class SelectTest(unittest.TestCase):
 
 class ShardTest(unittest.TestCase):
     def test_apid_uses_its_own_postgres_service_shards(self):
-        dirs = ["cmd/apid", "pkg/state", "pkg/api", "pkg/sched"]
+        dirs = ["pkg/apid/apidserver", "pkg/state", "pkg/api", "pkg/sched"]
         shards = [ap.shard(dirs, i, 6) for i in range(1, 7)]
-        self.assertEqual(shards[3:], [["cmd/apid"]] * 3)
+        self.assertEqual(shards[3:], [["pkg/apid/apidserver"]] * 3)
         self.assertEqual(shards[:3], [
-            [d for d in ap.shard(dirs, i, 3) if d != "cmd/apid"]
+            [d for d in ap.shard(dirs, i, 3) if d != "pkg/apid/apidserver"]
             for i in range(1, 4)
         ])
         self.assertEqual(sorted(d for s in shards[:3] for d in s),
-                         sorted(d for d in dirs if d not in {"pkg/state", "cmd/apid"}))
-        self.assertNotIn("cmd/apid", [d for s in shards[:3] for d in s])
+                         sorted(d for d in dirs if d not in {"pkg/state", "pkg/apid/apidserver"}))
+        self.assertNotIn("pkg/apid/apidserver", [d for s in shards[:3] for d in s])
 
     def test_shards_partition_the_set_deterministically(self):
         dirs = [f"pkg/p{i}" for i in range(20)] + ["cmd/gregale"]
@@ -101,10 +101,10 @@ class ShardTest(unittest.TestCase):
 
     def test_split_packages_are_never_assigned_whole(self):
         # API and state tests run by name across every shard instead.
-        shards = [ap.shard(["cmd/apid", "pkg/state", "pkg/x"], i, 3)
+        shards = [ap.shard(["pkg/apid/apidserver", "pkg/state", "pkg/x"], i, 3)
                   for i in (1, 2, 3)]
         self.assertEqual([d for s in shards for d in s], ["pkg/x"])
-        for pkg in ("cmd/apid", "pkg/state"):
+        for pkg in ("pkg/apid/apidserver", "pkg/state"):
             self.assertIn(pkg, ap.SPLIT_PACKAGES)
 
 
@@ -120,20 +120,20 @@ class CommandTest(unittest.TestCase):
 
     def test_split_command_selects_only_affected_large_packages(self):
         for paths, want in [
-            (["cmd/apid/handler_test.go"], ["./cmd/apid"]),
+            (["pkg/apid/apidserver/handler_test.go"], ["./pkg/apid/apidserver"]),
             (["pkg/state/store_test.go"], ["./pkg/state"]),
-            (["cmd/apid/handler_test.go", "pkg/state/store_test.go"], ["./cmd/apid", "./pkg/state"]),
+            (["pkg/apid/apidserver/handler_test.go", "pkg/state/store_test.go"], ["./pkg/apid/apidserver", "./pkg/state"]),
             (["pkg/util/helper.go"], []),
         ]:
             with self.subTest(paths=paths):
                 self.assertEqual(self.run_command("split", paths), want)
 
     def test_standard_and_name_split_commands_cover_selected_packages_once(self):
-        paths = ["cmd/apid/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]
+        paths = ["pkg/apid/apidserver/handler_test.go", "pkg/state/store_test.go", "pkg/util/helper.go"]
         ordinary = [p for i in (1, 2, 3) for p in self.run_command("test", paths, i)]
         large = self.run_command("split", paths)
         self.assertEqual(sorted(ordinary), ["./pkg/util", "./tests/property"])
-        self.assertEqual(large, ["./cmd/apid", "./pkg/state"])
+        self.assertEqual(large, ["./pkg/apid/apidserver", "./pkg/state"])
         self.assertEqual(len(ordinary + large), len(set(ordinary + large)))
 
 

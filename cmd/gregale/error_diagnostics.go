@@ -65,6 +65,10 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale profile check."
 		case p.Status == 429:
 			p.Hint = "Wait for Retry-After when provided, then retry."
+		case p.Status == 501:
+			// Operator-gated features (disposable executions, app tasks)
+			// answer 501; retrying or checking service status cannot help.
+			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
 		case p.Status >= 500:
 			p.Hint = "Check Gregale's service status and run gregale profile check. Inspect deployment status before retrying a deploy."
 		}

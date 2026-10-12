@@ -128,6 +128,14 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)
+
+	_, _ = io.WriteString(w, `  if [[ "${words[2]}" == secrets ]]; then
+    local secret_names
+    if secret_names=$(gregale "${__gregale_profile_args[@]}" completion secret-keys -- "${words[@]:1:$((CURRENT-1))}" 2>/dev/null); then
+      local -a secret_keys; secret_keys=( "${(@f)secret_names}" ); [[ -n "$secret_names" ]] && compadd -- "${secret_keys[@]}"; return 0
+    fi
+  fi
+`)
 	fileFlags := completionUnambiguousFlagSpellings(cliFlagUsesFilePathValues)
 	if len(fileFlags) > 0 {
 		_, _ = fmt.Fprintf(w, "  case \"${words[CURRENT-1]}\" in %s)\n", strings.Join(fileFlags, "|"))

@@ -116,8 +116,8 @@ from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerU
 from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
-from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
+from .api_consumer_usage_threshold_webhook_payload import APIConsumerUsageThresholdWebhookPayload
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -619,7 +619,11 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
+from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
+from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
 from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_platform_tenant_access_token_request import CreatePlatformTenantAccessTokenRequest
 from .create_platform_tenant_access_token_request_scopes_item import CreatePlatformTenantAccessTokenRequestScopesItem
@@ -811,6 +815,8 @@ from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayload
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_readiness_probe import DeploymentReadinessProbe
+from .deployment_promotion_hold import DeploymentPromotionHold
+from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -924,6 +930,16 @@ from .durable_entity_state_export_format import DurableEntityStateExportFormat
 from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
+from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
+from .edge_protection_response_range import EdgeProtectionResponseRange
+from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
+from .edge_protection_response_rejections_item_gate import EdgeProtectionResponseRejectionsItemGate
+from .edge_protection_response_rejections_item_status import EdgeProtectionResponseRejectionsItemStatus
+from .edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
+from .edge_protection_response_waf import EdgeProtectionResponseWaf
+from .edge_protection_response_waf_categories_item import EdgeProtectionResponseWafCategoriesItem
+from .edge_protection_response_waf_top_rules_item import EdgeProtectionResponseWafTopRulesItem
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -975,6 +991,12 @@ from .edge_rule_throttle_action_missing_key_policy import EdgeRuleThrottleAction
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
+from .edge_rule_validate_parameters import EdgeRuleValidateParameters
+from .edge_rule_validate_parameters_headers import EdgeRuleValidateParametersHeaders
+from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
+from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
+from .edge_rule_waf_action import EdgeRuleWAFAction
+from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -1378,6 +1400,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
@@ -1800,6 +1823,13 @@ from .managed_realtime_retained_history_response import ManagedRealtimeRetainedH
 from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
 from .managed_realtime_retained_message_request_metadata import ManagedRealtimeRetainedMessageRequestMetadata
 from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
+from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
+from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
+from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
+from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_probe_rpc_request import MCPProbeRPCRequest
+from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
+from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
 from .managed_realtime_retained_message_response_metadata import ManagedRealtimeRetainedMessageResponseMetadata
 from .managed_realtime_schedule_group_request import ManagedRealtimeScheduleGroupRequest
 from .managed_realtime_schedule_group_request_expected_versions import (
@@ -1826,6 +1856,10 @@ from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
+from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
+from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
+from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
+from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -2238,12 +2272,35 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_budget_alert import OutboundAIBudgetAlert
+from .outbound_ai_budget_alert_budget import OutboundAIBudgetAlertBudget
+from .outbound_ai_budget_alert_list import OutboundAIBudgetAlertList
+from .outbound_ai_budget_alert_threshold_percent import OutboundAIBudgetAlertThresholdPercent
+from .outbound_ai_budget_threshold_webhook_payload import OutboundAIBudgetThresholdWebhookPayload
+from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudgetThresholdWebhookPayloadBudget
+from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
+    OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
+)
+from .outbound_ai_price_entry import OutboundAIPriceEntry
+from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
+from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
+from .outbound_ai_request_log_list import OutboundAIRequestLogList
+from .outbound_ai_route import OutboundAIRoute
+from .outbound_ai_route_format import OutboundAIRouteFormat
+from .outbound_ai_route_list import OutboundAIRouteList
+from .outbound_ai_route_target import OutboundAIRouteTarget
+from .outbound_ai_usage_item import OutboundAIUsageItem
+from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
 from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
 from .outbound_binding_usage_response import OutboundBindingUsageResponse
+from .outbound_credential_key import OutboundCredentialKey
+from .outbound_credential_key_list import OutboundCredentialKeyList
 from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_ai_provider import OutboundIntegrationOfferAiProvider
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
 from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
@@ -2401,6 +2458,8 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
+from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
 from .pre_auth_failed_response_limit_coordination import PreAuthFailedResponseLimitCoordination
 from .pre_auth_observations_response import PreAuthObservationsResponse
@@ -2712,6 +2771,12 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
+from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
+from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
+from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
+from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
@@ -2856,6 +2921,11 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_impact import RouteAdviceImpact
+from .route_advice_response import RouteAdviceResponse
+from .route_advice_suggestion import RouteAdviceSuggestion
+from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
 from .route_budget_requirement import RouteBudgetRequirement
@@ -3041,6 +3111,11 @@ from .route_policy_plan_status import RoutePolicyPlanStatus
 from .route_policy_plan_version import RoutePolicyPlanVersion
 from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_priorities_response import RoutePrioritiesResponse
+from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_rule import RoutePriorityRule
+from .route_priority_rule_class import RoutePriorityRuleClass
+from .route_priority_rule_method import RoutePriorityRuleMethod
 from .route_public_exception import RoutePublicException
 from .route_public_exception_method import RoutePublicExceptionMethod
 from .route_removal_approval import RouteRemovalApproval
@@ -3167,6 +3242,7 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_response import ServiceWakeAheadResponse
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -3202,8 +3278,10 @@ from .set_route_health_gate_request_on_regression import SetRouteHealthGateReque
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
+from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
+from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -3667,8 +3745,8 @@ __all__ = (
     "APIConsumerUsageStatementHandoffResponse",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
-    "APIConsumerUsageThresholdWebhookPayload",
     "APIConsumerUsageStatementResponseStatus",
+    "APIConsumerUsageThresholdWebhookPayload",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
@@ -4162,7 +4240,11 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIRouteRequest",
+    "CreateOutboundAIRouteRequestFormat",
+    "CreateOutboundCredentialKeyRequest",
     "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAiProvider",
     "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePlatformTenantAccessTokenRequest",
     "CreatePlatformTenantAccessTokenRequestScopesItem",
@@ -4343,6 +4425,8 @@ __all__ = (
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
     "DeploymentReadinessProbe",
+    "DeploymentPromotionHold",
+    "DeploymentWorkerDrainStatus",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -4457,6 +4541,16 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfo",
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
+    "EdgeProtectionResponse",
+    "EdgeProtectionResponsePreAuth",
+    "EdgeProtectionResponseRange",
+    "EdgeProtectionResponseRejectionsItem",
+    "EdgeProtectionResponseRejectionsItemGate",
+    "EdgeProtectionResponseRejectionsItemStatus",
+    "EdgeProtectionResponseValidationFailuresItem",
+    "EdgeProtectionResponseWaf",
+    "EdgeProtectionResponseWafCategoriesItem",
+    "EdgeProtectionResponseWafTopRulesItem",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -4508,6 +4602,12 @@ __all__ = (
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
+    "EdgeRuleValidateParameters",
+    "EdgeRuleValidateParametersHeaders",
+    "EdgeRuleValidateParametersPath",
+    "EdgeRuleValidateParametersQuery",
+    "EdgeRuleWAFAction",
+    "EdgeRuleWAFActionMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
@@ -4899,6 +4999,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
@@ -5297,6 +5398,13 @@ __all__ = (
     "ManagedRealtimeRetainedMessageRequest",
     "ManagedRealtimeRetainedMessageRequestMetadata",
     "ManagedRealtimeRetainedMessageResponse",
+    "MCPInstanceHealthProbeResponse",
+    "MCPInstanceProtocolProbeRequest",
+    "MCPInstanceProtocolProbeRequestProtocolVersion",
+    "MCPInstanceProtocolProbeResponse",
+    "MCPProbeRPCRequest",
+    "MCPProbeRPCRequestMethod",
+    "MCPProbeRPCRequestParams",
     "ManagedRealtimeRetainedMessageResponseMetadata",
     "ManagedRealtimeScheduleGroupRequest",
     "ManagedRealtimeScheduleGroupRequestExpectedVersions",
@@ -5321,6 +5429,10 @@ __all__ = (
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
     "MCPResourcePolicyToolScopesType0",
+    "MCPTaskCompatibilityReportRequest",
+    "MCPTaskCompatibilityReportResponse",
+    "MCPTaskHandlerCompatibility",
+    "MCPTaskHandlerDeploymentWorkers",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -5729,12 +5841,33 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIBudgetAlert",
+    "OutboundAIBudgetAlertBudget",
+    "OutboundAIBudgetAlertList",
+    "OutboundAIBudgetAlertThresholdPercent",
+    "OutboundAIBudgetThresholdWebhookPayload",
+    "OutboundAIBudgetThresholdWebhookPayloadBudget",
+    "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIPriceEntry",
+    "OutboundAIPriceListResponse",
+    "OutboundAIRequestLogEntry",
+    "OutboundAIRequestLogEntryOutcome",
+    "OutboundAIRequestLogList",
+    "OutboundAIRoute",
+    "OutboundAIRouteFormat",
+    "OutboundAIRouteList",
+    "OutboundAIRouteTarget",
+    "OutboundAIUsageItem",
+    "OutboundAIUsageResponse",
     "OutboundAppBinding",
     "OutboundAppBindingList",
     "OutboundBindingProbePolicy",
     "OutboundBindingProbePolicyMethod",
     "OutboundBindingUsageResponse",
+    "OutboundCredentialKey",
+    "OutboundCredentialKeyList",
     "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferAiProvider",
     "OutboundIntegrationOfferCredentialSource",
     "OutboundIntegrationOfferList",
     "OutboundIntegrationOfferOwnerKind",
@@ -5874,6 +6007,8 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthEnforcementSuggestion",
+    "PreAuthEnforcementSuggestionStatus",
     "PreAuthFailedResponseLimit",
     "PreAuthFailedResponseLimitCoordination",
     "PreAuthObservationsResponse",
@@ -6157,6 +6292,12 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundAIPolicyRequest",
+    "PutOutboundAIPolicyRequestAiProvider",
+    "PutOutboundAIPricesRequest",
+    "PutOutboundAIRouteTargetsRequest",
+    "PutOutboundBindingAIBudgetRequest",
+    "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
@@ -6293,6 +6434,11 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAdviceEvidence",
+    "RouteAdviceImpact",
+    "RouteAdviceResponse",
+    "RouteAdviceSuggestion",
+    "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
     "RouteBudgetRequirement",
@@ -6478,6 +6624,11 @@ __all__ = (
     "RoutePolicyPlanVersion",
     "RoutePolicyReceipt",
     "RoutePolicyRuleUsage",
+    "RoutePrioritiesResponse",
+    "RoutePrioritiesResponseSource",
+    "RoutePriorityRule",
+    "RoutePriorityRuleClass",
+    "RoutePriorityRuleMethod",
     "RoutePublicException",
     "RoutePublicExceptionMethod",
     "RouteRemovalApproval",
@@ -6600,6 +6751,7 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadResponse",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -6633,8 +6785,10 @@ __all__ = (
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
     "SetRouteMonitorRequestOnViolation",
+    "SetRoutePrioritiesRequest",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
+    "SetServiceWakeAheadRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

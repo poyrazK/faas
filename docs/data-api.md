@@ -1308,6 +1308,131 @@ exceptions do not change the response. These are gateway request records, not
 distributed traces or measurements of platform wake latency. Log retention and
 live staging verification remain deployment concerns.
 
+### Runtime contract guard
+
+Generated TypeScript exports `schemaFingerprint` alongside the application
+types. Use it to opt in to an exact serving-contract check for reads, writes
+and RPC calls:
+
+```ts
+import { createDataClient } from '@gregale/data'
+import { schemaFingerprint, type Database } from './database.types.js'
+
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  accessToken: () => session.getAccessToken(),
+  expectedSchemaFingerprint: schemaFingerprint,
+}).schema('api')
+
+const result = await db.from('notes').insert({ subject: session.user.id, body: 'Hello' })
+if (result.error?.code === 'schema_contract_mismatch') {
+  // Resolve the client/deployment mismatch before submitting the write again.
+}
+```
+
+The SDK validates the fingerprint as 64 lowercase hexadecimal characters and
+routes requests through `/__gregale/contract/<fingerprint>/rest/v1/...`.
+After verifying the application token, the gateway compares it with the
+immutable contract captured at startup. A mismatch returns HTTP 409
+`schema_contract_mismatch` without contacting PostgREST. An unavailable serving
+fingerprint returns HTTP 503 `serving_contract_unavailable`. HEAD responses have
+no JSON body; use the status. Request IDs, CORS, RLS, grants, profile headers,
+query typing and native error handling continue to apply. Guarded OpenAPI
+documents retain the qualified base path.
+
+The distinct path matters during upgrades: older runtimes reject it with 404
+instead of ignoring an optional header and executing a write. Upgrade the
+runtime before enabling the option. Clients never fall back to an unguarded
+route, automatically accept a new fingerprint, or replay rejected writes.
+Clients without the option retain `/rest/v1` behavior. No extra schema fetch or
+per-request database inspection is required.
+
+This is an exact serving-contract check. Additive schema changes also require
+regenerated types and a coordinated client rollout when the guard is enabled.
+Uncoordinated database DDL or an engine-only cache reload can make the captured
+contract stale; use `data-api sync`/fresh runtime refresh and release verification.
+The guard does not establish behavioral or authorization compatibility or make
+HTTP requests atomic with database migrations. Structural compatibility checks
+and application authorization tests remain separate checks.
+
+### Accept older clients during a compatible rollout
+
+Exact matching remains the default. To allow a selected older client contract,
+compare its saved snapshot against the intended serving snapshot:
+
+```sh
+gregale data-api diff --baseline old-schema.json --current new-schema.json \
+  --accept-contract accepted-contracts.json
+```
+
+`--accept-contract` writes an owner policy atomically only when there are **zero
+structural breaking changes**. Reviewed breaking-change approvals do not waive
+this requirement. Failed checks leave an existing output untouched. The output
+must differ from all comparison inputs. Identical contracts need no policy.
+You can also compare against an owner-authenticated app instead of `--current`.
+
+The policy has this shape (substitute the actual generated fingerprints):
+
+```json
+{
+  "version": 1,
+  "current_fingerprint": "<new serving fingerprint>",
+  "accepted_fingerprints": ["<reviewed older fingerprint>"]
+}
+```
+
+After reviewing application and authorization tests for the rollout, configure
+`DATA_API_ACCEPTED_CONTRACTS` with the **JSON contents**, then deploy/refresh the
+runtime. This is owner configuration, never a client-provided allowlist. To
+accept several older versions, check each directly against the same current
+snapshot and combine their reviewed fingerprints into one policy. Acceptance
+is not transitive. Clients keep their existing `expectedSchemaFingerprint`.
+
+The runtime validates the policy and captures it at startup. Malformed, duplicate
+or self-referential entries and a `current_fingerprint` that differs from the
+inspected serving contract prevent startup before PostgREST is launched. A later
+schema change requires a new comparison and policy; an old policy cannot silently
+carry forward. Authentication, RPC eligibility, grants and RLS still apply.
+Unapproved fingerprints receive 409 before SQL executes. OpenAPI keeps the
+requested qualified route, while `/__gregale/schema` advertises the actual
+current fingerprint. Remove the policy and refresh to revoke older contracts.
+
+Structural comparison does not cover policy semantics, function bodies,
+default behavior or every application assumption. Acceptance authorizes old
+clients to use the current API; it does not restore an older response schema.
+Use explicit projections when your application depends on exact response keys.
+This policy shares the startup-contract guard's live-DDL limitation.
+
+### Test contract rollouts locally
+
+Load the reviewed policy without staging credentials:
+
+```sh
+gregale data-api dev --directory . --accepted-contracts accepted-contracts.json
+# CI, with pinned old/current clients in the request collection:
+gregale data-api dev --directory . --accepted-contracts accepted-contracts.json \
+  --once --replay rollout.requests.json
+```
+
+The policy path is relative to the project, must be a bounded regular file, and
+must differ from generated types, baselines and other workflow inputs. Invalid
+policies fail before services start; stale policies fail before types or contracts
+are saved. With watching enabled, edits to the policy trigger the same serialized
+reload and authorization checks as migrations. A stale policy pauses the gateway
+and preserves the disposable database, identity tokens, saved contract and types.
+Save a policy reviewed against the migrated schema to recover. Deleting or
+corrupting the configured file also pauses requests. To return to exact matching
+without an acceptance list, restart without `--accepted-contracts`.
+
+Each saved request may include an optional `expectedSchemaFingerprint` containing
+64 lowercase hexadecimal characters. Paths remain relative `/rest/v1/...` paths;
+replay builds the guarded route, preserves query parameters, and never falls back.
+Use the old fingerprint for old-client requests, the current fingerprint for
+current clients, and an unapproved fingerprint with an expected 409 to prove
+rejection. Test RLS using distinct identities in the same scenario. The inspector
+can send, save and load pinned requests too. Unpinned collections keep their
+existing behavior; collection versions 1 and 2 remain supported.
+
 ### Typed client response diagnostics
 
 `createDataClient` accepts an optional `onResponse` callback so applications can
@@ -1372,26 +1497,87 @@ runtime deployments fail rather than report a compatible schema. The baseline
 is validated before starting a remote task and is never rewritten by diff.
 
 Without `--check`, a completed comparison exits zero even if it finds breaking
-changes. With `--check`, breaking changes exit one after printing the report;
+changes. With `--check` (or its `--check-compatible` alias), unapproved breaking changes exit one after printing the report;
 invalid baselines and failed inspections also exit nonzero. JSON output includes
 baseline/current fingerprints, task/deployment identifiers, the breaking count
-and a deterministic array of changes. No changes produces an empty array.
+and a deterministic array of changes. The `approved` and `unapproved` counts
+partition the total `breaking` count. No changes produces an empty array.
 
 Removed schemas, relations, columns, RPCs, RPC arguments, composite types and
 composite fields are breaking. Composite field type/nullability changes and new
 required object keys are also breaking, even when the containing table or RPC
 still references the same named type. New composite types are compatible.
 Type changes (including enum changes), nullability changes in either direction,
-removed write privileges, table/view changes, relationship changes, newly
+removed write privileges, table/view changes, removed or modified relationships, newly
 required insert fields, and required RPC arguments are conservatively breaking.
 Optional fields, new relations/RPCs, optional RPC arguments and relaxed write
 requirements are compatible. Defaults are checked through insert optionality;
 changing a default expression while retaining optionality is not detected.
 
+Relationship array order and JSON object key order do not constitute changes.
+Reports identify each relationship by constraint name and target. A new connection
+is compatible unless it could make an existing unqualified embed or foreign-key
+column/name hint ambiguous. A second connection between the same relations is
+conservatively breaking, including a connection in the reverse direction.
+Repeated view aliases or other metadata that cannot be matched uniquely retain
+a conservative relation-level report.
+
 Update queries, writes and generated types for breaking changes, then approve a
 new baseline explicitly. This is a structural contract check: policies, function
 bodies, default values and data-dependent behavior need separate tests. It does
 not verify the serving fingerprint; use `data-api sync` for that release check.
+
+### Approve an intentional breaking migration
+
+Keep the existing baseline when you want CI to retain a visible record of an
+intentional break. First obtain the candidate contract and JSON report:
+
+```sh
+gregale data-api types notes-data --snapshot --output candidate.json
+gregale --json data-api diff --baseline schema.json --current candidate.json
+```
+
+Create a reviewed `compatibility-approval.json` using the report's exact
+fingerprints, paths and reasons. Include only the breaking changes you intend
+to accept, with a rationale for each:
+
+```json
+{
+  "version": 1,
+  "baseline_fingerprint": "<64 lowercase hex characters from the report>",
+  "current_fingerprint": "<64 lowercase hex characters from the report>",
+  "changes": [
+    {
+      "path": "api.notes.priority",
+      "reason": "column removed; update projections and writes",
+      "rationale": "The deployed client no longer reads or writes priority."
+    }
+  ]
+}
+```
+
+Commit the approval alongside the baseline and migration, then check the candidate:
+
+```sh
+gregale --json data-api diff --baseline schema.json --current candidate.json \
+  --check-compatible --approval compatibility-approval.json
+gregale data-api dev --once --baseline schema.json --check-breaking \
+  --approval compatibility-approval.json
+```
+
+For local development, approval paths are project-relative; an explicit baseline
+and `--check-breaking` are required. Diff can also apply approvals during hosted
+inspection. It reads and validates the baseline and approval before starting a
+remote task. Both commands leave the baseline and approval file unchanged.
+
+An approved change remains `breaking: true` and gains `approved: true`; it is
+printed as `approved breaking` in text reports. The check succeeds only when
+every breaking change is approved. Missing files, invalid JSON, duplicate or
+unmatched path/reason pairs, missing rationales, and stale fingerprints fail.
+Even an unrelated schema change invalidates the candidate fingerprint: review
+the full report before replacing the approval. There are no wildcard approvals.
+An approval records an intentional break; it does not establish compatibility
+for clients that still depend on the removed contract or bypass authorization tests.
 
 ### Runtime JSON validation
 
@@ -1481,3 +1667,493 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 `cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
+
+### Coordinated hosted schema updates
+
+Opt-in coordinated sync keeps ordinary SQL traffic paused until compatibility,
+client and authorization checks finish. Install its private database barrier
+before enabling the runtime. Use a materialized `data-api` template as the local
+owner tool directory; install its pinned Node dependencies there:
+
+```sh
+gregale init data-api-runtime --template data-api
+npm ci --prefix data-api-runtime
+# Configure MIGRATION_DATABASE_URL locally with owner credentials.
+node data-api-runtime/refresh.mjs install YOUR_BINDING_LOGIN_ROLE
+# Deploy the current runtime to every instance using this binding first.
+gregale env set --app notes-data DATA_API_COORDINATED_REFRESH=1
+gregale data-api refresh notes-data --wait
+gregale data-api types notes-data --snapshot --output schema.before.json
+```
+
+The owner connection must be able to create the private control schema and
+`SET ROLE` to the binding login for role-filtered inspection. Set matching
+`DATA_API_SCHEMAS` in the local owner environment when exposing multiple schemas.
+Do not expose `gregale_data_api` or grant serving credentials control-table
+access. All runtimes sharing this role must enable coordination and expose the
+same schemas; use separate binding roles for distinct exposures.
+
+Extend the existing sync JSON with `coordination`:
+
+```json
+{
+  "output": "web/database.types.ts",
+  "migrate": { "directory": "migrations", "command": ["npm", "run", "migrate"] },
+  "check": { "directory": "web", "command": ["npm", "run", "typecheck"] },
+  "coordination": {
+    "baseline": "schema.before.json",
+    "setup_check": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "check", "YOUR_BINDING_LOGIN_ROLE"] },
+    "pause": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "pause", "YOUR_BINDING_LOGIN_ROLE"] },
+    "resume": { "directory": "data-api-runtime", "command": ["node", "refresh.mjs", "resume", "YOUR_BINDING_LOGIN_ROLE"] },
+    "authorization": { "directory": "web", "command": ["npm", "run", "test:data-api-authorization"] }
+  }
+}
+```
+
+Set an unpredictable private `GREGALE_DATA_API_REFRESH_TOKEN` (64 lowercase
+hexadecimal characters, generated from 32 random bytes), use a fresh token for
+each new refresh, keep that token for recovery,
+and configure the application JWT in `GREGALE_DATA_API_ACCESS_TOKEN` as before.
+Do not commit either token or put it in a URL. An optional `token_env` selects
+another local environment variable. Commands receive the private token under
+`GREGALE_DATA_API_REFRESH_TOKEN`; client/authorization/resume commands also
+receive `GREGALE_DATA_API_REFRESH_FINGERPRINT`. Only a client that sends both its
+normal application JWT and `X-Gregale-Refresh-Token` can execute verification
+requests while paused. The token grants no extra SQL or RLS permissions. Run
+multi-user and multi-tenant denial scenarios with the respective application
+identities; the token alone is insufficient. These are trusted owner checks,
+not headers to ship in an ordinary browser application.
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+# After correcting a failed check or reviewing a breaking change:
+gregale data-api sync notes-data --config data-api.json --resume-only
+```
+
+A normal run verifies the saved baseline against live inspection and the
+serving runtime, acquires the durable pause, runs migrations/permissions,
+refreshes the engine, and verifies the generated and serving fingerprints.
+The baseline is compared structurally with the new snapshot. Unapproved
+breaking changes stop the workflow; optional `coordination.approval` points to
+an exact reviewed approval file in the existing `data-api diff` format. Existing
+accepted-client deployment policies must also match the new runtime; stale
+policies fail startup. The workflow then runs client and authorization checks
+before releasing the barrier. Release re-inspects the live schema as the binding
+role and rejects drift. The database records the verified fingerprint, so runtimes whose serving fingerprint differs receive 409 before executing
+application SQL. This fences structural contract drift; it does not identify
+every old runtime version when the structural fingerprint is unchanged.
+
+Pause waits for transactions admitted by the PostgREST pre-request hook,
+including read-only GET transactions. Coordinated mode requires read committed
+transaction isolation. Repeatable-read and serializable requests receive 503
+`data_api_refresh_isolation_unsupported` before application SQL, because their
+snapshots can predate a waited-for pause. This includes RPCs that configure a
+stronger isolation level. Ordinary requests receive 503 while
+paused; a queued request cannot slip through when the barrier commits.
+Competing coordinators cannot replace an existing pause. The barrier is stored
+in PostgreSQL and survives fresh restarts. `/healthz` remains a transport/engine
+health check and adds `refresh_paused`; it does not mean ordinary SQL traffic
+is admitted. The authenticated schema endpoint adds `refresh_protocol`,
+`refresh_paused`, `refresh_verified` (whether this request owns the pause), and
+`refresh_fingerprint`; it never returns the token/hash.
+
+Migration, startup, compatibility, client, or authorization failures leave the
+barrier paused. Recovery must use the same private token and baseline;
+`--resume-only` skips migrations and permission setup, but repeats refresh and
+all verification. No step automatically clears a pause on cancellation or
+failure. If the resume command loses its acknowledgement, release may already
+have committed: inspect the serving contract before taking further action.
+Generated types are retained after a client-check failure, and completed DDL
+is not rolled back. Losing the private token requires owner-controlled recovery
+of the database barrier; the CLI does not adopt another session automatically.
+
+This mode reserves one of the existing two connections for its control reader
+and one for PostgREST. Engine-only SIGUSR1 reloads are rejected; use coordinated
+sync. Owner/superuser DDL and direct database connections remain outside this
+barrier. Serialize DDL through the workflow; fingerprints do not cover policy
+bodies or every behavioral change. Upgrade every runtime sharing the binding
+before relying on the barrier. Real hosted multi-replica qualification remains
+pending until staging is configured.
+
+### Inspect setup and recovery
+
+Add `coordination.setup_check` as shown above to run the shipped read-only owner
+check before each coordinated sync, including recovery. It verifies installed
+control state, owner SELECT/UPDATE privileges, the ability to `SET ROLE` to the
+binding login, a restricted serving role, and access to both hook functions with protected
+ownership, SECURITY DEFINER and their fixed `pg_catalog` search path.
+The helper uses a read-only transaction and rolls it back; it never installs,
+pauses, releases, or adopts a barrier. Run it directly when diagnosing setup:
+
+```sh
+node data-api-runtime/refresh.mjs check YOUR_BINDING_LOGIN_ROLE
+gregale data-api sync notes-data --config data-api.json --check
+# Check an existing owned pause without restarting or repeating migrations:
+gregale data-api sync notes-data --config data-api.json --resume-only --check
+```
+
+`sync --check` requires coordination and a `setup_check` command. It validates
+workflow configuration, the application's coordinated runtime and phase, and
+owner setup. For a new refresh it also compares the live schema and saved
+baseline. It does not pause, run migrations/permissions/client checks, restart,
+write types, or release traffic. Private schema inspection uses the existing
+owner-authenticated app task, which can wake an idle app. Commands in the JSON
+are trusted project code: use the shipped read-only helper for `setup_check`.
+Older configurations remain accepted; without this field they do not perform
+the additional owner privilege check. All coordinated syncs now reject an
+unsupported runtime or wrong phase before invoking the pause command.
+
+Inspect the serving runtime without database credentials or owner commands:
+
+```sh
+gregale data-api status notes-data
+gregale --json data-api status notes-data --baseline schema.candidate.json
+```
+
+Configure the normal application JWT in `GREGALE_DATA_API_ACCESS_TOKEN`. The
+private refresh token in `GREGALE_DATA_API_REFRESH_TOKEN` is optional for status;
+provide the original token to prove ownership of an existing pause. Alternate
+variables use `--access-token-env` and `--refresh-token-env`. Values never appear
+in status output; neither token belongs on the command line.
+
+| State | Meaning and next action |
+| --- | --- |
+| `active` | Serving and registered fingerprints agree, and traffic is admitted. After a lost resume acknowledgement, compare with the previously verified candidate; do not repeat migrations merely to recover the acknowledgement. |
+| `paused_owned` | The supplied token owns the pause. Correct checks and run sync with `--resume-only`, the same baseline and token. |
+| `paused_unowned` | The token is absent or belongs to another refresh. Retrieve the original token; a lost token requires owner-controlled recovery. |
+| `contract_mismatch` | The serving runtime differs from the registered contract. Inspect deployment/schema changes before another update. |
+| `coordination_disabled` | The runtime has no coordinated admission protocol. Install the barrier and upgrade/enable the runtime before coordinated sync. |
+
+Missing or malformed state and unreachable runtimes fail status rather than
+reporting active traffic. The optional baseline comparison is separate from
+admission state: an active runtime may legitimately differ from an older
+baseline. Status queries one serving runtime and the durable barrier; it does
+not attest every replica, live owner DDL, or application check completion. An
+active matching candidate is evidence that release was observed, not proof
+that this client received the original acknowledgement. Status is inspection;
+`--resume-only` remains the action that repeats required verification.
+
+
+### Replay authorization scenarios against a hosted API
+
+Saved request collections can also verify the hosted Data API. Map the same
+identity names to application JWT environment variables in a non-secret JSON
+file, for example `data-api.identities.json`:
+
+```json
+{
+  "alice": "ALICE_TEST_JWT",
+  "bob": "BOB_TEST_JWT"
+}
+```
+
+Configure those environment variables through your local environment or CI
+secret store. Do not write JWTs, account keys, or refresh tokens into this file,
+the collection, command arguments, or URLs. Use dedicated test users whose
+subjects and tenant claims match the fixtures; local `data-api.dev.json`
+identity subjects can match those hosted users so the same collection works in
+both environments. Assertions and request bodies remain project-owned test
+data. JWT payload decoding checks distinct subjects locally; the hosted runtime
+verifies signatures, issuer, audience and token validity.
+
+```sh
+gregale data-api replay notes-data \
+  --collection data-api.requests.json \
+  --identities data-api.identities.json --scenario notes-rls
+gregale --json data-api replay notes-data \
+  --collection data-api.requests.json --identities data-api.identities.json
+```
+
+Omit `--scenario` to replay all named scenarios. Version 1 collections also work
+as `default`. The selected requests must be nonempty and exercise at least two
+distinct JWT subjects. An unknown scenario, invalid collection, missing JWT or
+single-subject selection fails before app lookup or HTTP replay. Hosted replay
+requires Node 22+, a logged-in Gregale CLI, and the app HTTPS origin; it needs
+neither Docker nor database credentials and installs no Node dependencies.
+
+Before scenario requests, replay requires unauthenticated and invalid-JWT
+OpenAPI requests to return 401 and verifies each selected identity against the
+authenticated serving-schema endpoint. Failure of those probes prevents all
+scenario writes. These checks ensure that denial assertions cannot pass merely
+because the identity tokens are rejected. Each scenario has its own capture
+variables, using the same substitution and exact status/JSON assertions as local
+replay. Results report assertion names, HTTP statuses, matching flags and capture
+names, without response bodies, capture values, decoded claims or token values. JSON
+output uses `replay_result`, `replay_scenario_summary` and `replay_summary` events;
+the summary includes authentication probes. Any failed assertion, transport
+failure or interruption returns a nonzero exit status. Requests are not retried.
+
+**Replay executes saved writes and RPCs against the selected hosted app.** Use
+isolated test data and scenarios that clean up their own rows and can safely be
+repeated after failure. A failed replay does not roll back completed requests or
+perform automatic cleanup. Later scenario steps still run after an assertion
+failure, which lets explicit cleanup steps execute; steps depending on missing
+captures fail before sending their requests. Use a staging app for destructive
+fixtures. The replay deadline defaults to five minutes, configurable with
+`--timeout` up to one hour. Each request has a 30-second deadline; scenario
+responses are bounded to 1 MiB and serving-contract reads to 8 KiB. Only the
+configured HTTPS origin and `/rest/v1/` request paths are allowed, with redirects
+rejected. Standalone replay supports an optional private refresh token through
+`GREGALE_DATA_API_REFRESH_TOKEN` or `--refresh-token-env` when verifying a pause.
+It never pauses or releases the barrier itself.
+
+Replace the custom `coordination.authorization` command with required replay:
+
+```json
+{
+  "authorization_replay": {
+    "collection": "data-api.requests.json",
+    "identities": "data-api.identities.json",
+    "scenarios": ["notes-rls"]
+  }
+}
+```
+
+Place this object inside `coordination`. Configure exactly one of
+`authorization` and `authorization_replay`; existing command-based workflows
+remain supported. File paths are relative to the sync configuration. Omit
+`scenarios` to select the entire collection. Types output cannot replace either
+replay input. `sync --check` validates collection/scenario selection and identity
+subjects offline without sending scenario requests.
+
+Coordinated sync validates replay inputs before pause, then runs the selected
+scenarios after fresh refresh, schema compatibility and client checks. Native
+replay always uses the coordinator's private token (including a custom
+`coordination.token_env`) and pins every scenario request to the verified
+candidate fingerprint. Identity probes must confirm an owned paused barrier and
+that candidate's serving fingerprint. Conflicting per-request contract pins are
+rejected, and schema-contract rejection cannot count as a successful expected
+409 assertion. Assertion reports go to stderr so JSON sync stdout remains its
+final receipt. Failure leaves the barrier paused; fix the scenarios or application
+and rerun `sync --resume-only` with the same private token. Recovery replays all
+required scenarios without repeating migrations.
+
+Passing replay verifies the project's chosen assertions, not every policy or
+replica. Local PostgreSQL and HTTPS fixture tests do not establish live hosted
+multi-replica qualification; that remains pending a configured staging target.
+
+### One CI check for compatibility and generated types
+
+Use `data-api check` to compare a committed contract baseline and TypeScript
+file with the current database in one read-only check:
+
+```sh
+gregale --json data-api check notes-data \
+  --baseline schema.json --types client/src/database.types.ts
+```
+
+Install Node.js 22 or newer on the CI runner and authenticate the Gregale CLI
+through the environment. The hosted check starts one owner-authenticated,
+deployment-attached `types --snapshot` task using the app's restricted binding.
+It renders TypeScript locally from that exact snapshot using the embedded shared
+generator; there is no second database inspection or npm installation. A passing
+check requires zero unapproved breaking changes and byte-for-byte current types.
+It does not migrate, refresh, pause or resume the app, and never creates or
+rewrites the baseline or types file.
+
+The report includes both fingerprints, whether the structural contract drifted,
+ordered changes with compatibility reasons, breaking/approved/unapproved counts,
+and the types status (`current`, `stale`, `missing` or `too_large`). Hosted reports
+also identify the inspection task and deployment. `--json` emits a version-1 JSON
+report even when valid inputs produce failing checks. Reports omit generated
+TypeScript and file contents. Invalid inputs, failed/truncated inspection tasks,
+and generator failures emit the CLI's usual error diagnostic and exit nonzero.
+The deadline defaults to two minutes for the entire command; `--timeout` accepts
+up to one hour, with local rendering additionally bounded to 30 seconds.
+
+Removed relations or columns, changed types, new required insert fields and the
+other existing `data-api diff` breaking rules fail the check. Compatible changes
+can pass after the types file has been regenerated. Editing types while leaving
+the fingerprint header intact still fails the exact comparison. Missing and
+oversized types files also fail without being written. `--approval FILE` uses
+the same reviewed path/reason approvals bound to both fingerprints as `diff`;
+it only approves the named breaking changes and never waives stale types.
+
+For an offline check, export the candidate snapshot once and omit the app name:
+
+```sh
+gregale data-api types notes-data --snapshot --output candidate.json
+gregale --json data-api check --current candidate.json \
+  --baseline schema.json --types client/src/database.types.ts
+```
+
+The second command needs Node.js but no Gregale credentials, network, Docker,
+or database access. It checks the supplied candidate; it does not establish
+that the candidate is still the live hosted schema. Existing hosted runtimes
+with snapshot export are supported without redeployment. Local CI can produce
+its candidate from project migrations before running the offline check:
+
+```sh
+gregale data-api dev --port 0 --once --output .gregale/ci-database.types.ts
+# dev writes disposable CI types and its current contract outside the baseline.
+gregale --json data-api check --current .gregale/data-api-contract.json \
+  --baseline schema.json --types client/src/database.types.ts
+```
+
+Commit a reviewed baseline outside `.gregale`, as described above. Keep an old
+baseline when you need CI to preserve evidence of an approved breaking change;
+replace it only through your normal review. Do not regenerate committed types
+inside the check job: generate them during development and commit the result.
+Structural checks do not cover RLS policy bodies, arbitrary RPC behavior, or
+whether every serving replica has refreshed. Keep authorization replay and
+coordinated refresh checks for those concerns.
+
+### Summarize request logs and look up request IDs
+
+`data-api diagnostics` summarizes existing safe request records without changing
+the API or adding an application endpoint:
+
+```sh
+gregale data-api diagnostics notes-data --since 15m
+gregale --json data-api diagnostics notes-data --deployment DEPLOYMENT_ID \
+  --since 2026-10-11T09:00:00Z
+gregale data-api diagnostics notes-data \
+  --request-id 12345678-1234-4234-8234-123456789abc
+```
+
+Hosted diagnostics use the existing owner-authenticated runtime log API with
+`follow=0`. They never send an application JWT, inspect the database, restart
+an app or alter refresh ownership. The normal deployment-filter plan rules
+apply. `--since` accepts the existing positive duration/day forms or an RFC3339
+timestamp. The CLI also applies the lower bound to the request record's own
+`time`. Without it, diagnostics read the available retained sample. The hosted
+read deadline defaults to two minutes; `--timeout` accepts up to one hour.
+
+The version-1 JSON report includes request counts, HTTP errors, server errors,
+aborted requests, error-rate percentages and nearest-rank p50/p95/p99 gateway
+latencies. `summary` covers all recognized routes; `data_requests` covers REST
+and RPC only, keeping health/schema/OpenAPI traffic out of that traffic total.
+`by_route` reports each fixed route category separately. `authentication` covers
+records with `outcome: "authentication_failed"`, including their latency.
+`failures` counts authentication failures and gateway-reported query timeouts,
+engine/serving-contract unavailability, contract mismatches and upstream errors.
+It does not inspect PostgREST error bodies to infer SQL error causes.
+
+Errors mean HTTP status 400 or greater, or an aborted response; an aborted error
+is counted once even when an error status was already sent. Latencies include
+aborted requests and measure the gateway's local response finish/close interval,
+not SQL execution, client receipt, network latency or platform wake time. Empty
+groups report null percentiles and error rate, rather than a healthy zero.
+Percentiles are exact for the observed sample; small samples have coarse ranks.
+
+Request IDs are deduplicated across the sample. `--request-id UUID` narrows all
+summaries and includes the matching safe metadata record in `matches`. A missing
+match produces an empty sample and succeeds when the input was otherwise read
+cleanly; absence from retained logs is not evidence that a request never ran.
+Unknown log fields are discarded, and route/method/outcome/error-code values
+must belong to the runtime's fixed vocabulary. Reports contain no raw log lines,
+SQL, table/function names, subjects, JWTs, headers, bodies or query strings.
+
+For offline analysis, save runtime JSON logs and omit the app name:
+
+```sh
+gregale --json logs notes-data --since 15m > request-logs.ndjson
+gregale --json data-api diagnostics --file request-logs.ndjson
+```
+
+The file can contain raw runtime NDJSON request records, JSON log envelopes with
+a `line` field, and unrelated application log lines. It must be a regular file;
+it is never rewritten. Offline diagnostics require no Node.js, Docker, Gregale
+credentials or network. Do not combine `--file` with an app name or deployment
+filter. Protect saved logs as application data even though the diagnostic output
+omits arbitrary log content.
+
+Analysis is bounded to 16 MiB of input, 100,000 input records and 64 KiB per line
+or SSE frame. `input_records`, `ignored`, `invalid`, `duplicates`, `filtered` and
+`gaps` describe what was read. Runtime log gaps, malformed request records,
+unsupported frames, exceeded bounds, missing hosted terminal frames and read
+failures mark `partial: true`, with fixed `partial_reasons`, and exit nonzero
+while preserving the safe report. Timeouts and interruptions also retain partial
+results. Clean input succeeds even if the observed requests include HTTP errors;
+this command is a diagnostic summary, not an application health gate.
+
+Hosted coverage is always `retained_sample`; offline coverage is `provided_file`.
+`partial: false` means the available input was processed cleanly, not that every
+request or serving replica was captured. These summaries are not durable metrics
+or a complete traffic audit. Use existing app metrics and log archives/drains
+when you need longer retention. Live hosted qualification still requires a
+configured staging target.
+
+### Classify SDK errors
+
+`@gregale/data` exports `classifyDataError(error, { status })` for stable SQL,
+authentication, permission, contract, deadline, cancellation and availability
+categories. Pass `result.error` and `result.status`; successful null errors return
+`null`. Caught `throwOnError()` errors can be classified without a status. The
+helper preserves the original error and performs no requests or retries. See the
+[SDK category and recovery reference](../sdk/data/README.md#classify-errors-for-application-recovery).
+Use curated messages for UI feedback. Treat recovery hints as application
+choices: uncertain write outcomes require reconciliation before replay, and
+contract failures require a reviewed client/server rollout. Neither empty RLS
+results nor arbitrary 409 responses establish a permission or contract error.
+
+### Validate untrusted RPC inputs
+
+The SDK's opt-in `validatedRpc(input, parser, args => db.rpc(name, args))` helper
+runs a synchronous application-owned argument parser before constructing a
+request. The callback retains generated RPC argument and return types, including
+selected projections. Invalid input returns a structured, redacted
+`validation_failed` outcome without token lookup or transport. Valid input
+returns `completed` with the original query result; database failures still need
+the usual `result.error` check. Thrown request errors propagate unchanged.
+See the [SDK runtime argument validation example](../sdk/data/README.md#validate-rpc-arguments-at-runtime).
+Parser policies, UI field feedback, retry settings and write reconciliation stay
+application-owned. Database constraints and RLS remain authoritative.
+
+Local acceptance for this helper runs in `scripts/test-data-api.sh --integration`
+with the other Data API suites. `tests/data-api/validated-rpc.test.mjs` generates
+types from its disposable database and compiles the TypeScript client before
+executing it through PostgreSQL, PostgREST and the JWT gateway. The suite verifies
+argument rejection, projected/scalar results, defaults, two-subject RLS, SQL
+privileges and constraints, error classification and explicit retry suppression.
+An independent SQL invocation counter covers rolled-back failures; a lost-response
+case demonstrates read-only reconciliation of a committed write.
+
+The notes starter's browser form is a runnable validated RPC example. It supplies
+inline field feedback, curated request-error messages and typed note results.
+Uncertain writes retain the same key and payload for explicit recovery through
+the starter's idempotent function; automatic retries remain disabled. Follow the
+[starter form guide](../cmd/gregale/templates/data-api-starter/README.md#validated-rpc-form)
+for same-user session handling, receipt-retention limits and in-memory state.
+
+### RPC contract changes in CI
+
+`data-api check` compares exposed RPC argument names/types/optionality and result
+shapes alongside exact generated declaration freshness. Adding an optional
+argument or a default is structurally compatible but still requires refreshed
+types when the fingerprint changes. Removing or renaming arguments, adding a
+required argument, removing a default, or changing argument/result types requires
+review. Removing an approval annotation or execution permission removes the RPC
+from the exposed contract. Introducing an overload also removes the function:
+the current RPC contract supports one unambiguous function per exposed name,
+even when the new overload is unapproved.
+
+A fingerprint-bound approval does not waive stale types. Fresh types alone do
+not approve a breaking change or prove an old client remains compatible. The
+`tests/data-api/rpc-contract-drift.test.mjs` integration suite verifies both checks
+against actual restricted-role catalog exports and compiled TypeScript consumers.
+
+Argument default **presence** determines optionality; default **values** are not
+encoded in the structural contract. Changing a default value, including to NULL,
+can change SQL behavior while both compatibility and type freshness pass.
+Generated ordinary RPC arguments accept explicit null and scalar results remain
+nullable; this does not establish that every function body accepts those values.
+Use application-owned validation and authorization replay for behavior, defaults
+and function bodies, in addition to structural CI checks.
+
+### Validate RPC response values
+
+`validateRpcResponse(result, parser)` checks the entire successful RPC `data`
+value using a synchronous application-owned parser. Its `validated` outcome
+retains response metadata and supplies typed parser output; `request_failed`
+preserves the original server/transport failure without parsing. A
+`validation_failed` outcome contains only a safe `RPC_RESPONSE_VALIDATION_FAILED`
+error and the original HTTP status, without rejected data or parser exceptions.
+Null/undefined successful values also go through the parser. See the
+[SDK response validation example](../sdk/data/README.md#validate-entire-rpc-responses).
+
+Response validation happens after execution. It performs no requests or retries
+and does not establish that a write rolled back. Reconcile an uncertain write
+before replaying it. PostgreSQL/PostgREST acceptance explicitly verifies a
+committed write whose response parser fails, along with scalar, JSON and
+RLS-filtered row parsing and unchanged SQL permission failures.

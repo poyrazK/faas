@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -111,9 +112,14 @@ func (e *Engine) stopRunningWorker(ctx context.Context, instanceID string, opts 
 	if grace <= 0 {
 		grace = 30
 	}
-	if _, err := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace); err != nil {
+	deadline := time.Now().Add(time.Duration(grace) * time.Second)
+	outcome := "failed"
+	e.auditWorkerDrain(ctx, ins, deadline, "draining")
+	defer func() { e.auditWorkerDrain(ctx, ins, deadline, outcome) }()
+	stopped, stopErr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
+	if stopErr != nil {
 		e.log.Warn("sched: worker stop signal-grace failed; falling through to destroy",
-			"app", ins.AppID, "instance", instanceID, "err", err)
+			"app", ins.AppID, "instance", instanceID, "err", stopErr)
 	}
 
 	release := e.lockApp(ins.AppID)
@@ -133,5 +139,11 @@ func (e *Engine) stopRunningWorker(ctx context.Context, instanceID string, opts 
 	}
 	e.ledger.Release(fresh.ID)
 	e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+	if stopErr == nil && stopped != nil {
+		outcome = "completed"
+		if stopped.KillSignalSent {
+			outcome = "timed_out"
+		}
+	}
 	return nil
 }

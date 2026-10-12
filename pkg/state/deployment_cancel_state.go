@@ -67,3 +67,8 @@ func finalizeCancelledDeploymentState(d *Deployment, at time.Time, reason Cancel
 func abortedCanaryCandidate(d Deployment) bool {
 	return d.CanaryTotalSteps > 0 && d.RolloutState == "aborted" && d.RolloutCompletedAt == nil
 }
+
+// AbortedCanaryCandidate exports abortedCanaryCandidate for schedd, which
+// retires such a candidate's instances instead of letting them hold a
+// serving slot until the idle timeout.
+func AbortedCanaryCandidate(d Deployment) bool { return abortedCanaryCandidate(d) }

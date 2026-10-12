@@ -70,9 +70,10 @@ const legacyAlertSecretNamespace = "alert_rule"
 //
 // The methods mirror state.Store with identical semantics; the only
 // reason they aren't `state.Store` is so we don't drag in
-// pkg/state's full interface when the only methods the evaluator
-// touches are these twelve.
+// pkg/state's full interface when the evaluator needs only
+// alert-specific reads and transitions.
 type Store interface {
+	MCPTaskPromotionHoldAgeSeconds(ctx context.Context, accountID, appID string, at time.Time) (float64, error)
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
 	AppByID(ctx context.Context, id string) (state.App, error)
@@ -86,6 +87,7 @@ type Store interface {
 	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
@@ -432,9 +434,12 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
 	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
-		// Still breaching inside the cool-down: a degraded read that has
-		// recovered goes back to firing, as a lost claim did before.
-		if rule.State == state.AlertStateDegraded {
+		// Still breaching inside the cool-down: record the breach even
+		// though the cool-down withholds a delivery. That covers a degraded
+		// read that recovered and a new breach after the rule resolved to
+		// ok, which otherwise read "ok" for a whole incident (production-us
+		// hunt #9, H9-94).
+		if rule.State != state.AlertStateFiring {
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
 			}
@@ -628,8 +633,8 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID 
 	if action == "" || action == state.AlertActionWebhook {
 		return
 	}
-	if rule.Metric == state.AlertMetricPreAuthTargetThreshold || rule.Metric == state.AlertMetricPreAuthTargetSignalGapPct {
-		e.log.Warn("alerts: pre-auth target metric cannot execute a deployment action", "rule", rule.ID)
+	if api.IsEdgeSecurityAlertMetric(string(rule.Metric)) {
+		e.log.Warn("alerts: edge security metric cannot execute a deployment action", "rule", rule.ID)
 		stats.ActionSkipped++
 		return
 	}
@@ -884,6 +889,82 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		}
 		observed := float64(n)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricMCPTaskPromotionHoldAgeSeconds:
+		age, err := e.store.MCPTaskPromotionHoldAgeSeconds(ctx, rule.AccountID, rule.AppID, e.now())
+		if err != nil {
+			e.log.Warn("alerts: read MCP promotion hold age", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		return age, compareFloat(age, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricMCPTasksOldestAgeSeconds:
+		// MCP task backlog age is a pushed, current gauge. Never alert on a
+		// missing or expired reading: doing so could turn a dead observer into
+		// a false healthy zero or fire on a frozen value. The normal alert
+		// degraded state makes the missing signal visible to operators.
+		metrics, err := e.store.ListCustomMetrics(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: list MCP task metrics", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+		for _, metric := range metrics {
+			if metric.Name != string(state.AlertMetricMCPTasksOldestAgeSeconds) {
+				continue
+			}
+			if metric.ObservedAt.IsZero() ||
+				now.Sub(metric.ObservedAt) > freshness ||
+				metric.Value < 0 || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
+				e.log.Warn("alerts: MCP task age metric is stale or invalid", "rule", rule.ID)
+				return 0, false, skipDegraded
+			}
+			return metric.Value, compareFloat(metric.Value, rule.Comparison, rule.Threshold), ""
+		}
+		e.log.Warn("alerts: MCP task age metric is missing", "rule", rule.ID)
+		return 0, false, skipDegraded
+	case state.AlertMetricMCPTasksMetricsStale:
+		// This binary health signal intentionally treats missing, stale, and
+		// invalid app gauges as an observable breach. Min=0 worker apps also
+		// require the dedicated observer heartbeat. It lets operators send a
+		// webhook when a publisher disappears, while backend read failures
+		// still degrade because the evaluator cannot determine the app signal.
+		app, err := e.store.AppByID(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: get app for MCP task metrics health", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		metrics, err := e.store.ListCustomMetrics(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: list MCP task metrics", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+		present := make(map[string]state.CustomMetric, 4)
+		for _, metric := range metrics {
+			if metric.Name == "mcp_tasks_outstanding" || metric.Name == string(state.AlertMetricMCPTasksOldestAgeSeconds) || metric.Name == "mcp_tasks_without_compatible_worker" || metric.Name == "mcp_tasks_observer_heartbeat" {
+				present[metric.Name] = metric
+			}
+		}
+		stale := false
+		requiredMetrics := []string{"mcp_tasks_outstanding", string(state.AlertMetricMCPTasksOldestAgeSeconds), "mcp_tasks_without_compatible_worker"}
+		if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
+			requiredMetrics = append(requiredMetrics, "mcp_tasks_observer_heartbeat")
+		}
+		for _, name := range requiredMetrics {
+			metric, ok := present[name]
+			if !ok || metric.ObservedAt.IsZero() || now.Sub(metric.ObservedAt) > freshness ||
+				metric.Value < 0 || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) ||
+				(name == "mcp_tasks_observer_heartbeat" && metric.Value != 1) {
+				stale = true
+				break
+			}
+		}
+		observed := 0.0
+		if stale {
+			observed = 1
+		}
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
 		// the 1h/14.4x and 6h/6x windows into one effective value so
@@ -1033,7 +1114,7 @@ type investigationPaths struct {
 
 func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule) investigationPaths {
 	workflow := isWorkflowMetric(rule.Metric)
-	if (!workflow && rule.Metric != state.AlertMetricPreAuthTargetThreshold && rule.Metric != state.AlertMetricPreAuthTargetSignalGapPct) || rule.AppID == "" {
+	if (!workflow && !preAuthObservationMetric(rule.Metric)) || rule.AppID == "" {
 		return investigationPaths{}
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.WorkflowAlertSnapshotReadTimeout)
@@ -1057,6 +1138,16 @@ func (e *Evaluator) investigationPaths(ctx context.Context, rule state.AlertRule
 		observations: "/v1/apps/" + slug + "/pre-auth-observations?range=" + rng,
 		dashboard:    "/dashboard/apps/" + slug + "/pre-auth?range=" + rng,
 	}
+}
+
+// preAuthObservationMetric reports metrics whose alert payload links to the
+// app's pre-auth observations and dashboard view.
+func preAuthObservationMetric(metric state.AlertMetric) bool {
+	switch metric {
+	case state.AlertMetricPreAuthTargetThreshold, state.AlertMetricPreAuthTargetSignalGapPct, state.AlertMetricPreAuthPressure:
+		return true
+	}
+	return false
 }
 
 func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {

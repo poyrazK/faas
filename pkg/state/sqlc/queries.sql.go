@@ -18761,7 +18761,7 @@ func (q *Queries) GetWorkflowAutomationRevision(ctx context.Context, db DBTX, ar
 }
 
 const getWorkflowDiagnosticsSteps = `-- name: GetWorkflowDiagnosticsSteps :many
-SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at,error
 FROM workflow_steps WHERE run_id=$1::uuid ORDER BY step_name
 `
 
@@ -18776,6 +18776,7 @@ type GetWorkflowDiagnosticsStepsRow struct {
 	ForeachCount  pgtype.Int4
 	NextRetryAt   pgtype.Timestamptz
 	NextCheckAt   pgtype.Timestamptz
+	Error         pgtype.Text
 }
 
 func (q *Queries) GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error) {
@@ -18798,6 +18799,7 @@ func (q *Queries) GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runI
 			&i.ForeachCount,
 			&i.NextRetryAt,
 			&i.NextCheckAt,
+			&i.Error,
 		); err != nil {
 			return nil, err
 		}
@@ -51386,7 +51388,7 @@ SELECT session_user::text AS login, current_user::text AS effective_user,
  has_schema_privilege(current_user,'public','CREATE') AS schema_create,
  (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
  OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
- (has_database_privilege(current_user,current_database(),'CREATE')
+ (($1::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
  OR has_database_privilege(current_user,current_database(),'TEMPORARY')
  OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
  AND ($1::text<>'migration' OR roleid<>e.oid))

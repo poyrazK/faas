@@ -197,6 +197,17 @@ The fleet dashboard also includes request- and wake-latency heatmaps with
 `$${__value.raw}` macro. The metrics and heatmaps remain useful when no trace
 backend is configured; the runbook documents the observer-endpoint fallback.
 
+## `ai-gateway.json` (ADR-991)
+
+Eight-panel dashboard for the outboundd AI gateway:
+- AI calls by usage outcome, tokens by kind, and customer-priced cost in euros per hour;
+- time to first byte;
+- budget and guardrail rejections and the 80% / 100% budget alerts;
+- route fallbacks and OpenAI-format translations;
+- provider key pool cooldowns and rotations.
+
+UID `faas-ai-gateway`. Mirror at `deploy/ansible/roles/grafana/files/ai-gateway.json` (byte-identical; `make grafana-mirror-check` enforces the contract). The operator guide is `docs/ops/outbound-integrations.md`.
+
 ## `loki-pipeline.json` (issue #274 follow-up)
 
 The Loki pipeline dashboard covers both control-plane and compute Promtail

@@ -19,6 +19,7 @@ EdgeRuleResponseKind = Literal[
     "route",
     "throttle",
     "validate",
+    "waf",
 ]
 
 EDGE_RULE_RESPONSE_KIND_VALUES: set[EdgeRuleResponseKind] = {
@@ -40,6 +41,7 @@ EDGE_RULE_RESPONSE_KIND_VALUES: set[EdgeRuleResponseKind] = {
     "route",
     "throttle",
     "validate",
+    "waf",
 }
 
 

@@ -39,8 +39,8 @@ marker_sha="$(tr -d '\n' < "${repo_root}/.faas-metal-source-sha")"
 [[ "${marker_sha}" == "${FAAS_METAL_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_METAL_SOURCE_SHA}"
 
-kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.134}"
-fc_version="${FAAS_TEST_FC_VERSION:-1.7.0}"
+kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.18.54}"
+fc_version="${FAAS_TEST_FC_VERSION:-1.17.0}"
 run_id="${FAAS_METAL_RUN_ID:-manual}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "run ID contains unsupported characters"
 transfer_root="${FAAS_METAL_TRANSFER_ROOT:-}"

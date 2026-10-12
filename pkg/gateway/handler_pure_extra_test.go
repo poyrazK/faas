@@ -360,6 +360,34 @@ func TestClientIPFromTrustedXFF_V6Valid(t *testing.T) {
 	}
 }
 
+// Hunt #9 H9-67: forged True-Client-IP and Forwarded reached production
+// workloads unchanged while X-Forwarded-For was sanitized. Frameworks that read
+// the aliases first then trusted the client's claim.
+func TestStampTrustedClientIPReplacesAliases(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	r.Header.Set("X-Forwarded-For", "203.0.113.42")
+	for _, name := range append([]string{"Forwarded"}, clientIPAliasHeaders...) {
+		r.Header.Set(name, "198.51.100.7")
+	}
+	stampTrustedClientIP(r)
+	for name, want := range map[string]string{
+		"True-Client-IP": "203.0.113.42", "X-Real-IP": "203.0.113.42",
+		"X-Client-IP": "", "X-Cluster-Client-IP": "", "Fastly-Client-IP": "", "Forwarded": "",
+	} {
+		if got := r.Header.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	// Without one trusted hop no alias survives with the forged value.
+	r = httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	r.Header.Set("True-Client-IP", "198.51.100.7")
+	stampTrustedClientIP(r)
+	if got := r.Header.Get("True-Client-IP"); got != "" {
+		t.Errorf("True-Client-IP without a trusted hop = %q, want removed", got)
+	}
+}
+
 func TestStampTrustedClientIP(t *testing.T) {
 	t.Run("valid overwrites forged value", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)

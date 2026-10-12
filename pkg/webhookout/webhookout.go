@@ -303,6 +303,12 @@ type DispatcherOptions struct {
 	Logger     *slog.Logger
 	HeaderSet  HeaderSet
 	Format     DeliveryFormat
+	// FirstAttempt is the one-based attempt number of this Dispatch's first
+	// HTTP request, sent in the attempt header. A caller that owns the retry
+	// ladder (the app webhook dispatcher sends one request per ledger
+	// attempt) passes its ledger count so receivers see 1, 2, 3 rather than
+	// 1 on every retry. Zero means 1.
+	FirstAttempt int
 }
 
 // Dispatcher is the per-rule outbound webhook poster. PR 3 wires one
@@ -470,7 +476,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 			unix = d.opts.Now().Unix()
 		}
 		sig := t.Signer.Sign(unix, evt.ID, body)
-		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, attempt+1, body)
+		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
 			return lastResult

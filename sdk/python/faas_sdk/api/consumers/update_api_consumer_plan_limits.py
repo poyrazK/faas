@@ -93,6 +93,7 @@ def sync_detailed(
         slug (str):
         plan_id (UUID):
         body (UpdateAPIConsumerPlanLimitsRequest): Replacement limits for a consumer plan.
+            Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,6 +132,7 @@ def sync(
         slug (str):
         plan_id (UUID):
         body (UpdateAPIConsumerPlanLimitsRequest): Replacement limits for a consumer plan.
+            Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,6 +166,7 @@ async def asyncio_detailed(
         slug (str):
         plan_id (UUID):
         body (UpdateAPIConsumerPlanLimitsRequest): Replacement limits for a consumer plan.
+            Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,6 +203,7 @@ async def asyncio(
         slug (str):
         plan_id (UUID):
         body (UpdateAPIConsumerPlanLimitsRequest): Replacement limits for a consumer plan.
+            Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

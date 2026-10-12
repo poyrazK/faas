@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "ai-gateway",
+      "name": "AI gateway",
+      "category": "data",
+      "description": "Call LLM providers through managed outbound integrations with hard token and cost caps, per-app guardrails, cross-provider fallback routes, key pools, budget alerts and usage reports.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/ops/outbound-integrations",
+      "acceptance_test": "pkg/outbound/ai_translate_test.go::TestOpenAIRouteFallsBackAcrossProvidersWithTranslation",
+      "operator_flag": "FAAS_AI_GATEWAY_ENABLED"
+    },
+    {
       "id": "api-monetization",
       "name": "API monetization",
       "category": "billing",
@@ -13,7 +24,7 @@
         "scale"
       ],
       "docs_url": "/docs/api-monetization",
-      "acceptance_test": "cmd/apid/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
+      "acceptance_test": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
     },
     {
       "id": "application-messaging",
@@ -27,7 +38,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven#application-inbox",
-      "acceptance_test": "cmd/apid/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
+      "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
     },
     {
       "id": "circuit-breaking",
@@ -148,7 +159,7 @@
       ],
       "docs_url": "https://gregale.dev/docs/executions",
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
-      "acceptance_test": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
     },
     {
       "id": "durable-inbound-webhooks",
@@ -162,7 +173,7 @@
         "scale"
       ],
       "docs_url": "/docs/inbound-webhooks",
-      "acceptance_test": "cmd/apid/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"
+      "acceptance_test": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"
     },
     {
       "id": "egress-circuit-breaking",
@@ -269,7 +280,7 @@
         "scale"
       ],
       "docs_url": "/docs/issues",
-      "acceptance_test": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
+      "acceptance_test": "pkg/apid/apidserver/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
     },
     {
       "id": "managed-exclusive-operations",
@@ -407,6 +418,20 @@
       "acceptance_test": "pkg/gateway/handler_retry_test.go::TestHandlerRetryConvertsTransportFailureIntoSuccess"
     },
     {
+      "id": "route-advisor",
+      "name": "Route advisor",
+      "category": "edge",
+      "description": "Suggest cache, async and per-consumer throttle edge rules from observed route traffic, with evidence and what-if estimates such as wakes avoided; suggested rules are created disabled for review.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/route-advisor",
+      "acceptance_test": "pkg/routeadvisor/advisor_test.go::TestCacheSuggestionRules"
+    },
+    {
       "id": "route-health-canary-guard",
       "name": "Critical route health during canaries",
       "category": "delivery",
@@ -418,7 +443,7 @@
         "scale"
       ],
       "docs_url": "/docs/route-health",
-      "acceptance_test": "cmd/apid/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"
+      "acceptance_test": "pkg/apid/apidserver/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"
     },
     {
       "id": "route-lifecycle-review",

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 )
 
 func TestMCPGatewayPolicySelectorsAndPersistence(t *testing.T) {
@@ -24,12 +25,12 @@ func TestMCPGatewayPolicySelectorsAndPersistence(t *testing.T) {
 		{"app.example", "/**", []string{"POST"}, nil, false},
 		{"app.example", "/**", nil, map[string]string{"x-bypass": "no"}, false},
 	} {
-		prob := validateMCPRuleSelectors("jwt", tc.host, tc.path, tc.methods, tc.headers, body)
+		prob := edgerules.ValidateMCPRuleSelectors("jwt", tc.host, tc.path, tc.methods, tc.headers, body)
 		if (prob == nil) != tc.valid {
 			t.Fatalf("%+v problem=%v", tc, prob)
 		}
 	}
-	stored := actionFromBody("jwt", body)
+	stored := edgerules.ActionFromBody("jwt", body)
 	if stored.JWT == nil || stored.JWT.MCP == nil || stored.JWT.MCP.ToolScopes == nil {
 		t.Fatal("MCP policy was discarded at the state boundary")
 	}

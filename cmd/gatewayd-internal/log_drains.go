@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,6 +35,12 @@ const (
 	// appLogDrainRequestTimeout matches logdrain's default per-request
 	// timeout, which only applies when the sender builds its own client.
 	appLogDrainRequestTimeout = 5 * time.Second
+
+	// appLogDrainRetryWindow is how long a record keeps retrying while the
+	// customer's endpoint is unavailable before it is dead-lettered. The
+	// durable outbox holds later records meanwhile (production-us hunt #9,
+	// H9-109: the old 0.3 s budget lost every record of a brief outage).
+	appLogDrainRetryWindow = 10 * time.Minute
 )
 
 type appLogDrainStore interface {
@@ -94,6 +101,13 @@ type appLogDrainManager struct {
 	// the §11 dial-time egress guard; see newAppLogDrainHTTPClient.
 	httpClient *http.Client
 
+	// owns reports whether this gateway delivers a drain. Every
+	// gatewayd-internal reconciles every enabled drain, so without it each
+	// node streamed and delivered the same lines (production-us hunt #9:
+	// two compute nodes, every line delivered twice). Nil keeps the
+	// single-box behaviour of delivering every drain.
+	owns func(context.Context, state.AppLogDrain) (bool, error)
+
 	mu                 sync.Mutex
 	workers            map[string]*appLogDrainWorker
 	active             map[string]int
@@ -119,6 +133,43 @@ func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver,
 		active:     make(map[string]int),
 		health:     make(map[string]state.AppLogDrainHealth),
 	}
+}
+
+// newAppLogDrainOwnership makes the gateway on an app's owner node the only
+// deliverer of that app's drains. The owner is apps.node_id, the same row
+// scheddRouter.ScheddForApp follows to open the log stream. When ownership
+// moves, the old owner stops at its next reconcile and the new one starts at
+// its own, so a handoff can briefly overlap or gap by one reconcile interval.
+func newAppLogDrainOwnership(store appLogDrainOwnerStore, nodeName string) func(context.Context, state.AppLogDrain) (bool, error) {
+	var (
+		mu     sync.Mutex
+		nodeID string
+	)
+	return func(ctx context.Context, drain state.AppLogDrain) (bool, error) {
+		mu.Lock()
+		local := nodeID
+		mu.Unlock()
+		if local == "" {
+			node, err := store.ComputeNodeByName(ctx, nodeName)
+			if err != nil {
+				return false, fmt.Errorf("resolve local compute node %q: %w", nodeName, err)
+			}
+			local = node.ID
+			mu.Lock()
+			nodeID = local
+			mu.Unlock()
+		}
+		app, err := store.AppByID(ctx, drain.AppID)
+		if err != nil {
+			return false, err
+		}
+		return app.NodeID == local, nil
+	}
+}
+
+type appLogDrainOwnerStore interface {
+	ComputeNodeByName(context.Context, string) (state.ComputeNode, error)
+	AppByID(context.Context, string) (state.App, error)
 }
 
 func (m *appLogDrainManager) Run(ctx context.Context) {
@@ -151,12 +202,29 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 		return
 	}
 	desired := make(map[string]state.AppLogDrain, len(rows))
+	undecided := make(map[string]struct{})
 	for _, row := range rows {
+		if m.owns != nil {
+			owned, err := m.owns(ctx, row)
+			if err != nil {
+				// Keep whatever this gateway is already doing until the
+				// owner resolves; never start a second deliverer on doubt.
+				m.log.WarnContext(ctx, "resolve app log drain owner", slog.String("drain_id", row.ID), slog.String("app_id", row.AppID), slog.String("err", err.Error()))
+				undecided[row.ID] = struct{}{}
+			} else if !owned {
+				continue
+			}
+		}
 		desired[row.ID] = row
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for id := range undecided {
+		if _, running := m.workers[id]; !running {
+			delete(desired, id)
+		}
+	}
 	for id, worker := range m.workers {
 		spec, ok := desired[id]
 		if ok && sameAppLogDrainSpec(worker.spec, spec) {
@@ -204,6 +272,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		TargetURL:    spec.TargetURL,
 		AuthHeader:   authHeader,
 		DurableQueue: durableQueue,
+		RetryWindow:  appLogDrainRetryWindow,
 		HTTPClient:   m.httpClient,
 		OnDropped: func(logdrain.Record) {
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))
@@ -260,7 +329,15 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		},
 		OnRetry: func(_ logdrain.Record, _ int) {
 			m.metrics.ObserveLogDrainRetry(spec.AppID, string(spec.Kind))
-			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) { health.RetriesTotal++ })
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				health.RetriesTotal++
+				// A record can now retry for minutes; health must not read
+				// healthy while delivery is stalled behind it.
+				if health.Active {
+					health.Status = appLogDrainHealthDegraded
+				}
+				health.LastError = "endpoint unavailable; retrying delivery"
+			})
 		},
 		OnDeliveredLatency: func(_ logdrain.Record, latency time.Duration) {
 			m.metrics.ObserveLogDrainDeliveryLatency(spec.AppID, string(spec.Kind), latency)

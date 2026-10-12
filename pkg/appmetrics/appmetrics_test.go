@@ -117,6 +117,10 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
 		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
 		{"pre_auth_target_threshold", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome="target_threshold"`, `[5m]`, "or vector(0)"}},
+		{"pre_auth_pressure", []string{`gateway_pre_auth_rate_limit_total`, `outcome=~"blocked|route_blocked|would_block|route_would_block"`, `[5m]`, "or vector(0)"}},
+		{"edge_validation_failures", []string{`gateway_validate_failures_total{app_id=`, `[5m]`, "or vector(0)"}},
+		{"edge_rejections", []string{`gateway_edge_rejections_total{app=`, `status=~"401|403|413|429"`, `[5m]`, "or vector(0)"}},
+		{"edge_waf_detections", []string{`gateway_waf_inspections_total{app=`, `outcome="detected"`, `gateway_waf_inline_checks_total{app=`, `outcome=~"warned|blocked"`, `[5m]`, "or vector(0)"}},
 		{"pre_auth_target_signal_gap_pct", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome=~"target_missing|target_invalid"`, `outcome=~"target_failure|target_missing|target_invalid"`, `sum by (policy)`, `>= 20`, `or vector(-1)`}},
 	}
 	for _, tc := range tests {

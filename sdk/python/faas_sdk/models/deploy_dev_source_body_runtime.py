@@ -1,8 +1,9 @@
 from typing import Literal
 
-DeployDevSourceBodyRuntime = Literal["go124", "go124-alpine", "node22", "node24", "python312", "python313"]
+DeployDevSourceBodyRuntime = Literal["binary", "go124", "go124-alpine", "node22", "node24", "python312", "python313"]
 
 DEPLOY_DEV_SOURCE_BODY_RUNTIME_VALUES: set[DeployDevSourceBodyRuntime] = {
+    "binary",
     "go124",
     "go124-alpine",
     "node22",

@@ -6,6 +6,7 @@ on:
     paths:
       - "cmd/gregale/templates/**"
       - "cmd/apid/**"
+      - "pkg/apid/**"
       - "pkg/gateway/**"
       - "cmd/gatewayd-internal/**"
       - "pkg/sched/**"
@@ -99,7 +100,7 @@ jobs:
         # Bound GC pressure, omit APID test debug metadata and serialize its
         # compiler backend. Production build jobs retain their debug metadata.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2

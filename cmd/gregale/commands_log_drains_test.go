@@ -68,11 +68,33 @@ func TestCmdLogDrainsAddReadsCredentialFromEnvironment(t *testing.T) {
 	if code := cmdLogDrains([]string{"add", "--app", "web", "--url", "https://logs.example.com/in", "--auth-header-env", "LOG_DRAIN_TOKEN"}); code != 0 {
 		t.Fatalf("log-drains add exit = %d", code)
 	}
-	if created.AuthHeader != "Bearer drain-secret" || created.Kind != "http_json" {
+	if created.AuthHeader != "Authorization: Bearer drain-secret" || created.Kind != "http_json" {
 		t.Fatalf("create request = %+v", created)
 	}
 	if strings.Contains(out.String(), "drain-secret") {
 		t.Fatalf("credential echoed: %q", out.String())
+	}
+}
+
+// production-us hunt #9 (H9-107): the documented LOG_TOKEN='Bearer …' was
+// sent verbatim and the API rejected it as not a "Name: value" pair.
+func TestLogDrainAuthHeaderPairAcceptsTheDocumentedForms(t *testing.T) {
+	for _, tc := range []struct {
+		value, want string
+		wantErr     bool
+	}{
+		{value: "Bearer drain-secret", want: "Authorization: Bearer drain-secret"},
+		{value: "Splunk 0f3c-11", want: "Authorization: Splunk 0f3c-11"},
+		{value: "Authorization: Bearer drain-secret", want: "Authorization: Bearer drain-secret"},
+		{value: "DD-API-KEY: abc123", want: "DD-API-KEY: abc123"},
+		{value: "Bearer a:b", wantErr: true},
+		{value: "X-Key: a:b", wantErr: true},
+		{value: "X-Key:", wantErr: true},
+	} {
+		got, err := logDrainAuthHeaderPair(tc.value)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("logDrainAuthHeaderPair(%q) = %q, %v; want %q, err=%v", tc.value, got, err, tc.want, tc.wantErr)
+		}
 	}
 }
 

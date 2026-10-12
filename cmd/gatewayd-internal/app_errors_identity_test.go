@@ -89,3 +89,26 @@ func TestAppErrorsRecorderIgnoresClientSuppliedIdentity(t *testing.T) {
 		t.Fatalf("rows = %+v, want one row for the gateway-stamped identity", rows)
 	}
 }
+
+// production-us hunt #9: the recorder fingerprinted the raw URL because the
+// route-template context key it read was never set, so /orders/12345 and
+// /orders/67890 failing the same way became two issues.
+func TestAppErrorsRecorderGroupsIdentifierPathsIntoOneIssue(t *testing.T) {
+	r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+	failing := r.Middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		api.PlatformIdentity{AppID: "app-1", TenantID: "acct-1", DeploymentID: "dep-1"}.ApplyGuestHeaders(req.Header)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	for _, path := range []string{"/orders/12345", "/orders/67890"} {
+		failing.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+	}
+	rows := r.drainBatch(2)
+	if len(rows) == 0 {
+		t.Fatal("no app error rows recorded")
+	}
+	for _, row := range rows {
+		if row.Route != "GET /orders/{id}" || row.Fingerprint != rows[0].Fingerprint {
+			t.Fatalf("rows = %+v, want one GET /orders/{id} fingerprint", rows)
+		}
+	}
+}

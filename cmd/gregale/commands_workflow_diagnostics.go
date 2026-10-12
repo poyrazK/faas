@@ -5,28 +5,37 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdWorkflowsDiagnose(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflows diagnose <run_id>", "workflows")
-		return 1
-	}
-	if !workflowUUIDPattern.MatchString(args[0]) {
-		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", args[0])
-		return 1
+	target, code := parseWorkflowReadTarget("diagnose", args)
+	if code != 0 {
+		return code
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.GetWorkflowRunDiagnostics(context.Background(), args[0])
+	ctx := context.Background()
+	if target.Ref == "latest" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	runID, err := resolveWorkflowReadTarget(ctx, client, target)
+	if err != nil {
+		return printErr("Could not resolve workflow run", err)
+	}
+	result, err := client.GetWorkflowRunDiagnostics(ctx, runID)
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if target.Ref == "latest" && result.RunID != runID {
+		return printErr("Could not diagnose selected workflow run", fmt.Errorf("diagnostics response did not identify the selected run %s", runID))
 	}
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(result))
@@ -61,5 +70,8 @@ func renderWorkflowRunDiagnostics(w io.Writer, result api.WorkflowRunDiagnostics
 	_, _ = fmt.Fprintln(w, "\nSTEP  KIND  STATUS  ATTEMPT")
 	for _, step := range result.Steps {
 		_, _ = fmt.Fprintf(w, "%s  %s  %s  %d\n", step.StepName, step.Kind, step.Status, step.Attempt)
+		if step.RetryEligible {
+			_, _ = fmt.Fprintf(w, "  Manual HTTP retry eligible at observation; skipped descendants to reopen: %s\n", oneLine(strings.Join(step.RetryReopenedSteps, ", ")))
+		}
 	}
 }

@@ -68,10 +68,13 @@ type Config struct {
 }
 
 type Result struct {
-	Marker       string `json:"marker"`
-	Counter      int64  `json:"counter"`
-	RuntimeProof string `json:"runtime_proof"`
-	ReaderProof  string `json:"reader_proof"`
+	Marker            string `json:"marker"`
+	Counter           int64  `json:"counter"`
+	RuntimeProof      string `json:"runtime_proof"`
+	ReaderProof       string `json:"reader_proof"`
+	PoolGeneration    uint64 `json:"pool_generation,omitempty"`
+	WriterConnections int64  `json:"writer_connections,omitempty"`
+	ReaderConnections int64  `json:"reader_connections,omitempty"`
 }
 
 // Proof identifies the private credential actually received by the process.

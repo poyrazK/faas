@@ -268,6 +268,80 @@ func TestSenderDurableQueueAcknowledgesAfterSuccessfulDelivery(t *testing.T) {
 	}
 }
 
+// production-us hunt #9 (H9-109): a log endpoint that failed for ~0.3 s
+// dead-lettered every record despite the durable outbox. Within the retry
+// window a record outlives MaxAttempts and is delivered once the endpoint
+// recovers; past the window it is dead-lettered.
+func TestSenderDurableRetryWindowOutlivesATransientOutage(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		failures      int64
+		window        time.Duration
+		wantDelivered bool
+	}{
+		{name: "recovers inside the window", failures: 4, window: time.Minute, wantDelivered: true},
+		{name: "dead-letters past the window", failures: 1 << 30, window: 400 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if attempts.Add(1) <= tc.failures {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer server.Close()
+			queue, err := NewQueue(QueueConfig{Root: t.TempDir(), DrainID: "drain-1"})
+			if err != nil {
+				t.Fatalf("NewQueue: %v", err)
+			}
+			done := make(chan bool, 1)
+			sender, err := New(Config{
+				Kind: KindHTTPJSON, TargetURL: server.URL, DurableQueue: queue, MaxAttempts: 2, RetryWindow: tc.window,
+				OnDelivered:  func(Record) { done <- true },
+				OnDeadLetter: func(Record, error) { done <- false },
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go sender.Run(ctx)
+			if !sender.Enqueue(Record{AppID: "app-1", InstanceID: "instance-1", Sequence: 1, Line: "outage"}) {
+				t.Fatal("durable Enqueue returned false")
+			}
+			select {
+			case delivered := <-done:
+				if delivered != tc.wantDelivered {
+					t.Fatalf("delivered = %v after %d attempts, want %v", delivered, attempts.Load(), tc.wantDelivered)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("no outcome after %d attempts", attempts.Load())
+			}
+			if tc.wantDelivered && attempts.Load() != tc.failures+1 {
+				t.Fatalf("attempts = %d, want %d", attempts.Load(), tc.failures+1)
+			}
+			if !tc.wantDelivered && attempts.Load() <= 2 {
+				t.Fatalf("attempts = %d, want retries beyond MaxAttempts inside the window", attempts.Load())
+			}
+		})
+	}
+}
+
+func TestSenderDurableBackoffDoublesToTheCap(t *testing.T) {
+	s := &Sender{cfg: Config{RetryWindow: time.Hour}}
+	for attempt, want := range map[int]time.Duration{2: 100 * time.Millisecond, 3: 200 * time.Millisecond, 6: 1600 * time.Millisecond, 40: maxRetryBackoff} {
+		if got := s.durableBackoff(attempt); got != want {
+			t.Errorf("durableBackoff(%d) = %s, want %s", attempt, got, want)
+		}
+	}
+	bounded := &Sender{}
+	if got := bounded.durableBackoff(3); got != 200*time.Millisecond {
+		t.Errorf("bounded durableBackoff(3) = %s, want the linear 200ms", got)
+	}
+}
+
 func queueRoot(queue *Queue) string {
 	return filepath.Dir(filepath.Dir(queue.recordsPath))
 }

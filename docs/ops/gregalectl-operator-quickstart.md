@@ -539,11 +539,10 @@ when `main.go`'s dispatcher diverges from `cli_meta.go`.
 ## Trusted-publishers (note)
 
 `trusted-publishers add|remove|list` is dispatched by `gregalectl` per
-ADR-058 deviation note in `main.go:15`, but the on-disk
-`/etc/faas/secrets/trusted-publishers/<name>.pem` writes still happen
-from the customer-side `gregale` binary. The ADR-058 follow-up
-("operator-vs-customer split") is filed separately and out of scope for
-this PR.
+ADR-058 deviation note in `main.go:15`, and the customer-side `gregale`
+binary still exposes the same commands. Both write `app_trusted_signers`
+through apid; imaged reads that table on every verify. The ADR-058
+follow-up ("operator-vs-customer split") is filed separately.
 
 ## Where to go next
 
