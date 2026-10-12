@@ -1012,6 +1012,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
@@ -2069,6 +2070,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tReady := time.Now()
+	v.applyBlockRateLimitAfterRestore(ctx, l, spec.Workloads)
 	// Snapshot load, lazy memory faults, and the mandatory guest resume hook
 	// are startup work. Applying a customer's sustained CPU shape before those
 	// phases can exhaust a 250 mCPU cgroup period and hold the resume ACK until
