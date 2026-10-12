@@ -139,6 +139,16 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 		return nil
 	}
 	for _, u := range watchUpdates {
+		if u.Playbook != nil {
+			identity := playbookEvidenceWatchIdentity(r, u.Playbook.Watch)
+			var progress *api.OperationWorkflowPlaybookProgress
+			if row, found := data.playbookProgress[u.Playbook.Watch.ProgressID]; found && row.key() == identity.key() {
+				p := row.Progress
+				progress = &p
+			}
+			notifications = append(notifications, applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)...)
+			continue
+		}
 		for i, n := range data.readinessInbox[r.Subscription.ID] {
 			if n.Sequence != u.Sequence {
 				continue

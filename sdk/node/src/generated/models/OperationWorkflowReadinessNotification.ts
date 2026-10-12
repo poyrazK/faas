@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookEvidenceEvent } from './OperationWorkflowPlaybookEvidenceEvent.js';
 import type { OperationWorkflowReadinessBusinessOutcomeEvent } from './OperationWorkflowReadinessBusinessOutcomeEvent.js';
 import type { OperationWorkflowReadinessBusinessOutcomeWatch } from './OperationWorkflowReadinessBusinessOutcomeWatch.js';
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
@@ -15,6 +16,10 @@ import type { OperationWorkflowReadinessVerificationWatch } from './OperationWor
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  /**
+   * OperationWorkflowReadinessNotification.playbook_evidence. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
+   */
+  playbook_evidence?: OperationWorkflowPlaybookEvidenceEvent;
   escalation_response?: OperationWorkflowReadinessEscalationResponseEvent;
   outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation;
   business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch;
@@ -33,7 +38,7 @@ export type OperationWorkflowReadinessNotification = {
   /**
    * OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
    */
-  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue';
+  kind: 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed';
   /**
    * OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
    */

@@ -100,5 +100,14 @@ func readinessFollowUpProjection(s api.OperationWorkflowReadinessSubscription, t
 			row.PlatformTenantID = b.PlatformTenantID
 		}
 	}
+	if event := n.PlaybookEvidence; event != nil {
+		row.Workflow = event.Workflow
+		row.InstanceID = event.InstanceID
+		subject := event.Subject
+		row.Subject = &subject
+		if event.PlatformTenantID != "" {
+			row.PlatformTenantID = event.PlatformTenantID
+		}
+	}
 	return row
 }

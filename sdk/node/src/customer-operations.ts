@@ -392,6 +392,14 @@ export class GregaleOperationClient {
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress/' + encodeURIComponent(id) + '/reviews?' + q, 'POST', body, undefined, signal);
   }
+  configureWorkflowPlaybookEvidenceWatch(options: OperationWorkflowCoordinationTimelineOptions, id: string, body: OperationWorkflowPlaybookEvidenceWatchRequest, signal?: AbortSignal): Promise<OperationWorkflowPlaybookEvidenceWatch> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.offset !== undefined || options.limit !== undefined) throw new Error('Pagination is not accepted for watch configuration');
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID || !UUID.test(id)) throw new Error('Explicit case and checklist UUID required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+    return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress/' + encodeURIComponent(id) + '/evidence-watch?' + q, 'POST', body, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -760,7 +768,7 @@ export interface OperationWorkflowReadinessSubscription extends Omit<OperationWo
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { playbook_evidence?: OperationWorkflowPlaybookEvidenceEvent; escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
@@ -824,3 +832,8 @@ export interface OperationWorkflowPlaybookApplicability { status: 'applicable' |
 
 export interface OperationWorkflowPlaybookReviewRequest { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; replacement_progress_id?: string; replacement_revision?: number }
 export interface OperationWorkflowPlaybookReview { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; actor: string; at: string; applicability: OperationWorkflowPlaybookApplicability; replacement_progress_id?: string; replacement_revision?: number }
+
+export interface OperationWorkflowPlaybookEvidenceWatchRequest { watch_id?: string; subscription_id: string; progress_revision: number; revision: number; enabled: boolean; owner: string }
+export interface OperationWorkflowPlaybookEvidenceWatch { id: string; progress_id: string; subscription_id: string; revision: number; status: 'active' | 'stopped'; stop_reason?: string; owner: string; platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; contract_version: number; playbook_id: string; playbook_version: number; created_at: string; updated_at: string; updated_by: string; evaluated_at: string; items: OperationWorkflowPlaybookEvidenceCheck[] }
+export interface OperationWorkflowPlaybookEvidenceChange { before_status: string; before_reason: string; after: OperationWorkflowPlaybookEvidenceCheck }
+export interface OperationWorkflowPlaybookEvidenceEvent { watch_id: string; progress_id: string; platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; contract_version: number; playbook_id: string; playbook_version: number; checked_at: string; changes: OperationWorkflowPlaybookEvidenceChange[] }

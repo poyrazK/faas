@@ -1212,8 +1212,12 @@ export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkfl
 export type { OperationWorkflowPlaybook } from './models/OperationWorkflowPlaybook.js';
 export type { OperationWorkflowPlaybookApplicability } from './models/OperationWorkflowPlaybookApplicability.js';
 export type { OperationWorkflowPlaybookEvidence } from './models/OperationWorkflowPlaybookEvidence.js';
+export type { OperationWorkflowPlaybookEvidenceChange } from './models/OperationWorkflowPlaybookEvidenceChange.js';
 export type { OperationWorkflowPlaybookEvidenceCheck } from './models/OperationWorkflowPlaybookEvidenceCheck.js';
+export type { OperationWorkflowPlaybookEvidenceEvent } from './models/OperationWorkflowPlaybookEvidenceEvent.js';
 export type { OperationWorkflowPlaybookEvidenceRequirement } from './models/OperationWorkflowPlaybookEvidenceRequirement.js';
+export type { OperationWorkflowPlaybookEvidenceWatch } from './models/OperationWorkflowPlaybookEvidenceWatch.js';
+export type { OperationWorkflowPlaybookEvidenceWatchRequest } from './models/OperationWorkflowPlaybookEvidenceWatchRequest.js';
 export type { OperationWorkflowPlaybookGuidance } from './models/OperationWorkflowPlaybookGuidance.js';
 export type { OperationWorkflowPlaybookProgress } from './models/OperationWorkflowPlaybookProgress.js';
 export type { OperationWorkflowPlaybookProgressChange } from './models/OperationWorkflowPlaybookProgressChange.js';

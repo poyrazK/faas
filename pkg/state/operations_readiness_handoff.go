@@ -8,6 +8,13 @@ func readinessHandoff(check api.OperationWorkflowReadinessNotificationCheck) api
 		"Advisory application reports only; the application owns decisions, authorization and execution.",
 		"Comparison starts at the saved notification observation, not at follow-up scheduling. Scheduling-time evidence was not retained.",
 	}}
+	if event := check.Notification.PlaybookEvidence; event != nil {
+		h.Summary = "Checklist evidence changed. Consult the saved requirement observations and open the exact case for current evidence."
+		t := event.CheckedAt
+		h.BaselineEvaluatedAt = &t
+		h.Limitations = []string{"This notice contains checklist requirement observations, not a transition readiness baseline.", "Human coordination and attached references remain separate from application evidence and business outcomes."}
+		return h
+	}
 	if saved := readinessNotificationBaseline(check.Notification); saved != nil {
 		t := saved.EvaluatedAt
 		h.BaselineEvaluatedAt = &t

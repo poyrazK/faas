@@ -72,11 +72,16 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	evidenceTenant := canonicalReadinessTenant(tenant)
 	if operator && saved != nil {
 		evidenceTenant = saved.PlatformTenantID
+	} else if operator && check.Notification.PlaybookEvidence != nil {
+		evidenceTenant = check.Notification.PlaybookEvidence.PlatformTenantID
 	}
 	for _, evidenceID := range ids {
 		op, err := store.OperationByID(ctx, uuid.MustParse(account).String(), evidenceTenant, evidenceID)
 		if err != nil {
 			return out, err
+		}
+		if event := check.Notification.PlaybookEvidence; event != nil && (!sameOperationHistoryIdentity(op.PlatformTenantID, evidenceTenant) || op.Subject == nil || *op.Subject != event.Subject) {
+			return out, ErrNotFound
 		}
 		if !sameOperationHistoryIdentity(op.AppID, app) || op.Scope != scope || (saved != nil && (!sameOperationHistoryIdentity(op.PlatformTenantID, evidenceTenant) || op.Subject == nil || *op.Subject != saved.Subject)) {
 			return out, ErrNotFound

@@ -10099,3 +10099,7 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Checklist watches are durable within a readiness subscription; polling rotates a bounded sample.
+const OperationWorkflowPlaybookEvidenceWatchesPerSubscriptionMax = 20
+const OperationWorkflowPlaybookEvidenceWatchesPerPassMax = 5

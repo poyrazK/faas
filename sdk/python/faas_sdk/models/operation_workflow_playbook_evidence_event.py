@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
+
+from attrs import define as _attrs_define
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
+
+
+T = TypeVar("T", bound="OperationWorkflowPlaybookEvidenceEvent")
+
+
+@_attrs_define
+class OperationWorkflowPlaybookEvidenceEvent:
+    """OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations preserve
+    human reviews and application business authority.
+
+    """
+
+    watch_id: UUID
+    """OperationWorkflowPlaybookEvidenceEvent.watch_id. Pinned case identity or retained watch metadata."""
+    progress_id: UUID
+    """OperationWorkflowPlaybookEvidenceEvent.progress_id. Pinned case identity or retained watch metadata."""
+    subject: OperationSubject
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
+    workflow: str
+    """OperationWorkflowPlaybookEvidenceEvent.workflow. Pinned case identity or retained watch metadata."""
+    instance_id: str
+    """OperationWorkflowPlaybookEvidenceEvent.instance_id. Pinned case identity or retained watch metadata."""
+    contract_version: int
+    """OperationWorkflowPlaybookEvidenceEvent.contract_version. Pinned case identity or retained watch metadata."""
+    playbook_id: str
+    """OperationWorkflowPlaybookEvidenceEvent.playbook_id. Pinned case identity or retained watch metadata."""
+    playbook_version: int
+    """OperationWorkflowPlaybookEvidenceEvent.playbook_version. Pinned case identity or retained watch metadata."""
+    checked_at: datetime.datetime
+    """OperationWorkflowPlaybookEvidenceEvent.checked_at. Observed case evidence clock; this is polling, not an
+    application transaction timestamp."""
+    changes: list[OperationWorkflowPlaybookEvidenceChange]
+    """OperationWorkflowPlaybookEvidenceEvent.changes. Grouped changes in requirement status or diagnostic reason;
+    excludes observation clocks and report counters."""
+    platform_tenant_id: UUID | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceEvent.platform_tenant_id. Exact evidence customer, included only for
+    operator watches and deliveries."""
+
+    def to_dict(self) -> dict[str, Any]:
+        watch_id = str(self.watch_id)
+
+        progress_id = str(self.progress_id)
+
+        subject = self.subject.to_dict()
+
+        workflow = self.workflow
+
+        instance_id = self.instance_id
+
+        contract_version = self.contract_version
+
+        playbook_id = self.playbook_id
+
+        playbook_version = self.playbook_version
+
+        checked_at = self.checked_at.isoformat()
+
+        changes = []
+        for changes_item_data in self.changes:
+            changes_item = changes_item_data.to_dict()
+            changes.append(changes_item)
+
+        platform_tenant_id: str | Unset = UNSET
+        if not isinstance(self.platform_tenant_id, Unset):
+            platform_tenant_id = str(self.platform_tenant_id)
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "watch_id": watch_id,
+                "progress_id": progress_id,
+                "subject": subject,
+                "workflow": workflow,
+                "instance_id": instance_id,
+                "contract_version": contract_version,
+                "playbook_id": playbook_id,
+                "playbook_version": playbook_version,
+                "checked_at": checked_at,
+                "changes": changes,
+            }
+        )
+        if platform_tenant_id is not UNSET:
+            field_dict["platform_tenant_id"] = platform_tenant_id
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
+
+        d = dict(src_dict)
+        watch_id = UUID(d.pop("watch_id"))
+
+        progress_id = UUID(d.pop("progress_id"))
+
+        subject = OperationSubject.from_dict(d.pop("subject"))
+
+        workflow = d.pop("workflow")
+
+        instance_id = d.pop("instance_id")
+
+        contract_version = d.pop("contract_version")
+
+        playbook_id = d.pop("playbook_id")
+
+        playbook_version = d.pop("playbook_version")
+
+        checked_at = datetime.datetime.fromisoformat(d.pop("checked_at"))
+
+        changes = []
+        _changes = d.pop("changes")
+        for changes_item_data in _changes:
+            changes_item = OperationWorkflowPlaybookEvidenceChange.from_dict(changes_item_data)
+
+            changes.append(changes_item)
+
+        _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
+        platform_tenant_id: UUID | Unset
+        if isinstance(_platform_tenant_id, Unset):
+            platform_tenant_id = UNSET
+        else:
+            platform_tenant_id = UUID(_platform_tenant_id)
+
+        operation_workflow_playbook_evidence_event = cls(
+            watch_id=watch_id,
+            progress_id=progress_id,
+            subject=subject,
+            workflow=workflow,
+            instance_id=instance_id,
+            contract_version=contract_version,
+            playbook_id=playbook_id,
+            playbook_version=playbook_version,
+            checked_at=checked_at,
+            changes=changes,
+            platform_tenant_id=platform_tenant_id,
+        )
+
+        return operation_workflow_playbook_evidence_event

@@ -229,3 +229,54 @@ type OperationWorkflowPlaybookReview struct {
 	ReplacementProgressID string                                 `json:"replacement_progress_id,omitempty"`
 	ReplacementRevision   int64                                  `json:"replacement_revision,omitempty"`
 }
+
+// OperationWorkflowPlaybookEvidenceWatchRequest explicitly enrolls or stops one checklist in an inbox.
+type OperationWorkflowPlaybookEvidenceWatchRequest struct {
+	WatchID          string `json:"watch_id,omitempty"`
+	SubscriptionID   string `json:"subscription_id"`
+	ProgressRevision int64  `json:"progress_revision"`
+	Revision         int64  `json:"revision"`
+	Enabled          bool   `json:"enabled"`
+	Owner            string `json:"owner"`
+}
+
+// Watch revisions fence configuration changes; polling does not advance them.
+type OperationWorkflowPlaybookEvidenceWatch struct {
+	ID               string                                   `json:"id"`
+	ProgressID       string                                   `json:"progress_id"`
+	SubscriptionID   string                                   `json:"subscription_id"`
+	Revision         int64                                    `json:"revision"`
+	Status           string                                   `json:"status"`
+	StopReason       string                                   `json:"stop_reason,omitempty"`
+	Owner            string                                   `json:"owner"`
+	PlatformTenantID string                                   `json:"platform_tenant_id,omitempty"`
+	Subject          OperationSubject                         `json:"subject"`
+	Workflow         string                                   `json:"workflow"`
+	InstanceID       string                                   `json:"instance_id"`
+	ContractVersion  int                                      `json:"contract_version"`
+	PlaybookID       string                                   `json:"playbook_id"`
+	PlaybookVersion  int                                      `json:"playbook_version"`
+	CreatedAt        time.Time                                `json:"created_at"`
+	UpdatedAt        time.Time                                `json:"updated_at"`
+	UpdatedBy        string                                   `json:"updated_by"`
+	EvaluatedAt      time.Time                                `json:"evaluated_at"`
+	Items            []OperationWorkflowPlaybookEvidenceCheck `json:"items"`
+}
+type OperationWorkflowPlaybookEvidenceChange struct {
+	BeforeStatus string                                 `json:"before_status"`
+	BeforeReason string                                 `json:"before_reason"`
+	After        OperationWorkflowPlaybookEvidenceCheck `json:"after"`
+}
+type OperationWorkflowPlaybookEvidenceEvent struct {
+	WatchID          string                                    `json:"watch_id"`
+	ProgressID       string                                    `json:"progress_id"`
+	PlatformTenantID string                                    `json:"platform_tenant_id,omitempty"`
+	Subject          OperationSubject                          `json:"subject"`
+	Workflow         string                                    `json:"workflow"`
+	InstanceID       string                                    `json:"instance_id"`
+	ContractVersion  int                                       `json:"contract_version"`
+	PlaybookID       string                                    `json:"playbook_id"`
+	PlaybookVersion  int                                       `json:"playbook_version"`
+	CheckedAt        time.Time                                 `json:"checked_at"`
+	Changes          []OperationWorkflowPlaybookEvidenceChange `json:"changes"`
+}

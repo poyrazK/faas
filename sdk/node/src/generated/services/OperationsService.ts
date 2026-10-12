@@ -50,6 +50,8 @@ import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkf
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowPlaybookEvidenceWatch } from '../models/OperationWorkflowPlaybookEvidenceWatch.js';
+import type { OperationWorkflowPlaybookEvidenceWatchRequest } from '../models/OperationWorkflowPlaybookEvidenceWatchRequest.js';
 import type { OperationWorkflowPlaybookProgress } from '../models/OperationWorkflowPlaybookProgress.js';
 import type { OperationWorkflowPlaybookProgressStartRequest } from '../models/OperationWorkflowPlaybookProgressStartRequest.js';
 import type { OperationWorkflowPlaybookProgressUpdateRequest } from '../models/OperationWorkflowPlaybookProgressUpdateRequest.js';
@@ -6210,6 +6212,92 @@ export class OperationsService {
     });
   }
   /**
+   * Configure account checklist evidence monitoring
+   * ConfigureAccountWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+   * @returns OperationWorkflowPlaybookEvidenceWatch ConfigureAccountWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+   * @throws ApiError
+   */
+  public static configureAccountWorkflowPlaybookEvidenceWatch({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookEvidenceWatchRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookEvidenceWatch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Record account playbook review decision
    * ReviewAccountWorkflowPlaybookProgress. Record continue, retire or replace with a required human reason and expected source revision. Retire and replace permanently close source coordination. Replacement requires an already-started active applicable target in the same exact case, its expected revision, and an atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed. Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from authentication. Applicability is observed before the write, not transactionally locked application evidence.
    * @returns OperationWorkflowPlaybookProgress ReviewAccountWorkflowPlaybookProgress. Source checklist with the committed durable decision and updated shared revision.
@@ -6270,6 +6358,86 @@ export class OperationsService {
       query: {
         'scope': scope,
         'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Configure customer checklist evidence monitoring
+   * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+   * @returns OperationWorkflowPlaybookEvidenceWatch ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+   * @throws ApiError
+   */
+  public static configurePlatformTenantSelfWorkflowPlaybookEvidenceWatch({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookEvidenceWatchRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookEvidenceWatch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/evidence-watch',
+      path: {
+        'id': id,
+      },
+      query: {
+        'app_id': appId,
+        'scope': scope,
         'subject_type': subjectType,
         'subject_id': subjectId,
         'workflow': workflow,

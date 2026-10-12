@@ -264,6 +264,14 @@
   const a = document.createElement('a'); a.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); a.textContent = label; parent.append(a,document.createElement('br'));
  };
  window.renderReadinessVerification = (parent, notification, scope) => {
+  if(notification.playbook_evidence){const event=notification.playbook_evidence;
+   text(parent,'Checklist evidence changed · '+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
+   text(parent,'Checklist '+event.progress_id+' · Checked '+new Date(event.checked_at).toLocaleString());
+   for(const change of event.changes){text(parent,change.after.requirement.label+': '+change.before_status+' → '+change.after.status+' · '+change.after.reason.replace(/_/g,' '));if(change.after.review_suggested)text(parent,'Review suggested for this completed checklist item.');}
+   text(parent,'These observations preserve the original checklist reviews. Refresh the case for current evidence.');
+   const open=document.createElement('button');open.type='button';open.textContent='Open current workflow case';open.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('gregale-workflow-case',{detail:{scope,tenant_id:event.platform_tenant_id||panel.dataset.tenant,subject_type:event.subject.type,subject_id:event.subject.id,workflow:event.workflow,instance_id:event.instance_id}})));parent.append(open);
+
+  }
   const link=(id,label)=>{if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
   const item=(proof)=>{
    text(parent,proof.proof.resolution.operation+'/'+proof.proof.resolution.code+': '+proof.status+' · '+proof.explanation);
@@ -636,13 +644,13 @@
   if(result.history_truncated)limitations.append(node('li','Older coordination review or assignment changes are missing.'));
   if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
  }
- async function savePlaybookProgress(id,body,button,reviewDecision=false) {
+ async function savePlaybookProgress(id,body,button,reviewDecision=false,evidenceWatch=false) {
   const token=generation,query=new URLSearchParams(active);query.delete('offset');query.delete('limit');
   button.disabled=true;message.textContent='Saving playbook progress…';
   try {
    const url=safeURL(root.dataset.caseUrl);if(!url.pathname.endsWith('/case'))throw new Error('Invalid progress destination.');
-   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'')+(reviewDecision?'/reviews':'');url.search=query.toString();
-   const response=await fetch(url.href,{method:reviewDecision?'POST':id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
+   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'')+(reviewDecision?'/reviews':evidenceWatch?'/evidence-watch':'');url.search=query.toString();
+   const response=await fetch(url.href,{method:reviewDecision||evidenceWatch?'POST':id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
    if(!response.ok)throw new Error(response.status===409?'This checklist or its guidance changed. Reload the case before saving again.':'Playbook progress could not be saved (HTTP '+response.status+').');
    if(token!==generation)return;
    next=0;seen=new Set();items.replaceChildren();await loadTimeline(false);
@@ -669,12 +677,31 @@
    void savePlaybookProgress(p.id,body,button,true);
   });section.append(form);
  }
+ function mountPlaybookEvidenceWatch(section,p){
+  if(!(p.playbook.evidence_requirements||[]).length)return;
+  const form=node('form','');section.append(form);form.append(node('p','Monitor requirement changes in a readiness inbox. Enabling saves a baseline; later changes notify the responsible team.'));
+  const destinations=node('select','');destinations.setAttribute('aria-label','Monitoring inbox for '+p.playbook.id);const empty=node('option','Load inbox destinations');empty.value='';destinations.append(empty);form.append(destinations);
+  const refresh=node('button','Load monitoring destinations');refresh.type='button';form.append(refresh);
+  const enabled=node('input','');enabled.type='checkbox';enabled.disabled=(p.disposition||'active')!=='active';const enabledLabel=node('label','Monitor this checklist ');enabledLabel.append(enabled);form.append(enabledLabel);
+  const owner=node('input','');owner.maxLength=256;owner.value=p.playbook.owner||'';const ownerLabel=node('label','Notification owner or team ');ownerLabel.append(owner);form.append(ownerLabel);
+  const save=node('button','Save monitoring');save.type='submit';save.disabled=true;form.append(save);const detail=node('p','');form.append(detail);let subscriptions=[];
+  const selectedWatch=()=>subscriptions.find(s=>s.id===destinations.value)?.playbook_evidence_watches?.find(w=>w.progress_id===p.id);
+  const describe=()=>{const watch=selectedWatch();enabled.checked=watch?.status==='active';owner.value=watch?.owner??p.playbook.owner??'';save.disabled=!destinations.value;detail.textContent=watch?'Monitoring '+watch.status+' · Last checked '+clock(watch.evaluated_at)+(watch.stop_reason?' · '+watch.stop_reason.replace(/_/g,' '):''):'No monitoring has been configured for this checklist in the selected inbox.';};
+  destinations.addEventListener('change',describe);
+  refresh.addEventListener('click',async()=>{refresh.disabled=true;const token=generation;try{
+   const panel=document.getElementById('readiness-subscriptions');if(!panel)throw new Error('Inbox destination unavailable.');const url=safeURL(panel.dataset.url);url.search=new URLSearchParams({scope:active.get('scope')}).toString();
+   const response=await fetch(url.href,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'application/json'}});if(!response.ok)throw new Error('Unable to load monitoring destinations ('+response.status+').');const result=await response.json();if(token!==generation||!form.isConnected)return;
+   subscriptions=(result.items||[]).filter(s=>!s.workflow||s.workflow===active.get('workflow'));destinations.replaceChildren(empty);for(const sub of subscriptions){const option=node('option',sub.name);option.value=sub.id;destinations.append(option);}describe();
+  }catch(error){detail.textContent=error.message;}finally{refresh.disabled=false;}});
+  form.addEventListener('submit',async event=>{event.preventDefault();const watch=selectedWatch();if(!destinations.value||!watch&&!enabled.checked){detail.textContent='Choose an inbox and enable monitoring to create a watch.';return;}await savePlaybookProgress(p.id,{watch_id:watch?.id,subscription_id:destinations.value,progress_revision:p.revision,revision:watch?.revision||0,enabled:enabled.checked,owner:owner.value},save,false,true);});
+ }
  function renderPlaybookProgress(records) {
   caseView.append(node('h4','Playbook checklist progress'),node('p','Reviews follow pinned guidance. Completing a checklist does not establish readiness or business success. Evidence references were checked when saved.'));
   if(!records.length)caseView.append(node('p','No playbook checklists have been started for this case.'));
   for(const p of records){
    const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
    section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
+   mountPlaybookEvidenceWatch(section,p);
    const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
    if(!p.items.length)section.append(node('p','No evidence items were declared; checklist completion is not asserted.'));
    const applicability=p.applicability;
@@ -791,6 +818,8 @@
  }
  form.addEventListener('submit',event=>{event.preventDefault();startView(false);});
  caseButton.addEventListener('click',()=>startView(true));
+ window.addEventListener('gregale-workflow-case',event=>{for(const name of ['scope','tenant_id','subject_type','subject_id','workflow','instance_id']){const input=form.elements.namedItem(name);if(input)input.value=event.detail[name]||'';}root.scrollIntoView();startView(true);});
+
  more.addEventListener('click',()=>{if(active&&!pending)void loadTimeline(true);});
 })();
 </script>

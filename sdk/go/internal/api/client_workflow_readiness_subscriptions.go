@@ -211,3 +211,21 @@ func (c *Client) ReviewPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Co
 	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/reviews?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
 	return out, err
 }
+
+func (c *Client) ConfigureAccountWorkflowPlaybookEvidenceWatch(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
+	var out OperationWorkflowPlaybookEvidenceWatch
+	opts.Offset = 0
+	opts.Limit = 0
+	opts.AppID = ""
+	err := c.doOperation(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/evidence-watch?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
+	var out OperationWorkflowPlaybookEvidenceWatch
+	opts.Offset = 0
+	opts.Limit = 0
+
+	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/evidence-watch?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}

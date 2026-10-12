@@ -81,10 +81,18 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 				return out, err
 			}
 			b := readinessNotificationBaseline(n)
-			if b == nil || b.Subject != out.Subject || b.Workflow != opts.Workflow || b.InstanceID != opts.InstanceID {
-				continue
+			evidenceTenant := ""
+			if event := n.PlaybookEvidence; event != nil {
+				if event.Subject != out.Subject || event.Workflow != opts.Workflow || event.InstanceID != opts.InstanceID {
+					continue
+				}
+				evidenceTenant = event.PlatformTenantID
+			} else {
+				if b == nil || b.Subject != out.Subject || b.Workflow != opts.Workflow || b.InstanceID != opts.InstanceID {
+					continue
+				}
+				evidenceTenant = b.PlatformTenantID
 			}
-			evidenceTenant := b.PlatformTenantID
 			if operator && evidenceTenant == "" {
 				evidenceTenant = subscription.TenantID
 			}

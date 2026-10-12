@@ -160,6 +160,16 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	// Match checklist writers' account-first lock order before locking the subscription.
+	for _, u := range watchUpdates {
+		if u.Playbook != nil {
+			account, _ := operationUUID(r.Account)
+			if _, err = q.LockCustomerOperationAccount(ctx, tx, account); err != nil {
+				return mapErr(err)
+			}
+			break
+		}
+	}
 	_, err = q.LockReadinessSubscriptionLease(ctx, tx, sqlc.LockReadinessSubscriptionLeaseParams{ID: id, LeaseToken: lease})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -168,6 +178,23 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		return mapErr(err)
 	}
 	for _, u := range watchUpdates {
+		if u.Playbook != nil {
+			identity := playbookEvidenceWatchIdentity(r, u.Playbook.Watch)
+			rows, e := readPGPlaybookProgress(ctx, tx, identity)
+			if e != nil {
+				return e
+			}
+			var progress *api.OperationWorkflowPlaybookProgress
+			for _, p := range rows {
+				if p.ID == u.Playbook.Watch.ProgressID {
+					row := p
+					progress = &row
+					break
+				}
+			}
+			notifications = append(notifications, applyPlaybookEvidenceWatchUpdate(&r, *u.Playbook, progress)...)
+			continue
+		}
 		payload, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: id, Sequence: u.Sequence})
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue

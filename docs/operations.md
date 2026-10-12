@@ -3105,3 +3105,70 @@ business state, and are absent from stored progress and mutation responses.
 Reload the case to refresh them. Satisfaction means retained application-reported
 evidence, not external correctness, business success or execution permission.
 Existing playbooks without selectors remain human-only.
+
+### Monitor checklist evidence in a durable inbox
+
+Explicitly enroll a pinned checklist through
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch`
+or its `/v1/platform-tenant-self/...` counterpart. Use the same exact case query
+selectors as checklist edits, an existing readiness subscription in the same app,
+environment and caller role, and the current human checklist revision:
+
+```json
+{
+  "subscription_id": "00000000-0000-4000-8000-000000000001",
+  "progress_revision": 2,
+  "revision": 0,
+  "enabled": true,
+  "owner": "payments"
+}
+```
+
+The example UUID is a placeholder; use your existing subscription ID. Enabling
+requires an active checklist with live evidence selectors. A customer-scoped
+subscription must match that customer; a declared subscription workflow must
+match the checklist. Other readiness discovery filters do not constrain an
+explicit checklist watch. Account writes require existing write scope and MFA;
+customer writes use tenant operations-manage scope and authenticated identity.
+
+The response provides a watch UUID, configuration revision and saved observations.
+For subsequent configuration changes, include `watch_id`, the current watch
+`revision`, the current `progress_revision`, and the desired `enabled` and `owner`.
+Read `playbook_evidence_watches` from subscription lists or inbox metadata to get
+current configuration. The dashboard's checklist controls load inbox destinations,
+show monitoring status and enable or stop the selected watch. Polling does not
+advance configuration revisions. Enabling or editing configuration captures a
+new silent baseline; changes while disabled are not replayed.
+
+Watches are durable in the subscription, independently of the latest-100 inbox
+retention window. Each subscription retains at most 20 watches. New enrollment
+may reclaim a stopped slot; a fresh watch UUID prevents old configuration tokens
+from affecting a recreated watch. The existing worker rotates through five active
+watches per pass, nominally every 30 seconds. This is bounded polling and can miss
+short-lived states; failures retain previous observations and retry while healthy
+watches can publish. Watch changes invalidate in-flight subscription leases.
+
+A later requirement status or diagnostic-reason change produces one grouped
+`playbook_evidence_changed` notification, including missing/stale/invalidated/
+unavailable evidence, recovery to satisfied, and changed-contract/guidance reasons.
+Observation clocks, report revisions, human completion flags and evidence-ID
+renewal alone do not produce repeat notices. Each notice preserves the exact case,
+pinned playbook identity and before/after requirement observations. New notices
+are unread with the configured owner; older coordination is never reassigned.
+The dashboard renders changed labels and can open the current workflow case.
+Retained notices also appear in the exact case timeline. Manually scheduled
+follow-ups keep the same case attribution in both stores.
+
+Publication rechecks checklist identity, active disposition and observed human
+revision under the shared writer lock. A prior retirement/replacement prevents
+publication and stops monitoring; a concurrent item/review edit defers the poll
+until another observation. Disabling or deleting the subscription also prevents
+stale worker publication. Missing checklist records stop the watch. No automatic
+item reopen, checklist completion, application action or external delivery occurs.
+The notification is a saved observation, not a current transition-readiness
+baseline; open the case for fresh requirements. Completion references on these
+notices remain scoped to the notification's exact customer and subject.
+
+No migration or new worker is required: existing JSON subscription and inbox
+storage retain configurations and observations. Existing subscriptions without
+explicit checklist watches preserve their behavior.

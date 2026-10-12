@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -16,6 +16,10 @@ from ..models.operation_workflow_readiness_subscription_status import (
     check_operation_workflow_readiness_subscription_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_evidence_watch import OperationWorkflowPlaybookEvidenceWatch
+
 
 T = TypeVar("T", bound="OperationWorkflowReadinessSubscription")
 
@@ -54,6 +58,9 @@ class OperationWorkflowReadinessSubscription:
     capacity are incomplete; no exhaustive delivery guarantee is inferred."""
     latest_sequence: int
     """OperationWorkflowReadinessSubscription.latest_sequence. Latest committed inbox sequence."""
+    playbook_evidence_watches: list[OperationWorkflowPlaybookEvidenceWatch] | Unset = UNSET
+    """OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence
+    monitoring, independent of readiness discovery filters."""
     tenant_id: UUID | Unset = UNSET
     """OperationWorkflowReadinessSubscription.tenant_id. Optional account-only customer selector; customer identity
     derives from authentication."""
@@ -92,6 +99,13 @@ class OperationWorkflowReadinessSubscription:
 
         latest_sequence = self.latest_sequence
 
+        playbook_evidence_watches: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.playbook_evidence_watches, Unset):
+            playbook_evidence_watches = []
+            for playbook_evidence_watches_item_data in self.playbook_evidence_watches:
+                playbook_evidence_watches_item = playbook_evidence_watches_item_data.to_dict()
+                playbook_evidence_watches.append(playbook_evidence_watches_item)
+
         tenant_id: str | Unset = UNSET
         if not isinstance(self.tenant_id, Unset):
             tenant_id = str(self.tenant_id)
@@ -121,6 +135,8 @@ class OperationWorkflowReadinessSubscription:
                 "latest_sequence": latest_sequence,
             }
         )
+        if playbook_evidence_watches is not UNSET:
+            field_dict["playbook_evidence_watches"] = playbook_evidence_watches
         if tenant_id is not UNSET:
             field_dict["tenant_id"] = tenant_id
         if workflow is not UNSET:
@@ -136,6 +152,8 @@ class OperationWorkflowReadinessSubscription:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_evidence_watch import OperationWorkflowPlaybookEvidenceWatch
+
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
 
@@ -164,6 +182,17 @@ class OperationWorkflowReadinessSubscription:
 
         latest_sequence = d.pop("latest_sequence")
 
+        _playbook_evidence_watches = d.pop("playbook_evidence_watches", UNSET)
+        playbook_evidence_watches: list[OperationWorkflowPlaybookEvidenceWatch] | Unset = UNSET
+        if _playbook_evidence_watches is not UNSET:
+            playbook_evidence_watches = []
+            for playbook_evidence_watches_item_data in _playbook_evidence_watches:
+                playbook_evidence_watches_item = OperationWorkflowPlaybookEvidenceWatch.from_dict(
+                    playbook_evidence_watches_item_data
+                )
+
+                playbook_evidence_watches.append(playbook_evidence_watches_item)
+
         _tenant_id = d.pop("tenant_id", UNSET)
         tenant_id: UUID | Unset
         if isinstance(_tenant_id, Unset):
@@ -191,6 +220,7 @@ class OperationWorkflowReadinessSubscription:
             watched_transition_count=watched_transition_count,
             coverage_incomplete=coverage_incomplete,
             latest_sequence=latest_sequence,
+            playbook_evidence_watches=playbook_evidence_watches,
             tenant_id=tenant_id,
             workflow=workflow,
             target_operation=target_operation,

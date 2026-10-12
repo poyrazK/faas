@@ -2,10 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookEvidenceWatch } from './OperationWorkflowPlaybookEvidenceWatch.js';
 /**
  * Durable subscription configuration and most recent successful bounded evaluation; deletion cancels future evaluations and removes its inbox.
  */
 export type OperationWorkflowReadinessSubscription = {
+  /**
+   * OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
+   */
+  playbook_evidence_watches?: Array<OperationWorkflowPlaybookEvidenceWatch>;
   /**
    * OperationWorkflowReadinessSubscription.app_id. Application UUID; required in customer requests and omitted in account requests.
    */

@@ -9,6 +9,7 @@ import (
 )
 
 type readinessWatchUpdate struct {
+	Playbook        *playbookEvidenceWatchUpdate
 	ResponseWatchID string
 	OutcomeWatch    *api.OperationWorkflowReadinessBusinessOutcomeWatch
 	OutcomeEvents   []api.OperationWorkflowReadinessBusinessOutcomeEvent

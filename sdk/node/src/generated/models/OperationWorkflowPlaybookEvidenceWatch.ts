@@ -1,0 +1,88 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
+/**
+ * OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
+ */
+export type OperationWorkflowPlaybookEvidenceWatch = {
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.id. Pinned case identity or retained watch metadata.
+   */
+  id: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.progress_id. Pinned case identity or retained watch metadata.
+   */
+  progress_id: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.subscription_id. Existing inbox destination in the same application, environment, and caller access boundary.
+   */
+  subscription_id: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.revision. Watch configuration revision. Zero creates; polling leaves it unchanged.
+   */
+  revision: number;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.status. Active monitoring or stopped monitoring.
+   */
+  status: 'active' | 'stopped';
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.stop_reason. Disabled or stopped because the exact checklist was closed or unavailable.
+   */
+  stop_reason?: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.owner. Responsible team label assigned to new inbox deliveries; no external destination.
+   */
+  owner: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.platform_tenant_id. Exact evidence customer, included only for operator watches and deliveries.
+   */
+  platform_tenant_id?: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.subject. Pinned case identity or retained watch metadata.
+   */
+  subject: OperationSubject;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.workflow. Pinned case identity or retained watch metadata.
+   */
+  workflow: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.instance_id. Pinned case identity or retained watch metadata.
+   */
+  instance_id: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.contract_version. Pinned case identity or retained watch metadata.
+   */
+  contract_version: number;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.playbook_id. Pinned case identity or retained watch metadata.
+   */
+  playbook_id: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.playbook_version. Pinned case identity or retained watch metadata.
+   */
+  playbook_version: number;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.created_at. Pinned case identity or retained watch metadata.
+   */
+  created_at: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.updated_at. Pinned case identity or retained watch metadata.
+   */
+  updated_at: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.updated_by. Authenticated configuration actor, or system actor for automatic monitoring stop.
+   */
+  updated_by: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.evaluated_at. Last successful case evidence observation clock.
+   */
+  evaluated_at: string;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from checklist reviews.
+   */
+  items: Array<OperationWorkflowPlaybookEvidenceCheck>;
+};
+

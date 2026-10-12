@@ -22,6 +22,7 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	PlaybookCursor     string                                     `json:"playbook_cursor,omitempty"`
 	ResponseCursor     int64                                      `json:"response_cursor,omitempty"`
 	OutcomeCursor      int64                                      `json:"outcome_cursor,omitempty"`
 	VerificationCursor int64                                      `json:"verification_cursor,omitempty"`
@@ -326,6 +327,10 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		watchUpdates = append(watchUpdates, outcomeUpdates...)
 		cancel()
 		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		playbookUpdates, playbookErr := evaluatePlaybookEvidenceWatches(check, store, &record)
+		watchUpdates = append(watchUpdates, playbookUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
 		notifications, evaluationErr := evaluateReadinessSubscription(check, store, &record)
 		cancel()
 		if evaluationErr != nil {
@@ -335,7 +340,7 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 			}
 			record.Seen["evaluation"] = "unavailable"
 		}
-		if watchErr != nil || outcomeErr != nil {
+		if watchErr != nil || outcomeErr != nil || playbookErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

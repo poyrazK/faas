@@ -1589,3 +1589,37 @@ requirements rather than attachments and establish no external correctness,
 business outcome or execution authority. Both backend writers strip ephemeral
 checks from progress and history. Dashboard and SDKs expose the same fields;
 no new queries, migration or worker is required.
+
+## Opt-in durable checklist evidence watches
+
+Add exact-case evidence-watch configuration endpoints under existing account
+write/MFA and customer operations-manage boundaries. Bind an active pinned
+checklist to an existing same-role/app/environment inbox, checking customer and
+optional workflow scope. Capture a silent baseline from the existing live case
+projection. Configuration uses the expected checklist revision and watch UUID/
+revision; polling does not advance configuration revisions or human progress.
+
+Store at most 20 watches in subscription JSON, with five active watches rotated
+per pass. Stopped slots can be reclaimed with new UUIDs, preventing stale edits
+after slot reuse. Watches outlive inbox pruning but end at subscription deletion.
+Failures preserve prior baselines, rotate for retry and do not manufacture business
+absence. Status/reason changes produce a single grouped, unread, owner-labeled
+inbox notice; clocks, report counters and attachment/metadata changes alone are
+quiet. Saved observations and fresh case reads remain independent of application
+transactions and cannot authorize execution or establish business success.
+
+Both stores serialize configuration and publication with checklist writers.
+Postgres takes the account lock before the subscription lock, matching existing
+checklist writers. Configuration invalidates current subscription leases; old
+workers cannot overwrite it. Publication rechecks exact checklist identity,
+disposition and observed revision. Closed/missing records stop monitoring;
+revision drift defers delivery without advancing the baseline. Accepted baseline
+updates and inbox inserts share the existing fenced finish transaction/memory
+mutex, so retries cannot duplicate an already committed change.
+
+New notifications retain their own exact-case identity without fabricating
+readiness transition baselines. Timeline/follow-up projections and completion
+reference validation preserve that identity and tenant boundary. Dashboard and
+SDKs expose monitoring controls and evidence changes. Existing storage handles
+the payloads; no migration, additional worker, external messaging or automatic
+application/checklist lifecycle mutation is introduced.

@@ -40201,6 +40201,98 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch:
+    post:
+      operationId: ConfigureAccountWorkflowPlaybookEvidenceWatch
+      summary: Configure account checklist evidence monitoring
+      description: ConfigureAccountWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.slug. Application slug.
+        schema:
+          type: string
+      - name: scope
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: tenant_id
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.tenant_id. Required exact customer UUID; broad business-reference
+          projections are not accepted.
+        schema:
+          type: string
+          format: uuid
+      - name: subject_type
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: ConfigureAccountWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceWatchRequest'
+      responses:
+        '200':
+          description: ConfigureAccountWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceWatch'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews:
     post:
       operationId: ReviewAccountWorkflowPlaybookProgress
@@ -40299,6 +40391,94 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '409':
           $ref: '#/components/responses/Conflict'
+  /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/evidence-watch:
+    post:
+      operationId: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch
+      summary: Configure customer checklist evidence monitoring
+      description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+      tags:
+      - operations
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: app_id
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.app_id. Application UUID; customer identity
+          comes from authentication.
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+        schema:
+          type: string
+      - name: subject_type
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+        schema:
+          type: string
+          maxLength: 63
+      - name: subject_id
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+        schema:
+          type: string
+          maxLength: 256
+      - name: workflow
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+        schema:
+          type: string
+          maxLength: 63
+      - name: instance_id
+        in: query
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+        schema:
+          type: string
+          maxLength: 256
+      - name: id
+        in: path
+        required: true
+        description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this
+          exact case.
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceWatchRequest'
+      responses:
+        '200':
+          description: ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceWatch'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews:
     post:
       operationId: ReviewPlatformTenantSelfWorkflowPlaybookProgress
@@ -78876,6 +79056,12 @@ components:
         future evaluations and removes its inbox.
       additionalProperties: false
       properties:
+        playbook_evidence_watches:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceWatch'
+          description: OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
         app_id:
           type: string
           description: OperationWorkflowReadinessSubscription.app_id. Application UUID; required in customer requests
@@ -78995,6 +79181,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        playbook_evidence:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceEvent'
+          description: OperationWorkflowReadinessNotification.playbook_evidence. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
         escalation_response:
           $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponseEvent'
         outcome_escalation:
@@ -79034,6 +79223,7 @@ components:
           - outcome_unavailable
           - outcome_deadline_reached
           - escalation_response_overdue
+          - playbook_evidence_changed
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -80650,6 +80840,272 @@ components:
           description: OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
             boundaries.
 
+    OperationWorkflowPlaybookEvidenceWatchRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceWatchRequest. Opt-in durable
+        checklist evidence monitoring; advisory observations preserve human reviews
+        and application business authority.
+      required:
+        - subscription_id
+        - progress_revision
+        - revision
+        - enabled
+        - owner
+      properties:
+        watch_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceWatchRequest.watch_id. Required current watch UUID when changing configuration; omit for a new watch. Prevents stale edits after a stopped slot is reclaimed.
+        subscription_id:
+          type: string
+          format: uuid
+          description:
+            OperationWorkflowPlaybookEvidenceWatchRequest.subscription_id. Existing
+            inbox destination in the same application, environment, and caller
+            access boundary.
+        progress_revision:
+          type: integer
+          minimum: 1
+          format: int64
+          description:
+            OperationWorkflowPlaybookEvidenceWatchRequest.progress_revision.
+            Expected exact human checklist revision; stale observations conflict.
+        revision:
+          type: integer
+          minimum: 0
+          format: int64
+          description: OperationWorkflowPlaybookEvidenceWatchRequest.revision. Watch
+            configuration revision. Zero creates; polling leaves it unchanged.
+        enabled:
+          type: boolean
+          description: OperationWorkflowPlaybookEvidenceWatchRequest.enabled.
+            Explicit monitoring preference; enabling establishes a silent baseline.
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookEvidenceWatchRequest.owner.
+            Responsible team label assigned to new inbox deliveries; no external
+            destination.
+    OperationWorkflowPlaybookEvidenceWatch:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist
+        evidence monitoring; advisory observations preserve human reviews and
+        application business authority.
+      required:
+        - id
+        - progress_id
+        - subscription_id
+        - revision
+        - status
+        - owner
+        - subject
+        - workflow
+        - instance_id
+        - contract_version
+        - playbook_id
+        - playbook_version
+        - created_at
+        - updated_at
+        - updated_by
+        - evaluated_at
+        - items
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceWatch.id. Pinned case
+            identity or retained watch metadata.
+        progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceWatch.progress_id. Pinned
+            case identity or retained watch metadata.
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceWatch.subscription_id.
+            Existing inbox destination in the same application, environment, and
+            caller access boundary.
+        revision:
+          type: integer
+          minimum: 1
+          format: int64
+          description: OperationWorkflowPlaybookEvidenceWatch.revision. Watch
+            configuration revision. Zero creates; polling leaves it unchanged.
+        status:
+          type: string
+          enum:
+            - active
+            - stopped
+          description: OperationWorkflowPlaybookEvidenceWatch.status. Active
+            monitoring or stopped monitoring.
+        stop_reason:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceWatch.stop_reason. Disabled
+            or stopped because the exact checklist was closed or unavailable.
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookEvidenceWatch.owner. Responsible
+            team label assigned to new inbox deliveries; no external destination.
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceWatch.platform_tenant_id.
+            Exact evidence customer, included only for operator watches and
+            deliveries.
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+          description: OperationWorkflowPlaybookEvidenceWatch.subject. Pinned case
+            identity or retained watch metadata.
+        workflow:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceWatch.workflow. Pinned case
+            identity or retained watch metadata.
+        instance_id:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceWatch.instance_id. Pinned
+            case identity or retained watch metadata.
+        contract_version:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookEvidenceWatch.contract_version.
+            Pinned case identity or retained watch metadata.
+        playbook_id:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceWatch.playbook_id. Pinned
+            case identity or retained watch metadata.
+        playbook_version:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookEvidenceWatch.playbook_version.
+            Pinned case identity or retained watch metadata.
+        created_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceWatch.created_at. Pinned
+            case identity or retained watch metadata.
+        updated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceWatch.updated_at. Pinned
+            case identity or retained watch metadata.
+        updated_by:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceWatch.updated_by.
+            Authenticated configuration actor, or system actor for automatic
+            monitoring stop.
+        evaluated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceWatch.evaluated_at. Last
+            successful case evidence observation clock.
+        items:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceCheck'
+          description: OperationWorkflowPlaybookEvidenceWatch.items. Latest retained
+            requirement observations, separate from checklist reviews.
+    OperationWorkflowPlaybookEvidenceChange:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceChange. Opt-in durable checklist
+        evidence monitoring; advisory observations preserve human reviews and
+        application business authority.
+      required:
+        - before_status
+        - before_reason
+        - after
+      properties:
+        before_status:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceChange.before_status. Pinned
+            case identity or retained watch metadata.
+        before_reason:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceChange.before_reason. Pinned
+            case identity or retained watch metadata.
+        after:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceCheck'
+          description: OperationWorkflowPlaybookEvidenceChange.after. Pinned case
+            identity or retained watch metadata.
+    OperationWorkflowPlaybookEvidenceEvent:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist
+        evidence monitoring; advisory observations preserve human reviews and
+        application business authority.
+      required:
+        - watch_id
+        - progress_id
+        - subject
+        - workflow
+        - instance_id
+        - contract_version
+        - playbook_id
+        - playbook_version
+        - checked_at
+        - changes
+      properties:
+        watch_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceEvent.watch_id. Pinned case
+            identity or retained watch metadata.
+        progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceEvent.progress_id. Pinned
+            case identity or retained watch metadata.
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceEvent.platform_tenant_id.
+            Exact evidence customer, included only for operator watches and
+            deliveries.
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+          description: OperationWorkflowPlaybookEvidenceEvent.subject. Pinned case
+            identity or retained watch metadata.
+        workflow:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceEvent.workflow. Pinned case
+            identity or retained watch metadata.
+        instance_id:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceEvent.instance_id. Pinned
+            case identity or retained watch metadata.
+        contract_version:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookEvidenceEvent.contract_version.
+            Pinned case identity or retained watch metadata.
+        playbook_id:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceEvent.playbook_id. Pinned
+            case identity or retained watch metadata.
+        playbook_version:
+          type: integer
+          minimum: 1
+          description: OperationWorkflowPlaybookEvidenceEvent.playbook_version.
+            Pinned case identity or retained watch metadata.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceEvent.checked_at. Observed
+            case evidence clock; this is polling, not an application transaction
+            timestamp.
+        changes:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceChange'
+          description: OperationWorkflowPlaybookEvidenceEvent.changes. Grouped
+            changes in requirement status or diagnostic reason; excludes observation
+            clocks and report counters.
     OperationWorkflowPlaybookEvidenceRequirement:
       type: object
       additionalProperties: false
