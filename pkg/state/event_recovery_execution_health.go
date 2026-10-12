@@ -56,7 +56,12 @@ func observeRecoveryExecutionHealth(ctx context.Context, q *sqlc.Queries, db sql
 		if err := json.Unmarshal(row.Selection, &selection); err != nil {
 			return nil, err
 		}
-		observations, err := observeRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.EventRecoveryRecipientsMax, now)
+		var observations map[int64]api.EventRecoveryExecution
+		if selection.Mode == "workflow" {
+			observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.AutomationRecoveryBatchMaxRuns, now)
+		} else {
+			observations, err = observeRecoveryExecutions(ctx, q, db, account, uuidString(row.ID), 0, api.EventRecoveryRecipientsMax, now)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -65,6 +70,14 @@ func observeRecoveryExecutionHealth(ctx context.Context, q *sqlc.Queries, db sql
 			addRecoveryExecution(&summary, observation)
 		}
 		appendRecoveryExecutionHealth(out, uuidString(row.ID), selection.ParentJobID, row.State, timeFromPgtype(row.CompletedAt), now, row.ExecutionNotificationCaptured, row.QueuedCount, summary)
+		if selection.WorkflowRuns != nil {
+			attention, e := workflowRecoveryAttentionRead(ctx, q, db, account, api.EventRecoveryJob{ID: uuidString(row.ID), AppID: app, Selection: selection}, now)
+			if e != nil {
+				return nil, e
+			}
+			attachWorkflowRecoveryAttention(out, uuidString(row.ID), attention)
+		}
+
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -79,7 +92,7 @@ func (m *MemStore) recoveryExecutionHealthLocked(ctx context.Context, account, a
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !sameMemUUID(job.AccountID, account) || !sameMemUUID(job.Job.AppID, app) || job.Job.Selection.Mode != "execution" || job.Job.ExecutionFinishedAt != nil || job.Job.CompletedAt == nil || job.Job.CompletedAt.After(now) || (job.Job.State != "completed" && job.Job.State != "cancelled") {
+		if !sameMemUUID(job.AccountID, account) || !sameMemUUID(job.Job.AppID, app) || (job.Job.Selection.Mode != "execution" && job.Job.Selection.Mode != "workflow") || job.Job.ExecutionFinishedAt != nil || (job.Job.Selection.Mode != "workflow" && (job.Job.CompletedAt == nil || job.Job.CompletedAt.After(now) || job.Job.State != "completed" && job.Job.State != "cancelled")) || job.Job.CreatedAt.After(now) {
 			continue
 		}
 		unresolved := false
@@ -88,6 +101,14 @@ func (m *MemStore) recoveryExecutionHealthLocked(ctx context.Context, account, a
 				return nil, err
 			}
 			if item.State != "queued" {
+				continue
+			}
+			if job.Job.Selection.Mode == "workflow" {
+				observed := m.workflowRecoveryExecutionLocked(job, item, now)
+				if observed.Source != "recovery_result" {
+					unresolved = true
+					break
+				}
 				continue
 			}
 			saved, ok := m.eventRecoveryExecutionResults[recoveryResultKey{job.Job.ID, item.Position}]
@@ -101,10 +122,10 @@ func (m *MemStore) recoveryExecutionHealthLocked(ctx context.Context, account, a
 		}
 		entries = append(entries, job)
 		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].Job.CompletedAt.Equal(*entries[j].Job.CompletedAt) {
+			if workflowRecoveryMonitorStart(entries[i].Job).Equal(workflowRecoveryMonitorStart(entries[j].Job)) {
 				return entries[i].Job.ID < entries[j].Job.ID
 			}
-			return entries[i].Job.CompletedAt.Before(*entries[j].Job.CompletedAt)
+			return workflowRecoveryMonitorStart(entries[i].Job).Before(workflowRecoveryMonitorStart(entries[j].Job))
 		})
 		if len(entries) > api.EventRecoveryExecutionHealthJobsMax+1 {
 			entries = entries[:api.EventRecoveryExecutionHealthJobsMax+1]
@@ -119,10 +140,50 @@ func (m *MemStore) recoveryExecutionHealthLocked(ctx context.Context, account, a
 			return nil, err
 		}
 		response := m.eventRecoveryObservedResponseLocked(entry, now)
-		appendRecoveryExecutionHealth(out, response.ID, response.Selection.ParentJobID, response.State, *response.CompletedAt, now, entry.ExecutionNotificationCaptured, response.QueuedCount, *response.Execution)
+		appendRecoveryExecutionHealth(out, response.ID, response.Selection.ParentJobID, response.State, workflowRecoveryMonitorStart(response), now, entry.ExecutionNotificationCaptured, response.QueuedCount, *response.Execution)
+		if entry.Job.Selection.WorkflowRuns != nil {
+			attention, e := m.workflowRecoveryAttentionLocked(ctx, entry, now)
+			if e != nil {
+				return nil, e
+			}
+			attachWorkflowRecoveryAttention(out, response.ID, attention)
+		}
+
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func workflowRecoveryMonitorStart(job api.EventRecoveryJob) time.Time {
+	if job.CompletedAt != nil {
+		return *job.CompletedAt
+	}
+	return job.CreatedAt
+}
+func attachWorkflowRecoveryAttention(out *api.EventRecoveryExecutionHealth, id string, attention api.WorkflowRecoveryExecutionAttention) {
+	if attention.StalledCount > 0 {
+		out.StalledJobs++
+	}
+	if attention.DeadlineExceededCount > 0 {
+		out.DeadlineExceededJobs++
+	}
+	for i := range out.Jobs {
+		if out.Jobs[i].JobID != id {
+			continue
+		}
+		out.Jobs[i].Attention = &attention
+		if attention.DeadlineExceededCount > 0 {
+			out.Jobs[i].Status = "deadline_exceeded"
+		} else if attention.StalledCount > 0 {
+			out.Jobs[i].Status = "stalled"
+		} else if attention.UnknownCount > 0 {
+			out.Jobs[i].Status = "unknown"
+		} else if attention.CapacityWaitingCount > 0 {
+			out.Jobs[i].Status = "capacity_wait"
+		} else if attention.ScheduledWaitingCount > 0 && attention.ScheduledWaitingCount == len(attention.Targets) {
+			out.Jobs[i].Status = "scheduled_wait"
+		}
+	}
 }

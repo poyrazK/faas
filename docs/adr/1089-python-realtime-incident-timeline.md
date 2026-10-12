@@ -10,7 +10,7 @@ Diagnostics snapshots show current state but not how a reconnect, denial or stal
 
 Export generator-preserved immutable RealtimeIncidentEvent and RealtimeIncidentTimeline. Record explicit callback observations for connection, subscription and catch-up states, including ACK-missing transitions. Store only UTC capture time, monotonic elapsed time, local ID, allowlisted state, attempt/generation and channel/inbox identity. Exclude payloads, presence state, reader IDs, arbitrary codes, exception bodies, tokens, credentials, transport URLs and labels.
 
-Suppress identical state/attempt/generation/warning observations. Bound event ring to 256 (1–8192), counting oldest-event eviction. Independently bound recent transition markers to 1024 (1–8192), evicting least-recently-observed identities. Snapshot is immutable and oldest-first; clear resets all local history/counters. Use one endpoint/account/execution context.
+Suppress identical state/attempt/generation/warning observations. Bound event ring to 256 (1–8192), counting oldest-event eviction. Independently bound recent transition markers to 1115 (1–8192), evicting least-recently-observed identities. Snapshot is immutable and oldest-first; clear resets all local history/counters. Use one endpoint/account/execution context.
 
 Add an optional timeline section to version-1 diagnostics using the existing channel redaction map. Keep newest events under max_entries, expose omitted counts separately from ring eviction and retain total output cap. No automatic callback attachment, upload or persistence.
 

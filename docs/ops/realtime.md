@@ -1034,7 +1034,7 @@ MFA. GET uses the read scope. Both return `sequence`, `unread`,
 `updated_at`. A missing marker returns sequence zero without creating storage.
 Writes are monotonic: repeats and older sequences return current progress,
 without another durable read event. Future sequences are rejected. Markers
-persist for the endpoint's lifetime, with a cap of 1024 principal/stream
+persist for the endpoint's lifetime, with a cap of 1115 principal/stream
 markers per endpoint; deleting the endpoint removes them.
 
 Unread counts cover distinct, undeleted logical messages in the retained
@@ -1182,7 +1182,7 @@ fetch the inbox on open and deduplicate by delivery ID. Delivery is at least onc
 a worker crash after provider acceptance can cause a retry. `sent` means accepted
 by the provider, not displayed, read, or acknowledged by the user.
 
-Each endpoint supports 16 devices per principal and 1024 devices total. The ledger
+Each endpoint supports 16 devices per principal and 1115 devices total. The ledger
 holds at most 4096 deliveries per endpoint. Completed history lasts up to seven
 days and is evicted oldest first when space is needed. Pending work expires after
 24 hours; when all capacity is occupied by unfinished jobs, fallback deadlines
@@ -1765,7 +1765,7 @@ original sequence allocation without appending messages. Different content retur
 normal sequence deduplication. Idempotency survives event eviction and edits;
 the response confirms original publication, not that original data remains in the
 current log. IDs can be reused after 24 hours. Up to 256 batch IDs are retained
-per endpoint; new batches return 429 at capacity. Existing 1024-message/24-hour
+per endpoint; new batches return 429 at capacity. Existing 1115-message/24-hour
 channel retention still applies. Batch-created message IDs use a reserved derived
 `batch:<SHA256(batch_id)>:<zero-based-index>` convention; avoid these IDs for
 independent single publishes.
@@ -2627,7 +2627,7 @@ past/future clock window are ignored. Expiry follows the server's timestamp usin
 the client's clock, so clock alignment matters. Data follows the existing 2 KiB
 JSON limit, and snapshots clone data to keep UI mutations isolated.
 
-Capacity defaults to 1024 identities including ordering markers; configure
+Capacity defaults to 1115 identities including ordering markers; configure
 `maxEntries` from 1 to 8192. Additional identities throw rather than silently
 evicting active activity. Reset a channel on unsubscribe/reconnect to clear its
 activity and ordering memory; signals do not replay across reconnects. `dispose`
@@ -2650,7 +2650,7 @@ and ordering memory. Reconnect starts empty and uses new live signals; there is
 no activity replay. Cleanup resets every channel even if an activity callback
 throws. Expiry notifications remain timer-driven and activity callbacks are
 synchronous; applications should handle UI exceptions inside the callback.
-Capacity defaults to 1024 identities including ordering markers, configurable
+Capacity defaults to 1115 identities including ordering markers, configurable
 from 1 to 8192 when activity tracking is enabled. Standalone trackers expose
 `removeMember(channel, memberId)` for equivalent custom lifecycle integration.
 No server migration or new API is required.
@@ -2678,7 +2678,7 @@ a clear or expiry rather than a specific arbitrary data payload.
 membership events, returning isolated snapshots and emitting per-channel changes.
 Incomplete snapshots do not replace visible presence. Reset it on reconnect,
 unsubscribe, and teardown; it is independently owned from lifecycle activity
-trackers. Capacity defaults to 1024 stored members, including staging, configurable
+trackers. Capacity defaults to 1115 stored members, including staging, configurable
 from 1 to 8192. Capacity failures preserve previous state. Aggregation helpers are
 local UI projections and require no migration or new server API.
 
@@ -2728,7 +2728,7 @@ is needed.
 ## Transactional publishing preview
 
 Use a customer PostgreSQL outbox when a business write and its realtime event
-must commit together. See [ADR-1021](../adr/1021-transactional-realtime-publishing.md)
+must commit together. See [ADR-1112](../adr/1112-transactional-realtime-publishing.md)
 and [Gregale Commit setup](../gregale-commit.md) for the existing source registration,
 database binding, credentials and network qualification.
 
@@ -2777,7 +2777,7 @@ Apply `20261012102700456_realtime_principal_access.sql`, then enable
 `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on every realtimed node **before** enabling
 the flag on apid. Each node needs the existing private history/fleet connection,
 including nodes serving live-only OIDC clients. Keep enforcement enabled while
-stored revocations must remain effective. See [ADR-1022](../adr/1022-managed-realtime-access-revocation.md).
+stored revocations must remain effective. See [ADR-1113](../adr/1113-managed-realtime-access-revocation.md).
 
 Use the account-authenticated, app-scoped API (MFA and the normal read/write
 scopes are required):
@@ -2825,7 +2825,7 @@ node reads durable state before resuming delivery. API success confirms a
 database commit, not instantaneous fleet convergence. Qualification must account
 for one access read per active OIDC connection per second.
 
-Preview guards allow 1024 principal records per endpoint and 64 denied channels
+Preview guards allow 1115 principal records per endpoint and 64 denied channels
 per principal. Session cutoffs and principal records remain until endpoint
 deletion; they are not expired automatically. Static bearer and unauthenticated
 endpoints do not support per-user revocation.
@@ -3026,7 +3026,7 @@ Content-Type: application/json
 The API requires normal app ownership, realtime plan eligibility, MFA and write
 scopes. Returns 201 with `{ "ticket": "grt_...", "expires_at": "..." }` and
 Cache-Control: no-store. TTL is 1-300 seconds, with 1-32 unique exact channels.
-Endpoint must be enabled. At most 1024 unexpired tickets per endpoint; expired
+Endpoint must be enabled. At most 1115 unexpired tickets per endpoint; expired
 records are pruned on subsequent issuance and endpoint deletion removes all.
 These are operator-preview bounds, not a new pricing tier.
 
@@ -3494,7 +3494,7 @@ required. Exact grants do not interpret wildcards.
 Reuse the same key and decoded content after an uncertain response. A matching
 retry returns the original decimal-string sequence with `replayed: true`, even
 if channel history has been trimmed. Changed content returns 409. Receipts last
-24 hours and have a hard cap of 1024 per credential, so sustained publishing can
+24 hours and have a hard cap of 1115 per credential, so sustained publishing can
 reach this cap before the rate limit. Capacity/rate failures return 429. Matching
 retries do not consume accepted publish quota. Minute windows permit bursts across
 a boundary; this is not a rolling rate limit. Beyond receipt retention, reuse is
@@ -3966,7 +3966,7 @@ fencing context; the next claimed attempt receives a new fence. Replayed rows sh
 reset attempt zero. Completion remains inspectable after its snapshot is removed.
 No payload, metadata, worker identity, credential token/hash or lease token is stored.
 
-Each group keeps at most 1024 events shared across all messages for 24 hours.
+Each group keeps at most 1115 events shared across all messages for 24 hours.
 Heavy traffic can evict a message's observations sooner. Reads and new observations
 prune expired history; idle physical rows stay bounded until cleanup is triggered.
 `group_pruned_events` is a decimal lifetime total across the whole group, not proof
@@ -4021,7 +4021,7 @@ metrics or delivery-history entries. Reuse with different contents returns
 worker receipts are scoped to the credential identity. Saved renewal expiry is the
 original expiry, so use a new key for each new renewal.
 
-Receipts are limited to 1024 per group across all principals. Full capacity returns
+Receipts are limited to 1115 per group across all principals. Full capacity returns
 429 before mutation; existing-key replay still works. Live receipts are never evicted,
 replays do not refresh expiry, and expired rows are pruned on keyed requests. Keys
 have no replay protection after expiry. Requests without keys keep existing behavior.
@@ -4158,7 +4158,7 @@ Drain does not signal handler context stop events, release healthy work, pause t
 
 ### Python expiring activity tracker
 
-Existing managed realtime presence/signals already provide server-side ephemeral activity and principal-scoped multi-session grouping. Python `RealtimeActivityTracker` consumes named authenticated signal frames through `RealtimeActivity`, keyed by channel/member/name. It expires state with an asyncio timer, preserves nanosecond timestamp ordering, ignores duplicates/stale revisions, handles zero-TTL clears and retains bounded 30-second tombstones. Default capacity is 1024 identities including tombstones (configurable 1–8192); TTL is at most 30 seconds and JSON data at most 2048 UTF-8 bytes.
+Existing managed realtime presence/signals already provide server-side ephemeral activity and principal-scoped multi-session grouping. Python `RealtimeActivityTracker` consumes named authenticated signal frames through `RealtimeActivity`, keyed by channel/member/name. It expires state with an asyncio timer, preserves nanosecond timestamp ordering, ignores duplicates/stale revisions, handles zero-TTL clears and retains bounded 30-second tombstones. Default capacity is 1115 identities including tombstones (configurable 1–8192); TTL is at most 30 seconds and JSON data at most 2048 UTF-8 bytes.
 
 Construct/use on one running asyncio loop. Supply a synchronous nonblocking on_change callback; exceptions are ignored. Wire presence departure to remove_member, reconnect/unsubscribe to reset, and client shutdown to dispose. Feed the verified server member_id unchanged; principal-scoped subscriptions group sessions while connection-scoped subscriptions keep them separate. Synchronize clocks because updates outside a 30-second clock window are ignored. This helper opens no connection, issues no presence lease and changes no authorization. No migration or runtime checks are added.
 
@@ -4166,7 +4166,7 @@ Construct/use on one running asyncio loop. Supply a synchronous nonblocking on_c
 
 `RealtimePresenceDirectory` owns an expiring activity tracker and reports combined `RealtimePresenceSummary` snapshots through one synchronous callback. Feed verified presence frames as RealtimePresenceEvent/RealtimePresenceMember and named signals via apply_activity. Member/connection counts stay distinct; principal-scoped member IDs aggregate sessions. State is presentation data, not verified identity. Unknown activity senders are excluded from summaries.
 
-Stage incomplete snapshot chunks until complete=True, apply live changes to visible and staged membership, and remove departed members' activity on leave or completed replacement. Bound visible plus staged entries and channel count with max_members (default 1024, range 1–8192), and activity independently with max_activities. Invalid or overflowing presence events do not commit replacement state. Reset on transport loss/reconnect/unsubscribe; dispose at shutdown cancels timers. Presence follows server events rather than a local guessed TTL. No migration or runtime checks are added.
+Stage incomplete snapshot chunks until complete=True, apply live changes to visible and staged membership, and remove departed members' activity on leave or completed replacement. Bound visible plus staged entries and channel count with max_members (default 1115, range 1–8192), and activity independently with max_activities. Invalid or overflowing presence events do not commit replacement state. Reset on transport loss/reconnect/unsubscribe; dispose at shutdown cancels timers. Presence follows server events rather than a local guessed TTL. No migration or runtime checks are added.
 
 ### Python temporary activity publishing
 
@@ -4198,7 +4198,7 @@ Use the canonical channel for subscriptions and directory/tracker input. The HTT
 
 RealtimeReadProgressTracker tracks server-confirmed channel/inbox receipts by stream and hashed reader ID. It ignores exact duplicates or backward read/latest/oldest bounds, preserves history_unavailable, and accepts equal bounds when unread/count status changes after edits/deletions. There is no revision for equal-bound count updates; refresh authoritative read state if your transport may reorder them. Do not derive a user's read position from connection ACKs or mere receipt of a message.
 
-Capacity defaults to 1024 entries (1–8192); malformed/overflow updates fail without replacing state. Immutable snapshots expose server unread counts directly. Reset local ordering on reconnect/stream replacement; durable server markers remain intact. Callback failures are isolated, and no timers, connection, authorization or server writes are introduced. No migration or runtime tests are added.
+Capacity defaults to 1115 entries (1–8192); malformed/overflow updates fail without replacing state. Immutable snapshots expose server unread counts directly. Reset local ordering on reconnect/stream replacement; durable server markers remain intact. Callback failures are isolated, and no timers, connection, authorization or server writes are introduced. No migration or runtime tests are added.
 
 ### Python coalesced read assertions
 
@@ -4222,7 +4222,7 @@ Pass a current freshness snapshot to summarize_realtime_unread to obtain stale_s
 
 ### Python bounded read-refresh coordination
 
-Wire tracker on_refresh to RealtimeReadRefreshCoordinator.request, with an application-owned authenticated fetcher returning confirmed RealtimeReadProgress. Bound concurrency (default 4, 1–32), total queued/active identities (default 1024, 1–8192) and request timeout (default 5 seconds, 0.1–60). Repeated queued/in-flight identities coalesce; overflowing batches fail admission atomically.
+Wire tracker on_refresh to RealtimeReadRefreshCoordinator.request, with an application-owned authenticated fetcher returning confirmed RealtimeReadProgress. Bound concurrency (default 4, 1–32), total queued/active identities (default 1115, 1–8192) and request timeout (default 5 seconds, 0.1–60). Repeated queued/in-flight identities coalesce; overflowing batches fail admission atomically.
 
 Validate response identity/bounds and apply through the tracker. Reset increments a tracker generation, invalidating all previously admitted refreshes even for a scoped reset. Request errors use an isolated sanitized callback without automatic retries. wait_idle waits for admitted work; aclose cancels/joins requests and drops queued work before transport closure. No automatic poll loop, read writes, migration or runtime checks are added.
 
@@ -4292,7 +4292,7 @@ Bound arrays with max_entries (256 default, 1–8192) and report truncated count
 
 ### Python realtime incident timeline
 
-RealtimeIncidentTimeline records connection, subscription/ACK-warning and catch-up state transitions from application callbacks into a ring (256 default, 1–8192). Deduplication memory is separately bounded (1024 default, 1–8192) with oldest-observation eviction. Capture UTC plus monotonic elapsed time, safe states and attempt/generation/channel identity only; never copy payloads, tokens, arbitrary codes or error bodies.
+RealtimeIncidentTimeline records connection, subscription/ACK-warning and catch-up state transitions from application callbacks into a ring (256 default, 1–8192). Deduplication memory is separately bounded (1115 default, 1–8192) with oldest-observation eviction. Capture UTC plus monotonic elapsed time, safe states and attempt/generation/channel identity only; never copy payloads, tokens, arbitrary codes or error bodies.
 
 Pass timeline to diagnostics export for default channel redaction and newest-event truncation. Distinguish ring evicted_count from export omitted counts. Raw snapshots contain supplied channel IDs; no upload/storage occurs. clear resets local history. No migration or runtime validation is added.
 

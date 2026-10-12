@@ -689,6 +689,46 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-571: S3 write proof custody and owned cleanup](571-s003-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
+## Automation recovery lifecycle
+
+- [ADR-1000: Reviewed workflow event recovery jobs](1000-reviewed-workflow-event-recovery-jobs.md) — durable submission of pinned automation event plans.
+
+- [ADR-1001: Durable recovery of reviewed native workflow runs](1001-durable-workflow-run-recovery.md)
+
+- [ADR-1002: Observe the admitted workflow recovery generation](1002-workflow-recovery-execution-observations.md)
+- [ADR-1003: Retain workflow recovery outcomes and notify execution completion](1003-workflow-recovery-terminal-results.md)
+- [ADR-1004: Reviewed retries from saved workflow recovery failures](1004-reviewed-workflow-recovery-retries.md)
+- [ADR-1005: Server-side native workflow recovery preflight](1005-workflow-recovery-preflight.md)
+- [ADR-1006: Workflow recovery execution attention](1006-workflow-recovery-execution-attention.md)
+- [ADR-1007: Reviewed workflow recovery cancellation](1007-reviewed-workflow-recovery-cancellation.md)
+- [ADR-1008: Saved workflow recovery response plans](1008-saved-workflow-recovery-response-plans.md)
+- [ADR-1009: Preview workflow recovery policies](1009-preview-workflow-recovery-policies.md)
+
+- [ADR-1010: Policy recovery review decisions and live freshness](1010-policy-recovery-review-decisions.md)
+
+- [ADR-1011: Durable recovery review-ready notifications](1011-recovery-review-ready-notifications.md)
+
+- [ADR-1012: Recovery review execution outcomes and completion notification](1012-recovery-review-execution-completion.md)
+
+- [ADR-1013: Bounded automatic recovery retries](1013-bounded-automatic-recovery-retries.md)
+- [ADR-1014: Recovery queue visibility and operator controls](1014-recovery-queue-and-operator-controls.md)
+- [ADR-1015: Queued retry suppression and blocked notifications](1015-queued-retry-suppression-and-blocked-notifications.md)
+
+- [ADR-1016: Automatic retry queue evaluation evidence](1016-automatic-retry-queue-evaluation-evidence.md)
+
+- [ADR-1017: Recovery policy change preview](1017-recovery-policy-change-preview.md)
+- [ADR-1018: Recovery automation health](1018-recovery-automation-health.md)
+- [ADR-1019: Recovery health alert incidents](1019-recovery-health-alert-incidents.md)
+- [ADR-1020: Read-only retained recovery history](1020-recovery-retained-history.md)
+- [ADR-1021: Durable recovery policy, worker and incident events](1021-durable-recovery-history.md)
+- [ADR-1022: Observed recovery automation effectiveness report](1022-recovery-effectiveness-report.md)
+- [ADR-1023: Evidence-limited historical recovery policy evaluation](1023-historical-recovery-policy-evaluation.md)
+
+- [ADR-1024: Durable recovery candidate evidence](1024-durable-recovery-candidate-evidence.md)
+- [ADR-1025: Policy-independent workflow failure evidence](1025-policy-independent-workflow-failure-evidence.md)
+
+- [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
+
 ## Events and delivery
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
@@ -763,12 +803,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Managed realtime release decisions
 
-- [ADR-1021 — Transactional realtime publishing](1021-transactional-realtime-publishing.md)
-- [ADR-1022 — Managed realtime access revocation](1022-managed-realtime-access-revocation.md)
-- [ADR-1023: PostgreSQL realtime table-change feeds](1023-postgresql-realtime-changefeeds.md)
-- [ADR-1024: HTTP SSE subscriptions for retained realtime channels](1024-realtime-sse-subscriptions.md)
-- [ADR-1025: Transactional retained-channel webhooks](1025-realtime-channel-webhooks.md)
-- [ADR-1026: Short-lived channel subscription tickets](1026-realtime-subscription-tickets.md)
+- [ADR-1112 — Transactional realtime publishing](1112-transactional-realtime-publishing.md)
+- [ADR-1113 — Managed realtime access revocation](1113-managed-realtime-access-revocation.md)
+- [ADR-1114: PostgreSQL realtime table-change feeds](1114-postgresql-realtime-changefeeds.md)
+- [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
+- [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
+- [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
 - [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)

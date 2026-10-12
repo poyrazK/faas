@@ -25,9 +25,9 @@ triggers do not record deletion as completion, so retention/resync cannot manufa
 successful attempts. History survives completion/replay/snapshot retention until
 pruned. Group deletion cascades it. No pre-migration backfill or new webhook.
 
-At most 1024 events per group, shared across sequences. Serialize pruning/insertion
+At most 1115 events per group, shared across sequences. Serialize pruning/insertion
 under the group lock; remove events older than 24 hours, then retain the newest
-1023 before insertion. Idle storage remains bounded and may retain expired rows
+1114 before insertion. Idle storage remains bounded and may retain expired rows
 until another observation or read; reads prune expired group history using one
 transaction-time cutoff. Track a decimal lifetime group_pruned_events count for
 age/capacity deletion. This count covers the whole group, including other messages,

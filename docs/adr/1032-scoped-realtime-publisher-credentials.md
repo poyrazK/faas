@@ -22,7 +22,7 @@ Limit each endpoint to 64 credential records, each key to 32 exact channels and
 16 event types, and payloads to at most 4096 bytes (or the smaller endpoint/key
 limit). Default expiry is one day, maximum 30 days. Default accepted publish rate
 is 60 per fixed clock minute, maximum 600; boundary bursts are possible. Retain
-up to 1024 receipts per key for 24 hours. This is a bounded preview admission
+up to 1115 receipts per key for 24 hours. This is a bounded preview admission
 limit, so sustained publishers may exhaust receipts before their minute quota.
 
 Rotation preserves scopes, identity, receipts and rate counters. Revocation stops

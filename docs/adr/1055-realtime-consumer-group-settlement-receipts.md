@@ -39,7 +39,7 @@ or external exactly-once guarantee is introduced.
 ## Bounds and retention
 
 Retain receipts for 24 hours from their original commit path; replay does not extend
-retention. Cap at 1024 receipts per group shared by all principals and request kinds.
+retention. Cap at 1115 receipts per group shared by all principals and request kinds.
 Prune expired rows on keyed requests. Check capacity before settlement and return
 429 using the existing typed capacity error; never evict live receipts to admit new
 keys. Existing receipt replay works at capacity. Requests without keys consume no
