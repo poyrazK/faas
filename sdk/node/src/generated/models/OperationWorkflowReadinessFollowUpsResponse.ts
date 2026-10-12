@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';
+import type { OperationWorkflowReadinessImpactSummary } from './OperationWorkflowReadinessImpactSummary.js';
 /**
  * Live queue across this app/environment subscription inboxes. Owner/customer/workflow/due filters apply before pagination. No notification edits are performed by this read.
  */
 export type OperationWorkflowReadinessFollowUpsResponse = {
+  /**
+   * OperationWorkflowReadinessFollowUpsResponse.business_impact_summary. Matching retained unresolved review tasks grouped by workflow and protected result before pagination. Unique obligations and cases are deduplicated across inbox deliveries; owner counts describe queue tasks. Ordered by critical overdue reviews, critical reviews, total unique reviews and stable group identity. Existing filters and candidate-window limits apply.
+   */
+  business_impact_summary?: Array<OperationWorkflowReadinessImpactSummary>;
   /**
    * OperationWorkflowReadinessFollowUpsResponse.items. Pending follow-ups ordered by due time, subscription UUID and sequence.
    */

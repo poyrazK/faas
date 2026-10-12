@@ -96,6 +96,7 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 		}
 		return a.Sequence < b.Sequence
 	})
+	out.BusinessImpactSummary = readinessBusinessImpactSummary(matched)
 	out.TotalCount = len(matched)
 	start := min(opts.Offset, len(matched))
 	end := min(start+normalized.Limit, len(matched))

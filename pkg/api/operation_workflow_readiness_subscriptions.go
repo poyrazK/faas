@@ -147,14 +147,15 @@ type OperationWorkflowReadinessFollowUp struct {
 	Overdue              bool                                         `json:"overdue"`
 }
 type OperationWorkflowReadinessFollowUpsResponse struct {
-	DueReminderCount int                                  `json:"due_reminder_count"`
-	Items            []OperationWorkflowReadinessFollowUp `json:"items"`
-	EvaluatedAt      time.Time                            `json:"evaluated_at"`
-	TotalCount       int                                  `json:"total_count"`
-	OverdueCount     int                                  `json:"overdue_count"`
-	NextOffset       int                                  `json:"next_offset"`
-	HasMore          bool                                 `json:"has_more"`
-	RetentionLimited bool                                 `json:"retention_limited"`
+	BusinessImpactSummary []OperationWorkflowReadinessImpactSummary `json:"business_impact_summary,omitempty"`
+	DueReminderCount      int                                       `json:"due_reminder_count"`
+	Items                 []OperationWorkflowReadinessFollowUp      `json:"items"`
+	EvaluatedAt           time.Time                                 `json:"evaluated_at"`
+	TotalCount            int                                       `json:"total_count"`
+	OverdueCount          int                                       `json:"overdue_count"`
+	NextOffset            int                                       `json:"next_offset"`
+	HasMore               bool                                      `json:"has_more"`
+	RetentionLimited      bool                                      `json:"retention_limited"`
 }
 
 // A reminder is one durable delivery marker for the original notification/deadline.
@@ -415,4 +416,24 @@ type OperationWorkflowCase struct {
 	CoordinationCheckedAt time.Time                             `json:"coordination_checked_at"`
 	EvaluatedAt           time.Time                             `json:"evaluated_at"`
 	Limitations           []string                              `json:"limitations"`
+}
+
+// Impact summaries describe retained unresolved human reviews, independently of business success.
+type OperationWorkflowReadinessImpactSummary struct {
+	Workflow             string                                  `json:"workflow"`
+	Kind                 string                                  `json:"kind"`
+	Code                 string                                  `json:"code"`
+	ReviewCount          int                                     `json:"review_count"`
+	TaskCount            int                                     `json:"task_count"`
+	CaseCount            int                                     `json:"case_count"`
+	CriticalCount        int                                     `json:"critical_count"`
+	HighCount            int                                     `json:"high_count"`
+	OverdueCount         int                                     `json:"overdue_count"`
+	CriticalOverdueCount int                                     `json:"critical_overdue_count"`
+	Owners               []OperationWorkflowReadinessImpactOwner `json:"owners"`
+}
+type OperationWorkflowReadinessImpactOwner struct {
+	Owner        string `json:"owner"`
+	TaskCount    int    `json:"task_count"`
+	OverdueCount int    `json:"overdue_count"`
 }

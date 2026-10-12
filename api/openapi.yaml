@@ -80522,12 +80522,94 @@ components:
       - created_at
       - coordination
       - overdue
+    OperationWorkflowReadinessImpactSummary:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected business result, separate from reported business outcome.
+      required: [workflow, kind, code, review_count, task_count, case_count, critical_count, high_count, overdue_count, critical_overdue_count, owners]
+      properties:
+        workflow:
+          type: string
+          description: OperationWorkflowReadinessImpactSummary.workflow. Scoped workflow identity; identical result codes in different workflows remain separate.
+        kind:
+          type: string
+          enum: [milestone, outcome]
+          description: OperationWorkflowReadinessImpactSummary.kind. Pinned protected result category.
+        code:
+          type: string
+          description: OperationWorkflowReadinessImpactSummary.code. Pinned protected milestone or outcome code.
+        review_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.review_count. Distinct progress/outcome/step/regression obligations across inbox deliveries.
+        task_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.task_count. Matching retained inbox delivery tasks.
+        case_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.case_count. Distinct tenant/subject/workflow/instance cases.
+        critical_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.critical_count. Distinct critical review obligations.
+        high_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.high_count. Distinct high-priority review obligations.
+        overdue_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.overdue_count. Distinct review obligations with at least one overdue queue delivery.
+        critical_overdue_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactSummary.critical_overdue_count. Distinct critical review obligations with overdue queue attention.
+        owners:
+          type: array
+          maxItems: 2000
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessImpactOwner'
+          description: OperationWorkflowReadinessImpactSummary.owners. Effective inbox ownership totals, ordered by overdue task count, task count and owner label. A review delivered to several teams contributes to each delivery's owner.
+    OperationWorkflowReadinessImpactOwner:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReadinessImpactOwner. Effective queue ownership within a retained business impact group.
+      required: [owner, task_count, overdue_count]
+      properties:
+        owner:
+          type: string
+          description: OperationWorkflowReadinessImpactOwner.owner. Current inbox owner label; empty means unassigned.
+        task_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactOwner.task_count. Matching retained inbox delivery tasks for this owner.
+        overdue_count:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: OperationWorkflowReadinessImpactOwner.overdue_count. Matching tasks with overdue queue attention.
     OperationWorkflowReadinessFollowUpsResponse:
       type: object
       description: Live queue across this app/environment subscription inboxes. Owner/customer/workflow/due filters
         apply before pagination. No notification edits are performed by this read.
       additionalProperties: false
       properties:
+        business_impact_summary:
+          type: array
+          maxItems: 2000
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessImpactSummary'
+          description: OperationWorkflowReadinessFollowUpsResponse.business_impact_summary. Matching retained unresolved review tasks grouped by workflow and protected result before pagination. Unique obligations and cases are deduplicated across inbox deliveries; owner counts describe queue tasks. Ordered by critical overdue reviews, critical reviews, total unique reviews and stable group identity. Existing filters and candidate-window limits apply.
         items:
           type: array
           maxItems: 100

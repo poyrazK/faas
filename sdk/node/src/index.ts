@@ -346,3 +346,5 @@ export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEn
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
 
 export type { OperationWorkflowPlaybookReviewImpact } from './generated/models/OperationWorkflowPlaybookReviewImpact.js';
+
+export type { OperationWorkflowReadinessImpactSummary, OperationWorkflowReadinessImpactOwner } from './customer-operations.js';

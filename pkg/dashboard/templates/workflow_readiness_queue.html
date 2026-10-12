@@ -113,6 +113,7 @@
 <button type="submit">Load follow-ups</button>
 </form>
 <p id="readiness-work-message" role="status" aria-live="polite"></p>
+<div id="readiness-business-impact-summary"></div>
 <ol id="readiness-work-items" aria-live="polite"></ol>
 <button type="button" id="readiness-work-more" hidden>Load more follow-ups</button>
 <p>Follow-ups share each inbox's latest-100 notification retention window. Pages are live and can move when work is edited; reload to rebuild the queue.</p>
@@ -590,6 +591,18 @@
  const ids=new Set();
  const text=(parent,value)=>{const p=document.createElement('p');p.textContent=value;parent.append(p);return p;};
  const request=async(url,options={})=>{const response=await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});if(!response.ok){let p;try{p=await response.json();}catch{}throw new Error(p?.detail || p?.title || 'Follow-up request failed ('+response.status+').');}return response.json();};
+ const summary=document.getElementById('readiness-business-impact-summary');
+ const drawSummary=(groups)=>{
+  summary.replaceChildren();if(!groups?.length)return;
+  const title=document.createElement('h3');title.textContent='Business impact across matching workflow cases';summary.append(title);
+  text(summary,'Counts cover matching retained queue tasks across all pages. Reviews are deduplicated across inbox deliveries; ownership counts describe deliveries.');
+  for(const group of groups){const entry=document.createElement('div');text(entry,group.workflow+' · Protected '+group.kind+' '+group.code+' · '+group.review_count+' unresolved reviews · '+group.task_count+' inbox tasks in '+group.case_count+' cases · '+group.critical_count+' critical · '+group.high_count+' high · '+group.overdue_count+' overdue · '+group.critical_overdue_count+' critical overdue');
+   const selectGroup=(owner)=>{if(loading)return;const selectors=new URLSearchParams(applied);selectors.set('workflow',group.workflow);selectors.set('impact_kind',group.kind);selectors.set('impact_code',group.code);selectors.set('sort','business_impact');if(owner!==undefined)selectors.set('owner',owner);for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=selectors.get(field.name)==='true';else field.value=selectors.get(field.name)||'';}form.requestSubmit();};
+   const open=document.createElement('button');open.type='button';open.textContent='Show matching review tasks';open.addEventListener('click',()=>selectGroup());entry.append(open);
+   for(const owner of group.owners){text(entry,(owner.owner||'Unassigned')+' · '+owner.task_count+' tasks · '+owner.overdue_count+' overdue');if(owner.owner){const button=document.createElement('button');button.type='button';button.textContent='Show '+owner.owner+' tasks';button.addEventListener('click',()=>selectGroup(owner.owner));entry.append(button);}}
+   summary.append(entry);
+  }
+ };
  const draw=(row)=>{
   const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
   const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
@@ -627,11 +640,11 @@
  const read=async()=>{
   if(!applied || loading)return;loading=true;submit.disabled=true;more.disabled=true;const epoch=generation;
   const q=new URLSearchParams(applied);q.set('offset',String(offset));
-  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;count.textContent=String(result.due_reminder_count);message.textContent=result.total_count+' matching retained follow-ups; '+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!result.items.length && !list.children.length ? ' No pending follow-ups match these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
+  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;drawSummary(result.business_impact_summary);for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;count.textContent=String(result.due_reminder_count);message.textContent=result.total_count+' matching retained follow-ups; '+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!result.items.length && !list.children.length ? ' No pending follow-ups match these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
   catch(error){if(epoch===generation)message.textContent=error.message;}
   finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
  };
- const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();more.hidden=true;await read();};
+ const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();summary.replaceChildren();more.hidden=true;await read();};
  form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;const selectors=formValues();if(selectors.has('impact_code')&&!selectors.has('impact_kind')){message.textContent='Choose Milestone or Outcome when filtering by a result code.';return;}applied=selectors;void refresh();});
 
  more.addEventListener('click',()=>{void read();});

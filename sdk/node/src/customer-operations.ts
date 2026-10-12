@@ -786,7 +786,7 @@ export interface OperationWorkflowReadinessNotificationCheck { business_outcome?
 
 export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { impactPriority?: 'normal' | 'high' | 'critical'; impactKind?: 'milestone' | 'outcome'; impactCode?: string; sort?: 'due' | 'business_impact'; reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
 export interface OperationWorkflowReadinessFollowUp { playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
-export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
+export interface OperationWorkflowReadinessFollowUpsResponse { business_impact_summary?: OperationWorkflowReadinessImpactSummary[]; due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
 
 export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }
 
@@ -870,3 +870,6 @@ export interface OperationWorkflowPlaybookDependencyState { regression?: Operati
 export interface OperationWorkflowPlaybookDependencyRegression { checked_at: string; reopened_prerequisites: OperationWorkflowPlaybookDependencyState[]; affected_steps: OperationWorkflowPlaybookDependencyState[] }
 
 export interface OperationWorkflowPlaybookDependencyRecovery { checked_at: string; regression: OperationWorkflowReadinessOutcomeEscalationReference; ready_steps: OperationWorkflowPlaybookDependencyState[] }
+
+export type OperationWorkflowReadinessImpactSummary = import('./generated/models/OperationWorkflowReadinessImpactSummary.js').OperationWorkflowReadinessImpactSummary;
+export type OperationWorkflowReadinessImpactOwner = import('./generated/models/OperationWorkflowReadinessImpactOwner.js').OperationWorkflowReadinessImpactOwner;

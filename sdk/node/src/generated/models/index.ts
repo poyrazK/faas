@@ -1262,6 +1262,8 @@ export type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowRead
 export type { OperationWorkflowReadinessFollowUpOptions } from './OperationWorkflowReadinessFollowUpOptions.js';
 export type { OperationWorkflowReadinessFollowUpsResponse } from './OperationWorkflowReadinessFollowUpsResponse.js';
 export type { OperationWorkflowReadinessHandoff } from './OperationWorkflowReadinessHandoff.js';
+export type { OperationWorkflowReadinessImpactOwner } from './OperationWorkflowReadinessImpactOwner.js';
+export type { OperationWorkflowReadinessImpactSummary } from './OperationWorkflowReadinessImpactSummary.js';
 export type { OperationWorkflowReadinessInboxResponse } from './OperationWorkflowReadinessInboxResponse.js';
 export type { OperationWorkflowReadinessNotification } from './OperationWorkflowReadinessNotification.js';
 export type { OperationWorkflowReadinessNotificationCheck } from './OperationWorkflowReadinessNotificationCheck.js';
