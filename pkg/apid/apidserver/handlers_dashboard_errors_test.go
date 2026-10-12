@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -54,8 +56,8 @@ func TestDashboardHandler_AppErrorsSummaryAndDetail(t *testing.T) {
 		requests: []state.AppErrorRequestRow{{ID: uuid.New(), RequestID: requestID, ReceivedAt: now, Route: "GET /api", HTTPStatus: 504, ErrorClass: "upstream_timeout", SampleMessage: "upstream timed out"}},
 		sample:   state.AppErrorSampleRow{AppErrorRequestRow: state.AppErrorRequestRow{ID: uuid.New(), RequestID: requestID, ReceivedAt: now.Add(-2 * time.Hour), Route: "GET /api", HTTPStatus: 504, ErrorClass: "upstream_timeout", SampleMessage: "upstream timed out"}, HeadersSample: []byte(`{"content-type":"application/json","x-request-id":"redacted"}`), Redactions: []string{"authorization"}},
 	}
-	srv := newServerWithDeps(wrapped, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*time.Minute, "")
-	h := srv.handler()
+	srv := apidserver.NewServerWithDeps(wrapped, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "")
+	h := srv.Handler()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/apps/errors-app/errors", nil)
@@ -86,7 +88,7 @@ func TestDashboardHandler_AppErrorsSummaryAndDetail(t *testing.T) {
 }
 
 func TestDashboardHandler_AppErrorsFreePlanShowsUpgrade(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -115,7 +117,7 @@ func TestParseAppErrorsPath(t *testing.T) {
 		{path: "errors-app", ok: false},
 		{path: "errors-app/errors/abc", ok: false},
 	} {
-		got, ok := parseAppErrorsPath(tc.path)
+		got, ok := apidserver.ParseAppErrorsPath(tc.path)
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("parseAppErrorsPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 		}

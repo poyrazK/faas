@@ -2341,7 +2341,7 @@ Discover retained recovery jobs
 | Flag | Meaning | |
 |---|---|---|
 | `--state <STATE>` | filter by recovery state |  |
-| `--mode <MODE>` | routing or execution |  |
+| `--mode <MODE>` | routing, execution or workflow |  |
 | `--subscription-id <ID>` | selected or captured subscription |  |
 | `--created-after <TIME>` | exclusive creation lower bound (RFC3339) |  |
 | `--created-before <TIME>` | exclusive creation upper bound (RFC3339) |  |
@@ -4649,6 +4649,8 @@ gregale automations diff --app billing --name approval-flow
 gregale automations init --template scheduled-report --path reports
 gregale automations runs --app billing --name approval-flow --status failed
 gregale automations diagnose --app billing --name approval-flow --run RUN_ID
+gregale automations recovery-preview --app billing --name approval-flow --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z
+gregale automations recover --app billing --name approval-flow --run RUN_ID:COUNT --idempotency-key recovery-batch-1
 gregale automations list --app billing
 gregale automations get --app billing --name paid-invoice
 gregale automations health --app billing --name paid-invoice
@@ -4752,18 +4754,259 @@ Diagnose a run belonging to the selected automation
 | `--name <NAME>` | automation name | required |
 | `--run <UUID>` | workflow run UUID | required |
 
+### automations history
+
+Inspect retained recovery automation history
+
+`gregale automations history --app <SLUG> [--workflow <NAME>] [--run <UUID>] [--policy-version <N>] [--created-after <RFC3339>] [--created-before <RFC3339>] [--after <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | native workflow filter |  |
+| `--run <UUID>` | native run filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--created-after <RFC3339>` | inclusive start |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+| `--after <CURSOR>` | next page cursor |  |
+| `--limit <N>` | page size (default 25, max 100) |  |
+
 ### automations health
 
-Show bounded run reliability and failed-step metrics
+Inspect app recovery health or named automation run reliability
 
-`gregale automations health --app <SLUG> --name <NAME> [--created-after <RFC3339>] [--created-before <RFC3339>]`
+`gregale automations health [--stall-after-seconds <SECONDS>] --app <SLUG> [--name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stall-after-seconds <SECONDS>` | app recovery evaluation threshold (default 300) |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+
+### automations recover
+
+Resume explicitly selected failed runs with per-run generation checks and outcomes
+
+`gregale automations recover [--plan-out <PATH>] --app <SLUG> --name <NAME> --run <UUID:COUNT> --idempotency-key <KEY>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan-out <PATH>` | save reviewed selection to a new plan file without resuming |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID:COUNT>` | run UUID and original expected resume count; repeatable, at most 25 | required |
+| `--idempotency-key <KEY>` | stable batch key; reuse for interrupted retries | required |
+
+### automations event-recovery-plan
+
+Save selected retained automation routing actions for review
+
+`gregale automations event-recovery-plan --app <SLUG> --name <NAME> --source <SOURCE> --event <ID> --idempotency-key <KEY> --out <PATH>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
 | `--name <NAME>` | automation name | required |
-| `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
-| `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+| `--source <SOURCE>` | event source | required |
+| `--event <ID>` | selected event ID; repeatable, at most 25 | required |
+| `--idempotency-key <KEY>` | stable batch key | required |
+| `--out <PATH>` | new event plan file | required |
+
+### automations recovery-health
+
+Inspect recovery execution attention and explicit action hints
+
+`gregale automations recovery-health --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+### automations recovery-policy
+
+Inspect, preview or update recovery policy
+
+`gregale automations recovery-policy --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+### automations recovery-policy-reviews
+
+Inspect policy decisions and export prepared plans
+
+`gregale automations recovery-policy-reviews --app <SLUG> [--review <UUID>] [--plan-out <PATH>] [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | retained review |  |
+| `--plan-out <PATH>` | export selected prepared plan |  |
+| `--after <UUID>` | review pagination cursor |  |
+| `--limit <N>` | page limit |  |
+
+### automations recovery-response-plan
+
+Save reviewed cancellation and retry actions
+
+`gregale automations recovery-response-plan --app <SLUG> --job <UUID> --key <KEY> --reason <TEXT> --plan-out <PATH> [--cancel-position <N>] [--retry-position <N>] [--rate <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--key <KEY>` | stable response key | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--plan-out <PATH>` | new saved plan | required |
+| `--cancel-position <N>` | item to cancel (repeatable) |  |
+| `--retry-position <N>` | saved failed item to retry (repeatable) |  |
+| `--rate <N>` | retry admission rate |  |
+
+### automations recovery-response-preview
+
+Recheck saved actions without applying
+
+`gregale automations recovery-response-preview --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+### automations recovery-response-apply
+
+Apply saved actions with durable receipts
+
+`gregale automations recovery-response-apply --plan <PATH> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+| `--yes` | confirm reviewed actions | required |
+
+### automations recovery-response-status
+
+Reconcile retained action receipts and execution outcomes
+
+`gregale automations recovery-response-status --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+### automations recovery-cancel-preview
+
+Review or cancel one admitted recovery generation
+
+`gregale automations recovery-cancel-preview --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+
+### automations recovery-cancel
+
+Review or cancel one admitted recovery generation
+
+`gregale automations recovery-cancel --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--yes` | confirm exact generation cancellation | required |
+
+### automations recovery-retry-plan
+
+Review saved workflow recovery failures and save an explicit retry plan
+
+`gregale automations recovery-retry-plan --app <SLUG> --job <UUID> [--position <N>] [--plan-out <PATH>] [--key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | parent recovery job | required |
+| `--position <N>` | reviewed parent item position (repeatable) |  |
+| `--plan-out <PATH>` | new reviewed retry plan file |  |
+| `--key <KEY>` | stable idempotency key for the retry plan |  |
+
+### automations recovery-start
+
+Submit a reviewed automation run plan as a durable server job
+
+`gregale automations recovery-start --plan <PATH> [--rate <N>] [--execution-deadline <DURATION>] [--execution-stall <DURATION>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed run plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--execution-deadline <DURATION>` | advisory execution deadline (zero disables) |  |
+| `--execution-stall <DURATION>` | no-progress warning threshold (default 15m) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+
+### automations event-recovery-start
+
+Submit a reviewed automation event plan as a durable server job
+
+`gregale automations event-recovery-start --plan <PATH> [--rate <N>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+
+### automations event-recover
+
+Execute a reviewed event plan with fresh receipt checks and a journal
+
+`gregale automations event-recover --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--journal <PATH>` | new execution journal | required |
+
+### automations recovery-plan
+
+Execute a saved recovery plan with a durable per-attempt journal
+
+`gregale automations recovery-plan --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan file | required |
+| `--journal <PATH>` | new journal file for this execution | required |
+
+### automations recovery-preview
+
+Inspect failed run recovery, retained events and schedule catch-up without writes
+
+`gregale automations recovery-preview --app <SLUG> --name <NAME> --from <TIME> [--until <TIME>] [--limit <N>] [--run-offset <N>] [--event-after <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--from <TIME>` | RFC3339 event acceptance and schedule preview start | required |
+| `--until <TIME>` | RFC3339 end/evaluation time (default now) |  |
+| `--limit <N>` | runs per status and event scan page (1..25, default 10) |  |
+| `--run-offset <N>` | offset in each failed/dead run page |  |
+| `--event-after <CURSOR>` | retained event preview cursor |  |
 
 ### automations failure-policy
 

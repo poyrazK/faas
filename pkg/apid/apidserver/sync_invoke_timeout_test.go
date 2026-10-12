@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,17 +23,17 @@ func TestSyncInvokeWaitStaysInsideTheClientTimeout(t *testing.T) {
 }
 
 func TestSyncInvokeTimeoutProblemNamesTheInvocation(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "slow-api")
-	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
-		AccountID: e.acct.ID, AppID: appID, Source: state.InvocationAsyncInvoke, State: state.InvocationPending,
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "slow-api")
+	inv, err := (*e.Store()).EnqueueInvocation(context.Background(), state.Invocation{
+		AccountID: (*e.Acct()).ID, AppID: appID, Source: state.InvocationAsyncInvoke, State: state.InvocationPending,
 		Method: "POST", Path: "/", DueAt: time.Now(), CreatedAt: time.Now(),
 		LastError: "wake failed: scan_critical: Fixable CRITICAL vulnerability in base ext4",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := e.s.syncInvokeTimeoutProblem(context.Background(), inv, 25*time.Second)
+	p := (*e.S()).SyncInvokeTimeoutProblem(context.Background(), inv, 25*time.Second)
 	if p.Status != 504 || p.Code != "long_poll_timeout" {
 		t.Fatalf("problem = %d %s, want 504 long_poll_timeout", p.Status, p.Code)
 	}

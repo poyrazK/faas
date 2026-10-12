@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,20 +8,21 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{
-		AccountID: e.acct.ID, Slug: "queue-status", WorkloadClass: state.WorkloadClassWorker,
+	app, err := (*e.Store()).CreateApp(ctx, state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-status", WorkloadClass: state.WorkloadClassWorker,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app.ID, Name: "orders",
+	result, err := (*e.Store()).CreateQueueBindingWithConsumer(ctx, state.QueueBinding{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "orders",
 		QueueName: "orders", Mode: "push", WorkloadClass: state.WorkloadClassWorker,
 		Enabled: true, MaxConcurrency: 4,
 	})
@@ -29,27 +30,27 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := result.Binding
-	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)
+	triggerID, err := apidserver.QueueBindingTriggerID(ctx, (*e.Store()), app.ID, binding.ID)
 	if err != nil || triggerID == "" {
 		t.Fatalf("load projected trigger: id=%q err=%v", triggerID, err)
 	}
 	lagMessages := int64(7)
 	lagAge := 2.5
 	lastPoll := time.Now().UTC()
-	if err := e.store.RecordTriggerConsumerHealth(ctx, triggerID, state.TriggerConsumerHealthObservation{
+	if err := (*e.Store()).RecordTriggerConsumerHealth(ctx, triggerID, state.TriggerConsumerHealthObservation{
 		LastPollAt: lastPoll, Success: true, LagMessages: &lagMessages, LagAgeSeconds: &lagAge,
 	}); err != nil {
 		t.Fatalf("record consumer health: %v", err)
 	}
-	if _, err := e.store.EnqueueInvocation(ctx, state.Invocation{
-		AccountID: e.acct.ID, AppID: app.ID, QueueName: "orders", Source: state.InvocationQueue,
+	if _, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, QueueName: "orders", Source: state.InvocationQueue,
 		Payload: []byte(`{"order":"123"}`), DueAt: time.Now().UTC().Add(-time.Minute),
 		CreatedAt: time.Now().UTC().Add(-time.Minute),
 	}); err != nil {
 		t.Fatalf("seed queue row: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -78,11 +79,11 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 
 	// Renaming keeps the accepted queue ledger visible through binding identity.
 	name := "payments"
-	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{QueueName: &name})
+	result, err = (*e.Store()).UpdateQueueBindingWithConsumer(ctx, (*e.Acct()).ID, app.ID, binding.ID, state.UpdateQueueBindingParams{QueueName: &name})
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID, Name: "replacement", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	replacement, err := (*e.Store()).CreateQueueBinding(ctx, state.QueueBinding{AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "replacement", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 		id    string
 		depth int
 	}{{binding.ID, 1}, {replacement.ID, 0}} {
-		rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+item.id+"/status", nil, nil)
+		rec = e.Do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+item.id+"/status", nil, nil)
 		var status api.QueueBindingStatusResponse
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &status) != nil || status.Depth != item.depth {
 			t.Fatalf("renamed status depth=%d want=%d code=%d", status.Depth, item.depth, rec.Code)
@@ -98,12 +99,12 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 	}
 
 	disabled := false
-	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled})
+	result, err = (*e.Store()).UpdateQueueBindingWithConsumer(ctx, (*e.Acct()).ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled})
 	if err != nil {
 		t.Fatalf("disable binding: %v", err)
 	}
 	binding = result.Binding
-	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disabled status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -119,12 +120,12 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 	}
 
 	pull := "pull"
-	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull})
+	result, err = (*e.Store()).UpdateQueueBindingWithConsumer(ctx, (*e.Acct()).ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull})
 	if err != nil {
 		t.Fatalf("switch binding to pull: %v", err)
 	}
 	binding = result.Binding
-	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("pull status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -141,25 +142,25 @@ func TestQueueBindingConsumerLivenessClassifiesErrorsAndStaleness(t *testing.T) 
 	now := time.Now().UTC()
 	poll := now.Add(-time.Second)
 	errAt := now.Add(-500 * time.Millisecond)
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &poll, LastErrorAt: &errAt}); got != "degraded" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &poll, LastErrorAt: &errAt}); got != "degraded" {
 		t.Fatalf("degraded liveness = %q, want degraded", got)
 	}
 	stale := now.Add(-api.QueueConsumerMaxPollAge - time.Second)
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &stale}); got != "stale" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &stale}); got != "stale" {
 		t.Fatalf("stale liveness = %q, want stale", got)
 	}
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{}); got != "not_observed" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{}); got != "not_observed" {
 		t.Fatalf("empty liveness = %q, want not_observed", got)
 	}
 	zero, future := time.Time{}, now.Add(time.Second)
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &zero}); got != "not_observed" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &zero}); got != "not_observed" {
 		t.Fatalf("zero poll liveness = %q, want not_observed", got)
 	}
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &future}); got != "unknown" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &future}); got != "unknown" {
 		t.Fatalf("future poll liveness = %q, want unknown", got)
 	}
 	boundary := now.Add(-api.QueueConsumerMaxPollAge)
-	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &boundary}); got != "healthy" {
+	if got := apidserver.QueueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &boundary}); got != "healthy" {
 		t.Fatalf("poll age boundary = %q, want healthy", got)
 	}
 }

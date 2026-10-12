@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,7 +23,7 @@ import (
 func TestRenderAuthCapabilities_NoSession_RedirectsToLogin(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).handler()
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/auth/capabilities", nil)
 	rec := httptest.NewRecorder()
@@ -45,11 +46,11 @@ func TestRenderAuthCapabilities_NoSession_RedirectsToLogin(t *testing.T) {
 func TestRenderAuthCapabilities_AllDisabled(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(auth.SignInConfig{})
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(auth.SignInConfig{})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/auth/capabilities", nil)
-	srv.renderAuthCapabilities(w, r)
+	srv.RenderAuthCapabilities(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -75,11 +76,11 @@ func TestRenderAuthCapabilities_AllConfigured(t *testing.T) {
 	}
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(cfg)
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(cfg)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/auth/capabilities", nil)
-	srv.renderAuthCapabilities(w, r)
+	srv.RenderAuthCapabilities(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -110,11 +111,11 @@ func TestRenderAuthCapabilities_Mixed(t *testing.T) {
 	}
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(cfg)
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(cfg)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/auth/capabilities", nil)
-	srv.renderAuthCapabilities(w, r)
+	srv.RenderAuthCapabilities(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -140,7 +141,7 @@ func TestRenderAuthCapabilities_Mixed(t *testing.T) {
 // the JSON shape end-to-end. Issue #419 closes the original 500
 // symptom; the wire-shape contract is part of that closure.
 func TestAuthCapabilitiesRoute_MountedAndAuthed(t *testing.T) {
-	h, cookie := newAuthedDashboardServer(t)
+	h, cookie := apidserver.NewAuthedDashboardServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/auth/capabilities", nil)
 	req.AddCookie(cookie)

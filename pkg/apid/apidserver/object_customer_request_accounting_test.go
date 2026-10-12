@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -17,18 +17,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObjectCustomerRequestAccountingMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	objectCustomerRequestAccounting(t, e.s, e.store, e.acct, e.key)
+	e := apidserver.Setup(t, api.PlanPro)
+	objectCustomerRequestAccounting(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()))
 }
 
 // Every native page/attempt consumes the shared account budget, before I/O.
 // Status, accepted recovery, and rejected selections have different semantics.
-func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, acct state.Account, bearer string) {
+func objectCustomerRequestAccounting(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string) {
 	t.Helper()
 	var calls atomic.Int64
 	var fail atomic.Bool
@@ -73,8 +74,8 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	s.WithObjectStorage(objectLockTestRegistry(t, native.URL, policy, objectstorage.ObjectLockConfig{Enabled: true}))
 	since := time.Now().UTC().Add(-time.Minute)
 	policy.AccountingMode, policy.GatewayMeteringSince, policy.MaxMonthlyCostMillicents = api.ObjectStorageGatewaySafetyV1, &since, 0
-	s.objectStorage.Accounting = policy
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	(*s.ObjectStorage()).Accounting = policy
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	uploads := st.(state.ObjectMultipartUploadStore)
@@ -96,7 +97,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	base := "/v1/apps/encrypted-journal/buckets/" + b.ID
 	session := base + "/multipart-uploads/" + u.ID
 	parts := session + "/parts"
-	h := s.handler()
+	h := s.Handler()
 	do := func(path, token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -110,7 +111,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 		if e != nil {
 			t.Fatal(e)
 		}
-		return state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, time.Now()).RequestCount
+		return state.SummarizeObjectUsage(snapshot, (*s.ObjectStorage()).Accounting, time.Now()).RequestCount
 	}
 	assertResponse := func(t *testing.T, path string, status int) *httptest.ResponseRecorder {
 		t.Helper()
@@ -135,7 +136,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before, dispatched := usage(), calls.Load()
-			s.objectStorage.Accounting.MaxMonthlyRequests = before + tc.attempts
+			(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + tc.attempts
 			assertResponse(t, tc.path, http.StatusOK)
 			if usage() != before+tc.attempts || calls.Load() != dispatched+tc.attempts {
 				t.Fatal("attempt not recorded exactly once", usage()-before, calls.Load()-dispatched)
@@ -154,7 +155,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	}
 	t.Run("multi-probe boundary", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
-		s.objectStorage.Accounting.MaxMonthlyRequests = before + 2
+		(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + 2
 		assertResponse(t, base+"/objects/protection/retention?key=key&version_id="+refs[0].ID, http.StatusPaymentRequired)
 		if usage() != before+2 || calls.Load() != dispatched+2 {
 			t.Fatal("protection probes crossed the budget boundary", usage()-before, calls.Load()-dispatched)
@@ -162,7 +163,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	})
 	t.Run("failed object listing attempt", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
-		s.objectStorage.Accounting.MaxMonthlyRequests = before + 1
+		(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + 1
 		fail.Store(true)
 		assertResponse(t, base+"/objects", http.StatusServiceUnavailable)
 		fail.Store(false)
@@ -173,7 +174,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	})
 	t.Run("each page and failed attempt", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
-		s.objectStorage.Accounting.MaxMonthlyRequests = before + 3
+		(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + 3
 		first := assertResponse(t, parts+"?limit=1", http.StatusOK)
 		var page api.ObjectMultipartPartList
 		if json.Unmarshal(first.Body.Bytes(), &page) != nil || page.NextPartNumberMarker != 1 {
@@ -196,7 +197,7 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	})
 	t.Run("rejected selections", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
-		s.objectStorage.Accounting.MaxMonthlyRequests = before + 10
+		(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + 10
 		for _, query := range []string{"?limit=0", "?limit=1001", "?part_number_marker=-1", "?part_number_marker=10001", "?limit=abc", "?limit=", "?limit=1&limit=2", "?unexpected=1", "?limit=1;part_number_marker=1"} {
 			assertResponse(t, parts+query, http.StatusBadRequest)
 		}
@@ -239,16 +240,16 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 	t.Run("unqualified coverage", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
 		future := time.Now().UTC().Add(time.Minute)
-		s.objectStorage.Accounting.GatewayMeteringSince = &future
+		(*s.ObjectStorage()).Accounting.GatewayMeteringSince = &future
 		w := assertResponse(t, parts, http.StatusServiceUnavailable)
 		if !strings.Contains(w.Body.String(), "object_storage_usage_stale") || usage() != before || calls.Load() != dispatched {
 			t.Fatal("unqualified coverage reached native provider", w.Body.String())
 		}
-		s.objectStorage.Accounting.GatewayMeteringSince = &since
+		(*s.ObjectStorage()).Accounting.GatewayMeteringSince = &since
 	})
 	t.Run("concurrent final request", func(t *testing.T) {
 		before, dispatched := usage(), calls.Load()
-		s.objectStorage.Accounting.MaxMonthlyRequests = before + 1
+		(*s.ObjectStorage()).Accounting.MaxMonthlyRequests = before + 1
 		var winners atomic.Int32
 		var wg sync.WaitGroup
 		for i := range 20 {
@@ -276,15 +277,15 @@ func objectCustomerRequestAccounting(t *testing.T, s *server, st state.Store, ac
 
 // A store exposing metadata alone cannot silently disable gateway admission.
 func TestObjectCustomerRequestAccountingMissingMeter(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
-	e.s.objectStorage.Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
-	e.s.store = struct{ state.Store }{e.store}
-	if err := e.s.object.CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, state.ErrObjectUsageStale) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))
+	(*(*e.S()).ObjectStorage()).Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
+	(*(*e.S()).Store()) = struct{ state.Store }{(*e.Store())}
+	if err := (*(*e.S()).Object()).CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, state.ErrObjectUsageStale) {
 		t.Fatal("missing request meter did not fail closed", err)
 	}
-	e.s.objectStorage.Accounting.AccountingMode = ""
-	if err := e.s.object.CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, objectstorage.ErrConfiguration) {
+	(*(*e.S()).ObjectStorage()).Accounting.AccountingMode = ""
+	if err := (*(*e.S()).Object()).CustomerObjectRequestRecorder(state.ObjectBucket{ID: uuid.NewString()})(context.Background()); !errors.Is(err, objectstorage.ErrConfiguration) {
 		t.Fatal("legacy customer request escaped without a meter", err)
 	}
 }

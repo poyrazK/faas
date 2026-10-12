@@ -16,7 +16,7 @@
 // handlers_traffic_notify_test.go). Audit-emit is *not* asserted
 // here because newServerWithDeps doesn't wire an audit emitter;
 // PR-A3's gateway-side test will add the audit-capture seam.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -64,10 +65,10 @@ func TestPrepareMirrorReplayInvocation_StripsSecretsAndRequiresUnsafeOptIn(t *te
 		Body:           json.RawMessage(`{"order_id":"sanitized"}`),
 		ExpectedStatus: http.StatusCreated,
 	}
-	if _, _, err := prepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
+	if _, _, err := apidserver.PrepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
 		t.Fatal("POST replay without allow_unsafe_methods succeeded")
 	}
-	inv, requestID, err := prepareMirrorReplayInvocation(app, rule, item, true, time.Now())
+	inv, requestID, err := apidserver.PrepareMirrorReplayInvocation(app, rule, item, true, time.Now())
 	if err != nil {
 		t.Fatalf("prepare replay: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestPrepareMirrorReplayInvocation_StripsSecretsAndRequiresUnsafeOptIn(t *te
 	}
 	item.Method = http.MethodGet
 	item.Path = "//example.invalid/escape"
-	if _, _, err := prepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
+	if _, _, err := apidserver.PrepareMirrorReplayInvocation(app, rule, item, false, time.Now()); err == nil {
 		t.Fatal("network-path replay URI succeeded")
 	}
 }
@@ -229,8 +230,8 @@ func newMirrorFixture(t *testing.T) *mirrorFixture {
 // of fixture wiring.
 func newMirrorServer(fx *mirrorFixture) http.Handler {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(fx.store, log, "gregale.dev", fx.notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
-	return srv.handler()
+	srv := apidserver.NewServerWithDeps(fx.store, log, "gregale.dev", fx.notif, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
+	return srv.Handler()
 }
 
 func TestMirrorCreate_HappyPath_Pro(t *testing.T) {
@@ -288,7 +289,7 @@ func TestMirrorCreate_PlanGate_Free(t *testing.T) {
 	_ = store.MarkDeploymentLive(context.Background(), d.ID)
 	notif := &mirrorTestNotifier{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", notif, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	pt, hash, _ := api.GenerateAPIKey()
 	_, _ = store.CreateAPIKey(context.Background(), free.ID, hash, "test", api.ScopesDeployWriteSurface)
 
@@ -297,7 +298,7 @@ func TestMirrorCreate_PlanGate_Free(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+pt)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -328,7 +329,7 @@ func TestMirrorCreate_RangeCheck(t *testing.T) {
 	pt, hash, _ := api.GenerateAPIKey()
 	_, _ = fx.store.CreateAPIKey(context.Background(), fx.proAcct.ID, hash, "test", api.ScopesDeployWriteSurface)
 	for _, p := range []int{-1, 101, 9999} {
-		body := []byte(`{"source_deployment_id":"` + fx.proDep1.ID + `","mirror_deployment_id":"` + fx.proDep2.ID + `","percent":` + itoa(p) + `}`)
+		body := []byte(`{"source_deployment_id":"` + fx.proDep1.ID + `","mirror_deployment_id":"` + fx.proDep2.ID + `","percent":` + apidserver.Itoa(p) + `}`)
 		req := httptest.NewRequest(http.MethodPost, "/v1/apps/"+fx.proApp.Slug+"/mirrors", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+pt)
 		req.Header.Set("Content-Type", "application/json")
@@ -551,12 +552,12 @@ func TestMirrorSummary_ChangedResponsePercentDoesNotDoubleCount(t *testing.T) {
 			MirrorRuleID: rule.ID, AccountID: fx.proAcct.ID, AppID: fx.proApp.ID,
 			SourceDeploymentID: fx.proDep1.ID, MirrorDeploymentID: fx.proDep2.ID,
 			StatusDiff: true, SchemaDiff: true, BodyDiff: true, RequestID: "changed",
-			CompletedAt: timeNow(),
+			CompletedAt: (*apidserver.TimeNow)(),
 		},
 		{
 			MirrorRuleID: rule.ID, AccountID: fx.proAcct.ID, AppID: fx.proApp.ID,
 			SourceDeploymentID: fx.proDep1.ID, MirrorDeploymentID: fx.proDep2.ID,
-			RequestID: "same", CompletedAt: timeNow(),
+			RequestID: "same", CompletedAt: (*apidserver.TimeNow)(),
 		},
 	} {
 		if err := fx.store.InsertMirrorResult(context.Background(), result); err != nil {
@@ -608,7 +609,7 @@ func TestMirrorSummary_AdmissionFailuresDoNotCountAsCrashes(t *testing.T) {
 		result.SourceDeploymentID = fx.proDep1.ID
 		result.MirrorDeploymentID = fx.proDep2.ID
 		result.RequestID = fmt.Sprintf("admission-%d", i)
-		result.CompletedAt = timeNow()
+		result.CompletedAt = (*apidserver.TimeNow)()
 		if err := fx.store.InsertMirrorResult(context.Background(), result); err != nil {
 			t.Fatalf("InsertMirrorResult: %v", err)
 		}
@@ -648,7 +649,7 @@ func TestMirrorDelete_CascadesResults(t *testing.T) {
 	if err := fx.store.InsertMirrorResult(context.Background(), state.MirrorInvocationResult{
 		MirrorRuleID: rule.ID, AccountID: fx.proAcct.ID, AppID: fx.proApp.ID,
 		SourceDeploymentID: fx.proDep1.ID, MirrorDeploymentID: fx.proDep2.ID,
-		StatusCode: 200, SourceStatusCode: 200, CompletedAt: timeNow(),
+		StatusCode: 200, SourceStatusCode: 200, CompletedAt: (*apidserver.TimeNow)(),
 	}); err != nil {
 		t.Fatalf("InsertMirrorResult: %v", err)
 	}

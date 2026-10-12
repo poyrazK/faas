@@ -1,9 +1,11 @@
-package apidserver
+package apidserver_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 426 — source ingress preserves npm integrity while detecting credentials.
@@ -13,14 +15,14 @@ func TestScanExtractedMCPStarterPreservesSecretDefense(t *testing.T) {
 	if err := os.CopyFS(dir, os.DirFS(starter)); err != nil {
 		t.Fatal(err)
 	}
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("starter rejected: findings=%+v err=%v", findings, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "credential.js"), []byte("const STRIPE_SECRET_KEY = \""+fakeStripeLiveKey+"\";"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	findings, err = scanExtractedTreeSecrets(dir)
+	findings, err = apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil || len(findings) != 1 || findings[0].Provider != "stripe_live" {
 		t.Fatalf("credential accepted: findings=%+v err=%v", findings, err)
 	}

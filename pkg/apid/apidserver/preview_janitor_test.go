@@ -11,7 +11,7 @@
 //     schedd's app_delete subscriber can reap in-flight instances.
 //  4. The notify payload is the JSON shape pkg/sched's subscriber
 //     parses (kind:"preview_teardown" + app_id + slug).
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -118,9 +119,9 @@ func TestPreviewJanitor_OpenRowInsideGraceIsLeftAlone(t *testing.T) {
 	// An open preview that expires tomorrow: not eligible.
 	_, acct := seedPreviewApp(t, m, "pr-open", "demo", 1, state.PreviewPrStateOpen, now.Add(24*time.Hour))
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 
@@ -146,9 +147,9 @@ func TestPreviewJanitor_ClosedAndExpiredRowIsTombstoned(t *testing.T) {
 	// AND soft-delete it AND emit NotifyAppDelete.
 	a, _ := seedPreviewApp(t, m, "pr-closed", "demo", 2, state.PreviewPrStateClosed, now.Add(-time.Hour))
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 
@@ -175,7 +176,7 @@ func TestPreviewJanitor_ClosedAndExpiredRowIsTombstoned(t *testing.T) {
 	// Payload must carry the kind + app_id + slug so schedd's
 	// subscriber can identify the kind without parsing schema.
 	for _, want := range []string{`"app_id":"` + a.ID + `"`, `"slug":"pr-closed"`, `"kind":"preview_teardown"`} {
-		if !contains(payload, want) {
+		if !apidserver.Contains(payload, want) {
 			t.Errorf("payload missing %q; got %s", want, payload)
 		}
 	}
@@ -193,9 +194,9 @@ func TestPreviewJanitor_StaleRowIsTombstoned(t *testing.T) {
 	// state; transition() returns next="" for stale rows).
 	a, _ := seedPreviewApp(t, m, "pr-stale", "demo", 3, state.PreviewPrStateStale, now.Add(-time.Hour))
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 
@@ -221,8 +222,8 @@ func TestPreviewJanitor_ReopenWinsBeforeTeardownClaim(t *testing.T) {
 			t.Fatalf("reopen before claim: %v", err)
 		}
 	}}
-	j := newPreviewJanitor(store, notif, nil, testLogger(), true).withClock(func() time.Time { return now })
-	if err := j.sweepOnce(ctx); err != nil {
+	j := apidserver.NewPreviewJanitor(store, notif, nil, apidserver.TestLogger(), true).WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.AppByID(ctx, app.ID)
@@ -238,16 +239,16 @@ func TestPreviewJanitor_ClaimSurvivesCleanupFailure(t *testing.T) {
 	app, _ := seedPreviewApp(t, m, "pr-claimed", "demo", 42, state.PreviewPrStateStale, now.Add(-time.Hour))
 	notif := &fakeNotifier{}
 	failed := false
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now }).
-		withResourceCleanup(func(context.Context, state.App) error {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now }).
+		WithResourceCleanup(func(context.Context, state.App) error {
 			if !failed {
 				failed = true
 				return errors.New("cleanup unavailable")
 			}
 			return nil
 		})
-	if err := j.sweepOnce(ctx); err != nil {
+	if err := j.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.AppByID(ctx, app.ID)
@@ -260,7 +261,7 @@ func TestPreviewJanitor_ClaimSurvivesCleanupFailure(t *testing.T) {
 	if _, err := m.SetPreviewPrState(ctx, app.ID, state.PreviewPrStateClosed); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("close claimed preview = %v, want not found", err)
 	}
-	if err := j.sweepOnce(ctx); err != nil {
+	if err := j.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err = m.AppByID(ctx, app.ID)
@@ -278,9 +279,9 @@ func TestPreviewJanitor_ClosedInsideGraceIsLeftAlone(t *testing.T) {
 	// in the future: the grace window keeps it alive.
 	a, _ := seedPreviewApp(t, m, "pr-grace", "demo", 4, state.PreviewPrStateClosed, now.Add(7*24*time.Hour))
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 
@@ -326,9 +327,9 @@ func TestPreviewJanitor_RecoversFromStatusDeletedCrash(t *testing.T) {
 		t.Fatalf("CreateAppIfUnderQuota: %v", err)
 	}
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 	// The recovery sweep should:
@@ -358,9 +359,9 @@ func TestPreviewJanitor_NotifyFailureDoesNotAbortSweep(t *testing.T) {
 	_, _ = seedPreviewApp(t, m, "pr-1", "demo", 1, state.PreviewPrStateClosed, now.Add(-time.Hour))
 	_, _ = seedPreviewApp(t, m, "pr-2", "demo", 2, state.PreviewPrStateClosed, now.Add(-time.Hour))
 
-	j := newPreviewJanitor(m, notif, nil, testLogger(), true).
-		withClock(func() time.Time { return now })
-	if err := j.sweepOnce(context.Background()); err != nil {
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 	// Both rows must still be tombstoned even though the

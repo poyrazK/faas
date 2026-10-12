@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardPRPreviewEnvironment_CurrentHeadAndScope(t *testing.T) {
-	h, session, store, _ := newAuthedDashboardServerFull(t)
+	h, session, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	ctx := t.Context()
 	account, err := store.AccountByEmail(ctx, "alice@example.com")
 	if err != nil {

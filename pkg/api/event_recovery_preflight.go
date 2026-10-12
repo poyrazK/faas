@@ -8,6 +8,10 @@ import (
 )
 
 type EventRecoveryPreflightItem struct {
+	WorkflowRunID        string     `json:"workflow_run_id,omitempty"`
+	ExpectedResumeCount  *int       `json:"expected_resume_count,omitempty"`
+	SavedOutcome         string     `json:"saved_outcome,omitempty"`
+	Blockers             []string   `json:"blockers,omitempty"`
 	ReceiptRetainUntil   *time.Time `json:"receipt_retain_until,omitempty"`
 	ReceiptRetentionHeld bool       `json:"receipt_retention_held,omitempty"`
 	Position             int64      `json:"position"`
@@ -16,6 +20,10 @@ type EventRecoveryPreflightItem struct {
 	CapacityScope        string     `json:"capacity_scope,omitempty"`
 }
 type EventRecoveryPreflight struct {
+	ReviewMode                          string                       `json:"review_mode,omitempty"`
+	AppID                               string                       `json:"app_id,omitempty"`
+	WorkflowName                        string                       `json:"workflow_name,omitempty"`
+	ReviewedCount                       int64                        `json:"reviewed_count,omitempty"`
 	ReceiptProtectionUntil              *time.Time                   `json:"receipt_protection_until,omitempty"`
 	ReceiptRetentionWarningCount        int64                        `json:"receipt_retention_warning_count,omitempty"`
 	ReceiptRetentionHeldCount           int64                        `json:"receipt_retention_held_count,omitempty"`
@@ -44,5 +52,11 @@ type EventRecoveryPreflight struct {
 func (c *Client) GetEventRecoveryPreflight(ctx context.Context, id string) (EventRecoveryPreflight, error) {
 	var out EventRecoveryPreflight
 	err := c.do(ctx, http.MethodGet, "/v1/event-recoveries/"+url.PathEscape(id)+"/preflight", nil, &out)
+	return out, err
+}
+
+func (c *Client) GetWorkflowRecoveryRetryPreflight(ctx context.Context, id string) (EventRecoveryPreflight, error) {
+	var out EventRecoveryPreflight
+	err := c.do(ctx, http.MethodGet, "/v1/event-recoveries/"+url.PathEscape(id)+"/preflight?retry=true", nil, &out)
 	return out, err
 }

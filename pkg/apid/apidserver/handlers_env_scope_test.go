@@ -26,7 +26,7 @@
 // honours the same InScope / ListAllAppEnv surface that pgstore
 // does, so the test shapes match the production wire exactly.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -38,6 +38,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,18 +48,18 @@ import (
 // that widens the response (e.g. adds a `scope` field on the flat
 // AppEnvResponse) trips this seam.
 func TestEnv_DefaultScope_ByteIdenticalPrePRB(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-default-scope")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-default-scope")
 
 	// PUT a key with no ?scope=.
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
 		api.PutAppEnvRequest{Value: "debug"}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// GET with no ?scope=.
-	listRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("GET list: %d %s", listRec.Code, listRec.Body.String())
 	}
@@ -90,26 +91,26 @@ func TestEnv_DefaultScope_ByteIdenticalPrePRB(t *testing.T) {
 // scopes. A refactor that drops the WHERE clause and accidentally
 // returns every row on the app trips this seam.
 func TestEnv_PerScopeFilter_StagingOnly(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-per-scope")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-per-scope")
 
 	// default: LOG_LEVEL=debug
-	if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
+	if rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL",
 		api.PutAppEnvRequest{Value: "debug"}, nil); rec.Code != 200 {
 		t.Fatalf("PUT default: %d %s", rec.Code, rec.Body.String())
 	}
 	// staging: LOG_LEVEL=info, DB_URL=postgres://staging
-	if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=staging",
+	if rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=staging",
 		api.PutAppEnvRequest{Value: "info"}, nil); rec.Code != 200 {
 		t.Fatalf("PUT staging LOG_LEVEL: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/DB_URL?scope=staging",
+	if rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/DB_URL?scope=staging",
 		api.PutAppEnvRequest{Value: "postgres://staging"}, nil); rec.Code != 200 {
 		t.Fatalf("PUT staging DB_URL: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// GET ?scope=staging → 2 rows, both staging.
-	listRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope=staging", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope=staging", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("GET staging: %d %s", listRec.Code, listRec.Body.String())
 	}
@@ -131,7 +132,7 @@ func TestEnv_PerScopeFilter_StagingOnly(t *testing.T) {
 	}
 
 	// GET default → 1 row, no staging rows leak.
-	defRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
+	defRec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env", nil, nil)
 	if defRec.Code != http.StatusOK {
 		t.Fatalf("GET default: %d %s", defRec.Code, defRec.Body.String())
 	}
@@ -151,8 +152,8 @@ func TestEnv_PerScopeFilter_StagingOnly(t *testing.T) {
 // discriminated-union branch (ADR-090 D3). ?scope=__all__ returns
 // the nested env_by_scope map; the flat env array is empty.
 func TestEnv_ScopeAllSentinel_ReturnsNestedShape(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-all-scope")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-all-scope")
 
 	// Seed three rows across two scopes.
 	seeds := []struct{ scope, key, val string }{
@@ -165,13 +166,13 @@ func TestEnv_ScopeAllSentinel_ReturnsNestedShape(t *testing.T) {
 		if s.scope != "default" {
 			path += "?scope=" + s.scope
 		}
-		if rec := e.do(t, "PUT", path, api.PutAppEnvRequest{Value: s.val}, nil); rec.Code != 200 {
+		if rec := e.Do(t, "PUT", path, api.PutAppEnvRequest{Value: s.val}, nil); rec.Code != 200 {
 			t.Fatalf("PUT %s/%s: %d %s", s.scope, s.key, rec.Code, rec.Body.String())
 		}
 	}
 
 	// GET ?scope=__all__.
-	listRec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope=__all__", nil, nil)
+	listRec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope=__all__", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("GET __all__: %d %s", listRec.Code, listRec.Body.String())
 	}
@@ -201,11 +202,11 @@ func TestEnv_ScopeAllSentinel_ReturnsNestedShape(t *testing.T) {
 // semantics of __all__: PUT/DELETE with ?scope=__all__ return
 // 400 env_scope_reserved.
 func TestEnv_ScopeAllSentinel_RejectedOnWrite(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-reserved")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-reserved")
 
 	// PUT ?scope=__all__.
-	putRec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=__all__",
+	putRec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=__all__",
 		api.PutAppEnvRequest{Value: "debug"}, nil)
 	if putRec.Code != http.StatusBadRequest {
 		t.Fatalf("PUT __all__: got %d, want 400 (env_scope_reserved); body=%s", putRec.Code, putRec.Body.String())
@@ -215,7 +216,7 @@ func TestEnv_ScopeAllSentinel_RejectedOnWrite(t *testing.T) {
 	}
 
 	// DELETE ?scope=__all__.
-	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=__all__", nil, nil)
+	delRec := e.Do(t, "DELETE", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=__all__", nil, nil)
 	if delRec.Code != http.StatusBadRequest {
 		t.Fatalf("DELETE __all__: got %d, want 400; body=%s", delRec.Code, delRec.Body.String())
 	}
@@ -224,7 +225,7 @@ func TestEnv_ScopeAllSentinel_RejectedOnWrite(t *testing.T) {
 	}
 
 	// No row landed.
-	rows, err := e.store.ListAllAppEnv(context.Background(), e.acct.ID, app.ID)
+	rows, err := (*e.Store()).ListAllAppEnv(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -234,16 +235,16 @@ func TestEnv_ScopeAllSentinel_RejectedOnWrite(t *testing.T) {
 }
 
 func TestEnvCatalogScopeNamesAndAllSentinel(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := createApp(t, e, "catalog-scope-vars")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.CreateApp(t, e, "catalog-scope-vars")
 	scopes := []string{"a", "1", "qa", "12", "1a", strings.Repeat("a", 33), strings.Repeat("b", 40)}
 	for _, scope := range scopes {
-		rec := e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope="+scope, api.PutAppEnvRequest{Value: scope}, nil)
+		rec := e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope="+scope, api.PutAppEnvRequest{Value: scope}, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("catalog scope write %s: %d %s", scope, rec.Code, rec.Body.String())
 		}
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/env?scope=__all__", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/env?scope=__all__", nil, nil)
 	var response api.AppEnvListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("all scopes: %d %v", rec.Code, err)
@@ -264,8 +265,8 @@ func TestEnvCatalogScopeNamesAndAllSentinel(t *testing.T) {
 // relaxation (e.g. allowing underscores) is a deliberate change
 // to api.EnvScopePattern — this test pins the current shape.
 func TestEnv_ScopeMalformed_400(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-malformed-scope")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-malformed-scope")
 
 	cases := []struct{ name, scope string }{
 		{"empty", ""},
@@ -286,7 +287,7 @@ func TestEnv_ScopeMalformed_400(t *testing.T) {
 			// URL parser if concatenated raw.
 			enc := url.QueryEscape(tc.scope)
 			// GET: env_scope_invalid on malformed ?scope=.
-			rec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope="+enc, nil, nil)
+			rec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/env?scope="+enc, nil, nil)
 			if tc.scope == "" {
 				// Empty scope is the omitted-scope arm and
 				// returns 200 (the default-scope behaviour).
@@ -304,7 +305,7 @@ func TestEnv_ScopeMalformed_400(t *testing.T) {
 			}
 
 			// PUT: same gate.
-			putRec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope="+enc,
+			putRec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope="+enc,
 				api.PutAppEnvRequest{Value: "x"}, nil)
 			if putRec.Code != http.StatusBadRequest {
 				t.Errorf("PUT %q: got %d, want 400; body=%s", tc.scope, putRec.Code, putRec.Body.String())
@@ -322,21 +323,21 @@ func TestEnv_ScopeMalformed_400(t *testing.T) {
 // refactor that accidentally uses CountAppEnvInScope here would
 // let a customer bypass the cap by spreading rows across scopes.
 func TestEnv_Quota_AppliesAcrossScopes(t *testing.T) {
-	e := setup(t, api.PlanFree) // Free plan: 16 env vars per app
-	app := createApp(t, e, "env-quota-cross-scope")
+	e := apidserver.Setup(t, api.PlanFree) // Free plan: 16 env vars per app
+	app := apidserver.CreateApp(t, e, "env-quota-cross-scope")
 	freeLimit := api.MustLimitsFor(api.PlanFree).EnvVarsMax
 
 	// Fill the default scope to its cap.
 	for i := 0; i < freeLimit; i++ {
 		key := fmt.Sprintf("KEY_%d", i)
-		if rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key+"_KEY",
+		if rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/"+key+"_KEY",
 			api.PutAppEnvRequest{Value: "v"}, nil); rec.Code != 200 {
 			t.Fatalf("PUT default %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
 	// The next row in a non-default scope must 403, not 200. The
 	// quota path is per-app, not per-scope, per D6.
-	putRec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/STAGING_KEY?scope=staging",
+	putRec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/STAGING_KEY?scope=staging",
 		api.PutAppEnvRequest{Value: "v"}, nil)
 	if putRec.Code != http.StatusForbidden {
 		t.Fatalf("PUT cross-scope: got %d, want 403 plan_limit_env_vars; body=%s", putRec.Code, putRec.Body.String())
@@ -347,7 +348,7 @@ func TestEnv_Quota_AppliesAcrossScopes(t *testing.T) {
 	// Same row in the default scope would 200 (re-PUT replaces an
 	// existing row and does not count against the cap). We test
 	// the cross-scope gate by re-asserting no staging row landed.
-	rows, err := e.store.ListAppEnvInScope(context.Background(), e.acct.ID, app.ID, "staging")
+	rows, err := (*e.Store()).ListAppEnvInScope(context.Background(), (*e.Acct()).ID, app.ID, "staging")
 	if err != nil {
 		t.Fatalf("list staging: %v", err)
 	}
@@ -393,10 +394,10 @@ func TestEnv_AuditEmit_IncludesScope(t *testing.T) {
 	// (so a CLI can read it back without a GET) and that the
 	// store row carries the scope. The audit-emit capture is a
 	// follow-up if a refactor in the audit pipeline needs it.
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "env-audit-scope")
+	e := apidserver.Setup(t, api.PlanHobby)
+	app := apidserver.CreateApp(t, e, "env-audit-scope")
 
-	putRec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=staging",
+	putRec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/env/LOG_LEVEL?scope=staging",
 		api.PutAppEnvRequest{Value: "info"}, nil)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT staging: %d %s", putRec.Code, putRec.Body.String())
@@ -415,7 +416,7 @@ func TestEnv_AuditEmit_IncludesScope(t *testing.T) {
 	}
 
 	// Store row carries the scope. Cross-check via ListAppEnvInScope.
-	rows, err := e.store.ListAppEnvInScope(context.Background(), e.acct.ID, app.ID, "staging")
+	rows, err := (*e.Store()).ListAppEnvInScope(context.Background(), (*e.Acct()).ID, app.ID, "staging")
 	if err != nil {
 		t.Fatalf("list staging: %v", err)
 	}

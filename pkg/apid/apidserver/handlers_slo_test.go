@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
@@ -28,18 +29,18 @@ func accountSLOPromResponse(query, appID string) string {
 }
 
 func TestSLOEndpoints_FreePlanReturn402(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	createApp(t, e, "free-slo")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.CreateApp(t, e, "free-slo")
 	for _, path := range []string{"/v1/apps/free-slo/slo", "/v1/account/slo"} {
-		rec := e.do(t, http.MethodGet, path, nil, nil)
-		assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+		rec := e.Do(t, http.MethodGet, path, nil, nil)
+		apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
 	}
 }
 
 func TestFetchAccountSLO_UsesHistogramPopulation(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "slo-population")
-	installPromFixture(t, &e, func(query string) string {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "slo-population")
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		if strings.Contains(query, "gateway_requests_total") {
 			t.Fatalf("account SLO used a different request population: %q", query)
 		}
@@ -48,16 +49,16 @@ func TestFetchAccountSLO_UsesHistogramPopulation(t *testing.T) {
 		}
 		return accountSLOPromResponse(query, appID)
 	})
-	_, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
+	_, source := (*e.S()).FetchAccountSLO(context.Background(), (*e.Acct()), "24h")
 	if source != appmetrics.SourcePrometheus {
 		t.Fatalf("source = %q", source)
 	}
 }
 
 func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "slo-owned")
-	installPromFixture(t, &e, func(query string) string {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "slo-owned")
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		if !strings.Contains(query, appID) {
 			t.Errorf("account SLO query lacks owned app ID: %q", query)
 		}
@@ -70,7 +71,7 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 		return accountSLOPromResponse(query, appID)
 	})
 
-	got, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
+	got, source := (*e.S()).FetchAccountSLO(context.Background(), (*e.Acct()), "24h")
 	if source != appmetrics.SourcePrometheus {
 		t.Fatalf("source = %q, want %q", source, appmetrics.SourcePrometheus)
 	}
@@ -89,8 +90,8 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 }
 
 func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "slo-throttle")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "slo-throttle")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 		if strings.Contains(query, "gateway_rate_limited_total") {
@@ -102,9 +103,9 @@ func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) 
 		_, _ = fmt.Fprint(w, accountSLOPromResponse(query, appID))
 	}))
 	t.Cleanup(srv.Close)
-	e.s.WithStatusCache(srv.URL, "")
+	(*e.S()).WithStatusCache(srv.URL, "")
 
-	got, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
+	got, source := (*e.S()).FetchAccountSLO(context.Background(), (*e.Acct()), "24h")
 	if !strings.HasPrefix(source, appmetrics.SourceDegradedPrefix) {
 		t.Fatalf("source = %q, want degraded prefix", source)
 	}
@@ -124,7 +125,7 @@ func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) 
 
 func TestTelemetryDegradedReasonRedactsPrometheusURLAndQuery(t *testing.T) {
 	err := fmt.Errorf(`Get "http://127.0.0.1:9095/api/v1/query?query=app-secret": %w`, context.DeadlineExceeded)
-	_, source := degradedAccountSLO(err, nil, "error_rate", "account-id", "24h")
+	_, source := apidserver.DegradedAccountSLO(err, nil, "error_rate", "account-id", "24h")
 	if source != appmetrics.SourceDegradedPrefix+"telemetry timeout" {
 		t.Fatalf("source = %q, want stable timeout reason", source)
 	}
@@ -141,9 +142,9 @@ func TestTelemetryDegradedReasonRedactsPrometheusURLAndQuery(t *testing.T) {
 // cold-boot ratios have no denominator then and return no sample; #4181
 // guarded the metrics path but not this one.
 func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "slo-idle")
-	installPromFixture(t, &e, func(query string) string {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "slo-idle")
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		switch {
 		case strings.Contains(query, "* 100) and (("):
 			// PercentRatioQuery over an idle window: no sample.
@@ -154,11 +155,11 @@ func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
 			return `{"data":{"resultType":"vector","result":[{"metric":{},"value":[0,"0"]}]}}`
 		}
 	})
-	app, err := e.s.store.AppByID(context.Background(), appID)
+	app, err := (*(*e.S()).Store()).AppByID(context.Background(), appID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, source := e.s.fetchAppSLO(context.Background(), app, e.acct, "24h")
+	got, source := (*e.S()).FetchAppSLO(context.Background(), app, (*e.Acct()), "24h")
 	if source != appmetrics.SourcePrometheus {
 		t.Fatalf("idle app source = %q, want %q", source, appmetrics.SourcePrometheus)
 	}

@@ -450,10 +450,11 @@ type EventDeliveryListResponse struct {
 // ReplayEventFanoutFailureRequest identifies one failed recipient by the
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
-	AllowExpired   bool   `json:"allow_expired,omitempty"`
-	EventID        string `json:"event_id"`
-	EventSource    string `json:"event_source"`
-	SubscriptionID string `json:"subscription_id"`
+	RecoveryExpectation *EventRoutingRecoveryExpectation `json:"recovery_expectation,omitempty"`
+	AllowExpired        bool                             `json:"allow_expired,omitempty"`
+	EventID             string                           `json:"event_id"`
+	EventSource         string                           `json:"event_source"`
+	SubscriptionID      string                           `json:"subscription_id"`
 }
 
 // ReplayEventFanoutFailureResponse confirms that one recipient was returned
@@ -12979,4 +12980,16 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.
+type EventRoutingRecoveryExpectation struct {
+	WorkflowName     string `json:"workflow_name"`
+	PublishedVersion int64  `json:"published_version"`
+	ReplayCount      int64  `json:"replay_count"`
+	Generation       *int64 `json:"generation,omitempty"`
+}
+
+func (e EventRoutingRecoveryExpectation) Valid() bool {
+	return strings.TrimSpace(e.WorkflowName) != "" && e.PublishedVersion > 0 && e.ReplayCount >= 0 && (e.Generation == nil || *e.Generation >= 0)
 }

@@ -38,9 +38,8 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    # Cold builds of the complete API/state test sources exceeded the old
-    # fifteen-minute deadline; CI also reached 30 minutes while still running.
-    # Keep acceptance bounded without dropping tests.
+    # Cold builds of the complete API/state suite need around thirty minutes;
+    # leave room for the full tests and container cleanup.
     timeout-minutes: 45
     services:
       postgres:

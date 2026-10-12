@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,17 +7,18 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "health-app", Status: state.AppActive})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "health-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	drain, err := e.store.CreateAppLogDrain(t.Context(), state.AppLogDrain{
-		AppID: app.ID, AccountID: e.acct.ID, Kind: state.AppLogDrainKindHTTPJSON,
+	drain, err := (*e.Store()).CreateAppLogDrain(t.Context(), state.AppLogDrain{
+		AppID: app.ID, AccountID: (*e.Acct()).ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/health", Enabled: true,
 	})
 	if err != nil {
@@ -25,7 +26,7 @@ func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
 	}
 	updatedAt := time.Date(2026, 9, 11, 16, 0, 0, 0, time.UTC)
 	oldestPendingAt := updatedAt.Add(-time.Minute)
-	if err := e.store.UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
+	if err := (*e.Store()).UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
 		DrainID: drain.ID, Status: "future-status", Active: true, QueueDepth: 3,
 		QueueCapacity: 10, PendingRecords: 2, PendingBytes: 2048,
 		PendingBytesCapacity: 65536, DeadLetterTotal: 1, OldestPendingAt: oldestPendingAt,
@@ -35,7 +36,7 @@ func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
 		t.Fatalf("UpsertAppLogDrainHealth: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/health-app/log-drains/"+drain.ID+"/health", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/health-app/log-drains/"+drain.ID+"/health", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -52,49 +53,49 @@ func TestGetAppLogDrainHealthReturnsDurableSafeProjection(t *testing.T) {
 }
 
 func TestGetAppLogDrainHealthCrossAccount404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	other, err := e.store.CreateAccount(t.Context(), "other-health@example.com", api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(t.Context(), "other-health@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: other.ID, Slug: "other-health-app", Status: state.AppActive})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: other.ID, Slug: "other-health-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	drain, err := e.store.CreateAppLogDrain(t.Context(), state.AppLogDrain{
+	drain, err := (*e.Store()).CreateAppLogDrain(t.Context(), state.AppLogDrain{
 		AppID: app.ID, AccountID: other.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/other-health", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain: %v", err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/other-health-app/log-drains/"+drain.ID+"/health", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/other-health-app/log-drains/"+drain.ID+"/health", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account status = %d, body = %s; want 404", rec.Code, rec.Body.String())
 	}
 }
 
 func TestGetAppLogDrainHealthDisabledConfigWinsOverStaleSnapshot(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "disabled-health-app", Status: state.AppActive})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "disabled-health-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	drain, err := e.store.CreateAppLogDrain(t.Context(), state.AppLogDrain{
-		AppID: app.ID, AccountID: e.acct.ID, Kind: state.AppLogDrainKindHTTPJSON,
+	drain, err := (*e.Store()).CreateAppLogDrain(t.Context(), state.AppLogDrain{
+		AppID: app.ID, AccountID: (*e.Acct()).ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/disabled-health", Enabled: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain: %v", err)
 	}
-	if err := e.store.UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
+	if err := (*e.Store()).UpsertAppLogDrainHealth(t.Context(), state.AppLogDrainHealth{
 		DrainID: drain.ID, Status: api.AppLogDrainHealthStatusHealthy, Active: true,
 		UpdatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/disabled-health-app/log-drains/"+drain.ID+"/health", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/disabled-health-app/log-drains/"+drain.ID+"/health", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

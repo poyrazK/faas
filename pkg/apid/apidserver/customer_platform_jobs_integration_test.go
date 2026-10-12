@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,21 +25,21 @@ func (e starterAsyncEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway
 	return gateway.EnqueueAsyncRoute(ctx, e.Store, req)
 }
 
-func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenantIngressBackend, address string,
+func testCustomerPlatformQueuedWork(t *testing.T, e apidserver.PgHandlerEnv, backend *tenantIngressBackend, address string,
 	alice, bob api.ApplyPlatformTenantResponse, aliceKey, bobKey string) {
 	t.Helper()
 	ctx := context.Background()
-	app, err := e.store.AppBySlug(ctx, backend.slug)
+	app, err := (*e.Store()).AppBySlug(ctx, backend.slug)
 	if err != nil {
 		t.Fatal(err)
 	}
 	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).
-		WithConsumerAuth(tenantIngressConsumerStore{e.store}).
-		WithEdgeRules(starterAsyncMatcher{app.ID, e.acct.ID}, nil, nil).
-		WithAsyncRouteEnqueuer(starterAsyncEnqueuer{e.store})
+		WithConsumerAuth(tenantIngressConsumerStore{(*e.Store())}).
+		WithEdgeRules(starterAsyncMatcher{app.ID, (*e.Acct()).ID}, nil, nil).
+		WithAsyncRouteEnqueuer(starterAsyncEnqueuer{(*e.Store())})
 	token := func(tenantID string) string {
 		t.Helper()
-		response := e.do(t, "POST", "/v1/account/platform-tenants/"+tenantID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+		response := e.Do(t, "POST", "/v1/account/platform-tenants/"+tenantID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 			Name: "queued work", Scopes: []string{api.ScopePlatformTenantInvocationsRead, api.ScopePlatformTenantInvocationsManage}}, nil)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("job token: %d %s", response.Code, response.Body)
@@ -76,13 +77,13 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 	if a.ID == b.ID || enqueue(aliceKey, "same-key", "Alice queued").ID != a.ID {
 		t.Fatal("tenant idempotency boundary failed")
 	}
-	if response := e.do(t, "PATCH", "/v1/account/platform-tenants/"+alice.TenantID, map[string]string{"status": state.PlatformTenantSuspended}, nil); response.Code != http.StatusOK {
+	if response := e.Do(t, "PATCH", "/v1/account/platform-tenants/"+alice.TenantID, map[string]string{"status": state.PlatformTenantSuspended}, nil); response.Code != http.StatusOK {
 		t.Fatalf("suspend queued customer: %d %s", response.Code, response.Body)
 	}
-	if _, err := e.store.ClaimInvocationWithCap(ctx, a.ID, "", 30, 1); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).ClaimInvocationWithCap(ctx, a.ID, "", 30, 1); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("suspended worker admission: %v", err)
 	}
-	held, _ := e.store.InvocationByID(ctx, a.ID)
+	held, _ := (*e.Store()).InvocationByID(ctx, a.ID)
 	if held.Attempts != 0 || held.State != state.InvocationPending {
 		t.Fatal("suspension consumed queued work")
 	}
@@ -90,21 +91,21 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 	// as gatewayd-internal, with a warm loopback Node process replacing the VM.
 	deliver := func(id string, retryFirst bool) string {
 		t.Helper()
-		claimed, err := e.store.ClaimInvocationWithCap(ctx, id, "", 30, 1)
+		claimed, err := (*e.Store()).ClaimInvocationWithCap(ctx, id, "", 30, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tenantID := claimed.PlatformTenantID
 		if retryFirst {
-			if err := e.store.FailInvocation(ctx, id, "temporary transport failure", time.Millisecond, 3, state.WithClaimAttempt(claimed.Attempts)); err != nil {
+			if err := (*e.Store()).FailInvocation(ctx, id, "temporary transport failure", time.Millisecond, 3, state.WithClaimAttempt(claimed.Attempts)); err != nil {
 				t.Fatal(err)
 			}
-			claimed, err = e.store.ClaimInvocationWithCap(ctx, id, "", 30, 1)
+			claimed, err = (*e.Store()).ClaimInvocationWithCap(ctx, id, "", 30, 1)
 			if err != nil || claimed.Attempts != 2 || claimed.PlatformTenantID != tenantID {
 				t.Fatalf("retry identity: %+v %v", claimed, err)
 			}
 		}
-		admitted, err := state.AdmitPlatformTenantInvocation(ctx, e.store, app.ID, claimed)
+		admitted, err := state.AdmitPlatformTenantInvocation(ctx, (*e.Store()), app.ID, claimed)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +130,7 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 		if err != nil || response.StatusCode != http.StatusCreated {
 			t.Fatalf("queued guest response: %d %s %v", response.StatusCode, body, err)
 		}
-		if err := e.store.CompleteInvocation(ctx, id, body); err != nil {
+		if err := (*e.Store()).CompleteInvocation(ctx, id, body); err != nil {
 			t.Fatal(err)
 		}
 		var document struct {
@@ -141,13 +142,13 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 		return document.ID
 	}
 	bobDoc := deliver(b.ID, false)
-	if response := e.do(t, "PATCH", "/v1/account/platform-tenants/"+alice.TenantID, map[string]string{"status": state.PlatformTenantActive}, nil); response.Code != http.StatusOK {
+	if response := e.Do(t, "PATCH", "/v1/account/platform-tenants/"+alice.TenantID, map[string]string{"status": state.PlatformTenantActive}, nil); response.Code != http.StatusOK {
 		t.Fatalf("resume queued customer: %d %s", response.Code, response.Body)
 	}
 	aliceDoc := deliver(a.ID, true)
 	check := func(method, path, token string, want int) []byte {
 		t.Helper()
-		response := e.do(t, method, path, nil, map[string]string{"Authorization": "Bearer " + token, "Idempotency-Key": "replay-once"})
+		response := e.Do(t, method, path, nil, map[string]string{"Authorization": "Bearer " + token, "Idempotency-Key": "replay-once"})
 		if response.Code != want {
 			t.Fatalf("job self-service %s %s: %d %s; want %d", method, path, response.Code, response.Body, want)
 		}
@@ -167,7 +168,7 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 	}
 	check("GET", b.StatusURL, aliceToken, http.StatusNotFound)
 	// The actual starter DB cannot serve either customer's queued document to the other.
-	syncEdge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{e.store})
+	syncEdge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{(*e.Store())})
 	for _, tc := range []struct {
 		key, id string
 		want    int
@@ -181,7 +182,7 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 		}
 	}
 	failed := enqueue(aliceKey, "failure", "Replay me")
-	if err := e.store.FailInvocation(ctx, failed.ID, "failed delivery", 0, 0); err != nil {
+	if err := (*e.Store()).FailInvocation(ctx, failed.ID, "failed delivery", 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	var replay api.AsyncInvokeResponse
@@ -196,7 +197,7 @@ func testCustomerPlatformQueuedWork(t *testing.T, e pgHandlerEnv, backend *tenan
 	deliver(replay.ID, false)
 	cancelled := enqueue(aliceKey, "cancel", "Do not execute")
 	check("POST", cancelled.StatusURL+"/cancel", aliceToken, http.StatusOK)
-	if _, err := e.store.ClaimInvocationWithCap(ctx, cancelled.ID, "", 30, 1); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).ClaimInvocationWithCap(ctx, cancelled.ID, "", 30, 1); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cancelled job claimed: %v", err)
 	}
 }

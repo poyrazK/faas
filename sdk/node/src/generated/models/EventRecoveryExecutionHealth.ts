@@ -4,11 +4,13 @@
 /* eslint-disable */
 import type { EventRecoveryExecutionJobHealth } from './EventRecoveryExecutionJobHealth.js';
 /**
- * Oldest retained terminal admission jobs still missing exact saved execution results. Counts overlap and are lower bounds when counts_complete is false. Reads do not capture results or notifications.
+ * Oldest retained admission jobs including active native recovery jobs still missing exact saved execution results. Counts overlap and are lower bounds when counts_complete is false. Reads do not capture results or notifications.
  */
 export type EventRecoveryExecutionHealth = {
   coverage: 'bounded_retained_execution_jobs';
   observed_jobs: number;
+  stalled_jobs?: number;
+  deadline_exceeded_jobs?: number;
   waiting_jobs: number;
   prolonged_wait_jobs: number;
   unknown_jobs: number;

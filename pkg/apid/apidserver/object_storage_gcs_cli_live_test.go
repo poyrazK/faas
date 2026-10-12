@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -54,15 +55,17 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prevR, prevI, prevH := setSecretRecipient, mfaIdentities, hostHMACKey
-	setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
+	prevR, prevI, prevH := (*apidserver.SetSecretRecipient), (*apidserver.MfaIdentities), (*apidserver.HostHMACKey)
+	(*apidserver.SetSecretRecipient) = func() *age.X25519Recipient { return ident.Recipient() }
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
 	hmac := make([]byte, 32)
 	if _, err = rand.Read(hmac); err != nil {
 		t.Fatal(err)
 	}
-	hostHMACKey = func() []byte { return hmac }
-	t.Cleanup(func() { setSecretRecipient, mfaIdentities, hostHMACKey = prevR, prevI, prevH })
+	(*apidserver.HostHMACKey) = func() []byte { return hmac }
+	t.Cleanup(func() {
+		(*apidserver.SetSecretRecipient), (*apidserver.MfaIdentities), (*apidserver.HostHMACKey) = prevR, prevI, prevH
+	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	st := state.NewMemStore()
@@ -77,7 +80,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	if _, err = st.CreateAPIKey(ctx, acct.ID, hash, "local-qualification", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", nil)
+	srv := apidserver.NewServer(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", nil)
 	var gateway http.Handler
 	var recoveryFaults objectCLIRecoveryFaults
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { recoveryFaults.gateway(w, r, gateway) }))
@@ -104,7 +107,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.WithObjectStorage(registry)
-	if err = srv.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err = (*srv.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	backend, err := registry.Default(cfg.DefaultRegion)
@@ -126,7 +129,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 	// GCS connection still uses verified TLS. No host trust store is changed.
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured := httptest.NewRecorder()
-		srv.handler().ServeHTTP(captured, r)
+		srv.Handler().ServeHTTP(captured, r)
 		if recoveryFaults.control(w, r, captured.Code) {
 			return
 		}
@@ -160,7 +163,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		if e = st.ClaimObjectInventory(ctx, b.ID, "initial"); e != nil {
 			t.Fatal(e)
 		}
-		if e = srv.object.ScanObjectInventory(ctx, st, b, "initial"); e != nil {
+		if e = (*srv.Object()).ScanObjectInventory(ctx, st, b, "initial"); e != nil {
 			t.Fatal("real initial GCS inventory failed", e)
 		}
 	}
@@ -174,19 +177,19 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	propagated := time.Now().UTC().Add(-4 * time.Minute)
 	st.SetClockForTest(func() time.Time { return propagated })
-	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
+	if err := (*srv.Object()).ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	st.SetClockForTest(time.Now)
-	if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+	if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +239,7 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		job := run(t, "bucket", "reconcile", "start", app.Slug, b.ID)
 		var id string
 		_ = json.Unmarshal(job["id"], &id)
-		if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectCapacity(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		status := run(t, "bucket", "reconcile", "status", app.Slug, b.ID, id)
@@ -248,11 +251,11 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		run(t, "bucket", "versioning", "status", app.Slug, b.ID)
 		run(t, "bucket", "encryption", "status", app.Slug, b.ID)
 		run(t, "bucket", "encryption", "AES256", app.Slug, b.ID)
-		if err := srv.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		run(t, "bucket", "encryption", "clear", app.Slug, b.ID)
-		if err := srv.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		credential, err := client.CreateObjectS3Credential(ctx, app.Slug, b.ID, api.CreateObjectS3CredentialRequest{Label: "copy-grant", Permission: "read_write"})
@@ -465,19 +468,19 @@ func TestGCSLiveCLIQualification(t *testing.T) {
 		st.SetClockForTest(func() time.Time { return past })
 		defer st.SetClockForTest(time.Now)
 		run(t, "bucket", "versioning", "enable", app.Slug, b.ID)
-		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		propagated := time.Now().UTC().Add(-4 * time.Minute)
 		st.SetClockForTest(func() time.Time { return propagated })
-		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := srv.object.ReconcileObjectCapacity(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectCapacity(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		st.SetClockForTest(time.Now)
-		if err := srv.object.ReconcileObjectBucketVersioning(ctx, nil); err != nil {
+		if err := (*srv.Object()).ReconcileObjectBucketVersioning(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		// Real GCS requires propagation before replacing a versioned object.

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,8 +38,8 @@ func browserFormServer(t *testing.T) (http.Handler, string, string) {
 	if err := store.SetAccountPassword(context.Background(), acct.ID, phc); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	return srv.handler(), email, password
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	return srv.Handler(), email, password
 }
 
 func browserPost(h http.Handler, path string, form url.Values, accept string) *httptest.ResponseRecorder {
@@ -63,7 +64,7 @@ func TestBrowserLoginRedirectsToSanitizedNext(t *testing.T) {
 		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != tc.want {
 			t.Fatalf("next %q: status %d location %q, want 303 %q", tc.next, rec.Code, rec.Header().Get("Location"), tc.want)
 		}
-		if !strings.Contains(rec.Header().Get("Set-Cookie"), sessionCookie+"=") {
+		if !strings.Contains(rec.Header().Get("Set-Cookie"), apidserver.SessionCookie+"=") {
 			t.Fatalf("next %q: no session cookie forwarded", tc.next)
 		}
 	}

@@ -1,5 +1,5 @@
 // adr: 712
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -19,13 +19,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type entityHTTPEnv struct {
 	h     http.Handler
-	s     *server
+	s     *apidserver.Server
 	store *state.MemStore
 	key   string
 	acct  state.Account
@@ -45,8 +46,8 @@ func entityAPISetup(t *testing.T) entityHTTPEnv {
 	if _, err := store.CreateAPIKey(t.Context(), acct.ID, hash, "entity-test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	s := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	return entityHTTPEnv{h: s.handler(), s: s, store: store, key: key, acct: acct}
+	s := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	return entityHTTPEnv{h: s.Handler(), s: s, store: store, key: key, acct: acct}
 }
 
 func (e entityHTTPEnv) do(t *testing.T, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -232,7 +233,7 @@ func entityAPIFixture(t *testing.T, project bool) (entityHTTPEnv, state.App, *en
 		t.Fatal(err)
 	}
 	dispatch := &entityDispatchFixture{MemStore: e.store, t: t, guest: http.HandlerFunc(entityCounterGuest)}
-	e.s.store, e.s.durable.Engine, e.s.durable.Owner, e.s.durable.Apps = dispatch, engine, uuid.NewString(), map[string]bool{app.ID: true}
+	(*e.s.Store()), (*e.s.Durable()).Engine, (*e.s.Durable()).Owner, (*e.s.Durable()).Apps = dispatch, engine, uuid.NewString(), map[string]bool{app.ID: true}
 	return e, app, dispatch, bucket
 }
 
@@ -273,9 +274,10 @@ func TestDurableEntityAPIConcurrentCallsAndRestartReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine, e.s.durable.Owner = restarted, uuid.NewString()
+	(*e.s.Durable()).Engine, (*e.s.Durable()).Owner = restarted, uuid.NewString()
+	(*
 	// Make deployment selection fail: receipts must replay before selecting code.
-	e.s.store = &entityNoExecutionStore{MemStore: e.store}
+	e.s.Store()) = &entityNoExecutionStore{MemStore: e.store}
 	replayed := entityAPIResult(t, e.do(t, http.MethodPost, path, entityRequest("first"), nil))
 	if string(replayed.Value) != string(first.Value) || replayed.Version != first.Version || !replayed.Replayed || dispatch.calls.Load() != calls+1 {
 		t.Fatalf("restart replay = %+v, handler calls = %d", replayed, dispatch.calls.Load())
@@ -434,7 +436,7 @@ func TestDurableEntityPreviewDisabledAndConfigValidation(t *testing.T) {
 	if res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("disabled = %d", res.Code)
 	}
-	if err := e.s.configureDurableEntities(t.Context(), func(string) string { return "" }); err != nil {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
 }

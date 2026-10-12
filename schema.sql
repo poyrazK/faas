@@ -4831,6 +4831,39 @@ END $$;
 
 
 --
+-- Name: capture_event_recovery_workflow_result(uuid, uuid, text, integer, text, timestamp with time zone, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_workflow_result(p_run uuid, p_app uuid, p_name text, p_count integer, p_status text, p_updated timestamp with time zone, p_finished timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz := clock_timestamp();
+BEGIN
+ IF p_updated>observed THEN RETURN; END IF;
+ INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+ SELECT item.job_id,item.position,p_run,resume.resume_number,resume.created_at,
+ CASE WHEN p_count>resume.resume_number THEN 'superseded'
+ WHEN p_status='succeeded' THEN 'succeeded'
+ WHEN p_cancelled THEN 'cancelled' ELSE 'failed' END,
+ CASE WHEN p_count>resume.resume_number THEN NULL ELSE p_finished END,observed
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ JOIN apps app ON app.id=job.app_id AND app.account_id=job.account_id
+ JOIN workflow_run_resumes resume ON resume.run_id=p_run AND resume.account_id=job.account_id
+  AND resume.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+  AND resume.created_at>=job.created_at AND resume.created_at<=observed
+ WHERE item.state='queued' AND job.selection->>'mode'='workflow' AND job.app_id=p_app
+  AND job.selection->'workflow_runs'->>'name'=p_name
+  AND (item.expected_progress->>'run_id')::uuid=p_run
+  AND p_count>=resume.resume_number AND p_updated>=resume.created_at
+  AND (p_count>resume.resume_number OR p_status IN ('succeeded','failed','dead'))
+  AND (p_count>resume.resume_number OR p_finished IS NULL OR p_finished BETWEEN resume.created_at AND observed)
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4977,6 +5010,30 @@ BEGIN
   PERFORM bump_binding_promotion_revision(target);
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
+
+
+--
+-- Name: capture_workflow_recovery_failure(uuid, uuid, text, text, integer, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_workflow_recovery_failure(p_app uuid, p_run uuid, p_workflow text, p_status text, p_count integer, p_completed timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz:=clock_timestamp(); retained integer; age_seconds bigint; inserted uuid;
+BEGIN
+ IF p_status NOT IN ('failed','dead') OR p_cancelled OR p_completed>observed THEN RETURN; END IF;
+ IF NOT EXISTS(SELECT 1 FROM apps WHERE id=p_app AND status<>'deleted') THEN RETURN; END IF;
+ -- Serialize retention and first-observation capture for this app only.
+ PERFORM pg_advisory_xact_lock(hashtextextended('workflow-failure-evidence:'||p_app::text,0));
+ SELECT max_entries,retention_seconds INTO retained,age_seconds FROM workflow_recovery_failure_capture WHERE singleton;
+ INSERT INTO workflow_recovery_failure_evidence(id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at)
+ VALUES(gen_random_uuid(),p_app,p_run,p_workflow,p_count,p_status,observed,p_completed)
+ ON CONFLICT(app_id,run_id,resume_count) DO NOTHING RETURNING id INTO inserted;
+ IF inserted IS NULL THEN RETURN; END IF;
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND observed_at<=observed-make_interval(secs=>age_seconds::double precision);
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND sequence < (
+ SELECT sequence FROM workflow_recovery_failure_evidence WHERE app_id=p_app ORDER BY sequence DESC OFFSET retained-1 LIMIT 1);
 END $$;
 
 
@@ -16147,6 +16204,27 @@ END $$;
 
 
 --
+-- Name: record_event_recovery_workflow_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_workflow_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP IN ('DELETE','UPDATE') THEN
+  PERFORM capture_event_recovery_workflow_result(OLD.id,OLD.app_id,OLD.workflow_name,OLD.resume_count,
+   OLD.status,OLD.updated_at,OLD.finished_at,OLD.cancelled_at IS NOT NULL OR coalesce(OLD.last_error='cancelled by operator',false));
+ END IF;
+ IF TG_OP<>'DELETE' THEN
+  PERFORM capture_event_recovery_workflow_result(NEW.id,NEW.app_id,NEW.workflow_name,NEW.resume_count,
+   NEW.status,NEW.updated_at,NEW.finished_at,NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+  RETURN NEW;
+ END IF;
+ RETURN OLD;
+END $$;
+
+
+--
 -- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16332,6 +16410,23 @@ BEGIN
  ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
+END $$;
+
+
+--
+-- Name: record_workflow_recovery_failure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_workflow_recovery_failure() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.status IN ('failed','dead','succeeded') AND OLD.resume_count=NEW.resume_count THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM capture_workflow_recovery_failure(NEW.app_id,NEW.id,NEW.workflow_name,NEW.status,NEW.resume_count,NEW.finished_at,
+ NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+ RETURN NEW;
 END $$;
 
 
@@ -19879,7 +19974,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'outbound.ai_budget.threshold'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -23864,14 +23959,18 @@ CREATE TABLE public.event_recovery_history (
     state text NOT NULL,
     previous_rate integer NOT NULL,
     rate integer NOT NULL,
-    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text]))),
+    target_position bigint,
+    target_run_id uuid,
+    target_resume_count integer,
+    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text, 'workflow_cancelled'::text]))),
     CONSTRAINT event_recovery_history_actor_id_check CHECK (((length(actor_id) > 0) AND (octet_length(actor_id) <= 256))),
     CONSTRAINT event_recovery_history_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'internal'::text, 'system'::text]))),
     CONSTRAINT event_recovery_history_previous_rate_check CHECK (((previous_rate >= 0) AND (previous_rate <= 100))),
     CONSTRAINT event_recovery_history_previous_state_check CHECK ((previous_state = ANY (ARRAY[''::text, 'running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
     CONSTRAINT event_recovery_history_rate_check CHECK (((rate >= 1) AND (rate <= 100))),
     CONSTRAINT event_recovery_history_reason_check CHECK ((octet_length(reason) <= 512)),
-    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text])))
+    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT event_recovery_history_target_check CHECK ((((action = 'workflow_cancelled'::text) AND ((target_position >= 1) AND (target_position <= 25)) AND (target_run_id IS NOT NULL) AND ((target_resume_count >= 1) AND (target_resume_count <= 16)) AND (target_position IS NOT NULL) AND (target_resume_count IS NOT NULL)) OR ((action <> 'workflow_cancelled'::text) AND (target_position IS NULL) AND (target_run_id IS NULL) AND (target_resume_count IS NULL))))
 );
 
 
@@ -23901,7 +24000,7 @@ ALTER SEQUENCE public.event_recovery_history_id_seq OWNED BY public.event_recove
 CREATE TABLE public.event_recovery_items (
     job_id uuid NOT NULL,
     "position" bigint NOT NULL,
-    outbox_id bigint NOT NULL,
+    outbox_id bigint,
     subscription_id text NOT NULL,
     event_source text NOT NULL,
     event_id text NOT NULL,
@@ -23920,7 +24019,7 @@ CREATE TABLE public.event_recovery_items (
     CONSTRAINT event_recovery_items_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'changed'::text, 'receipt_expired'::text, 'target_unavailable'::text, 'cancelled'::text, 'expired'::text]))),
     CONSTRAINT event_recovery_items_replay_identity_chk CHECK ((((replay_invocation_id IS NULL) AND (replay_generation IS NULL) AND (replay_created_at IS NULL)) OR ((replay_invocation_id IS NOT NULL) AND (replay_generation IS NOT NULL) AND (replay_generation >= 0) AND (replay_created_at IS NOT NULL) AND (state = 'queued'::text)))),
     CONSTRAINT event_recovery_items_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'queued'::text, 'skipped'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_items_subscription_id_check CHECK ((subscription_id <> ''::text))
+    CONSTRAINT event_recovery_items_target_check CHECK ((((outbox_id IS NOT NULL) AND (subscription_id <> ''::text) AND (NOT (expected_progress ? 'run_id'::text))) OR ((outbox_id IS NULL) AND (subscription_id = ''::text) AND (event_source = ''::text) AND (event_id = ''::text) AND (event_type = ''::text) AND (COALESCE((expected_progress ->> 'run_id'::text), ''::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND (COALESCE(jsonb_typeof((expected_progress -> 'expected_resume_count'::text)), ''::text) = 'number'::text) AND ((((expected_progress ->> 'expected_resume_count'::text))::integer >= 0) AND (((expected_progress ->> 'expected_resume_count'::text))::integer <= 16)))))
 );
 
 
@@ -23954,14 +24053,15 @@ CREATE TABLE public.event_recovery_jobs (
     request_id uuid,
     notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    execution_attention_next_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
-    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text) AND (((COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'workflow'::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_runs'::text)), ''::text) = 'object'::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'routing'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_routing'::text)), ''::text) = 'object'::text)))))),
     CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
     CONSTRAINT event_recovery_jobs_completion_chk CHECK (((state = ANY (ARRAY['running'::text, 'paused'::text])) = (completed_at IS NULL))),
     CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text]) = '{}'::jsonb))),
+    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'event_recovery.execution_attention'::text]) = '{}'::jsonb))),
     CONSTRAINT event_recovery_jobs_pause_chk CHECK (((state = 'paused'::text) = (paused_at IS NOT NULL))),
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
@@ -23969,6 +24069,28 @@ CREATE TABLE public.event_recovery_jobs (
     CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
     CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
     CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
+);
+
+
+--
+-- Name: event_recovery_workflow_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_workflow_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    run_id uuid NOT NULL,
+    resume_number integer NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_recovery_workflow_results_check CHECK ((recorded_at >= admitted_at)),
+    CONSTRAINT event_recovery_workflow_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= admitted_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_workflow_results_check2 CHECK (((state <> 'superseded'::text) OR (completed_at IS NULL))),
+    CONSTRAINT event_recovery_workflow_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_workflow_results_resume_number_check CHECK ((resume_number > 0)),
+    CONSTRAINT event_recovery_workflow_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -33481,6 +33603,265 @@ CREATE TABLE public.workflow_operation_effects (
 
 
 --
+-- Name: workflow_recovery_action_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_action_receipts (
+    job_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    response jsonb NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    CONSTRAINT workflow_recovery_action_receipts_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT workflow_recovery_action_receipts_response_check CHECK ((jsonb_typeof(response) = 'object'::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_capture; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_capture (
+    singleton boolean NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    max_entries integer NOT NULL,
+    retention_seconds bigint NOT NULL,
+    CONSTRAINT workflow_recovery_failure_capture_max_entries_check CHECK ((max_entries > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_retention_seconds_check CHECK ((retention_seconds > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_singleton_check CHECK (singleton),
+    CONSTRAINT workflow_recovery_failure_capture_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_evidence (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    workflow text NOT NULL,
+    resume_count integer NOT NULL,
+    failure_status text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    eligibility_observed_at timestamp with time zone,
+    eligibility jsonb,
+    CONSTRAINT workflow_failure_eligibility_shape CHECK ((((eligibility IS NULL) AND (eligibility_observed_at IS NULL)) OR ((eligibility IS NOT NULL) AND (eligibility_observed_at IS NOT NULL) AND (jsonb_typeof(eligibility) = 'object'::text) AND (jsonb_typeof((eligibility -> 'blockers'::text)) = 'array'::text) AND (eligibility ? 'reason'::text) AND (eligibility ? 'observed_at'::text) AND ((eligibility ->> 'reason'::text) = ANY (ARRAY['eligible'::text, 'capacity'::text, 'resume_ineligible'::text, 'resume_limit_reached'::text, 'run_not_retained'::text, 'changed'::text, 'parent_not_retained'::text, 'inspection_error'::text])) AND (((eligibility ->> 'observed_at'::text))::timestamp with time zone = eligibility_observed_at)))),
+    CONSTRAINT workflow_recovery_failure_evidence_check CHECK (((completed_at IS NULL) OR (completed_at <= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_check1 CHECK ((isfinite(eligibility_observed_at) AND (eligibility_observed_at >= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_completed_at_check CHECK (((completed_at IS NULL) OR isfinite(completed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_failure_status_check CHECK ((failure_status = ANY (ARRAY['failed'::text, 'dead'::text]))),
+    CONSTRAINT workflow_recovery_failure_evidence_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT workflow_recovery_failure_evidence_resume_count_check CHECK ((resume_count >= 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_workflow_check CHECK ((workflow <> ''::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_failure_evidence ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_failure_evidence_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_health_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_health_incidents (
+    app_id uuid NOT NULL,
+    incident jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_health_incidents_incident_check CHECK (((jsonb_typeof(incident) = 'object'::text) AND ((jsonb_typeof((incident -> 'episode_id'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'opened_at'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'candidate_since'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'observed_at'::text)) = 'string'::text) IS TRUE) AND (((incident ->> 'status'::text) = ANY (ARRAY['healthy'::text, 'inactive'::text, 'paused'::text, 'blocked'::text, 'stalled'::text, 'unknown'::text])) IS TRUE) AND ((jsonb_typeof((incident -> 'reason'::text)) = 'string'::text) IS TRUE) AND ((NOT (incident ? 'closed_at'::text)) OR (jsonb_typeof((incident -> 'closed_at'::text)) = 'string'::text)) AND ((NOT (incident ? 'alert_notification'::text)) OR ((jsonb_typeof((incident -> 'alert_notification'::text)) = 'object'::text) AND ((((incident -> 'alert_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE))) AND ((NOT (incident ? 'recovery_notification'::text)) OR ((incident ? 'closed_at'::text) AND (incident ? 'alert_notification'::text) AND (jsonb_typeof((incident -> 'recovery_notification'::text)) = 'object'::text) AND ((((incident -> 'recovery_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE)))))
+);
+
+
+--
+-- Name: workflow_recovery_history_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_history_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_history_candidate_evidence_check CHECK (((((entry ->> 'kind'::text) <> 'candidates_observed'::text) OR ((jsonb_typeof((entry -> 'candidate_evidence'::text)) = 'object'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'decisions'::text)) = 'array'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'policy'::text)) = 'object'::text) AND (((entry -> 'candidate_evidence'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'candidate_evidence'::text) ->> 'review_id'::text) = (entry ->> 'review_id'::text)) AND (((entry -> 'candidate_evidence'::text) ->> 'job_id'::text) = (entry ->> 'job_id'::text)) AND (((entry -> 'candidate_evidence'::text) -> 'policy_version'::text) = (entry -> 'policy_version'::text)) AND ((((entry -> 'candidate_evidence'::text) ->> 'observed_at'::text))::timestamp with time zone = occurred_at) AND (NOT ((entry -> 'candidate_evidence'::text) ? 'plan'::text)))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_check CHECK ((((jsonb_typeof(entry) = 'object'::text) AND ((entry -> 'durable'::text) = 'true'::jsonb) AND ((entry ->> 'id'::text) = ('audit:'::text || (id)::text)) AND ((entry ->> 'kind'::text) = ANY (ARRAY['candidates_observed'::text, 'policy_changed'::text, 'policy_paused'::text, 'retry_transition'::text, 'health_opened'::text, 'health_changed'::text, 'health_closed'::text, 'health_alert_captured'::text, 'health_recovered_captured'::text])) AND (jsonb_typeof((entry -> 'reason'::text)) = 'string'::text) AND (jsonb_typeof((entry -> 'outcome'::text)) = 'string'::text) AND (((entry ->> 'policy_version'::text))::bigint > 0) AND (((entry ->> 'occurred_at'::text))::timestamp with time zone = occurred_at) AND (((entry ->> 'kind'::text) <> 'policy_changed'::text) OR (jsonb_typeof((entry -> 'policy'::text)) = 'object'::text))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT workflow_recovery_history_events_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT workflow_recovery_history_events_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: workflow_recovery_history_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_history_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_history_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policies (
+    app_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    policy jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    next_evaluate_at timestamp with time zone NOT NULL,
+    last_evaluated_at timestamp with time zone,
+    job_cursor uuid,
+    status text NOT NULL,
+    next_execute_at timestamp with time zone DEFAULT now() NOT NULL,
+    automatic_failures integer DEFAULT 0 NOT NULL,
+    automatic_paused_at timestamp with time zone,
+    automatic_pause_reason text DEFAULT ''::text NOT NULL,
+    next_health_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_recovery_policies_automatic_failures_check CHECK ((automatic_failures >= 0)),
+    CONSTRAINT workflow_recovery_policies_next_health_at_check CHECK (isfinite(next_health_at)),
+    CONSTRAINT workflow_recovery_policies_policy_check CHECK (((jsonb_typeof(policy) = 'object'::text) AND ((policy ->> 'mode'::text) = ANY (ARRAY['preview'::text, 'automatic_retry'::text])))),
+    CONSTRAINT workflow_recovery_policies_status_check CHECK ((status = ANY (ARRAY['disabled'::text, 'monitoring'::text, 'review_limit'::text, 'paused'::text]))),
+    CONSTRAINT workflow_recovery_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: workflow_recovery_policy_controls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_controls (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    operation text NOT NULL,
+    reason text NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    controlled_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_controls_actor_id_check CHECK ((length(actor_id) > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'system'::text, 'internal'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_operation_check CHECK ((operation = ANY (ARRAY['pause'::text, 'resume'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
+);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_execution_charges (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    applied_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: workflow_recovery_policy_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_executions (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    "position" bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    child_job_id uuid,
+    applied_at timestamp with time zone,
+    result jsonb,
+    suppression jsonb,
+    blocked_notification jsonb,
+    next_blocked_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_evaluation jsonb,
+    CONSTRAINT workflow_recovery_policy_executions_blocked_notification_check CHECK (((blocked_notification IS NULL) OR ((jsonb_typeof(blocked_notification) = 'object'::text) AND ((blocked_notification ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text]))))),
+    CONSTRAINT workflow_recovery_policy_executions_check CHECK (((status = 'applied'::text) = ((child_job_id IS NOT NULL) AND (applied_at IS NOT NULL)))),
+    CONSTRAINT workflow_recovery_policy_executions_check1 CHECK (((result IS NULL) OR (status = 'applied'::text))),
+    CONSTRAINT workflow_recovery_policy_executions_check2 CHECK (((suppression IS NULL) OR ((jsonb_typeof(suppression) = 'object'::text) AND (status = 'suppressed'::text) AND (reason = 'operator_suppressed'::text)))),
+    CONSTRAINT workflow_recovery_policy_executions_last_evaluation_check CHECK (((last_evaluation IS NULL) OR ((jsonb_typeof(last_evaluation) = 'object'::text) AND ((jsonb_typeof((last_evaluation -> 'evaluated_at'::text)) = 'string'::text) IS TRUE) AND (((last_evaluation ->> 'reason'::text) = ANY (ARRAY['hourly_budget'::text, 'cooldown'::text, 'execution_quota'::text, 'evidence_unknown'::text, 'outstanding_retry'::text, 'admission_wait'::text, 'execution_wait'::text, 'retry_running'::text, 'inspection_error'::text, 'child_created'::text, 'result_recorded'::text, 'suppressed'::text])) IS TRUE) AND ((NOT (last_evaluation ? 'waiting_since'::text)) OR (jsonb_typeof((last_evaluation -> 'waiting_since'::text)) = 'string'::text)) AND (((last_evaluation ->> 'reason'::text) <> ALL (ARRAY['child_created'::text, 'result_recorded'::text, 'suppressed'::text])) OR (NOT (last_evaluation ? 'waiting_since'::text)))))),
+    CONSTRAINT workflow_recovery_policy_executions_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_position_check CHECK (("position" > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_result_check CHECK (((result IS NULL) OR ((jsonb_typeof(result) = 'object'::text) AND (((result -> 'complete'::text) = 'true'::jsonb) IS TRUE)))),
+    CONSTRAINT workflow_recovery_policy_executions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'suppressed'::text])))
+);
+
+
+--
+-- Name: workflow_recovery_policy_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_reviews (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    review jsonb NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    review_decision jsonb,
+    CONSTRAINT workflow_recovery_policy_reviews_review_check CHECK ((jsonb_typeof(review) = 'object'::text)),
+    CONSTRAINT workflow_recovery_policy_reviews_review_decision_check CHECK (((review_decision IS NULL) OR ((jsonb_typeof(review_decision) = 'object'::text) AND ((review_decision ->> 'decision'::text) = ANY (ARRAY['approved'::text, 'dismissed'::text])) AND (review_decision ?& ARRAY['reason'::text, 'decided_at'::text, 'actor_kind'::text, 'actor_id'::text]))))
+);
+
+
+--
+-- Name: workflow_recovery_policy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_targets (
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    action text NOT NULL,
+    prepared_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_targets_action_check CHECK ((action = ANY (ARRAY['cancel'::text, 'retry'::text]))),
+    CONSTRAINT workflow_recovery_policy_targets_resume_count_check CHECK (((resume_count >= 1) AND (resume_count <= 16)))
+);
+
+
+--
+-- Name: workflow_recovery_review_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_review_notifications (
+    review_id uuid NOT NULL,
+    next_at timestamp with time zone DEFAULT now() NOT NULL,
+    receipt jsonb,
+    next_completion_at timestamp with time zone DEFAULT now() NOT NULL,
+    completion jsonb,
+    CONSTRAINT workflow_recovery_review_notifications_completion_check CHECK (((completion IS NULL) OR ((jsonb_typeof(completion) = 'object'::text) AND ((completion ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) AND (completion ?& ARRAY['event_id'::text, 'status'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'result'::text]) AND (jsonb_typeof((completion -> 'result'::text)) = 'object'::text) AND ((((completion -> 'result'::text) ->> 'complete'::text) = 'true'::text) IS TRUE)))),
+    CONSTRAINT workflow_recovery_review_notifications_receipt_check CHECK (((receipt IS NULL) OR ((jsonb_typeof(receipt) = 'object'::text) AND ((receipt ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text, 'suppressed'::text])) AND (receipt ?& ARRAY['event_id'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'reason'::text]))))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36405,6 +36786,14 @@ ALTER TABLE ONLY public.event_recovery_items
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_pkey PRIMARY KEY (job_id, "position");
 
 
 --
@@ -40632,6 +41021,134 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 
 --
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_pkey PRIMARY KEY (job_id, request_id);
+
+
+--
+-- Name: workflow_recovery_failure_capture workflow_recovery_failure_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_capture
+    ADD CONSTRAINT workflow_recovery_failure_capture_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_eviden_app_id_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_eviden_app_id_run_id_resume_count_key UNIQUE (app_id, run_id, resume_count);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key UNIQUE (app_id, job_id, fingerprint);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_pkey PRIMARY KEY (app_id, run_id, resume_count, action);
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_pkey PRIMARY KEY (review_id);
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43162,6 +43679,13 @@ CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_re
 
 
 --
+-- Name: event_recovery_execution_attention_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_execution_attention_pending_idx ON public.event_recovery_jobs USING btree (execution_attention_next_at, id) WHERE (((selection ->> 'mode'::text) = 'workflow'::text) AND (execution_finished_at IS NULL) AND (NOT (notification_receipts ? 'event_recovery.execution_attention'::text)));
+
+
+--
 -- Name: event_recovery_execution_notification_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -43194,6 +43718,20 @@ CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USI
 --
 
 CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_workflow_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_workflow_identity_idx ON public.event_recovery_items USING btree ((((expected_progress ->> 'run_id'::text))::uuid)) WHERE ((state = 'queued'::text) AND (expected_progress ? 'run_id'::text));
+
+
+--
+-- Name: event_recovery_items_workflow_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_items_workflow_run_key ON public.event_recovery_items USING btree (job_id, ((expected_progress ->> 'run_id'::text))) WHERE (outbox_id IS NULL);
 
 
 --
@@ -47173,10 +47711,143 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 
 
 --
+-- Name: workflow_failure_eligibility_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_failure_eligibility_queue_idx ON public.workflow_recovery_failure_evidence USING btree (eligibility_observed_at NULLS FIRST, observed_at, id);
+
+
+--
 -- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_sequence ON public.workflow_recovery_failure_evidence USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_time ON public.workflow_recovery_failure_evidence USING btree (app_id, observed_at, id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_observed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_observed ON public.workflow_recovery_failure_evidence USING btree (observed_at, id);
+
+
+--
+-- Name: workflow_recovery_history_events_app_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_recorded ON public.workflow_recovery_history_events USING btree (app_id, recorded_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_sequence ON public.workflow_recovery_history_events USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_time ON public.workflow_recovery_history_events USING btree (app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_recorded ON public.workflow_recovery_history_events USING btree (recorded_at, id);
+
+
+--
+-- Name: workflow_recovery_policies_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_due ON public.workflow_recovery_policies USING btree (next_evaluate_at, app_id) WHERE enabled;
+
+
+--
+-- Name: workflow_recovery_policies_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_health_idx ON public.workflow_recovery_policies USING btree (next_health_at, app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_controls_app_idx ON public.workflow_recovery_policy_controls USING btree (app_id, controlled_at);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_execution_charges_budget ON public.workflow_recovery_policy_execution_charges USING btree (app_id, applied_at);
+
+
+--
+-- Name: workflow_recovery_policy_executions_applied; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_applied ON public.workflow_recovery_policy_executions USING btree (app_id, applied_at) WHERE (status = 'applied'::text);
+
+
+--
+-- Name: workflow_recovery_policy_executions_blocked_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_blocked_idx ON public.workflow_recovery_policy_executions USING btree (next_blocked_at, app_id, action_id) WHERE (blocked_notification IS NULL);
+
+
+--
+-- Name: workflow_recovery_policy_executions_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_pending ON public.workflow_recovery_policy_executions USING btree (app_id, policy_version, review_id, "position") WHERE (status = 'pending'::text);
+
+
+--
+-- Name: workflow_recovery_policy_reviews_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_reviews_app ON public.workflow_recovery_policy_reviews USING btree (app_id, id);
+
+
+--
+-- Name: workflow_recovery_policy_targets_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_targets_budget ON public.workflow_recovery_policy_targets USING btree (app_id, prepared_at);
+
+
+--
+-- Name: workflow_recovery_review_completion_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_completion_pending ON public.workflow_recovery_review_notifications USING btree (next_completion_at, review_id) WHERE (completion IS NULL);
+
+
+--
+-- Name: workflow_recovery_review_notifications_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_notifications_pending ON public.workflow_recovery_review_notifications USING btree (next_at, review_id) WHERE (receipt IS NULL);
 
 
 --
@@ -49658,6 +50329,13 @@ CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE
 
 
 --
+-- Name: workflow_runs event_recovery_workflow_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_workflow_result BEFORE DELETE OR UPDATE OF status, resume_count, finished_at, cancelled_at, last_error ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_workflow_result();
+
+
+--
 -- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -51790,6 +52468,13 @@ CREATE TRIGGER workflow_due_trg AFTER INSERT OR UPDATE OF status ON public.workf
 --
 
 CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR EACH ROW EXECUTE FUNCTION public.workflow_event_due_notify();
+
+
+--
+-- Name: workflow_runs workflow_recovery_failure_evidence_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status, resume_count ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_workflow_recovery_failure();
 
 
 --
@@ -55359,6 +56044,14 @@ ALTER TABLE ONLY public.event_recovery_jobs
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --
@@ -60679,6 +61372,118 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 ALTER TABLE ONLY public.workflow_operation_effects
     ADD CONSTRAINT workflow_operation_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
 
 
 --

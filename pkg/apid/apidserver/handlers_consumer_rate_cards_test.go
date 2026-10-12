@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,14 +8,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAPIConsumerRateCardsAndUsageQuote(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-pricing-app")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-pricing-app/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-pricing-app")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-pricing-app/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "priced-customer", Name: "Priced Customer",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -27,7 +29,7 @@ func TestAPIConsumerRateCardsAndUsageQuote(t *testing.T) {
 	}
 
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	rate := e.do(t, http.MethodPost, "/v1/apps/consumer-pricing-app/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	rate := e.Do(t, http.MethodPost, "/v1/apps/consumer-pricing-app/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "eur", PriceMillicentsPerUnit: 125, EffectiveFrom: &minute,
 	}, nil)
 	if rate.Code != http.StatusCreated {
@@ -41,7 +43,7 @@ func TestAPIConsumerRateCardsAndUsageQuote(t *testing.T) {
 		t.Fatalf("rate card = %+v", card)
 	}
 
-	listed := e.do(t, http.MethodGet, "/v1/apps/consumer-pricing-app/rate-cards", nil, nil)
+	listed := e.Do(t, http.MethodGet, "/v1/apps/consumer-pricing-app/rate-cards", nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list rate cards: %d %s", listed.Code, listed.Body)
 	}
@@ -53,15 +55,15 @@ func TestAPIConsumerRateCardsAndUsageQuote(t *testing.T) {
 		t.Fatalf("rate cards = %+v", cards)
 	}
 
-	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 		ConsumerKey: consumer.ID, WindowStart: minute,
 		RequestCount: 4, ErrorCount: 1, BillableUnits: 4,
 	}); err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
 	quotePath := "/v1/apps/consumer-pricing-app/consumers/" + consumer.ID + "/usage/quote"
-	quoted := e.do(t, http.MethodGet, quotePath, nil, nil)
+	quoted := e.Do(t, http.MethodGet, quotePath, nil, nil)
 	if quoted.Code != http.StatusOK {
 		t.Fatalf("quote usage: %d %s", quoted.Code, quoted.Body)
 	}
@@ -76,30 +78,30 @@ func TestAPIConsumerRateCardsAndUsageQuote(t *testing.T) {
 		t.Fatalf("quote bucket = %+v", quote.Buckets[0])
 	}
 
-	gotCard := e.do(t, http.MethodGet, "/v1/apps/consumer-pricing-app/rate-cards/"+card.ID, nil, nil)
+	gotCard := e.Do(t, http.MethodGet, "/v1/apps/consumer-pricing-app/rate-cards/"+card.ID, nil, nil)
 	if gotCard.Code != http.StatusOK {
 		t.Fatalf("get rate card: %d %s", gotCard.Code, gotCard.Body)
 	}
 }
 
 func TestAPIConsumerRateCardCurrencyAndPlanGates(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-pricing-gates")
-	first := e.do(t, http.MethodPost, "/v1/apps/consumer-pricing-gates/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-pricing-gates")
+	first := e.Do(t, http.MethodPost, "/v1/apps/consumer-pricing-gates/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 1,
 	}, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create first rate card: %d %s", first.Code, first.Body)
 	}
-	second := e.do(t, http.MethodPost, "/v1/apps/consumer-pricing-gates/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	second := e.Do(t, http.MethodPost, "/v1/apps/consumer-pricing-gates/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "USD", PriceMillicentsPerUnit: 1,
 	}, nil)
 	if second.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("currency change: got %d %s, want 422", second.Code, second.Body)
 	}
 
-	free := setup(t, api.PlanFree)
-	mustSeedApp(t, free, "consumer-pricing-free")
-	blocked := free.do(t, http.MethodGet, "/v1/apps/consumer-pricing-free/rate-cards", nil, nil)
-	assertProblem(t, blocked, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
+	free := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, free, "consumer-pricing-free")
+	blocked := free.Do(t, http.MethodGet, "/v1/apps/consumer-pricing-free/rate-cards", nil, nil)
+	apidserver.AssertProblem(t, blocked, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
 }

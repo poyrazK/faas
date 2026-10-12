@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
-	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	srv, store, account, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
@@ -34,7 +35,7 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	}
 	call := func(method, suffix, body, revision string) *httptest.ResponseRecorder {
 		t.Helper()
-		request, response := projectRequest(method, "/v1/apps/"+app.Slug+"/work-policies"+suffix, app.Slug, []byte(body))
+		request, response := apidserver.ProjectRequest(method, "/v1/apps/"+app.Slug+"/work-policies"+suffix, app.Slug, []byte(body))
 		request.SetPathValue("name", policy.Name)
 		if method == http.MethodPost {
 			request.Header.Set("Idempotency-Key", "shared-cancellation-key")
@@ -44,17 +45,17 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 		}
 		switch method {
 		case http.MethodPut:
-			srv.upsertWorkPolicy(response, request, account)
+			srv.UpsertWorkPolicy(response, request, account)
 		case http.MethodGet:
-			srv.listWorkPolicies(response, request, account)
+			srv.ListWorkPolicies(response, request, account)
 		case http.MethodDelete:
-			srv.deleteWorkPolicy(response, request, account)
+			srv.DeleteWorkPolicy(response, request, account)
 		case http.MethodPost:
-			srv.cancelPendingWork(response, request, account)
+			srv.CancelPendingWork(response, request, account)
 		}
 		return response
 	}
-	assertProblem(t, call(http.MethodGet, "?environment=staging", "", ""), http.StatusConflict, "environment_work_policy_collection_unavailable")
+	apidserver.AssertProblem(t, call(http.MethodGet, "?environment=staging", "", ""), http.StatusConflict, "environment_work_policy_collection_unavailable")
 	body := `{"max_running_per_key":1,"pending_updates":"keep_latest","debounce_ms":3000}`
 	put := call(http.MethodPut, "/orders?environment=staging", body, "0")
 	if put.Code != http.StatusOK || put.Header().Get("X-Gregale-Workload-Revision") != "1" {
@@ -68,8 +69,8 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	if listed.Code != http.StatusOK || listed.Header().Get("X-Gregale-Workload-Config-Hash") != put.Header().Get("X-Gregale-Workload-Config-Hash") {
 		t.Fatalf("stage list = %d %s", listed.Code, listed.Body.String())
 	}
-	assertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "0"), http.StatusConflict, api.CodeConflict)
-	assertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "invalid"), http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "0"), http.StatusConflict, api.CodeConflict)
+	apidserver.AssertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "invalid"), http.StatusBadRequest, api.CodeValidation)
 	noop := call(http.MethodPut, "/orders?environment=staging", body, "1")
 	if noop.Code != http.StatusOK || noop.Header().Get("X-Gregale-Workload-Revision") != "1" {
 		t.Fatalf("no-op advanced desired head: %d %s", noop.Code, noop.Body.String())
@@ -159,31 +160,31 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 		t.Fatalf("recreated policy revision = %+v, %v", configured, err)
 	}
 	for _, query := range []string{"?environment=", "?scope=staging", "?environment=staging&environment=production", "?environment=default", "?environment=bad!"} {
-		assertProblem(t, call(http.MethodPut, "/orders"+query, body, ""), http.StatusBadRequest, api.CodeValidation)
-		assertProblem(t, call(http.MethodDelete, "/orders"+query, "", ""), http.StatusBadRequest, api.CodeValidation)
-		assertProblem(t, call(http.MethodPost, "/orders/cancel-pending"+query, `{"key":"one"}`, ""), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, call(http.MethodPut, "/orders"+query, body, ""), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, call(http.MethodDelete, "/orders"+query, "", ""), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, call(http.MethodPost, "/orders/cancel-pending"+query, `{"key":"one"}`, ""), http.StatusBadRequest, api.CodeValidation)
 	}
-	assertProblem(t, call(http.MethodPut, "/orders?environment=unknown", body, ""), http.StatusNotFound, api.CodeNotFound)
+	apidserver.AssertProblem(t, call(http.MethodPut, "/orders?environment=unknown", body, ""), http.StatusNotFound, api.CodeNotFound)
 	if _, err := store.UpdateProjectEnvironmentProtection(ctx, account.ID, project.ID, "staging", true); err != nil {
 		t.Fatal(err)
 	}
-	assertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "3"), http.StatusConflict, api.CodeConflict)
-	assertProblem(t, call(http.MethodDelete, "/orders?environment=staging", "", "3"), http.StatusConflict, api.CodeConflict)
+	apidserver.AssertProblem(t, call(http.MethodPut, "/orders?environment=staging", body, "3"), http.StatusConflict, api.CodeConflict)
+	apidserver.AssertProblem(t, call(http.MethodDelete, "/orders?environment=staging", "", "3"), http.StatusConflict, api.CodeConflict)
 	if list := call(http.MethodGet, "", "", ""); list.Code != http.StatusOK {
 		t.Fatalf("legacy production list = %d %s", list.Code, list.Body.String())
 	}
 }
 
 func TestEnvironmentWorkCancellationAllowsIdleDeletion(t *testing.T) {
-	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	srv, store, account, project, app := apidserver.NewProjectLifecycleFixture(t)
 	env, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, response := projectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
+	request, response := apidserver.ProjectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
 	request.SetPathValue("name", "orders")
 	request.Header.Set("Idempotency-Key", "stage-lifecycle-receipt")
-	srv.cancelPendingWork(response, request, account)
+	srv.CancelPendingWork(response, request, account)
 	if response.Code != http.StatusOK {
 		t.Fatalf("empty stage cancellation = %d %s", response.Code, response.Body.String())
 	}
@@ -191,9 +192,9 @@ func TestEnvironmentWorkCancellationAllowsIdleDeletion(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &original); err != nil {
 		t.Fatal(err)
 	}
-	request, response = projectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
+	request, response = apidserver.ProjectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
 	request.SetPathValue("environment", "staging")
-	srv.deleteProjectEnvironment(response, request, account)
+	srv.DeleteProjectEnvironment(response, request, account)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("idle stage deletion = %d %s", response.Code, response.Body.String())
 	}
@@ -204,10 +205,10 @@ func TestEnvironmentWorkCancellationAllowsIdleDeletion(t *testing.T) {
 	if err != nil || recreated.ID == env.ID {
 		t.Fatalf("recreated environment identity: %+v, %v", recreated, err)
 	}
-	request, response = projectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
+	request, response = apidserver.ProjectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
 	request.SetPathValue("name", "orders")
 	request.Header.Set("Idempotency-Key", "stage-lifecycle-receipt")
-	srv.cancelPendingWork(response, request, account)
+	srv.CancelPendingWork(response, request, account)
 	var fresh api.CancelPendingWorkResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &fresh); err != nil || response.Code != http.StatusOK || fresh.ID == original.ID {
 		t.Fatalf("recreated stage replayed old receipt: %d %s, %v", response.Code, response.Body.String(), err)
@@ -215,7 +216,7 @@ func TestEnvironmentWorkCancellationAllowsIdleDeletion(t *testing.T) {
 }
 
 func TestEnvironmentDeletionReportsRunningWork(t *testing.T) {
-	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	srv, store, account, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := t.Context()
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
@@ -251,12 +252,12 @@ func TestEnvironmentDeletionReportsRunningWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	remove := func() *httptest.ResponseRecorder {
-		r, w := projectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
+		r, w := apidserver.ProjectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
 		r.SetPathValue("environment", "staging")
-		srv.deleteProjectEnvironment(w, r, account)
+		srv.DeleteProjectEnvironment(w, r, account)
 		return w
 	}
-	assertProblem(t, remove(), http.StatusConflict, "environment_work_busy")
+	apidserver.AssertProblem(t, remove(), http.StatusConflict, "environment_work_busy")
 	if err := store.CompleteInvocation(ctx, row.ID, nil); err != nil {
 		t.Fatal(err)
 	}

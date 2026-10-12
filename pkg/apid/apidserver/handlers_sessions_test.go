@@ -3,7 +3,7 @@
 // modes. Mirrors the handlers_mfa_test.go harness; uses MemStore
 // everywhere (the in-memory backend still has to comply with the
 // production pgstore contract).
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -35,7 +37,7 @@ import (
 // store.ListEventsForAccount.
 type sessionTestEnv struct {
 	h         http.Handler
-	srv       *server
+	srv       *apidserver.Server
 	store     *state.MemStore
 	acct      state.Account
 	mgr       *session.Manager
@@ -55,7 +57,7 @@ func newSessionEnv(t *testing.T) sessionTestEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,16 +70,16 @@ func newSessionEnv(t *testing.T) sessionTestEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr,
+	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr,
 		nil, 15*60_000_000_000, "").WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_iam3_test"))
 	return sessionTestEnv{
-		h:         srv.handler(),
+		h:         srv.Handler(),
 		srv:       srv,
 		store:     store,
 		acct:      acct,
 		mgr:       mgr,
-		cookie:    &http.Cookie{Name: sessionCookie, Value: cookieVal},
+		cookie:    &http.Cookie{Name: apidserver.SessionCookie, Value: cookieVal},
 		currentID: sid,
 	}
 }
@@ -95,7 +97,7 @@ func mintSiblingSeal(t *testing.T, env sessionTestEnv) (*http.Cookie, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &http.Cookie{Name: sessionCookie, Value: v}, sid
+	return &http.Cookie{Name: apidserver.SessionCookie, Value: v}, sid
 }
 
 // doSession is the request dispatch helper. The body's env stays
@@ -159,7 +161,7 @@ func doSession(t *testing.T, env sessionTestEnv, method, path string, body any, 
 			req.ContentLength = int64(len(body))
 		default:
 			if len(rawBody) > 0 && rawBody[0] == '{' {
-				wrapped := injectCSRFToken(rawBody, tok)
+				wrapped := apidserver.InjectCSRFToken(rawBody, tok)
 				req.Body = io.NopCloser(bytes.NewReader(wrapped))
 				req.ContentLength = int64(len(wrapped))
 			} else {
@@ -183,13 +185,13 @@ func csrfActionName(path string) string {
 	if strings.HasPrefix(path, "/v1/auth/sessions/") &&
 		!strings.HasSuffix(path, "/sessions") &&
 		!strings.HasSuffix(path, "/revoke_all") {
-		return csrfActionSessionRevoke
+		return apidserver.CsrfActionSessionRevoke
 	}
 	switch {
 	case strings.HasSuffix(path, "/v1/auth/logout"):
-		return csrfActionLogout
+		return apidserver.CsrfActionLogout
 	case strings.HasSuffix(path, "/v1/auth/sessions/revoke_all"):
-		return csrfActionSessionsRevokeAll
+		return apidserver.CsrfActionSessionsRevokeAll
 	}
 	return ""
 }
@@ -212,7 +214,7 @@ func problemHasCode(t *testing.T, body []byte, want string) bool {
 func cookieCleared(t *testing.T, cookies []*http.Cookie) bool {
 	t.Helper()
 	for _, c := range cookies {
-		if c.Name == sessionCookie {
+		if c.Name == apidserver.SessionCookie {
 			if c.MaxAge < 0 || c.Value == "" {
 				return true
 			}
@@ -428,7 +430,7 @@ func TestHandlers_Sessions_PreIAM3Cookie_401_CookieCleared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := &http.Cookie{Name: sessionCookie, Value: legacyCookieVal}
+	legacy := &http.Cookie{Name: apidserver.SessionCookie, Value: legacyCookieVal}
 	rec := doSession(t, env, "GET", "/v1/auth/sessions", nil, legacy)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
@@ -486,7 +488,7 @@ func TestRequireSessionCookie_DefendsAccountMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount B: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("NewEphemeralManager: %v", err)
 	}
@@ -503,7 +505,7 @@ func TestRequireSessionCookie_DefendsAccountMismatch(t *testing.T) {
 	forged, err := mgr.Seal(session.Envelope{
 		AccountID:  acctB.ID,
 		IssuedAt:   time.Now(),
-		ExpiresAt:  time.Now().Add(sessionCookieLifetime),
+		ExpiresAt:  time.Now().Add(apidserver.SessionCookieLifetime),
 		MfaPending: false,
 		Sid:        sid,
 	})
@@ -522,7 +524,7 @@ func TestRequireSessionCookie_DefendsAccountMismatch(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/auth/sessions", nil)
-	mw := authmw.New(storeAsAuthenticator(store), mgr, storeAsSessionLookup(store), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
+	mw := authmw.New(apidserver.StoreAsAuthenticator(store), mgr, apidserver.StoreAsSessionLookup(store), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
 	_, handled, err := mw.RequireSessionCookie(rec, req, env)
 	if err != nil {
 		t.Fatalf("requireSessionCookie returned err (should be silent handled=true): %v", err)

@@ -15,7 +15,7 @@
 //   - IDOR posture: cross-account probes get 404, not 403. Same
 //     posture as getDeployment / getDeploymentScan.
 //   - Unknown id: 404 with the standard not-found problem code.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,8 @@ import (
 // pass-through — no Go-side re-shape, no silent rename if the typed
 // StageState struct ever drifts from the jsonb).
 func TestGetDeploymentStages_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "stages-happy")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "stages-happy")
 
 	now := time.Now().UTC().Truncate(time.Second)
 	// Walk source_download → dependency_restore → image_build →
@@ -54,12 +55,12 @@ func TestGetDeploymentStages_HappyPath(t *testing.T) {
 		{state.StageImageBuild, state.StageSnapshotPrepare, now.Add(-3 * time.Second)},
 	}
 	for _, tr := range transitions {
-		if _, err := e.store.AppendDeploymentStage(context.Background(), dep.ID, tr.from, tr.to, tr.at, ""); err != nil {
+		if _, err := (*e.Store()).AppendDeploymentStage(context.Background(), dep.ID, tr.from, tr.to, tr.at, ""); err != nil {
 			t.Fatalf("AppendDeploymentStage %s→%s: %v", tr.from, tr.to, err)
 		}
 	}
 
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID+"/stages", nil, nil)
+	rec := e.Do(t, "GET", "/v1/deployments/"+dep.ID+"/stages", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -90,9 +91,9 @@ func TestGetDeploymentStages_HappyPath(t *testing.T) {
 // TestGetDeploymentStages_UnknownReturns404 covers the not-found
 // branch (deployment id format is valid hex but no such row).
 func TestGetDeploymentStages_UnknownReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/deployments/deadbeefdeadbeefdeadbeefdeadbeef/stages", nil, nil)
-	assertProblem(t, rec, 404, api.CodeNotFound)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/deployments/deadbeefdeadbeefdeadbeefdeadbeef/stages", nil, nil)
+	apidserver.AssertProblem(t, rec, 404, api.CodeNotFound)
 }
 
 // TestGetDeploymentStages_CrossAccountReturns404 locks the IDOR
@@ -102,13 +103,13 @@ func TestGetDeploymentStages_UnknownReturns404(t *testing.T) {
 // posture as getDeployment (handlers_ext.go:1136) and
 // getDeploymentScan (handlers_scan.go:58).
 func TestGetDeploymentStages_CrossAccountReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "stages-cross")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "stages-cross")
 
 	// Provision a second account + API key on the same store. The
 	// attacker uses the foreign key to probe the victim's deployment
 	// id — must NEVER confirm the id exists.
-	store := e.store
+	store := (*e.Store())
 	foreignAcct, err := store.CreateAccount(context.Background(), "intruder-stages@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount foreign: %v", err)
@@ -117,7 +118,7 @@ func TestGetDeploymentStages_CrossAccountReturns404(t *testing.T) {
 	if _, err := store.CreateAPIKey(context.Background(), foreignAcct.ID, hash, "intruder", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("CreateAPIKey foreign: %v", err)
 	}
-	rec := e.doAs(t, "GET", "/v1/deployments/"+dep.ID+"/stages", nil, nil, pt)
+	rec := e.DoAs(t, "GET", "/v1/deployments/"+dep.ID+"/stages", nil, nil, pt)
 	if rec.Code != 404 {
 		t.Fatalf("cross-account GET /stages: status %d, want 404 (body=%s)", rec.Code, rec.Body.String())
 	}

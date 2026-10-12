@@ -12,7 +12,7 @@
 // NON-error graceful degradation. Pre-PR-2 wire-equal callers see no diff
 // (omitempty on the *BuildPlan pointer).
 
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -26,24 +26,25 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
-	s := &server{}
-	got := s.appResponse(state.App{MaintenanceMode: true}, api.PlanHobby)
+	s := &apidserver.Server{}
+	got := s.AppResponse(state.App{MaintenanceMode: true}, api.PlanHobby)
 	if !got.MaintenanceMode {
 		t.Fatal("MaintenanceMode = false, want persisted true value")
 	}
 }
 
 func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
-	s := &server{}
+	s := &apidserver.Server{}
 	bindings := []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}}
 	callers := []string{"frontend"}
-	got := s.appResponse(state.App{Manifest: state.AppManifest{
+	got := s.AppResponse(state.App{Manifest: state.AppManifest{
 		ServiceBindings:           bindings,
 		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
 		ServiceBindingTransport:   api.ServiceBindingTransportHTTPS,
@@ -76,7 +77,7 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 }
 
 func TestAppResponseDefaultsServiceBindingPolicyToAccount(t *testing.T) {
-	got := (&server{}).appResponse(state.App{}, api.PlanHobby)
+	got := (&apidserver.Server{}).AppResponse(state.App{}, api.PlanHobby)
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyAccount {
 		t.Fatalf("service binding policy = %q, want account", got.ServiceBindingPolicy)
 	}
@@ -100,8 +101,8 @@ func TestAppResponseUsesVerifiedDefaultDomain(t *testing.T) {
 	if err := store.SetDefaultCustomDomain(context.Background(), appID, "api.example.com"); err != nil {
 		t.Fatalf("SetDefaultCustomDomain: %v", err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	got := srv.appResponseWithContext(context.Background(), state.App{ID: appID, Slug: "canonical-app"}, api.PlanHobby)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	got := srv.AppResponseWithContext(context.Background(), state.App{ID: appID, Slug: "canonical-app"}, api.PlanHobby)
 	if got.URL != "https://canonical-app.gregale.dev" {
 		t.Fatalf("platform URL = %q, want platform hostname", got.URL)
 	}
@@ -128,8 +129,8 @@ func TestAppResponseFallsBackWhenDefaultDomainIsRemoved(t *testing.T) {
 	if err := store.DeleteCustomDomain(context.Background(), "api.example.com"); err != nil {
 		t.Fatalf("DeleteCustomDomain: %v", err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	got := srv.appResponseWithContext(context.Background(), state.App{ID: appID, Slug: "fallback-app"}, api.PlanHobby)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	got := srv.AppResponseWithContext(context.Background(), state.App{ID: appID, Slug: "fallback-app"}, api.PlanHobby)
 	if got.DefaultDomain != "" {
 		t.Fatalf("default_domain = %q, want empty after delete", got.DefaultDomain)
 	}
@@ -161,16 +162,16 @@ func writeTarball(t *testing.T, entries []tar.Header, bodies map[string][]byte) 
 // hand it to os.File.Write to get a real path on disk.
 func buildTestTarGzTo(t *testing.T, f *os.File, entries []tar.Header, bodies map[string][]byte) {
 	t.Helper()
-	if _, err := f.Write(buildTestTarGz(t, entries, bodies)); err != nil {
+	if _, err := f.Write(apidserver.BuildTestTarGz(t, entries, bodies)); err != nil {
 		t.Fatalf("write tarball: %v", err)
 	}
 }
 
 func TestDeploymentResponse_NormalizesEmptyRolloutState(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
-	resp := srv.deploymentResponse(t.Context(), state.Deployment{
+		"gregale.dev", apidserver.NoopNotifier{})
+	resp := srv.DeploymentResponse(t.Context(), state.Deployment{
 		ID: "d1", AppID: "a1", Status: state.DeployLive,
 	}, state.App{ID: "a1"})
 	if resp.RolloutState != "pending" {
@@ -182,9 +183,9 @@ func TestDeploymentResponse_NormalizesEmptyRolloutState(t *testing.T) {
 // points at a tarball with package.json, deploymentResponse surfaces
 // BuildPlan.Framework="node" + Class="app" + the resolved version.
 func TestDeploymentResponse_BuildPlan_AppWithFramework(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	tarPath := writeTarball(t,
 		[]tar.Header{
 			{Name: "package.json"},
@@ -200,7 +201,7 @@ func TestDeploymentResponse_BuildPlan_AppWithFramework(t *testing.T) {
 		SourcePath: tarPath, Status: state.DeployPending,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(t.Context(), d, app)
+	resp := srv.DeploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want populated")
 	}
@@ -220,15 +221,15 @@ func TestDeploymentResponse_BuildPlan_AppWithFramework(t *testing.T) {
 // omitempty keeps the field off the JSON; pre-PR-2 clients see
 // bit-identical payloads.
 func TestDeploymentResponse_BuildPlan_FunctionImageNoSourcePath(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	d := state.Deployment{
 		ID: "d1", AppID: "a1", Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:abc", Status: state.DeployLive,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeFunction, Runtime: "node22"}
-	resp := srv.deploymentResponse(t.Context(), d, app)
+	resp := srv.DeploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan != nil {
 		t.Errorf("BuildPlan = %+v; want nil for image deploy", resp.BuildPlan)
 	}
@@ -241,9 +242,9 @@ func TestDeploymentResponse_BuildPlan_FunctionImageNoSourcePath(t *testing.T) {
 // field. This is why PR-2 calls markers.DetectFromTarball directly
 // (the builderd shim errors on FrameworkUnknown).
 func TestDeploymentResponse_BuildPlan_UnknownFramework(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	tarPath := writeTarball(t,
 		[]tar.Header{{Name: "README.md"}},
 		map[string][]byte{"README.md": []byte("# hello\n")},
@@ -253,7 +254,7 @@ func TestDeploymentResponse_BuildPlan_UnknownFramework(t *testing.T) {
 		SourcePath: tarPath, Status: state.DeployPending,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(t.Context(), d, app)
+	resp := srv.DeploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want unknown framework block")
 	}
@@ -275,9 +276,9 @@ func TestDeploymentResponse_BuildPlan_UnknownFramework(t *testing.T) {
 // kept inside the BuildPlan block so the dashboard can render the
 // "effective" plan in one place.
 func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	tarPath := writeTarball(t,
 		[]tar.Header{{Name: "package.json"}},
 		map[string][]byte{"package.json": []byte(`{"name":"x"}`)},
@@ -290,7 +291,7 @@ func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
 		OverridePort:       3000,
 	}
 	app := state.App{ID: "a1", Type: state.AppTypeApp}
-	resp := srv.deploymentResponse(t.Context(), d, app)
+	resp := srv.DeploymentResponse(t.Context(), d, app)
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil")
 	}
@@ -303,9 +304,9 @@ func TestDeploymentResponse_BuildPlan_OverridesPopulated(t *testing.T) {
 }
 
 func TestDeploymentResponse_BuildPlan_UsesPersistedProfileAfterSpoolCleanup(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	raw, err := json.Marshal(frameworkprofile.Profile{
 		Version: frameworkprofile.Version, Framework: "fastapi", FrameworkVer: "0.115",
 		StartCommand: "uvicorn app:app --host 0.0.0.0 --port 8000", Port: 8000, HealthPath: "/ready", Inferred: true,
@@ -317,7 +318,7 @@ func TestDeploymentResponse_BuildPlan_UsesPersistedProfileAfterSpoolCleanup(t *t
 		ID: "d1", AppID: "a1", Kind: state.DeploymentKindTarball,
 		Status: state.DeployLive, InferredProfile: raw,
 	}
-	resp := srv.deploymentResponse(t.Context(), d, state.App{ID: "a1", Type: state.AppTypeApp})
+	resp := srv.DeploymentResponse(t.Context(), d, state.App{ID: "a1", Type: state.AppTypeApp})
 	if resp.BuildPlan == nil {
 		t.Fatalf("BuildPlan = nil; want persisted profile")
 	}
@@ -327,14 +328,14 @@ func TestDeploymentResponse_BuildPlan_UsesPersistedProfileAfterSpoolCleanup(t *t
 }
 
 func TestDeploymentResponse_HostingReceiptRoundTrips(t *testing.T) {
-	srv := newServer(state.NewMemStore(),
+	srv := apidserver.NewServer(state.NewMemStore(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"gregale.dev", noopNotifier{})
+		"gregale.dev", apidserver.NoopNotifier{})
 	d := state.Deployment{
 		ID: "d1", AppID: "a1", Kind: state.DeploymentKindImage,
 		Status: state.DeployLive, APIHostingReceipt: []byte(`{"schema_version":1,"smoke":{"status":"verified"}}`),
 	}
-	resp := srv.deploymentResponse(t.Context(), d, state.App{ID: "a1"})
+	resp := srv.DeploymentResponse(t.Context(), d, state.App{ID: "a1"})
 	if string(resp.APIHostingReceipt) != string(d.APIHostingReceipt) {
 		t.Fatalf("hosting receipt = %s, want %s", resp.APIHostingReceipt, d.APIHostingReceipt)
 	}

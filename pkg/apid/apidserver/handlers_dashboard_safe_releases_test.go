@@ -4,11 +4,12 @@
 // helpers are pure functions; we test them in isolation rather
 // than spinning up a full authed server (handlers_dashboard_test.go
 // already covers the authed-request path for sibling handlers).
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,7 +28,7 @@ func TestSafeReleasesAuditKind_PinsPRAKinds(t *testing.T) {
 		state.DeployAlertRuleFired,
 	}
 	for _, k := range admit {
-		if !safeReleasesAuditKind(k) {
+		if !apidserver.SafeReleasesAuditKind(k) {
 			t.Errorf("safeReleasesAuditKind(%q) = false; want true (PR-A widened kind)", k)
 		}
 	}
@@ -47,7 +48,7 @@ func TestSafeReleasesAuditKind_PinsPRAKinds(t *testing.T) {
 		"",
 	}
 	for _, k := range reject {
-		if safeReleasesAuditKind(k) {
+		if apidserver.SafeReleasesAuditKind(k) {
 			t.Errorf("safeReleasesAuditKind(%q) = true; want false (out of scope)", k)
 		}
 	}
@@ -67,7 +68,7 @@ func TestSafeReleasesAlertMetric_PinsPRBMetrics(t *testing.T) {
 		string(state.AlertMetricCanaryFleetInFlightHigh),
 	}
 	for _, m := range admit {
-		if !safeReleasesAlertMetric(m) {
+		if !apidserver.SafeReleasesAlertMetric(m) {
 			t.Errorf("safeReleasesAlertMetric(%q) = false; want true (PR-B metric)", m)
 		}
 	}
@@ -79,7 +80,7 @@ func TestSafeReleasesAlertMetric_PinsPRBMetrics(t *testing.T) {
 		"bogus_metric",
 	}
 	for _, m := range reject {
-		if safeReleasesAlertMetric(m) {
+		if apidserver.SafeReleasesAlertMetric(m) {
 			t.Errorf("safeReleasesAlertMetric(%q) = true; want false (out of scope)", m)
 		}
 	}

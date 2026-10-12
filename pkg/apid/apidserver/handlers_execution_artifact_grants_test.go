@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,12 +11,13 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 )
 
-func createExecutionArtifactGrantAs(t *testing.T, e testEnv, key, executionID, name string) api.ExecutionArtifactGrantResponse {
+func createExecutionArtifactGrantAs(t *testing.T, e apidserver.TestEnv, key, executionID, name string) api.ExecutionArtifactGrantResponse {
 	t.Helper()
-	rec := e.doAs(t, http.MethodPost, "/v1/executions/"+executionID+"/artifact-grants", api.CreateExecutionArtifactGrantRequest{
+	rec := e.DoAs(t, http.MethodPost, "/v1/executions/"+executionID+"/artifact-grants", api.CreateExecutionArtifactGrantRequest{
 		ArtifactName: name, ExpiresInSeconds: 300,
 	}, nil, key)
 	if rec.Code != http.StatusCreated {
@@ -29,29 +30,29 @@ func createExecutionArtifactGrantAs(t *testing.T, e testEnv, key, executionID, n
 	return grant
 }
 
-func createExecutionUsingArtifactGrantAs(t *testing.T, e testEnv, key, idempotencyKey, token string) *httptest.ResponseRecorder {
+func createExecutionUsingArtifactGrantAs(t *testing.T, e apidserver.TestEnv, key, idempotencyKey, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := api.CreateExecutionRequest{
 		Runtime: api.ExecutionRuntimeNode22, Entrypoint: "main.js",
 		Files:          []api.ExecutionFile{{Path: "main.js", Content: []byte("export default async () => 1")}},
 		ArtifactInputs: []api.ExecutionArtifactInput{{GrantToken: token, Path: "input/result.csv"}},
 	}
-	return e.doAs(t, http.MethodPost, "/v1/executions", request, map[string]string{"Idempotency-Key": idempotencyKey}, key)
+	return e.DoAs(t, http.MethodPost, "/v1/executions", request, map[string]string{"Idempotency-Key": idempotencyKey}, key)
 }
 
 func TestExecutionArtifactGrantTransfersOnlyOneArtifactAcrossKeyFamilies(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	agentA := createRunsOnlyKey(t, e, "producer")
-	agentB := createRunsOnlyKey(t, e, "consumer")
-	owned := createExecutionAs(t, e, agentA, "producer-run", executionRequest())
-	finishExecutionWithArtifact(t, e, owned.ID)
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	agentA := apidserver.CreateRunsOnlyKey(t, e, "producer")
+	agentB := apidserver.CreateRunsOnlyKey(t, e, "consumer")
+	owned := apidserver.CreateExecutionAs(t, e, agentA, "producer-run", apidserver.ExecutionRequest())
+	apidserver.FinishExecutionWithArtifact(t, e, owned.ID)
 
 	grant := createExecutionArtifactGrantAs(t, e, agentA, owned.ID, "result.csv")
 	if grant.ID == "" || grant.Token == "" || grant.SourceExecutionID != owned.ID || grant.ArtifactName != "result.csv" {
 		t.Fatalf("artifact grant response = %+v", grant)
 	}
-	if rec := e.doAs(t, http.MethodGet, "/v1/executions/"+owned.ID, nil, nil, agentB); rec.Code != http.StatusNotFound {
+	if rec := e.DoAs(t, http.MethodGet, "/v1/executions/"+owned.ID, nil, nil, agentB); rec.Code != http.StatusNotFound {
 		t.Fatalf("consumer read source execution = %d: %s", rec.Code, rec.Body.String())
 	}
 
@@ -63,7 +64,7 @@ func TestExecutionArtifactGrantTransfersOnlyOneArtifactAcrossKeyFamilies(t *test
 	if err := json.Unmarshal(created.Body.Bytes(), &received); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := e.store.ClaimExecution(context.Background(), "artifact-grant-test", time.Now().UTC().Add(time.Millisecond), time.Minute)
+	claim, err := (*e.Store()).ClaimExecution(context.Background(), "artifact-grant-test", time.Now().UTC().Add(time.Millisecond), time.Minute)
 	if err != nil || claim.ID != received.ID {
 		t.Fatalf("claim receiving run = %q, %v; want %q", claim.ID, err, received.ID)
 	}
@@ -85,11 +86,11 @@ func TestExecutionArtifactGrantTransfersOnlyOneArtifactAcrossKeyFamilies(t *test
 	}
 
 	revocable := createExecutionArtifactGrantAs(t, e, agentA, owned.ID, "result.csv")
-	if rec := e.doAs(t, http.MethodDelete, "/v1/execution-artifact-grants/"+revocable.ID, nil,
+	if rec := e.DoAs(t, http.MethodDelete, "/v1/execution-artifact-grants/"+revocable.ID, nil,
 		map[string]string{"Idempotency-Key": "cross-agent-revoke"}, agentB); rec.Code != http.StatusNotFound {
 		t.Fatalf("consumer revoked producer grant = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.doAs(t, http.MethodDelete, "/v1/execution-artifact-grants/"+revocable.ID, nil,
+	if rec := e.DoAs(t, http.MethodDelete, "/v1/execution-artifact-grants/"+revocable.ID, nil,
 		map[string]string{"Idempotency-Key": "producer-revoke"}, agentA); rec.Code != http.StatusOK {
 		t.Fatalf("producer revoke = %d: %s", rec.Code, rec.Body.String())
 	}

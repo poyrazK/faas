@@ -1,5 +1,5 @@
 // adr: 640
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -98,7 +99,7 @@ func TestDashboardOperationMilestones(t *testing.T) {
 		}
 		reports = append(reports, fact)
 	}
-	base := dashboardCustomerOperationsURL(f.app.Slug)
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug)
 	query := url.Values{"scope": {f.def.Scope}, "subject_type": {"order"}, "subject_id": {"order-42"}}
 	for _, path := range []string{base + "/" + operations[0].ID, base + "?" + query.Encode()} {
 		body := f.get(t, path, http.StatusOK).Body.String()

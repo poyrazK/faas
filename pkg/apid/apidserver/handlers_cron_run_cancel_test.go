@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func createQueuedCronRunForCancelTest(t *testing.T, e testEnv, app state.App, deployment state.Deployment, cron state.Cron) state.AppTask {
+func createQueuedCronRunForCancelTest(t *testing.T, e apidserver.TestEnv, app state.App, deployment state.Deployment, cron state.Cron) state.AppTask {
 	t.Helper()
-	tasks := e.store
+	tasks := (*e.Store())
 	task, err := tasks.CreateAppTask(context.Background(), state.CreateAppTaskParams{
-		AccountID: e.acct.ID, AppID: app.ID, DeploymentID: deployment.ID,
+		AccountID: (*e.Acct()).ID, AppID: app.ID, DeploymentID: deployment.ID,
 		CronID: cron.ID, Kind: state.AppTaskKindCron, Command: cron.Command,
 		CreatedAt: time.Now().UTC(),
 	})
@@ -26,10 +27,10 @@ func createQueuedCronRunForCancelTest(t *testing.T, e testEnv, app state.App, de
 }
 
 func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
-	app, deployment := seedAppTaskDeployment(t, e, "cron-run-cancel")
-	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 * * * *", "", true, state.CronOptions{
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	app, deployment := apidserver.SeedAppTaskDeployment(t, e, "cron-run-cancel")
+	cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), app.ID, "0 * * * *", "", true, state.CronOptions{
 		Command: []string{"bin/maintenance"},
 	})
 	if err != nil {
@@ -39,7 +40,7 @@ func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
 	queued := createQueuedCronRunForCancelTest(t, e, app, deployment, cron)
 	path := "/v1/crons/" + cron.ID + "/runs/" + queued.ID + "/cancel"
 	idempotencyHeaders := map[string]string{"Idempotency-Key": "cron-run-cancel-queued"}
-	first := e.do(t, http.MethodPost, path, nil, idempotencyHeaders)
+	first := e.Do(t, http.MethodPost, path, nil, idempotencyHeaders)
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("cancel queued run = %d, want 202; body=%s", first.Code, first.Body.String())
 	}
@@ -53,7 +54,7 @@ func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
 
 	// Repeated requests preserve the terminal result rather than producing a
 	// second transition or an error.
-	replay := e.do(t, http.MethodPost, path, nil, idempotencyHeaders)
+	replay := e.Do(t, http.MethodPost, path, nil, idempotencyHeaders)
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("repeat cancel queued run = %d, want 202; body=%s", replay.Code, replay.Body.String())
 	}
@@ -66,7 +67,7 @@ func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
 	}
 
 	running := createQueuedCronRunForCancelTest(t, e, app, deployment, cron)
-	tasks := e.store
+	tasks := (*e.Store())
 	claimed, err := tasks.ClaimNextAppTask(context.Background(), "cron-run-cancel-test", time.Now().UTC(), time.Minute)
 	if err != nil {
 		t.Fatalf("ClaimNextAppTask: %v", err)
@@ -79,7 +80,7 @@ func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
 	}
 
 	runningPath := "/v1/crons/" + cron.ID + "/runs/" + running.ID + "/cancel"
-	active := e.do(t, http.MethodPost, runningPath, nil, nil)
+	active := e.Do(t, http.MethodPost, runningPath, nil, nil)
 	if active.Code != http.StatusAccepted {
 		t.Fatalf("cancel running run = %d, want 202; body=%s", active.Code, active.Body.String())
 	}
@@ -93,12 +94,12 @@ func TestCancelCronCommandRunHandlesQueuedAndRunningTasks(t *testing.T) {
 }
 
 func TestCancelCronCommandRunHidesWrongCronAndForeignAccount(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
-	app, deployment := seedAppTaskDeployment(t, e, "cron-run-cancel-ownership")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	app, deployment := apidserver.SeedAppTaskDeployment(t, e, "cron-run-cancel-ownership")
 	createCron := func(schedule string) state.Cron {
 		t.Helper()
-		cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, schedule, "", true, state.CronOptions{
+		cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), app.ID, schedule, "", true, state.CronOptions{
 			Command: []string{"bin/maintenance"},
 		})
 		if err != nil {
@@ -111,24 +112,24 @@ func TestCancelCronCommandRunHidesWrongCronAndForeignAccount(t *testing.T) {
 	task := createQueuedCronRunForCancelTest(t, e, app, deployment, otherCron)
 
 	path := "/v1/crons/" + cron.ID + "/runs/" + task.ID + "/cancel"
-	wrongCron := e.do(t, http.MethodPost, path, nil, nil)
+	wrongCron := e.Do(t, http.MethodPost, path, nil, nil)
 	if wrongCron.Code != http.StatusNotFound {
 		t.Fatalf("cancel run from sibling cron = %d, want 404; body=%s", wrongCron.Code, wrongCron.Body.String())
 	}
-	manualTask, err := e.store.CreateAppTask(context.Background(), state.CreateAppTaskParams{
-		AccountID: e.acct.ID, AppID: app.ID, DeploymentID: deployment.ID,
+	manualTask, err := (*e.Store()).CreateAppTask(context.Background(), state.CreateAppTaskParams{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, DeploymentID: deployment.ID,
 		Kind: state.AppTaskKindManual, Command: []string{"bin/manual"},
 		CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("CreateAppTask manual: %v", err)
 	}
-	manualRun := e.do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/runs/"+manualTask.ID+"/cancel", nil, nil)
+	manualRun := e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/runs/"+manualTask.ID+"/cancel", nil, nil)
 	if manualRun.Code != http.StatusNotFound {
 		t.Fatalf("cancel manual app task as cron run = %d, want 404; body=%s", manualRun.Code, manualRun.Body.String())
 	}
 
-	foreignAccount, err := e.store.CreateAccount(context.Background(), "cron-run-cancel-foreign@example.com", api.PlanPro)
+	foreignAccount, err := (*e.Store()).CreateAccount(context.Background(), "cron-run-cancel-foreign@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount foreign: %v", err)
 	}
@@ -136,13 +137,13 @@ func TestCancelCronCommandRunHidesWrongCronAndForeignAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAPIKey foreign: %v", err)
 	}
-	if _, err := e.store.CreateAPIKey(context.Background(), foreignAccount.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(context.Background(), foreignAccount.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("CreateAPIKey foreign: %v", err)
 	}
 	foreign := e
-	foreign.acct = foreignAccount
-	foreign.key = foreignToken
-	foreignRequest := foreign.do(t, http.MethodPost, "/v1/crons/"+otherCron.ID+"/runs/"+task.ID+"/cancel", nil, nil)
+	(*foreign.Acct()) = foreignAccount
+	(*foreign.Key()) = foreignToken
+	foreignRequest := foreign.Do(t, http.MethodPost, "/v1/crons/"+otherCron.ID+"/runs/"+task.ID+"/cancel", nil, nil)
 	if foreignRequest.Code != http.StatusNotFound {
 		t.Fatalf("cross-account cancel = %d, want 404; body=%s", foreignRequest.Code, foreignRequest.Body.String())
 	}
@@ -152,10 +153,10 @@ func TestCancelCronCommandRunHidesWrongCronAndForeignAccount(t *testing.T) {
 }
 
 func TestCancelCronCommandRunHidesHTTPCronRuns(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
 	cronID, _ := seedCron(t, e, "cron-run-cancel-http", "0 * * * *")
-	rec := e.do(t, http.MethodPost, "/v1/crons/"+cronID+"/runs/01234567-89ab-cdef-0123-456789abcdef/cancel", nil, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/crons/"+cronID+"/runs/01234567-89ab-cdef-0123-456789abcdef/cancel", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cancel HTTP cron run = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}

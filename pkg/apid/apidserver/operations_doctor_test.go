@@ -1,5 +1,5 @@
 // adr: 521 — observational diagnostics never grant admission or repeat work.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -17,13 +17,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
-func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorTestStore, acct state.Account, dep state.Deployment, tenant state.PlatformTenant, hook state.AppWebhook, read, foreign, customer string, call func(string, string, string, any) *httptest.ResponseRecorder) {
+func testOperationDoctorHTTP(t *testing.T, srv *apidserver.Server, store operationOperatorTestStore, acct state.Account, dep state.Deployment, tenant state.PlatformTenant, hook state.AppWebhook, read, foreign, customer string, call func(string, string, string, any) *httptest.ResponseRecorder) {
 	t.Helper()
 	counter := store.(state.OperationDiagnosticStore)
 	before, err := counter.OperationPendingCount(t.Context(), acct.ID)
@@ -86,20 +87,21 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 			t.Fatalf("doctor selector/ownership %s HTTP %d want %d", item.path, w.Code, item.code)
 		}
 	}
-	oldGate, oldVerifier, oldStorage := srv.operation.Preview, srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage
+	oldGate, oldVerifier, oldStorage := (*srv.Operation()).Preview, (*srv.Operation()).WorkloadVerifier, (*srv.Operation()).ArtifactStorage
 	defer func() {
-		srv.operation.Preview, srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage = oldGate, oldVerifier, oldStorage
+		(*srv.Operation()).Preview, (*srv.Operation()).WorkloadVerifier, (*srv.Operation()).ArtifactStorage = oldGate, oldVerifier, oldStorage
 	}()
 	policyPath := filepath.Join(t.TempDir(), "preview.json")
 	gate, _ := operations.NewPreviewAdmission(policyPath)
-	srv.operation.Preview = gate
+	(*srv.Operation()).Preview = gate
+	(*
 	// Presence is configuration evidence only; no JWT/storage I/O is claimed.
-	srv.operation.WorkloadVerifier = &workloadidentity.Verifier{}
+	srv.Operation()).WorkloadVerifier = &workloadidentity.Verifier{}
 	backend, err := storage.NewLocalStorageBackend(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.ArtifactStorage = backend
+	(*srv.Operation()).ArtifactStorage = backend
 	now := time.Now().UTC()
 	policy := operations.PreviewPolicy{Version: 1, Enabled: true, NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), Cohorts: []operations.PreviewCohort{{AccountID: uuid.MustParse(acct.ID).String(), AppID: uuid.MustParse(dep.AppID).String(), Scope: dep.Scope, PlatformTenantIDs: []string{tenant.ID}}}}
 	writePolicy := func(p operations.PreviewPolicy) {
@@ -148,7 +150,7 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 	writePolicy(policy)
 	r = get()
 	check(r, "preview_expired", "blocked", "submission")
-	if srv.operation.OperationTenantKindAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID, operations.ExecutionHTTP) {
+	if (*srv.Operation()).OperationTenantKindAdmission(acct.ID, dep.AppID, dep.Scope, tenant.ID, operations.ExecutionHTTP) {
 		t.Fatal("doctor altered closed policy")
 	}
 	if err := os.WriteFile(policyPath, []byte("invalid-policy-containing-secret"), 0600); err != nil {
@@ -178,10 +180,10 @@ func testOperationDoctorHTTP(t *testing.T, srv *server, store operationOperatorT
 		err          error
 		status, code string
 	}{{int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount), nil, "blocked", "pending_capacity_exhausted"}, {0, errors.New("private database address"), "unknown", "pending_capacity_unavailable"}} {
-		original := srv.store
-		srv.store = operationDoctorCounterFixture{operationOperatorTestStore: store, count: tc.count, err: tc.err}
-		c := srv.operation.ObserveOperationPending(t.Context(), acct.ID, int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount))
-		srv.store = original
+		original := (*srv.Store())
+		(*srv.Store()) = operationDoctorCounterFixture{operationOperatorTestStore: store, count: tc.count, err: tc.err}
+		c := (*srv.Operation()).ObserveOperationPending(t.Context(), acct.ID, int64(api.MustLimitsFor(acct.Plan).Operations.PendingPerAccount))
+		(*srv.Store()) = original
 		if c.Status != tc.status || c.Code != tc.code || strings.Contains(c.Message, "private database") {
 			t.Fatal("quota uncertainty misclassified", c)
 		}
@@ -217,22 +219,22 @@ func TestOperationDoctorUnusableContractAndReleasePins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	changed := d
 	changed.Revision = "changed"
-	checks := srv.operation.ObserveOperationDefinition(t.Context(), acct, dep, changed)
+	checks := (*srv.Operation()).ObserveOperationDefinition(t.Context(), acct, dep, changed)
 	if checks[0].Status != "blocked" || checks[0].Code != "definition_contract_unusable" {
 		t.Fatal("invalid revision observed as usable", checks)
 	}
 	changed = d
 	changed.ReleaseID = uuid.NewString()
-	checks = srv.operation.ObserveOperationDefinition(t.Context(), acct, dep, changed)
+	checks = (*srv.Operation()).ObserveOperationDefinition(t.Context(), acct, dep, changed)
 	if checks[1].Status != "blocked" || checks[1].Code != "release_pin_unavailable" {
 		t.Fatal("missing release observed as usable", checks)
 	}
 	changed = d
 	changed.Spec.CompletionWebhookID = uuid.NewString()
-	check := srv.operation.ObserveOperationCompletion(t.Context(), acct.ID, app.ID, changed.Spec.CompletionWebhookID)
+	check := (*srv.Operation()).ObserveOperationCompletion(t.Context(), acct.ID, app.ID, changed.Spec.CompletionWebhookID)
 	if check.Impact != "delivery" || check.Status != "warning" {
 		t.Fatal("missing completion conflated with business work", check)
 	}

@@ -13,7 +13,7 @@
 // because the production file has no parallel _test.go — keeping
 // this review-fix test in its own file avoids touching a 1k+ LOC
 // handler source for unrelated test plumbing.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -96,7 +97,7 @@ func TestKafkaSkipVerifyRequested(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := kafkaSkipVerifyRequested(tc.kind, json.RawMessage(tc.raw))
+			got, err := apidserver.KafkaSkipVerifyRequested(tc.kind, json.RawMessage(tc.raw))
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("err = nil, want parse error")
@@ -198,12 +199,12 @@ func TestErrTriggerKindNotAllowedWireShape(t *testing.T) {
 }
 
 func TestCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	e := apidserver.Setup(t, api.PlanHobby)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "hobby-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID:  app.ID,
 		Kind:   api.TriggerKindKafka,
 		Slug:   "orders",
@@ -222,12 +223,12 @@ func TestCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
 }
 
 func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "pro-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "pro-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID:  app.ID,
 		Kind:   api.TriggerKindKafka,
 		Slug:   "orders",
@@ -239,12 +240,12 @@ func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
 }
 
 func TestCreateQueueTriggerPersistsFirstClassSource(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "queue-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "queue-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID:  app.ID,
 		Kind:   api.TriggerKindQueue,
 		Slug:   "jobs",
@@ -260,7 +261,7 @@ func TestCreateQueueTriggerPersistsFirstClassSource(t *testing.T) {
 	if trigger.Source == nil || *trigger.Source != "delayed_task" {
 		t.Fatalf("source = %v, want delayed_task", trigger.Source)
 	}
-	stored, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	stored, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	if err != nil {
 		t.Fatalf("TriggerByID: %v", err)
 	}
@@ -270,13 +271,13 @@ func TestCreateQueueTriggerPersistsFirstClassSource(t *testing.T) {
 }
 
 func TestTriggerRetryPolicyRoundTripsAndUpdates(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "retry-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "retry-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	policy := &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.1}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs",
 		Config: json.RawMessage(`{"mode":"queue"}`), RetryPolicy: policy,
 	}, nil)
@@ -294,7 +295,7 @@ func TestTriggerRetryPolicyRoundTripsAndUpdates(t *testing.T) {
 		t.Fatalf("trigger cap/config = %d/%s, want max_attempts=4 and retry_policy", trigger.MaxAttempts, trigger.Config)
 	}
 	updatedPolicy := &api.RetryPolicyDTO{BaseSeconds: 5, MaxSeconds: 60, JitterSeconds: 0}
-	patch := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{RetryPolicy: updatedPolicy}, nil)
+	patch := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{RetryPolicy: updatedPolicy}, nil)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("update status = %d: %s", patch.Code, patch.Body.String())
 	}
@@ -308,12 +309,12 @@ func TestTriggerRetryPolicyRoundTripsAndUpdates(t *testing.T) {
 }
 
 func TestCreateTriggerRejectsInvalidRetryPolicy(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "retry-invalid-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "retry-invalid-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs",
 		Config:      json.RawMessage(`{"mode":"queue"}`),
 		RetryPolicy: &api.RetryPolicyDTO{BaseSeconds: 2, MaxSeconds: 1},
@@ -341,7 +342,7 @@ func TestEnforceCreateTriggerCapsUsesPlanSafeDefaults(t *testing.T) {
 	} {
 		t.Run(string(tc.plan), func(t *testing.T) {
 			limits := api.MustLimitsFor(tc.plan)
-			bs, bw, ma, pb, _, problem := enforceCreateTriggerCaps(
+			bs, bw, ma, pb, _, problem := apidserver.EnforceCreateTriggerCaps(
 				&api.CreateTriggerRequest{Kind: api.TriggerKindQueue}, tc.plan, limits)
 			got := [4]int32{bs, bw, ma, pb}
 			if problem != nil || got != tc.want {
@@ -357,13 +358,13 @@ func TestEnforceCreateTriggerCapsRejectsExplicitOverCaps(t *testing.T) {
 		name string
 		req  api.CreateTriggerRequest
 	}{
-		{"batch_size", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchSizeMax: intPtr(51)}},
-		{"batch_window", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchWindowMs: intPtr(30_001)}},
-		{"attempts", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, MaxAttempts: intPtr(4)}},
-		{"payload", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, PayloadMaxBytes: intPtr(1_048_577)}},
+		{"batch_size", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchSizeMax: apidserver.IntPtr(51)}},
+		{"batch_window", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, BatchWindowMs: apidserver.IntPtr(30_001)}},
+		{"attempts", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, MaxAttempts: apidserver.IntPtr(4)}},
+		{"payload", api.CreateTriggerRequest{Kind: api.TriggerKindQueue, PayloadMaxBytes: apidserver.IntPtr(1_048_577)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, _, _, _, problem := enforceCreateTriggerCaps(&tc.req, api.PlanHobby, limits); problem == nil {
+			if _, _, _, _, _, problem := apidserver.EnforceCreateTriggerCaps(&tc.req, api.PlanHobby, limits); problem == nil {
 				t.Fatal("problem = nil, want explicit over-cap rejection")
 			}
 		})
@@ -371,12 +372,12 @@ func TestEnforceCreateTriggerCapsRejectsExplicitOverCaps(t *testing.T) {
 }
 
 func TestBatchCreateTriggerUsesPlanSafeDefaults(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	e := apidserver.Setup(t, api.PlanHobby)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "hobby-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
 		AppID: app.ID,
 		ManifestYAML: `triggers:
   - kind: queue
@@ -389,7 +390,7 @@ func TestBatchCreateTriggerUsesPlanSafeDefaults(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var out batchCreateResponse
+	var out apidserver.BatchCreateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -404,12 +405,12 @@ func TestBatchCreateTriggerUsesPlanSafeDefaults(t *testing.T) {
 }
 
 func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "hobby-app"})
+	e := apidserver.Setup(t, api.PlanHobby)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "hobby-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
 		AppID: app.ID,
 		ManifestYAML: `triggers:
   - kind: kafka
@@ -424,7 +425,7 @@ func TestBatchCreateTriggerRejectsKindOutsidePlan(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var out batchCreateResponse
+	var out apidserver.BatchCreateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -439,18 +440,18 @@ func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
 		name  string
 		patch api.UpdateTriggerRequest
 	}{
-		{"batch_size", api.UpdateTriggerRequest{BatchSizeMax: intPtr(limits.TriggerBatchSizeMax + 1)}},
-		{"batch_window", api.UpdateTriggerRequest{BatchWindowMs: intPtr(limits.TriggerBatchWindowMaxSec*1000 + 1)}},
-		{"attempts", api.UpdateTriggerRequest{MaxAttempts: intPtr(limits.TriggerMaxAttemptsMax + 1)}},
-		{"payload", api.UpdateTriggerRequest{PayloadMaxBytes: intPtr(limits.TriggerPayloadMaxBytes + 1)}},
+		{"batch_size", api.UpdateTriggerRequest{BatchSizeMax: apidserver.IntPtr(limits.TriggerBatchSizeMax + 1)}},
+		{"batch_window", api.UpdateTriggerRequest{BatchWindowMs: apidserver.IntPtr(limits.TriggerBatchWindowMaxSec*1000 + 1)}},
+		{"attempts", api.UpdateTriggerRequest{MaxAttempts: apidserver.IntPtr(limits.TriggerMaxAttemptsMax + 1)}},
+		{"payload", api.UpdateTriggerRequest{PayloadMaxBytes: apidserver.IntPtr(limits.TriggerPayloadMaxBytes + 1)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "caps-app"})
+			e := apidserver.Setup(t, api.PlanPro)
+			app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "caps-app"})
 			if err != nil {
 				t.Fatalf("CreateApp: %v", err)
 			}
-			created := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+			created := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 				AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs", Config: json.RawMessage(`{"mode":"queue"}`),
 			}, nil)
 			if created.Code != http.StatusCreated {
@@ -460,7 +461,7 @@ func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
 			if err := json.Unmarshal(created.Body.Bytes(), &trigger); err != nil {
 				t.Fatalf("decode trigger: %v", err)
 			}
-			rec := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, tc.patch, nil)
+			rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, tc.patch, nil)
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("update status = %d, want 403: %s", rec.Code, rec.Body.String())
 			}
@@ -469,12 +470,12 @@ func TestUpdateTriggerRejectsExplicitOverCaps(t *testing.T) {
 }
 
 func TestUpdateQueueTriggerPersistsChangedSource(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "source-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "source-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	created := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	created := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID: app.ID, Kind: api.TriggerKindQueue, Slug: "jobs", Config: json.RawMessage(`{"mode":"queue"}`),
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -488,7 +489,7 @@ func TestUpdateQueueTriggerPersistsChangedSource(t *testing.T) {
 		t.Fatalf("created source = %v, want queue", trigger.Source)
 	}
 
-	updated := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
+	updated := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
 		Config: json.RawMessage(`{"mode":"delayed_task"}`),
 	}, nil)
 	if updated.Code != http.StatusOK {

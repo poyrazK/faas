@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -21,12 +22,12 @@ func TestSourceHealthcheckPersistsAcrossTransports(t *testing.T) {
 			{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}, TimeoutS: 3},
 		} {
 			t.Run(transport+"/"+probe.Path+grpcProbeService(probe), func(t *testing.T) {
-				e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
-				raw := buildSourceRefTarGz(t)
-				e.gh.streamBody = nopReadCloser{bytes.NewReader(raw)}
-				srv := httptest.NewServer(e.h)
+				e := apidserver.NewSourceRefTestServer(t, api.PlanPro, "x", 7777)
+				raw := apidserver.BuildSourceRefTarGz(t)
+				(*(*e.Gh()).StreamBody()) = apidserver.NopReadCloser{bytes.NewReader(raw)}
+				srv := httptest.NewServer((*e.H()))
 				defer srv.Close()
-				client := api.NewClient(srv.URL, e.key).SetCompletionCache(nil)
+				client := api.NewClient(srv.URL, (*e.Key())).SetCompletionCache(nil)
 				ctx := t.Context()
 				var dep api.DeploymentResponse
 				var err error
@@ -61,7 +62,7 @@ func TestSourceHealthcheckPersistsAcrossTransports(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				stored, err := e.store.LatestDeployment(ctx, e.appID)
+				stored, err := (*e.Store()).LatestDeployment(ctx, (*e.AppID()))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -91,12 +92,12 @@ func grpcProbeService(probe *api.DeploymentHealthcheck) string {
 func TestSourceHealthcheckRejectsInvalidBeforeEnqueue(t *testing.T) {
 	for _, transport := range []string{"multipart", "source-tarball", "source-ref", "resumable"} {
 		t.Run(transport, func(t *testing.T) {
-			e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
-			raw := buildSourceRefTarGz(t)
-			e.gh.streamBody = nopReadCloser{bytes.NewReader(raw)}
-			srv := httptest.NewServer(e.h)
+			e := apidserver.NewSourceRefTestServer(t, api.PlanPro, "x", 7777)
+			raw := apidserver.BuildSourceRefTarGz(t)
+			(*(*e.Gh()).StreamBody()) = apidserver.NopReadCloser{bytes.NewReader(raw)}
+			srv := httptest.NewServer((*e.H()))
 			defer srv.Close()
-			client := api.NewClient(srv.URL, e.key).SetCompletionCache(nil)
+			client := api.NewClient(srv.URL, (*e.Key())).SetCompletionCache(nil)
 			probe := &api.DeploymentHealthcheck{Path: "/readyz", GRPC: &api.DeploymentGRPCHealthcheck{}}
 			var err error
 			switch transport {
@@ -113,7 +114,7 @@ func TestSourceHealthcheckRejectsInvalidBeforeEnqueue(t *testing.T) {
 			if !errors.As(err, &apiErr) || apiErr.Problem.Status != 400 {
 				t.Fatalf("error=%v want validation 400", err)
 			}
-			if _, err = e.store.LatestDeployment(t.Context(), e.appID); !errors.Is(err, state.ErrNotFound) {
+			if _, err = (*e.Store()).LatestDeployment(t.Context(), (*e.AppID())); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("invalid probe enqueued deployment: %v", err)
 			}
 		})
