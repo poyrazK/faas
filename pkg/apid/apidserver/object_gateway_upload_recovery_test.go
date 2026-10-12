@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -193,10 +194,10 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	}
 	// A new store/server has only durable state; no in-memory request ownership survives.
 	recovered := state.NewPgStore(pool)
-	e := setup(t, api.PlanHobby)
-	e.s.store = recovered
-	e.s.WithObjectStorage(registry)
-	setS3Flag(t, e, false)
+	e := apidserver.Setup(t, api.PlanHobby)
+	(*(*e.S()).Store()) = recovered
+	(*e.S()).WithObjectStorage(registry)
+	apidserver.SetS3Flag(t, e, false)
 	report.ObservedAt = time.Now()
 	report.CostMillicents = policy.MaxMonthlyCostMillicents
 	if err = recovered.RecordObjectUsageReport(ctx, report); err != nil {
@@ -208,7 +209,7 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 		}
 	}
 	due(ctx, id)
-	if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
+	if err = (*(*e.S()).Object()).ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	receipt, err = recovered.GetObjectUploadReceipt(ctx, acct.ID, app.ID, "", credential.ID, id)
@@ -226,7 +227,7 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
+	if err = (*(*e.S()).Object()).ReconcileObjectCapacity(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = recovered.GetObjectCapacityReconciliation(ctx, acct.ID, b.ID, j.ID)
@@ -252,7 +253,7 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	object.receipt = uuid.NewString()
 	object.mu.Unlock()
 	due(ctx, fresh.ID)
-	if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
+	if err = (*(*e.S()).Object()).ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := recovered.GetObjectUploadReceipt(ctx, acct.ID, app.ID, "", credential.ID, fresh.ID)

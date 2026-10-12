@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPublishProjectReleaseSetRequiresCompleteLiveGraph(t *testing.T) {
-	srv, store, acct, _, app := newProjectLifecycleFixture(t)
+	srv, store, acct, _, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
@@ -30,9 +31,9 @@ func TestPublishProjectReleaseSetRequiresCompleteLiveGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
 	req.SetPathValue("environment", "production")
-	srv.publishProjectReleaseSet(rec, req, acct)
+	srv.PublishProjectReleaseSet(rec, req, acct)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("publish = %d %s", rec.Code, rec.Body.String())
 	}
@@ -53,17 +54,17 @@ func TestPublishProjectReleaseSetRequiresCompleteLiveGraph(t *testing.T) {
 	}
 	request.Deployments = map[string]string{app.Slug: dark.ID}
 	body, _ = json.Marshal(request)
-	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
+	req, rec = apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
 	req.SetPathValue("environment", "production")
-	srv.publishProjectReleaseSet(rec, req, acct)
+	srv.PublishProjectReleaseSet(rec, req, acct)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("publish dark deployment = %d %s", rec.Code, rec.Body.String())
 	}
 	request.Deployments = map[string]string{app.Slug: "not-a-deployment"}
 	body, _ = json.Marshal(request)
-	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
+	req, rec = apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/release-sets", "shop", body)
 	req.SetPathValue("environment", "production")
-	srv.publishProjectReleaseSet(rec, req, acct)
+	srv.PublishProjectReleaseSet(rec, req, acct)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid deployment = %d %s", rec.Code, rec.Body.String())
 	}

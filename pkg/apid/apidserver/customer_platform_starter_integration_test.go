@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"bufio"
@@ -18,7 +18,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -51,19 +53,19 @@ func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal("customer-platform acceptance requires Node.js")
 	}
-	e := setupPGHandler(t, api.PlanHobby)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
 	const slug = "customer-platform-api"
 	required, operatorAuth := true, false
-	created := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	created := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: slug, PlatformTenantRequired: &required, RequireAuthn: &operatorAuth,
 	}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create app: %d %s", created.Code, created.Body.String())
 	}
-	ownerAPI := httptest.NewServer(e.h)
+	ownerAPI := httptest.NewServer((*e.H()))
 	t.Cleanup(ownerAPI.Close)
 	tools := starterOperator{t: t, node: node, dir: dir,
-		env: append(os.Environ(), "FAAS_API="+ownerAPI.URL, "FAAS_TOKEN="+e.key)}
+		env: append(os.Environ(), "FAAS_API="+ownerAPI.URL, "FAAS_TOKEN="+(*e.Key()))}
 	var alice, bob api.ApplyPlatformTenantResponse
 	tools.run(&alice, "onboard", slug, "customer-alice", "Alice")
 	tools.run(&bob, "onboard", slug, "customer-bob", "Bob")
@@ -76,8 +78,8 @@ func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 	aliceKey, aliceKeyID := tools.issue(alice, "alice-v1", "")
 	bobKey, _ := tools.issue(bob, "bob-v1", "")
 	address := startCustomerStarter(t, node, dir, database)
-	backend := &tenantIngressBackend{store: e.store, slug: slug, address: address}
-	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{e.store})
+	backend := &tenantIngressBackend{store: (*e.Store()), slug: slug, address: address}
+	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{(*e.Store())})
 	request := func(method, path, key, forgedTenant string, body any, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		var data bytes.Buffer
@@ -150,15 +152,15 @@ func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 // Exercise the local billing tools against the real PostgreSQL-backed owner
 // API. The large full-minute month is covered by the Node billing test; here
 // each daily window is seeded to prove server pricing, revisions and handoff.
-func testCustomerPlatformMonthlyBilling(t *testing.T, e pgHandlerEnv, tools starterOperator, alice, bob api.ApplyPlatformTenantResponse) {
+func testCustomerPlatformMonthlyBilling(t *testing.T, e apidserver.PgHandlerEnv, tools starterOperator, alice, bob api.ApplyPlatformTenantResponse) {
 	t.Helper()
 	ctx := context.Background()
-	store := e.store.(*state.PgStore)
+	store := (*e.Store()).(*state.PgStore)
 	end := time.Now().UTC()
 	end = time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
 	start := end.AddDate(0, -1, 0)
 	appID := alice.Consumers[0].AppID
-	if _, err := store.CreateAPIConsumerRateCard(ctx, e.acct.ID, appID, "EUR", 10, start); err != nil {
+	if _, err := store.CreateAPIConsumerRateCard(ctx, (*e.Acct()).ID, appID, "EUR", 10, start); err != nil {
 		t.Fatal(err)
 	}
 	for at := start; at.Before(end); at = at.Add(24 * time.Hour) {
@@ -167,7 +169,7 @@ func testCustomerPlatformMonthlyBilling(t *testing.T, e pgHandlerEnv, tools star
 			units  int64
 		}{{alice, 3}, {bob, 5}} {
 			if _, err := store.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
-				EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+				EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appID,
 				ConsumerKey: customer.tenant.Consumers[0].ID, PlatformTenantID: customer.tenant.TenantID,
 				WindowStart: at, RequestCount: customer.units, BillableUnits: customer.units,
 			}); err != nil {
@@ -209,7 +211,7 @@ func testCustomerPlatformMonthlyBilling(t *testing.T, e pgHandlerEnv, tools star
 		tools.run(nil, "statement-handoff", alice.TenantID, statement.ID, invoiceRef)
 	}
 	if _, err := store.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appID,
 		ConsumerKey: alice.Consumers[0].ID, PlatformTenantID: alice.TenantID,
 		WindowStart: start, RequestCount: 2, BillableUnits: 2,
 	}); err != nil {

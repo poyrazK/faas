@@ -1,5 +1,5 @@
 // adr: 521
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -113,7 +115,7 @@ func TestDashboardCustomerOperationsFiltersAndPagination(t *testing.T) {
 	otherCustomer := f.admit(t, f.def, bob.ID)
 	staging := dashboardOperationTestDefinition(t, f.store, f.app, "staging", "")
 	otherScope := f.admit(t, staging, f.tenant.ID)
-	base := dashboardCustomerOperationsURL(f.app.Slug)
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug)
 	query := url.Values{"scope": {api.DefaultEnvScope}, "tenant_id": {f.tenant.ID}, "name": {f.def.Spec.Name}, "state": {"accepted"}, "limit": {"1"}}
 	first := f.get(t, base+"?"+query.Encode(), http.StatusOK).Body.String()
 	link := regexp.MustCompile(`href="([^"]+)">Older operations`).FindStringSubmatch(first)
@@ -186,12 +188,12 @@ func TestDashboardCustomerOperationBusinessOutcomeAndExecutionEvidence(t *testin
 		"private-notification-error", state.AppWebhookAttemptMetadata{}); err != nil {
 		t.Fatal(err)
 	}
-	base := dashboardCustomerOperationsURL(f.app.Slug)
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug)
 	body := f.get(t, base+"/"+op.ID, http.StatusOK).Body.String()
 	for _, want := range []string{"Succeeded", "Dead letter", "generating", "storing", "4 of 10", "Current reported stage",
 		"Business work succeeded", "Execution started", "Progress reported", "A retained JSON result is available",
 		f.tenant.ID, f.def.Revision, "/dashboard/apps/" + f.app.Slug + "/deployments/" + f.def.DeploymentID,
-		dashboardAsyncInvocationPath + claim.ID, delivery.ID} {
+		apidserver.DashboardAsyncInvocationPath + claim.ID, delivery.ID} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail missing %q", want)
 		}
@@ -202,7 +204,7 @@ func TestDashboardCustomerOperationBusinessOutcomeAndExecutionEvidence(t *testin
 		}
 	}
 	// Following the evidence link reaches the existing scoped invocation view.
-	f.get(t, dashboardAsyncInvocationPath+claim.ID, http.StatusOK)
+	f.get(t, apidserver.DashboardAsyncInvocationPath+claim.ID, http.StatusOK)
 	// Reading a future event cursor shows the current snapshot and an explicit
 	// history gap; it never turns missing events into a failed business result.
 	resync := f.get(t, base+"/"+op.ID+"?event_after=999", http.StatusOK).Body.String()
@@ -236,9 +238,9 @@ func TestDashboardCustomerOperationsOwnershipAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := dashboardCustomerOperationsURL(f.app.Slug)
-	for _, path := range []string{dashboardCustomerOperationsURL(foreignApp.Slug), base + "/" + foreignOp.ID,
-		dashboardCustomerOperationsURL(otherApp.Slug) + "/" + op.ID, base + "/missing", base + "/" + op.ID + "/extra"} {
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug)
+	for _, path := range []string{apidserver.DashboardCustomerOperationsURL(foreignApp.Slug), base + "/" + foreignOp.ID,
+		apidserver.DashboardCustomerOperationsURL(otherApp.Slug) + "/" + op.ID, base + "/missing", base + "/" + op.ID + "/extra"} {
 		t.Run(path, func(t *testing.T) { f.get(t, path, http.StatusNotFound) })
 	}
 	for _, query := range []string{"?event_after=-1", "?execution_after=2147483648", "?event_after=1&event_after=2", "?execution_after=", "?tenant_id=" + f.tenant.ID} {
@@ -268,7 +270,7 @@ func TestDashboardCustomerOperationHistoryCursorsRemainIndependent(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	base := dashboardCustomerOperationsURL(f.app.Slug) + "/" + op.ID
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug) + "/" + op.ID
 	body := f.get(t, base+"?event_after=4&execution_after=1", http.StatusOK).Body.String()
 	for _, test := range []struct {
 		text     string
@@ -316,9 +318,9 @@ func TestDashboardCustomerOperationEvidenceFailurePreservesBusinessSnapshot(t *t
 	f := newDashboardOperationFixture(t)
 	op := f.admit(t, f.def, f.tenant.ID)
 	store := dashboardOperationEvidenceFailureStore{Store: f.store, OperationStore: f.store}
-	srv := newServerWithDeps(store, discardLogger(), "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, f.mgr, nil, time.Minute, "")
-	f.handler = srv.handler()
-	body := f.get(t, dashboardCustomerOperationsURL(f.app.Slug)+"/"+op.ID, http.StatusOK).Body.String()
+	srv := apidserver.NewServerWithDeps(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, f.mgr, nil, time.Minute, "")
+	f.handler = srv.Handler()
+	body := f.get(t, apidserver.DashboardCustomerOperationsURL(f.app.Slug)+"/"+op.ID, http.StatusOK).Body.String()
 	for _, want := range []string{"Accepted", "The pinned definition is unavailable", "Execution history is temporarily unavailable", "Progress history is temporarily unavailable"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing evidence failure state %q", want)
@@ -333,10 +335,10 @@ func TestDashboardCustomerOperationEventProjectionDoesNotRenderArbitraryPayloads
 	for _, kind := range []string{"artifact_attached", "recovery_requested", "future_event", "progress"} {
 		t.Run(kind, func(t *testing.T) {
 			event := api.OperationEvent{Sequence: 1, Type: kind, Data: []byte(`{"uri":"private-storage-location","capability":"private-authority","stage":"<script>bad()</script>","completed":1,"total":2}`)}
-			item := projectDashboardOperationEvent(event)
+			item := apidserver.ProjectDashboardOperationEvent(event)
 			data := dashboard.CustomerOperationsData{Detail: &dashboard.CustomerOperationDetail{Events: []dashboard.CustomerOperationEvent{item}}}
 			rec := httptest.NewRecorder()
-			if err := dashboard.Render(rec, discardLogger(), "test-nonce", dashboard.Page{Body: "customer_operations", Data: data}); err != nil {
+			if err := dashboard.Render(rec, apidserver.DiscardLogger(), "test-nonce", dashboard.Page{Body: "customer_operations", Data: data}); err != nil {
 				t.Fatal(err)
 			}
 			body := rec.Body.String()

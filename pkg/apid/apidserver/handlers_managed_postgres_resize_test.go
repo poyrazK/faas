@@ -1,5 +1,5 @@
 // adr: 623 — customer admission, durable progress and secret-free projections.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -47,10 +49,10 @@ func resizeAPIService(t *testing.T, account string) (*managedpostgres.Service, m
 	return svc, d, &enabled
 }
 func TestManagedPostgresResizeRoutesAndReplay(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	service, d, enabled := resizeAPIService(t, e.acct.ID)
-	e.s.managedPostgres = service
-	capabilities := e.do(t, http.MethodGet, "/v1/postgres/capabilities", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	service, d, enabled := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	capabilities := e.Do(t, http.MethodGet, "/v1/postgres/capabilities", nil, nil)
 	var support api.ManagedPostgresCapabilities
 	if err := json.Unmarshal(capabilities.Body.Bytes(), &support); err != nil || !support.ClassResize {
 		t.Fatal("resize support not discoverable", err)
@@ -58,49 +60,49 @@ func TestManagedPostgresResizeRoutesAndReplay(t *testing.T) {
 	id := uuid.NewString()
 	path := "/v1/postgres/databases/" + d.ID + "/resize"
 	payload := map[string]any{"request_id": id, "service_class": "burstable"}
-	if rec := e.do(t, http.MethodPost, path, payload, map[string]string{"Authorization": ""}); rec.Code != http.StatusUnauthorized {
+	if rec := e.Do(t, http.MethodPost, path, payload, map[string]string{"Authorization": ""}); rec.Code != http.StatusUnauthorized {
 		t.Fatal("unauthenticated resize", rec.Code)
 	}
 	token, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "read only", []string{"postgres:read"}); err != nil {
+	if _, err = (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "read only", []string{"postgres:read"}); err != nil {
 		t.Fatal(err)
 	}
 	headers := map[string]string{"Authorization": "Bearer " + token}
-	if rec := e.do(t, http.MethodPost, path, payload, headers); rec.Code != http.StatusForbidden {
+	if rec := e.Do(t, http.MethodPost, path, payload, headers); rec.Code != http.StatusForbidden {
 		t.Fatal("read scope mutated", rec.Code)
 	}
-	rec := e.do(t, http.MethodPost, path, payload, nil)
+	rec := e.Do(t, http.MethodPost, path, payload, nil)
 	if rec.Code != http.StatusAccepted || !strings.HasSuffix(rec.Header().Get("Location"), "/resizes/"+id) {
 		t.Fatal("reservation", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "PRIVATE_") || strings.Contains(rec.Body.String(), "private-backend") {
 		t.Fatal("private evidence leaked")
 	}
-	if _, err := service.Reconcile(t.Context(), e.acct.ID, d.ID); err != nil {
+	if _, err := service.Reconcile(t.Context(), (*e.Acct()).ID, d.ID); err != nil {
 		t.Fatal(err)
 	}
 	*enabled = false
-	rec = e.do(t, http.MethodPost, path, payload, nil)
+	rec = e.Do(t, http.MethodPost, path, payload, nil)
 	var view api.ManagedPostgresResize
 	if err = json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != 202 || view.State != "succeeded" || view.Generation != 2 || !view.ConnectionInterruptionExpected {
 		t.Fatal("replay cached initial acceptance", rec.Code, rec.Body.String(), err)
 	}
 	progress := strings.TrimSuffix(path, "/resize") + "/resizes/" + id
-	rec = e.do(t, http.MethodGet, progress, nil, headers)
+	rec = e.Do(t, http.MethodGet, progress, nil, headers)
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("read progress", rec.Code, rec.Body.String())
 	}
 	payload["service_class"] = "development"
-	if rec = e.do(t, http.MethodPost, path, payload, nil); rec.Code != 409 {
+	if rec = e.Do(t, http.MethodPost, path, payload, nil); rec.Code != 409 {
 		t.Fatal("UUID changed target", rec.Code, rec.Body.String())
 	}
 }
 func TestManagedPostgresResizeValidationAndPlan(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	e.s.managedPostgres, _, _ = resizeAPIService(t, e.acct.ID)
+	e := apidserver.Setup(t, api.PlanHobby)
+	(*(*e.S()).ManagedPostgres()), _, _ = resizeAPIService(t, (*e.Acct()).ID)
 	path := "/v1/postgres/databases/anything/resize"
 	for _, tc := range []struct {
 		body   map[string]any
@@ -111,7 +113,7 @@ func TestManagedPostgresResizeValidationAndPlan(t *testing.T) {
 		{map[string]any{"request_id": uuid.NewString(), "service_class": "burstable"}, 403},
 		{map[string]any{"request_id": uuid.NewString(), "service_class": "development", "provider_id": "private"}, 400},
 	} {
-		if rec := e.do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
+		if rec := e.Do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
 			t.Fatal("validation", tc.body, rec.Code, rec.Body.String())
 		}
 	}

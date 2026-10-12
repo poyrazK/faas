@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,8 +15,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -24,16 +26,16 @@ import (
 
 // adr: 687
 func TestObjectVersionsControlJourneyMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	objectVersionsControlJourney(t, e.s, e.store, e.acct, e.key, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	objectVersionsControlJourney(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil)
 }
 func TestObjectVersionsControlJourneyPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	objectVersionsControlJourney(t, e.s, e.store, e.acct, e.key, e.pool)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	objectVersionsControlJourney(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()))
 }
 
-func objectVersionsControlJourney(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
-	identity, teardown := withTestIdentities(t)
+func objectVersionsControlJourney(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	const key = "目录 /+%.txt"
 	var calls atomic.Int32
@@ -74,17 +76,17 @@ func objectVersionsControlJourney(t *testing.T, s *server, st state.Store, acct 
 	}))
 	defer native.Close()
 	_, bucket, _, _ := seedEncryptionJournalStorage(t, s, st, acct, native.URL)
-	if _, err := st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: runtimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: boolJSON(true), ApplyMode: state.RuntimeConfigApplyHot, Reason: "version read test"}); err != nil {
+	if _, err := st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: apidserver.RuntimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: apidserver.BoolJSON(true), ApplyMode: state.RuntimeConfigApplyHot, Reason: "version read test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.runtimeConfig.reconcile(t.Context(), st); err != nil {
+	if err := (*s.RuntimeConfig()).Reconcile(t.Context(), st); err != nil {
 		t.Fatal(err)
 	}
 	public := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
 	makeGateway := func(store state.Store) http.Handler {
-		h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: store.(s3gateway.Store), RequestMetrics: store.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
+		h, err := s3gateway.New(s3gateway.Config{Registry: (*s.ObjectStorage()), Store: store.(s3gateway.Store), RequestMetrics: store.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
 			ns, plain, err := secretbox.OpenBytes(identity, blob)
 			if err != nil || ns != s3gateway.CredentialSecretNamespace {
 				return "", errors.New("invalid credential")
@@ -96,7 +98,7 @@ func objectVersionsControlJourney(t *testing.T, s *server, st state.Store, acct 
 		}
 		return h
 	}
-	control := s.handler()
+	control := s.Handler()
 	base := "/v1/apps/encrypted-journal/buckets/" + bucket.ID
 	send := func(method, path, token string, body any) *httptest.ResponseRecorder {
 		t.Helper()

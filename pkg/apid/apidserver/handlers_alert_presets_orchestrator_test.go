@@ -16,7 +16,7 @@
 // Pattern: mirrors the existing handlers_admin_force_test.go
 // harness (newForceHarness + seedRunningInstance) — same
 // newServer() call shape, same MemStore.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -29,7 +29,9 @@ import (
 	"testing"
 
 	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -83,9 +85,9 @@ func TestSendTestAlertPresetCore_DispatchesTestTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	prev := hostIdentitiesForUnseal
-	t.Cleanup(func() { hostIdentitiesForUnseal = prev })
-	hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+	prev := (*apidserver.HostIdentitiesForUnseal)
+	t.Cleanup(func() { (*apidserver.HostIdentitiesForUnseal) = prev })
+	(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 		return []*age.X25519Identity{ident}
 	}
 
@@ -141,7 +143,7 @@ func TestSendTestAlertPresetCore_DispatchesTestTrue(t *testing.T) {
 	// newAuditor(store, log, nil) — Emit is nil-safe and used
 	// as a no-op here (the orchestrator still fires the emit).
 	ops := wire.NewOpsMetrics("apid_test_alert")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
 
 	// Fire the orchestrator directly. The HTTP-layer wrapper at
@@ -149,7 +151,7 @@ func TestSendTestAlertPresetCore_DispatchesTestTrue(t *testing.T) {
 	// delegates — that's covered by the route registration tests
 	// in server.go. The orchestrator is where the load-bearing
 	// work lives.
-	res, prob := srv.sendTestAlertPresetCore(context.Background(), acct, "test-alert-app", "api_down")
+	res, prob := srv.SendTestAlertPresetCore(context.Background(), acct, "test-alert-app", "api_down")
 	if prob != nil {
 		t.Fatalf("orchestrator returned Problem; want 200: %+v", prob)
 	}
@@ -250,10 +252,10 @@ func TestSendTestAlertPresetCore_NoRule(t *testing.T) {
 	// Note: NO alert rule instantiated for this app.
 
 	ops := wire.NewOpsMetrics("apid_test_alert_no_rule")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
 
-	res, prob := srv.sendTestAlertPresetCore(context.Background(), acct, "norule-app", "api_down")
+	res, prob := srv.SendTestAlertPresetCore(context.Background(), acct, "norule-app", "api_down")
 	if prob == nil {
 		t.Fatalf("orchestrator returned success; want 404 Problem. res=%+v", res)
 	}

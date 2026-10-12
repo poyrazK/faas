@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,39 +13,41 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDevBridgeSelectedWebhookReplayPreservesOriginal(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.devBridgeEnabled = true
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).DevBridgeEnabled()) = true
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "shop"})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "shop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "development"})
+	_, err = (*e.Store()).CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "development"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "payments", Type: state.AppTypeApp, Status: state.AppActive})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "payments", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := e.store.EnqueueInvocation(ctx, state.Invocation{AccountID: e.acct.ID, AppID: app.ID, Source: state.InvocationInboundWebhook, State: state.InvocationPending, Method: "POST", Path: "/webhooks/stripe", Payload: []byte(`{"id":"evt_selected","type":"payment_intent.succeeded"}`), Headers: []byte(`{"content-type":"application/json","x-gregale-webhook-event-id":"evt_selected","x-gregale-webhook-provider":"stripe","authorization":"Bearer source-secret","stripe-signature":"expired-signature"}`), DueAt: time.Now(), CreatedAt: time.Now()})
+	original, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{AccountID: (*e.Acct()).ID, AppID: app.ID, Source: state.InvocationInboundWebhook, State: state.InvocationPending, Method: "POST", Path: "/webhooks/stripe", Payload: []byte(`{"id":"evt_selected","type":"payment_intent.succeeded"}`), Headers: []byte(`{"content-type":"application/json","x-gregale-webhook-event-id":"evt_selected","x-gregale-webhook-provider":"stripe","authorization":"Bearer source-secret","stripe-signature":"expired-signature"}`), DueAt: time.Now(), CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	relay := devbridge.NewRelay(4)
-	relayServer := httptest.NewServer(devbridge.NewServer(relay, e.store.DevBridgeByID, nil))
+	relayServer := httptest.NewServer(devbridge.NewServer(relay, (*e.Store()).DevBridgeByID, nil))
 	defer relayServer.Close()
-	e.s.devBridgeURL = relayServer.URL
-	apiServer := httptest.NewServer(e.h)
+	(*(*e.S()).DevBridgeURL()) = relayServer.URL
+	apiServer := httptest.NewServer((*e.H()))
 	defer apiServer.Close()
-	client := api.NewClient(apiServer.URL, e.key)
+	client := api.NewClient(apiServer.URL, (*e.Key()))
 	session, err := client.CreateDevBridge(ctx, api.CreateDevBridgeRequest{App: app.Slug, Environment: "development", DeveloperID: "alice"})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +69,7 @@ func TestDevBridgeSelectedWebhookReplayPreservesOriginal(t *testing.T) {
 	}))
 	defer local.Close()
 	target, _ := url.Parse(local.URL)
-	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{(*e.Acct()).ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
 	if handshake != nil {
 		_ = handshake.Body.Close()
 	}
@@ -94,7 +96,7 @@ func TestDevBridgeSelectedWebhookReplayPreservesOriginal(t *testing.T) {
 	if deliveries.Load() != 1 {
 		t.Fatal("idempotent replay duplicated local delivery")
 	}
-	preserved, err := e.store.InvocationByID(ctx, original.ID)
+	preserved, err := (*e.Store()).InvocationByID(ctx, original.ID)
 	if err != nil || preserved.State != original.State || preserved.Attempts != original.Attempts || string(preserved.Payload) != string(original.Payload) {
 		t.Fatal("original delivery mutated")
 	}

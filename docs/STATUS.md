@@ -7,6 +7,17 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Combined PostgreSQL rollout readiness — 2026-10-12
+
+[ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
+and durable lifecycle evidence with a separately approved native guest bundle.
+The offline verifier requires the same clean source revision, SQL major, current
+artifact hashes and unexpired evidence. Staging canaries can opt into enforcement;
+partial configuration cannot fall back to legacy approval. Portable race, verdict,
+lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20261012-managed-postgres-rollout-readiness/REPORT.md)
+record the qualification boundary. Supported native execution remains pending; this change
+does not enable production provisioning or alter Neon resources or billing.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
@@ -528,6 +539,16 @@ so each restore ran a fresh handler process. The migration's Up, Down and
 replay passed on Postgres 16.
 Functions without an explicit `idle_timeout_s` park after 30 s on every
 plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps keep the plan default.
+Functions stream responses and send every header value (ADR-999). All five
+runners share `guest/runners/internal.Serve`. Node Fetch bodies still being
+produced, async-iterable and Python generator bodies, and Go handlers that
+`Flush` stream; every other response is sent whole as before. Evidence,
+2026-10-12 on `gregale-internal-test-1` (`cmd/e2e`
+`TestFunctionStreamingMetal`, full daemon set): a streamed response reached
+the client through the gateway with its first chunk 0.8 ms after the headers
+and the second 1.97 s later, matching the handler's 2 s pause, and with both
+`Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
+runner core.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

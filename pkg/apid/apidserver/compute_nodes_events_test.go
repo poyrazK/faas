@@ -11,7 +11,7 @@
 // real socket — the SSE response is long-lived, and a real net.Conn
 // interacts badly with -race.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -44,9 +45,9 @@ func newComputeNodeEventsFixture(t *testing.T, notif *recordingNotifier, allowli
 	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("seed key: %v", err)
 	}
-	srv := newServerWithDeps(store, nil, "gregale.dev", notif, "", nil, nil, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, nil, "gregale.dev", notif, "", nil, nil, nil, nil, 0, "")
 	srv.WithAdminAllowlist(allowlistEmail)
-	return srv.handler(), key
+	return srv.Handler(), key
 }
 
 // TestComputeNodes_Events_StreamsAllFrames confirms the handler

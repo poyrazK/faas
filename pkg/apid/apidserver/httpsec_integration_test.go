@@ -12,7 +12,7 @@
 // and the rest of the server (e.g. a future handler that resets
 // headers, or a future wrapper that runs before the security chain).
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -38,9 +39,9 @@ import (
 func TestHttpsec_StaticHeadersOnAllPaths(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid_httpsec_test")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
-	h := srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	h := srv.Handler()
 
 	// Hoist the account + key out of the loop so the per-path
 	// subtests share one auth token. MemStore rejects duplicate
@@ -102,9 +103,9 @@ func TestHttpsec_StaticHeadersOnAllPaths(t *testing.T) {
 func TestHttpsec_CSPOnAllPaths(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid_httpsec_csp_test")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
-	h := srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	h := srv.Handler()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/healthz", nil)
@@ -148,9 +149,9 @@ func TestHttpsec_CSPOnAllPaths(t *testing.T) {
 func TestHttpsec_NonceFreshnessAcrossRequests(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid_httpsec_nonce_test")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
-	h := srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	h := srv.Handler()
 
 	parse := func(csp string) string {
 		const key = "'nonce-"
@@ -191,9 +192,9 @@ func TestHttpsec_HSTSDisabledByEnv(t *testing.T) {
 
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid_httpsec_hsts_test")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		"example.com", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
-	h := srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", apidserver.NoopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	h := srv.Handler()
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAccountUsage_ComputeProjection(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/account/usage?month=2026-09", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/account/usage?month=2026-09", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -27,10 +28,10 @@ func TestAccountUsage_ComputeProjection(t *testing.T) {
 }
 
 func TestAccountUsage_IncludesConfiguredObjectStorage(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
-	e.s.objectStorage.Accounting = api.ObjectStoragePolicy{}
-	rec := e.do(t, http.MethodGet, "/v1/account/usage", nil, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))
+	(*(*e.S()).ObjectStorage()).Accounting = api.ObjectStoragePolicy{}
+	rec := e.Do(t, http.MethodGet, "/v1/account/usage", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -45,7 +46,7 @@ func TestAccountUsage_IncludesConfiguredObjectStorage(t *testing.T) {
 		t.Fatal("empty inventory must remain stale")
 	}
 
-	rec = e.do(t, http.MethodGet, "/v1/account/usage?month=2026-08", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/account/usage?month=2026-08", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("historical status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -59,7 +60,7 @@ func TestAccountUsage_IncludesConfiguredObjectStorage(t *testing.T) {
 }
 
 func TestAccountUsage_BadMonth(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/v1/account/usage?month=not-a-month", nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/v1/account/usage?month=not-a-month", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }

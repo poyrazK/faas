@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,15 +9,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 120 — customer API consumer metering, pricing, and monetization foundation.
 func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-statements")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-statements/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-statements")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-statements/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "statement-customer", Name: "Statement Customer",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -28,21 +30,21 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 		t.Fatal(err)
 	}
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	rate := e.do(t, http.MethodPost, "/v1/apps/consumer-statements/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	rate := e.Do(t, http.MethodPost, "/v1/apps/consumer-statements/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 25, EffectiveFrom: &minute,
 	}, nil)
 	if rate.Code != http.StatusCreated {
 		t.Fatalf("create rate card: %d %s", rate.Code, rate.Body)
 	}
-	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 		ConsumerKey: consumer.ID, WindowStart: minute, RequestCount: 3, BillableUnits: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/consumer-statements/consumers/" + consumer.ID + "/usage-statements"
 	period := api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &minute, PeriodEnd: func() *time.Time { v := minute.Add(time.Hour); return &v }()}
-	first := e.do(t, http.MethodPost, path, period, nil)
+	first := e.Do(t, http.MethodPost, path, period, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create statement: %d %s", first.Code, first.Body)
 	}
@@ -53,7 +55,7 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if statement.Status != "draft" || !statement.Priced || statement.AmountMillicents != 75 || statement.UnpricedUnits != 0 || len(statement.Buckets) != 1 {
 		t.Fatalf("statement = %+v", statement)
 	}
-	duplicate := e.do(t, http.MethodPost, path, period, nil)
+	duplicate := e.Do(t, http.MethodPost, path, period, nil)
 	if duplicate.Code != http.StatusOK {
 		t.Fatalf("duplicate statement: %d %s", duplicate.Code, duplicate.Body)
 	}
@@ -61,15 +63,15 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(duplicate.Body.Bytes(), &replay); err != nil || replay.ID != statement.ID {
 		t.Fatalf("duplicate replay = %+v err=%v", replay, err)
 	}
-	hook, err := e.store.CreateAppWebhook(context.Background(), state.AppWebhook{
-		AppID: consumer.AppID, AccountID: e.acct.ID, TargetURL: "https://billing.example/statements",
+	hook, err := (*e.Store()).CreateAppWebhook(context.Background(), state.AppWebhook{
+		AppID: consumer.AppID, AccountID: (*e.Acct()).ID, TargetURL: "https://billing.example/statements",
 		EventFilter: []string{string(state.AppWebhookEventUsageStatementFinalized)}, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	finalizePath := path + "/" + statement.ID + "/finalize"
-	finalized := e.do(t, http.MethodPost, finalizePath, struct{}{}, nil)
+	finalized := e.Do(t, http.MethodPost, finalizePath, struct{}{}, nil)
 	if finalized.Code != http.StatusOK {
 		t.Fatalf("finalize: %d %s", finalized.Code, finalized.Body)
 	}
@@ -77,7 +79,7 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(finalized.Body.Bytes(), &final); err != nil || final.Status != "finalized" || final.FinalizedAt == nil {
 		t.Fatalf("final statement = %+v err=%v", final, err)
 	}
-	deliveries, _, err := e.store.ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
+	deliveries, _, err := (*e.Store()).ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +93,11 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if delivery.StatementID != statement.ID || delivery.ConsumerID != consumer.ID || delivery.AmountMillicents != 75 || delivery.FinalizedAt.IsZero() {
 		t.Fatalf("delivery payload = %+v", delivery)
 	}
-	repeated := e.do(t, http.MethodPost, finalizePath, struct{}{}, nil)
+	repeated := e.Do(t, http.MethodPost, finalizePath, struct{}{}, nil)
 	if repeated.Code != http.StatusOK {
 		t.Fatalf("repeat finalize: %d %s", repeated.Code, repeated.Body)
 	}
-	deliveries, _, err = e.store.ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
+	deliveries, _, err = (*e.Store()).ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 		t.Fatalf("repeat finalize enqueued %d deliveries, want one", len(deliveries))
 	}
 	handoffPath := finalizePath[:len(finalizePath)-len("/finalize")] + "/handoff"
-	claim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
+	claim := e.Do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
 	if claim.Code != http.StatusCreated {
 		t.Fatalf("claim handoff: %d %s", claim.Code, claim.Body)
 	}
@@ -111,7 +113,7 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(claim.Body.Bytes(), &handoff); err != nil || handoff.StatementID != statement.ID || handoff.ExternalInvoiceID != "customer-invoice-1001" || handoff.AmountMillicents != 75 {
 		t.Fatalf("handoff = %+v err=%v", handoff, err)
 	}
-	replayedClaim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
+	replayedClaim := e.Do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
 	if replayedClaim.Code != http.StatusOK {
 		t.Fatalf("replay handoff: %d %s", replayedClaim.Code, replayedClaim.Body)
 	}
@@ -119,15 +121,15 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(replayedClaim.Body.Bytes(), &replayedHandoff); err != nil || replayedHandoff.ID != handoff.ID {
 		t.Fatalf("replayed handoff = %+v err=%v", replayedHandoff, err)
 	}
-	conflictingClaim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1002"}, nil)
+	conflictingClaim := e.Do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1002"}, nil)
 	if conflictingClaim.Code != http.StatusConflict {
 		t.Fatalf("conflicting handoff: %d %s", conflictingClaim.Code, conflictingClaim.Body)
 	}
-	gotHandoff := e.do(t, http.MethodGet, handoffPath, nil, nil)
+	gotHandoff := e.Do(t, http.MethodGet, handoffPath, nil, nil)
 	if gotHandoff.Code != http.StatusOK {
 		t.Fatalf("get handoff: %d %s", gotHandoff.Code, gotHandoff.Body)
 	}
-	listed := e.do(t, http.MethodGet, path, nil, nil)
+	listed := e.Do(t, http.MethodGet, path, nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list statements: %d %s", listed.Code, listed.Body)
 	}
@@ -136,9 +138,9 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 // adr: 949 — app-local statements supersede changed drafts and bill late
 // usage as additive adjustment revisions of the same period.
 func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-revisions")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-revisions/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-revisions")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-revisions/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "revision-customer", Name: "Revision Customer",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -149,15 +151,15 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	if rate := e.do(t, http.MethodPost, "/v1/apps/consumer-revisions/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	if rate := e.Do(t, http.MethodPost, "/v1/apps/consumer-revisions/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &minute,
 	}, nil); rate.Code != http.StatusCreated {
 		t.Fatalf("create rate card: %d %s", rate.Code, rate.Body)
 	}
 	recordUsage := func(at time.Time, units int64) {
 		t.Helper()
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
 		}); err != nil {
 			t.Fatal(err)
@@ -168,7 +170,7 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 	period := api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &minute, PeriodEnd: &end}
 	snapshot := func(wantCode int) api.APIConsumerUsageStatementResponse {
 		t.Helper()
-		res := e.do(t, http.MethodPost, path, period, nil)
+		res := e.Do(t, http.MethodPost, path, period, nil)
 		if res.Code != wantCode {
 			t.Fatalf("create statement: %d %s, want %d", res.Code, res.Body, wantCode)
 		}
@@ -180,7 +182,7 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 	}
 	post := func(target string, body any, wantCode int) {
 		t.Helper()
-		if res := e.do(t, http.MethodPost, target, body, nil); res.Code != wantCode {
+		if res := e.Do(t, http.MethodPost, target, body, nil); res.Code != wantCode {
 			t.Fatalf("POST %s: %d %s, want %d", target, res.Code, res.Body, wantCode)
 		}
 	}
@@ -201,7 +203,7 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 		t.Fatalf("refreshed draft = %+v", refreshed)
 	}
 	var stale api.APIConsumerUsageStatementResponse
-	if err := json.Unmarshal(e.do(t, http.MethodGet, path+"/"+draft.ID, nil, nil).Body.Bytes(), &stale); err != nil || stale.Status != "superseded" {
+	if err := json.Unmarshal(e.Do(t, http.MethodGet, path+"/"+draft.ID, nil, nil).Body.Bytes(), &stale); err != nil || stale.Status != "superseded" {
 		t.Fatalf("superseded draft = %+v err=%v", stale, err)
 	}
 	post(path+"/"+draft.ID+"/finalize", struct{}{}, http.StatusConflict)
@@ -225,7 +227,7 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 
 	// A different period overlapping billed usage still cannot be handed off.
 	overlapStart, overlapEnd := minute.Add(time.Minute), minute.Add(2*time.Hour)
-	res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &overlapStart, PeriodEnd: &overlapEnd}, nil)
+	res := e.Do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &overlapStart, PeriodEnd: &overlapEnd}, nil)
 	var overlap api.APIConsumerUsageStatementResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &overlap); err != nil || res.Code != http.StatusCreated {
 		t.Fatalf("overlapping statement: %d %s", res.Code, res.Body)
@@ -241,9 +243,9 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	if now.Add(10*time.Minute).Month() != now.Month() {
 		t.Skip("allowance months must not roll over during the test")
 	}
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-allowance")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-allowance/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-allowance")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-allowance/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "allowance-customer", Name: "Allowance Customer",
 	}, nil)
 	var consumer api.APIConsumerResponse
@@ -252,12 +254,12 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	}
 	cards := "/v1/apps/consumer-allowance/rate-cards"
 	past := now.Add(-time.Hour)
-	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
+	if res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 10, IncludedUnitsPerMonth: 5, EffectiveFrom: &past,
 	}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("backdated allowance card: %d %s, want 422", res.Code, res.Body)
 	}
-	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
+	res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 10, IncludedUnitsPerMonth: 5, EffectiveFrom: &now,
 	}, nil)
 	var card api.APIConsumerRateCardResponse
@@ -267,8 +269,8 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	m0, m1 := now.Add(time.Minute), now.Add(2*time.Minute)
 	record := func(at time.Time, units int64) {
 		t.Helper()
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
 		}); err != nil {
 			t.Fatal(err)
@@ -278,7 +280,7 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 	end := now.Add(time.Hour)
 	draft := func() api.APIConsumerUsageStatementResponse {
 		t.Helper()
-		res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
+		res := e.Do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
 		var out api.APIConsumerUsageStatementResponse
 		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil || res.Code != http.StatusCreated {
 			t.Fatalf("draft: %d %s", res.Code, res.Body)
@@ -293,7 +295,7 @@ func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
 		first.Buckets[0].ChargedUnits != 0 || first.Buckets[1].ChargedUnits != 2 {
 		t.Fatalf("first statement = %+v, want 5 free and 2 charged units", first)
 	}
-	if res := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+	if res := e.Do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
 		t.Fatalf("finalize: %d %s", res.Code, res.Body)
 	}
 
@@ -314,9 +316,9 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	if now.Add(10*time.Minute).Month() != now.Month() {
 		t.Skip("tier months must not roll over during the test")
 	}
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-tiers")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-tiers/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-tiers")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-tiers/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "tier-customer", Name: "Tier Customer",
 	}, nil)
 	var consumer api.APIConsumerResponse
@@ -325,12 +327,12 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	}
 	step := func(n int64) *int64 { return &n }
 	cards := "/v1/apps/consumer-tiers/rate-cards"
-	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
+	if res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
 		Tiers: []api.APIConsumerRateCardTier{{UpTo: step(5), PriceMillicentsPerUnit: 10}, {PriceMillicentsPerUnit: 0}},
 	}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("free later step: %d %s, want 422", res.Code, res.Body)
 	}
-	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
+	res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", EffectiveFrom: &now,
 		Tiers: []api.APIConsumerRateCardTier{{UpTo: step(5), PriceMillicentsPerUnit: 0}, {UpTo: step(10), PriceMillicentsPerUnit: 100}, {PriceMillicentsPerUnit: 10}},
 	}, nil)
 	var card api.APIConsumerRateCardResponse
@@ -340,8 +342,8 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	m0, m1 := now.Add(time.Minute), now.Add(2*time.Minute)
 	record := func(at time.Time, units int64) {
 		t.Helper()
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
 		}); err != nil {
 			t.Fatal(err)
@@ -351,12 +353,12 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	monthEnd := monthStart.AddDate(0, 1, 0)
 	week := monthStart.AddDate(0, 0, 7)
-	if res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &week}, nil); res.Code != http.StatusUnprocessableEntity && now.Before(week) {
+	if res := e.Do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &week}, nil); res.Code != http.StatusUnprocessableEntity && now.Before(week) {
 		t.Fatalf("weekly tiered statement: %d %s, want 422", res.Code, res.Body)
 	}
 	draft := func() api.APIConsumerUsageStatementResponse {
 		t.Helper()
-		res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &monthEnd}, nil)
+		res := e.Do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &monthStart, PeriodEnd: &monthEnd}, nil)
 		var out api.APIConsumerUsageStatementResponse
 		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil || res.Code != http.StatusCreated {
 			t.Fatalf("draft: %d %s", res.Code, res.Body)
@@ -370,7 +372,7 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 	if first.AmountMillicents != 520 || len(first.Buckets) != 2 || !slices.Equal(first.Buckets[1].TierUnits, []int64{1, 5, 2}) {
 		t.Fatalf("first statement = %+v, want 1 free, 5 at 100 and 2 at 10 in the second minute", first)
 	}
-	if res := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+	if res := e.Do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
 		t.Fatalf("finalize: %d %s", res.Code, res.Body)
 	}
 	record(m0, 4)
@@ -379,7 +381,7 @@ func TestAPIConsumerRateCardTiersInStatements(t *testing.T) {
 		adjustment.Buckets[1].AmountMillicents != -260 || !slices.Equal(adjustment.Buckets[1].TierUnits, []int64{-1, -3, 4}) {
 		t.Fatalf("adjustment = %+v, want a 40 net re-rating", adjustment)
 	}
-	if res := e.do(t, http.MethodPost, path+"/"+adjustment.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+	if res := e.Do(t, http.MethodPost, path+"/"+adjustment.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
 		t.Fatalf("finalize adjustment: %d %s", res.Code, res.Body)
 	}
 }
@@ -391,9 +393,9 @@ func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 	if now.Add(10*time.Minute).Month() != now.Month() {
 		t.Skip("allowance months must not roll over during the test")
 	}
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-weights")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-weights")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "weight-customer", Name: "Weight Customer",
 	}, nil)
 	var consumer api.APIConsumerResponse
@@ -401,12 +403,12 @@ func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
 	}
 	cards := "/v1/apps/consumer-weights/rate-cards"
-	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &now,
+	if res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &now,
 		RouteWeights: map[string]int64{"/generate": 20},
 	}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("route without method: %d %s, want 422", res.Code, res.Body)
 	}
-	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10,
+	res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 10,
 		IncludedUnitsPerMonth: 10, RouteWeights: map[string]int64{"POST /generate": 20}, EffectiveFrom: &now,
 	}, nil)
 	var card api.APIConsumerRateCardResponse
@@ -415,15 +417,15 @@ func TestAPIConsumerRateCardRouteWeightsInStatements(t *testing.T) {
 	}
 	minute := now.Add(time.Minute)
 	for _, route := range []string{"POST /generate", "POST /generate", "GET /items", "GET /items", "GET /items"} {
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
 			WindowStart: minute, RequestCount: 1, BillableUnits: 1, BillingRoute: route,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	end := now.Add(time.Hour)
-	res = e.do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers/"+consumer.ID+"/usage-statements",
+	res = e.Do(t, http.MethodPost, "/v1/apps/consumer-weights/consumers/"+consumer.ID+"/usage-statements",
 		api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
 	var statement api.APIConsumerUsageStatementResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &statement); err != nil || res.Code != http.StatusCreated {
@@ -441,52 +443,52 @@ func TestAPIConsumerPlansPriceAssignedMinutes(t *testing.T) {
 	if now.Add(10*time.Minute).Month() != now.Month() {
 		t.Skip("months must not roll over during the test")
 	}
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-plans")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-plans")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "plan-customer", Name: "Plan Customer",
 	}, nil)
 	var consumer api.APIConsumerResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil || created.Code != http.StatusCreated {
 		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
 	}
-	if res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	if res := e.Do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &now,
 	}, nil); res.Code != http.StatusCreated {
 		t.Fatalf("default card: %d %s", res.Code, res.Body)
 	}
-	res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "pro", MaxRequestsPerMinute: 100}, nil)
+	res := e.Do(t, http.MethodPost, "/v1/apps/consumer-plans/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "pro", MaxRequestsPerMinute: 100}, nil)
 	var plan api.APIConsumerPlanResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &plan); err != nil || res.Code != http.StatusCreated {
 		t.Fatalf("create plan: %d %s", res.Code, res.Body)
 	}
 	assignments := "/v1/apps/consumer-plans/consumers/" + consumer.ID + "/plan-assignments"
 	switchAt := now.Add(2 * time.Minute)
-	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusUnprocessableEntity {
+	if res := e.Do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("assign to an unpriced plan: %d %s, want 422", res.Code, res.Body)
 	}
-	if res := e.do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
+	if res := e.Do(t, http.MethodPost, "/v1/apps/consumer-plans/rate-cards", api.CreateAPIConsumerRateCardRequest{
 		Currency: "EUR", PriceMillicentsPerUnit: 1, PlanID: plan.ID, EffectiveFrom: &now,
 	}, nil); res.Code != http.StatusCreated {
 		t.Fatalf("plan card: %d %s", res.Code, res.Body)
 	}
 	past := now.Add(-time.Hour)
-	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &past}, nil); res.Code != http.StatusUnprocessableEntity {
+	if res := e.Do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &past}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("backdated assignment: %d %s, want 422", res.Code, res.Body)
 	}
-	if res := e.do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusCreated {
+	if res := e.Do(t, http.MethodPost, assignments, api.AssignAPIConsumerPlanRequest{PlanID: plan.ID, EffectiveFrom: &switchAt}, nil); res.Code != http.StatusCreated {
 		t.Fatalf("assign: %d %s", res.Code, res.Body)
 	}
 	for _, at := range []time.Time{now.Add(time.Minute), switchAt.Add(time.Minute)} {
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID, ConsumerKey: consumer.ID,
 			WindowStart: at, RequestCount: 3, BillableUnits: 3,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	end := now.Add(time.Hour)
-	res = e.do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers/"+consumer.ID+"/usage-statements",
+	res = e.Do(t, http.MethodPost, "/v1/apps/consumer-plans/consumers/"+consumer.ID+"/usage-statements",
 		api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
 	var statement api.APIConsumerUsageStatementResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &statement); err != nil || res.Code != http.StatusCreated {
@@ -496,7 +498,7 @@ func TestAPIConsumerPlansPriceAssignedMinutes(t *testing.T) {
 	if statement.AmountMillicents != 33 || len(statement.Buckets) != 2 {
 		t.Fatalf("statement = %+v, want 33 millicents across both plans", statement)
 	}
-	listed := e.do(t, http.MethodGet, assignments, nil, nil)
+	listed := e.Do(t, http.MethodGet, assignments, nil, nil)
 	var history api.APIConsumerPlanAssignmentListResponse
 	if err := json.Unmarshal(listed.Body.Bytes(), &history); err != nil || len(history.Assignments) != 1 || history.Assignments[0].PlanID != plan.ID {
 		t.Fatalf("assignments = %s", listed.Body)

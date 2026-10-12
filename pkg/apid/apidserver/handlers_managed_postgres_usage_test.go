@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
 func TestManagedPostgresUsageViewIsCustomerSafe(t *testing.T) {
 	observed := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	view := managedPostgresUsageView(managedpostgres.UsageSummary{
+	view := apidserver.ManagedPostgresUsageView(managedpostgres.UsageSummary{
 		PolicyEnabled: true,
 		Fresh:         true,
 		Snapshot: managedpostgres.UsageSnapshot{
@@ -53,7 +54,7 @@ func TestManagedPostgresUsageViewGuardrailStates(t *testing.T) {
 		{name: "healthy", summary: managedpostgres.UsageSummary{PolicyEnabled: true, Fresh: true}, want: "healthy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := managedPostgresUsageView(tc.summary, limits).GuardrailState; got != tc.want {
+			if got := apidserver.ManagedPostgresUsageView(tc.summary, limits).GuardrailState; got != tc.want {
 				t.Fatalf("state = %q, want %q", got, tc.want)
 			}
 		})
@@ -62,7 +63,7 @@ func TestManagedPostgresUsageViewGuardrailStates(t *testing.T) {
 
 func TestManagedPostgresUsageOperatorViewIncludesNormalizedCostOnly(t *testing.T) {
 	period := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	view, err := managedPostgresUsageOperatorView("00000000-0000-0000-0000-000000000001", managedpostgres.UsageSummary{
+	view, err := apidserver.ManagedPostgresUsageOperatorView("00000000-0000-0000-0000-000000000001", managedpostgres.UsageSummary{
 		PolicyEnabled: true,
 		Fresh:         true,
 		EffectivePolicy: managedpostgres.UsagePolicy{

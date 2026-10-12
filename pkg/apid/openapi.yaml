@@ -11973,7 +11973,7 @@ paths:
     get:
       operationId: listCustomMetrics
       summary: List the app's pushed custom metrics (ADR-202)
-      description: "Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden \u2014 an operator debugging \"why isn't my custom target scaling\" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured."
+      description: "Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator debugging \"why isn't my custom target scaling\" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured."
       tags: [apps]
       responses:
         '200':
@@ -11993,7 +11993,7 @@ paths:
     put:
       operationId: putCustomMetric
       summary: Push a custom application metric (ADR-202)
-      description: "Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app \u2014 a cron, a database trigger, or the customer's own infrastructure \u2014 which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap."
+      description: "Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap."
       tags: [apps]
       requestBody:
         required: true
@@ -32200,7 +32200,7 @@ paths:
         - name: mode
           in: query
           description: Recovery mode; legacy omitted modes are routing.
-          schema: { type: string, enum: [routing, execution] }
+          schema: { type: string, enum: [routing, execution, workflow] }
         - name: subscription_id
           in: query
           description: Matches the frozen selection filter or any captured item subscription.
@@ -32486,12 +32486,578 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/recovery-policy:
+    get:
+      operationId: getWorkflowRecoveryPolicy
+      summary: Inspect the recovery policy
+      description: Returns the current app policy and scheduler evaluation status. An unconfigured app has a disabled version-zero policy.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for getWorkflowRecoveryPolicy.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Result of getWorkflowRecoveryPolicy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setWorkflowRecoveryPolicy
+      summary: Configure a recovery policy
+      description: Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures for explicit workflows and failure statuses. Requires deploy write permission and MFA; cancellation remains manual.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for setWorkflowRecoveryPolicy.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Recovery policy settings and explicit automatic retry limits with the last observed version.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetWorkflowRecoveryPolicyRequest' }
+      responses:
+        '200':
+          description: Result of setWorkflowRecoveryPolicy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/apps/{slug}/recovery-policy/evaluate:
+    post:
+      operationId: evaluateWorkflowRecoveryPolicy
+      summary: Evaluate proposed recovery settings against retained historical candidates
+      description: Read-only consistent snapshot comparing current and proposed settings against up to 100 oldest retained reviews and 500 decisions in a maximum 30-day window. Requires the observed current policy version. Individual historical failure status is not captured; historical policy filters establish a possible status set and ambiguous narrower filters remain unknown. Preparation budgets, cooldown and deduplication are replayed conditionally from empty window-start state; unknown candidates are not charged. Actual recorded applications establish lower-bound execution pressure, never admission availability or counterfactual retry results. Application warmup uses the longer policy cooldown or one hour, with up to 10000 records and explicit truncation. Never reads current run state as historical proof or writes policy, reviews, jobs, audit events or notifications.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App whose retained review evidence is used for policy comparison.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyEvaluationRequest' }
+      responses:
+        '200':
+          description: Evidence-limited conditional comparison with explicit coverage notes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Current recovery policy version differs from expected_version.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/recovery-policy/change-preview:
+    post:
+      operationId: previewWorkflowRecoveryPolicyChange
+      summary: Preview a recovery policy replacement
+      description: Read-only impact of replacing the observed policy version. Every replacement suppresses old pending automatic intents and preserves unresolved applied children and spent charges. Inspects up to five newest matching recovery jobs and returns up to 25 candidate decisions. Retained preparation targets continue to prevent duplicate plans. Requires read access and MFA. No plans, controls, retries or notifications are written. Advisory evidence can change before a separately authorized version-fenced update.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for previewWorkflowRecoveryPolicyChange.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Proposed policy using the last observed configuration version; version zero means no existing policy.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetWorkflowRecoveryPolicyRequest' }
+      responses:
+        '200':
+          description: Result of previewWorkflowRecoveryPolicyChange.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyChangePreview' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '504':
+          description: Policy change preview inspection timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/recovery-policy/control:
+    post:
+      operationId: controlWorkflowRecoveryPolicy
+      summary: Pause or resume automatic recovery
+      description: Controls enabled automatic recovery without replacing its policy or discarding prepared retries. Requires deploy write and MFA. The observed version, update timestamp and pause timestamp fence concurrent controls and failure pauses. Resume clears the consecutive failure streak; committed children continue while paused.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for controlWorkflowRecoveryPolicy.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Observed recovery control state, operation and operator reason.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlWorkflowRecoveryPolicyRequest' }
+      responses:
+        '200':
+          description: Result of controlWorkflowRecoveryPolicy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/apps/{slug}/recovery-policy/history:
+    get:
+      operationId: getWorkflowRecoveryHistory
+      summary: Inspect retained recovery automation history
+      description: Read-only timeline of retained review decisions, controls, retry events, durable policy changes, worker reason transitions and health incident events, alongside latest observations. Durable events are captured prospectively with their state mutations, retained for 30 days and capped at 10000 per app. Results are ordered newest first with stable identifier tie breaks. Cursors fix the time window and durable event sequence ceiling; later appends are excluded. Retention can remove events, and latest observations can change across pages. Workflow, run and policy filters omit records without those associations. No execution inputs or outputs are returned.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug.
+          schema: { type: string }
+        - name: workflow
+          in: query
+          description: Workflow name filter.
+          schema: { type: string }
+        - name: run_id
+          in: query
+          description: Workflow run filter.
+          schema: { type: string, format: uuid }
+        - name: policy_version
+          in: query
+          description: Policy version filter; zero includes all versions.
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: created_after
+          in: query
+          description: Inclusive start; defaults to seven days before the end.
+          schema: { type: string, format: date-time }
+        - name: created_before
+          in: query
+          description: Inclusive end; defaults to the first page observation time. Maximum window is 30 days.
+          schema: { type: string, format: date-time }
+        - name: after
+          in: query
+          description: Opaque next_after cursor; preserve the original filters.
+          schema: { type: string, maxLength: 2048 }
+        - name: limit
+          in: query
+          description: Page size; zero uses the default.
+          schema: { type: integer, minimum: 0, maximum: 100, default: 25 }
+      responses:
+        '200':
+          description: Retained history page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryHistory' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/report:
+    get:
+      operationId: getWorkflowRecoveryReport
+      summary: Report observed recovery automation effectiveness
+      description: Read-only consistent snapshot summarizing at most 10000 newest retained history entries. Deduplicates durable and retained retry records by action. Attempts and results are selected independently by event time; missing results do not prove children are running. Durations measure application to result recording including worker polling delay. Groups use workflow and policy version. Blockers count distinct actions per observed reason. Recording is prospective, without backfill, and durable history retains 30 days / 10000 events per app. Coverage notes and truncation always accompany counts; no success percentage or causal effectiveness claim is inferred.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App whose observed recovery behavior is summarized.
+          schema: { type: string }
+        - name: workflow
+          in: query
+          description: Restrict report evidence to this workflow name.
+          schema: { type: string }
+        - name: policy_version
+          in: query
+          description: Restrict report evidence to this policy version; zero includes every version.
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: created_after
+          in: query
+          description: Inclusive report start; omitted values use seven days before the report end.
+          schema: { type: string, format: date-time }
+        - name: created_before
+          in: query
+          description: Inclusive end; defaults to the snapshot observation time. Maximum window is 30 days.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Observed effectiveness report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryReport' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/health:
+    get:
+      operationId: getWorkflowRecoveryPolicyHealth
+      summary: Inspect recovery automation health
+      description: Read-only app-scoped recovery policy health from a consistent bounded queue snapshot. Expected cooldown and exhausted budgets are blocked rather than stalled. Stalled means worker evaluation is overdue, not that a running child exceeded its execution deadline. This is advisory and never releases slots or authorizes execution.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for recovery policy health.
+          schema: { type: string }
+        - name: stall_after_seconds
+          in: query
+          description: Worker evaluation age threshold; request-local and not persisted.
+          schema: { type: integer, minimum: 1, maximum: 86400, default: 300 }
+      responses:
+        '200':
+          description: Observed recovery automation health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyHealth' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/queue:
+    get:
+      operationId: getWorkflowRecoveryAutomaticQueue
+      summary: Inspect queued automatic retries
+      description: Returns a consistent app-scoped snapshot of current pending intents, unresolved applied children across policy versions, and execution charges across all versions. Includes at most 100 entries in review order. Reasons reflect the last worker evaluation and are informational; unknown evidence never grants execution authority.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for getWorkflowRecoveryAutomaticQueue.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Result of getWorkflowRecoveryAutomaticQueue.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticQueue' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/reviews:
+    get:
+      operationId: listWorkflowRecoveryPolicyReviews
+      summary: List retained recovery policy decisions
+      description: Lists immutable evaluations and prepared response plans in identifier order. Evidence is retained with the parent recovery job.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for listWorkflowRecoveryPolicyReviews.
+          schema: { type: string }
+        - name: after
+          in: query
+          description: Exclusive review identifier cursor from the previous policy review page.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum retained policy reviews returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Result of listWorkflowRecoveryPolicyReviews.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyReviews' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/reviews/{reviewID}:
+    get:
+      operationId: getWorkflowRecoveryPolicyReview
+      summary: Inspect one retained policy review
+      description: Reads a frozen policy version and its target decisions. A prepared plan can be exported and explicitly applied using generation-fenced controls.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for getWorkflowRecoveryPolicyReview.
+          schema: { type: string }
+        - name: reviewID
+          in: path
+          required: true
+          description: Retained recovery policy review to inspect.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Result of getWorkflowRecoveryPolicyReview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyReview' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision:
+    post:
+      operationId: decideWorkflowRecoveryPolicyReview
+      summary: Approve or dismiss a policy plan
+      description: Records one immutable actor-attributed decision. An identical retry returns the original decision; a different decision or reason conflicts. Approval never applies actions and can be recorded for stale plans. Only reviews with prepared plans can be decided.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App owning the policy review.
+          schema: { type: string }
+        - name: reviewID
+          in: path
+          required: true
+          description: Retained policy review identifier.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowRecoveryReviewDecisionRequest' }
+      responses:
+        '200':
+          description: Review operation result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryPolicyReview' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress:
+    post:
+      operationId: suppressWorkflowRecoveryAutomaticAction
+      summary: Suppress one pending automatic retry
+      description: Suppresses a retained pending intent under its observed policy version. Records a trusted operator and reason. Requires deploy write and MFA. Applied children cannot be suppressed; no child is cancelled and no charge is refunded. Identical reason retries return the retained audit receipt while the policy version remains current. Manual recovery remains available.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App slug for suppressWorkflowRecoveryAutomaticAction.
+          schema: { type: string }
+        - name: reviewID
+          in: path
+          required: true
+          description: Retained review containing the automatic retry to suppress.
+          schema: { type: string, format: uuid }
+        - name: actionID
+          in: path
+          required: true
+          description: Stable pending automatic action identifier for suppression.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        description: Observed automatic policy version and operator suppression reason.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuppressWorkflowRecoveryAutomaticActionRequest' }
+      responses:
+        '200':
+          description: Retained result of suppressWorkflowRecoveryAutomaticAction.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticAction' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status:
+    get:
+      operationId: getWorkflowRecoveryReviewStatus
+      summary: Inspect live policy plan freshness
+      description: Checks retained action receipts before live generation eligibility. Reports ready, stale, unknown, applied, partially_applied or no_plan. Applied means a cancellation succeeded or a retry child was created; execution outcomes require the response-status command. Advisory checks never mutate or refresh plans.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App whose prepared response plan freshness is inspected.
+          schema: { type: string }
+        - name: reviewID
+          in: path
+          required: true
+          description: Policy review containing the saved targets to inspect.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current advisory freshness and durable application evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryReviewStatus' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}:
+    get:
+      operationId: getWorkflowRecoveryActionReceipt
+      summary: Read a retained workflow recovery action receipt
+      description: Reads an immutable cancellation decision in the authenticated account. Missing or expired action receipts return 404. This operation never submits cancellation.
+      tags: [events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          description: Owned recovery job whose cancellation receipt is being reconciled.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Stable cancellation action identifier from the saved response plan.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Retained cancellation action and its original outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryActionReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/event-recoveries/by-request/{requestID}:
+    get:
+      operationId: getEventRecoveryByRequest
+      summary: Find a retained recovery job by its stable request identifier
+      description: Looks up the original recovery job in this app and account after an interrupted creation request. Missing or expired jobs return 404. This operation never creates work.
+      tags: [events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: App containing the original recovery creation request.
+          schema: { type: string }
+        - name: requestID
+          in: path
+          required: true
+          description: Original recovery creation request identifier to locate in this app.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Original retained recovery job and its current progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/event-recoveries/{jobID}/workflow-cancellation-preview:
+    post:
+      operationId: previewWorkflowRecoveryCancellation
+      summary: Preview cancellation of an admitted workflow generation
+      description: Cancellation preview for native workflow recovery only. Rechecks the frozen item and generation under the run lock. Changed or unproven generations are refused. Cancellation is cooperative and cannot undo external side effects. Successful cancellation and its actor and reason are recorded atomically in recovery history.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          description: Owned retained recovery job ID for workflow-cancellation-preview.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        description: Reviewed item and generation with the operator reason for workflow-cancellation-preview.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowRecoveryCancellationRequest' }
+      responses:
+        '200':
+          description: Cancellation preview outcome. Noneligible outcomes do not change execution or history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryCancellationResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/event-recoveries/{jobID}/workflow-cancel:
+    post:
+      operationId: cancelWorkflowRecoveryExecution
+      summary: Cancel one reviewed admitted workflow generation
+      description: Cancellation commit for native workflow recovery only. Rechecks the frozen item and generation under the run lock. Changed or unproven generations are refused. Cancellation is cooperative and cannot undo external side effects. Successful cancellation and its actor and reason are recorded atomically in recovery history.
+      tags: [events]
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          description: Owned retained recovery job ID for workflow-cancel.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        description: Reviewed item and generation with the operator reason for workflow-cancel.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowRecoveryCancellationRequest' }
+      responses:
+        '200':
+          description: Cancellation commit outcome. Noneligible outcomes do not change execution or history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRecoveryCancellationResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /v1/event-recoveries/{jobID}/preflight:
     get:
       tags: [events]
       operationId: getEventRecoveryPreflight
       summary: Assess a frozen recovery selection without admitting work.
-      description: Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. No query parameters are accepted.
+      description: Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. With retry=true, review every saved item of a terminal native workflow recovery using one consistent snapshot. Only saved failures matching the retained run generation can be retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not a prospective child.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: jobID
@@ -32499,6 +33065,11 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: retry
+          in: query
+          description: Review saved native workflow outcomes for an explicit child retry instead of pending parent admissions. Only true is accepted; omit for ordinary preflight.
+          required: false
+          schema: { type: boolean, enum: [true] }
       responses:
         '200':
           description: Current eligibility observations and optimistic timing estimate.
@@ -32513,6 +33084,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Retry view requires a terminal native workflow recovery parent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery preflight timed out.
           content:
@@ -55358,7 +55934,7 @@ components:
           type: string
           example: "Europe/Istanbul"
         schedules:
-          description: "Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor \u2014 they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap."
+          description: "Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap."
           type: array
           minItems: 1
           maxItems: 12
@@ -55422,7 +55998,7 @@ components:
           example: 3
 
     ScalingSchedule:
-      description: "One recurring window that raises the warm floor (ADR-195). `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window \u2014 and it needs no special case for a window that crosses midnight."
+      description: "One recurring window that raises the warm floor (ADR-195). `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window — and it needs no special case for a window that crosses midnight."
       type: object
       additionalProperties: false
       required: [cron, duration_s, min_instances]
@@ -55432,7 +56008,7 @@ components:
           type: string
           example: "0 8 * * 1-5"
         duration_s:
-          description: "How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60 s exists because the scheduler sweep is coarser than that, so a shorter window could close before any tick observed it \u2014 billing a floor that never produced an instance."
+          description: "How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60 s exists because the scheduler sweep is coarser than that, so a shorter window could close before any tick observed it — billing a floor that never produced an instance."
           type: integer
           minimum: 60
           maximum: 604800
@@ -55444,7 +56020,7 @@ components:
           example: 3
 
     CustomMetricRequest:
-      description: "ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies \u2014 which is what makes the push idempotent by construction."
+      description: "ADR-202 push body. The metric name travels in the URL path, so the body carries only the number that varies — which is what makes the push idempotent by construction."
       type: object
       additionalProperties: false
       required: [value]
@@ -55543,7 +56119,7 @@ components:
           enum: [rps, cpu, concurrent_requests, queue_depth]
           example: "rps"
         name:
-          description: "Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise \u2014 a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove."
+          description: "Which custom metric this target watches (ADR-202). Required when metric is `custom`, and REJECTED otherwise — a name on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps having to remove."
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
@@ -59523,15 +60099,17 @@ components:
     EventRecoveryRequest:
       type: object
       additionalProperties: false
-      description: Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
+      description: Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Native workflow mode requires explicit workflow_runs and never selects event recipients. Creation freezes its own selection; preview is advisory.
       properties:
-        parent_job_id: { type: string, format: uuid, description: Select only saved failed/dead-lettered queued items from this retained terminal execution recovery in the same account/app. Requires execution mode. Does not follow newer replays. }
-        request_id: { type: string, format: uuid, description: Required on child creation; optional on preview. Account-scoped durable idempotency while the child job is retained. Repeating the normalized selection returns its existing child; different selection/app with the same UUID conflicts. Only allowed with parent_job_id. Operator reason is excluded from comparison and the original audit reason wins. }
+        workflow_runs: { $ref: '#/components/schemas/WorkflowRunRecoveryPlan' }
+        workflow_routing: { $ref: '#/components/schemas/EventWorkflowRecoveryPlan' }
+        parent_job_id: { type: string, format: uuid, description: "Select saved failed/dead-lettered execution items or saved failed native workflow items from a retained terminal recovery in the same account/app. Native workflow retries require explicit parent_position and the saved resume count for every target, and the same workflow name. Changed runs are rejected at creation or skipped at admission. Does not follow newer replays." }
+        request_id: { type: string, format: uuid, description: "Required for workflow_runs, workflow_routing and on child creation; optional on child preview. Account-scoped durable idempotency while the job is retained. Repeating the normalized selection returns its existing job; different selection/app with the same UUID conflicts. Only allowed with parent_job_id, workflow_runs or workflow_routing. Operator reason is excluded from comparison and the original audit reason wins." }
         reason:
           type: string
           maxLength: 512
           description: Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
-        mode: { type: string, enum: [routing, execution], default: routing }
+        mode: { type: string, enum: [routing, execution, workflow], default: routing }
         outcome: { type: string, enum: [failed, dead_letter], description: Execution mode only; omitted selects both replayable outcomes. }
         subscription_id: { type: string, maxLength: 256 }
         event_source: { type: string, maxLength: 256 }
@@ -59542,24 +60120,827 @@ components:
         include_non_retryable: { type: boolean, default: false }
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput depends on scheduler load. }
 
+
+    WorkflowRecoveryExecutionAttention:
+      type: object
+      description: Generation-fenced advisory execution monitoring. Capacity and scheduled wait counters describe underlying waits and may overlap deadline exceeded counts. Only the first attention event per job is captured. Detection never cancels or retries work.
+      required: [observed_at, deadline_seconds, stall_seconds, stalled_count, deadline_exceeded_count, capacity_waiting_count, scheduled_waiting_count, unknown_count, needs_attention, notification_captured, targets]
+      properties:
+        observed_at: { type: string, format: date-time }
+        deadline_seconds: { type: integer }
+        stall_seconds: { type: integer }
+        stalled_count: { type: integer }
+        deadline_exceeded_count: { type: integer }
+        capacity_waiting_count: { type: integer }
+        scheduled_waiting_count: { type: integer }
+        unknown_count: { type: integer }
+        needs_attention: { type: boolean }
+        notification_captured: { type: boolean }
+        targets:
+          type: array
+          maxItems: 25
+          items: { $ref: '#/components/schemas/WorkflowRecoveryExecutionAttentionTarget' }
+    WorkflowRecoveryExecutionAttentionTarget:
+      description: Advisory observation of one admitted native workflow generation with run and diagnostics links.
+      type: object
+      required: [position, run_id, resume_count, status, run_url, diagnostics_url]
+      properties:
+        position: { type: integer, format: int64 }
+        run_id: { type: string, format: uuid }
+        resume_count: { type: integer }
+        status: { type: string, enum: [unknown, queued, running, capacity_wait, scheduled_wait, stalled, deadline_exceeded] }
+        wait_reason: { type: string }
+        admitted_at: { type: string, format: date-time }
+        last_progress_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        run_url: { type: string }
+        diagnostics_url: { type: string }
+    WorkflowRecoveryExecutionAttentionWebhookPayload:
+      description: First execution attention signal captured for a native recovery job with frozen notification receivers.
+      type: object
+      required: [event_id, job_id, app_id, observed_at, attention, items_url]
+      properties:
+        event_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        attention: { $ref: '#/components/schemas/WorkflowRecoveryExecutionAttention' }
+        items_url: { type: string }
+    WorkflowRecoveryResponsePlan:
+      type: object
+      description: Saved reviewed actions pinned to an app and parent recovery job. Explicit apply uses stable per-action identifiers. Actions commit independently.
+      required: [version, app, app_id, job_id, key, created_at, actions]
+      properties:
+        version: { type: integer }
+        app: { type: string }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        key: { type: string }
+        created_at: { type: string, format: date-time }
+        actions: { type: array, minItems: 1, maxItems: 25, items: { $ref: '#/components/schemas/WorkflowRecoveryResponseAction' } }
+    WorkflowRecoveryResponseAction:
+      type: object
+      description: One explicit cancellation or saved-failure retry target. Exactly one action request matches the kind and frozen identity.
+      required: [kind, position, run_id]
+      properties:
+        kind: { type: string, enum: [cancel, retry] }
+        position: { type: integer, format: int64 }
+        run_id: { type: string, format: uuid }
+        cancellation: { $ref: '#/components/schemas/WorkflowRecoveryCancellationRequest' }
+        retry: { $ref: '#/components/schemas/EventRecoveryRequest' }
+    WorkflowRecoveryPolicy:
+      type: object
+      description: Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate. Cancellation remains manual.
+      required: [enabled, mode, workflow_names, triggers, failure_statuses, max_resume_count, cooldown_seconds, hourly_action_budget, rate_per_second, reason]
+      properties:
+        health_alerts: { $ref: '#/components/schemas/WorkflowRecoveryHealthAlertPolicy' }
+        hourly_execution_budget: { type: integer, minimum: 0, maximum: 100, description: Required 1..100 for automatic_retry; zero or omitted in preview. Counts automatic child job creation. }
+        pause_after_failures: { type: integer, minimum: 0, maximum: 10, description: Required 1..10 for automatic_retry; zero or omitted in preview. Consecutive proven failures pause automatic execution. }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [preview, automatic_retry] }
+        workflow_names: { type: array, maxItems: 10, uniqueItems: true, items: { type: string, minLength: 1, maxLength: 256 } }
+        triggers: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, enum: [saved_failure, stalled, deadline_exceeded] } }
+        failure_statuses: { type: array, maxItems: 2, uniqueItems: true, items: { type: string, enum: [failed, dead] } }
+        max_resume_count: { type: integer, minimum: 1, maximum: 16 }
+        cooldown_seconds: { type: integer, minimum: 60, maximum: 604800 }
+        hourly_action_budget: { type: integer, minimum: 1, maximum: 100 }
+        rate_per_second: { type: integer, minimum: 1, maximum: 100 }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    WorkflowRecoveryPolicyAutomaticExecution:
+      type: object
+      description: Durable consecutive failure counter and automatic execution pause for the current policy version. Updating the policy explicitly clears this pause.
+      required: [consecutive_failures, pause_reason]
+      properties:
+        consecutive_failures: { type: integer }
+        paused_at: { type: string, format: date-time }
+        pause_reason: { type: string }
+    SuppressWorkflowRecoveryAutomaticActionRequest:
+      type: object
+      description: Version-fenced suppression of a pending automatic retry intent, requiring an operator reason.
+      required: [expected_policy_version, reason]
+      properties:
+        expected_policy_version: { type: integer, format: int64, minimum: 1 }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    WorkflowRecoveryAutomaticSuppression:
+      type: object
+      description: Immutable operator suppression audit retained with the automatic retry intent.
+      required: [reason, actor_kind, actor_id, suppressed_at]
+      properties:
+        reason: { type: string }
+        actor_kind: { type: string }
+        actor_id: { type: string }
+        suppressed_at: { type: string, format: date-time }
+    WorkflowRecoveryAutomaticBlockedNotification:
+      type: object
+      description: First observed evidence block capture for this automatic action. Receivers are frozen at capture; queued identifies ledger admission rather than successful delivery. No receivers prevents historical replay to later subscribers.
+      required: [event_id, status, reason, captured_at, receiver_webhook_ids]
+      properties:
+        event_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, no_receivers] }
+        reason: { type: string, enum: [evidence_unknown] }
+        captured_at: { type: string, format: date-time }
+        receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
+    WorkflowRecoveryQueueBlockedWebhookPayload:
+      type: object
+      description: Historical automation.recovery_queue_blocked event captured once per automatic retry action when fresh inspection cannot resolve pending or applied evidence. Capturing this event does not finalize a child, release its execution slot, or authorize another retry. Delivery may occur after the block resolves; stable identity and frozen recipients support receiver deduplication.
+      required: [event_id, app_id, app, review_id, action_id, policy_version, position, status, reason, observed_at, queue_url, review_status_url]
+      properties:
+        event_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app: { type: string }
+        review_id: { type: string, format: uuid }
+        action_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        position: { type: integer, format: int64 }
+        child_job_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, applied] }
+        reason: { type: string, enum: [evidence_unknown] }
+        observed_at: { type: string, format: date-time }
+        queue_url: { type: string }
+        review_status_url: { type: string }
+    WorkflowRecoveryAutomaticEvaluation:
+      type: object
+      description: Last committed worker evaluation, never refreshed by reads or notification capture. Waiting_since is the first observation of this consecutive wait reason and resets when the reason changes. Absent for legacy or unevaluated intents. Pausing preserves historical evidence.
+      required: [evaluated_at, reason]
+      properties:
+        evaluated_at: { type: string, format: date-time }
+        reason: { type: string, enum: [hourly_budget, cooldown, execution_quota, evidence_unknown, outstanding_retry, admission_wait, execution_wait, retry_running, inspection_error, child_created, result_recorded, suppressed] }
+        waiting_since: { type: string, format: date-time }
+    WorkflowRecoveryAutomaticAction:
+      type: object
+      description: Durable automatic retry intent and application receipt. Applied identifies child creation; its final result requires retained generation proof. Suppressed actions never run automatically.
+      required: [action_id, position, status, reason]
+      properties:
+        last_evaluation: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticEvaluation' }
+        suppression: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticSuppression' }
+        blocked_notification: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticBlockedNotification' }
+        action_id: { type: string, format: uuid }
+        position: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, applied, suppressed] }
+        reason: { type: string }
+        child_job_id: { type: string, format: uuid }
+        applied_at: { type: string, format: date-time }
+        result: { $ref: '#/components/schemas/WorkflowRecoveryReviewActionStatus' }
+    WorkflowRecoveryReviewAutomaticExecution:
+      type: object
+      description: Automatic retry execution records for the frozen review plan. Manual application is recorded through the existing keyed child receipts and is not charged to automatic execution budgets.
+      required: [actions]
+      properties:
+        actions: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticAction' } }
+    WorkflowRecoveryPolicyPausedWebhookPayload:
+      type: object
+      description: Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+      required: [event_id, app_id, app, policy_version, paused_at, consecutive_failures, reason, policy_url]
+      properties:
+        event_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app: { type: string }
+        policy_version: { type: integer, format: int64 }
+        paused_at: { type: string, format: date-time }
+        consecutive_failures: { type: integer }
+        reason: { type: string }
+        policy_url: { type: string }
+    ControlWorkflowRecoveryPolicyRequest:
+      type: object
+      description: Operational pause or resume using the last observed policy and pause state. Omit expected_paused_at when the observed policy was unpaused. Every accepted control updates updated_at and records a trusted audit actor and reason without changing the policy version. A retry using stale state returns conflict.
+      required: [expected_version, expected_updated_at, operation, reason]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 1 }
+        expected_updated_at: { type: string, format: date-time }
+        expected_paused_at: { type: string, format: date-time }
+        operation: { type: string, enum: [pause, resume] }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    WorkflowRecoveryHealthAlertPolicy:
+      type: object
+      additionalProperties: false
+      description: Opt-in recovery health incident notifications with explicit scheduler evaluation and sustained unhealthy duration thresholds. Settings are replaced with the full recovery policy. Read-only health query thresholds remain request-local.
+      required: [enabled, stall_after_seconds, alert_after_seconds]
+      properties:
+        enabled: { type: boolean }
+        stall_after_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        alert_after_seconds: { type: integer, minimum: 1, maximum: 86400 }
+    WorkflowRecoveryHealthNotification:
+      type: object
+      description: Frozen health notification identity and receiver set; no_receivers is terminal for this transition and does not replay to late receivers.
+      required: [event_id, status, captured_at, receiver_webhook_ids]
+      properties:
+        event_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, no_receivers] }
+        captured_at: { type: string, format: date-time }
+        receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
+    WorkflowRecoveryHealthIncident:
+      type: object
+      description: Latest retained health incident per app across policy versions. Reason changes do not create repeated alerts. Unknown snapshots defer initial capture and cannot declare recovery. Disabling alerts closes silently; healthy or inactive observations close with recovery only after alert capture. Historical webhook payloads remain immutable.
+      required: [episode_id, opened_at, candidate_since, observed_at, status, reason]
+      properties:
+        episode_id: { type: string, format: uuid }
+        opened_at: { type: string, format: date-time }
+        candidate_since: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        status: { type: string, enum: [healthy, inactive, paused, blocked, stalled, unknown] }
+        reason: { type: string }
+        closed_at: { type: string, format: date-time }
+        alert_notification: { $ref: '#/components/schemas/WorkflowRecoveryHealthNotification' }
+        recovery_notification: { $ref: '#/components/schemas/WorkflowRecoveryHealthNotification' }
+    WorkflowRecoveryHealthWebhookPayload:
+      type: object
+      description: Historical automation.recovery_health_alert or automation.recovery_health_recovered transition with stable event and incident identities. Recovery targets only original alert receivers still enabled and subscribed to recovery at capture. Delivery can occur after the observed condition changes and does not authorize retries or release slots.
+      required: [event_id, episode_id, app_id, app, policy_version, status, reason, opened_at, observed_at, pending, outstanding, queue_truncated, health_url]
+      properties:
+        event_id: { type: string, format: uuid }
+        episode_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app: { type: string }
+        policy_version: { type: integer, format: int64, minimum: 1 }
+        status: { type: string, enum: [healthy, inactive, paused, blocked, stalled, unknown] }
+        reason: { type: string }
+        opened_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        pending: { type: integer, minimum: 0 }
+        outstanding: { type: integer, minimum: 0 }
+        queue_truncated: { type: boolean }
+        health_url: { type: string }
+    WorkflowRecoveryReport:
+      type: object
+      description: Observed recovery counts with explicit retention and scan coverage limitations.
+      required: [observed_at, created_after, created_before, scanned_entries, durable_entries, truncated, coverage_notes, totals, groups, blockers, evidence]
+      properties:
+        observed_at: { type: string, format: date-time }
+        created_after: { type: string, format: date-time }
+        created_before: { type: string, format: date-time }
+        scanned_entries: { type: integer, minimum: 0, maximum: 10000 }
+        durable_entries: { type: integer, minimum: 0, maximum: 10000 }
+        truncated: { type: boolean }
+        coverage_notes:
+          type: array
+          items: { type: string }
+        totals: { $ref: '#/components/schemas/WorkflowRecoveryReportTotals' }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowRecoveryReportGroup' }
+        blockers:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowRecoveryReportBlocker' }
+        evidence:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/WorkflowRecoveryHistoryEntry' }
+    WorkflowRecoveryReportTotals:
+      description: Observed event-window counts and matched retry timing, without causal or live-state inference.
+      type: object
+      required: [attempts, succeeded, failed, cancelled, other_results, without_observed_result, pauses, timed_results]
+      properties:
+        attempts: { type: integer, minimum: 0 }
+        succeeded: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        cancelled: { type: integer, minimum: 0 }
+        other_results: { type: integer, minimum: 0 }
+        without_observed_result:
+          type: integer
+          minimum: 0
+          description: Attempts without a result observed in this window; not a live unresolved-child count.
+        pauses: { type: integer, minimum: 0 }
+        timed_results: { type: integer, minimum: 0 }
+        mean_retry_result_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: Mean application-to-recorded-result time for matched child IDs with ordered timestamps; absent without timing samples.
+    WorkflowRecoveryReportGroup:
+      description: Recovery counts for one workflow association and policy configuration version.
+      type: object
+      required: [workflow, policy_version, totals]
+      properties:
+        workflow: { type: string }
+        policy_version: { type: integer, format: int64, minimum: 0 }
+        totals: { $ref: '#/components/schemas/WorkflowRecoveryReportTotals' }
+    WorkflowRecoveryReportBlocker:
+      description: Distinct actions affected by an observed worker blocker with bounded source evidence.
+      type: object
+      required: [reason, actions, evidence]
+      properties:
+        reason: { type: string }
+        actions: { type: integer, minimum: 0 }
+        evidence:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/WorkflowRecoveryHistoryEntry' }
+    WorkflowRecoveryHistory:
+      description: A bounded page of retained recovery evidence with a fixed observation window.
+      type: object
+      required: [observed_at, created_after, created_before, entries, retained_observations]
+      properties:
+        observed_at: { type: string, format: date-time }
+        created_after: { type: string, format: date-time }
+        created_before: { type: string, format: date-time }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowRecoveryHistoryEntry' }
+        next_after: { type: string }
+        retained_observations:
+          type: boolean
+          description: True indicates retained evidence rather than a complete immutable audit log.
+    WorkflowRecoveryCandidateEvidence:
+      type: object
+      description: Immutable policy-review candidate facts, captured prospectively without execution inputs or outputs.
+      required: [review_id, app_id, job_id, policy_version, policy, observed_at, decisions]
+      properties:
+        review_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        observed_at: { type: string, format: date-time }
+        decisions: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyDecision' } }
+    WorkflowRecoveryHistoryEntry:
+      description: A retained event or latest observation linked to its available recovery evidence.
+      type: object
+      required: [id, occurred_at, kind, outcome, reason]
+      properties:
+        candidate_evidence: { $ref: '#/components/schemas/WorkflowRecoveryCandidateEvidence' }
+        durable:
+          type: boolean
+          description: True for an immutable event recorded prospectively with a state mutation; absent for retained source observations.
+        evaluation_reason:
+          type: string
+          description: Worker transition classification; suppression reason remains in reason.
+        episode_id:
+          type: string
+          format: uuid
+          description: Health incident episode association preserved across later incidents.
+        policy:
+          $ref: '#/components/schemas/WorkflowRecoveryPolicy'
+          description: Frozen configuration on policy_changed events; excludes workflow execution inputs and outputs.
+        id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        kind: { type: string }
+        outcome: { type: string }
+        reason: { type: string }
+        policy_version: { type: integer, format: int64 }
+        workflow: { type: string }
+        run_id: { type: string }
+        review_id: { type: string }
+        action_id: { type: string }
+        job_id: { type: string }
+        child_job_id: { type: string }
+        actor_kind: { type: string }
+        actor_id: { type: string }
+    WorkflowRecoveryPolicyHealth:
+      type: object
+      description: Advisory recovery automation health with bounded queue evidence. Status precedence is paused, stalled, observed blockers, current budget or cooldown, incomplete sample, then inactive or healthy. Sample progress is only from retained queue entries and is not a durable app-wide last-success timestamp. Healthy means no blocker observed in this snapshot, not scheduler or platform liveness.
+      required: [status, reason, stall_after_seconds, queue]
+      properties:
+        status: { type: string, enum: [healthy, inactive, paused, blocked, stalled, unknown] }
+        reason: { type: string }
+        stall_after_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        sample_last_progress_at: { type: string, format: date-time }
+        queue: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticQueue' }
+    WorkflowRecoveryPolicyEvaluationRequest:
+      type: object
+      description: Proposed policy and bounded historical review window, fenced against the current configuration version.
+      required: [expected_version, policy]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        workflow: { type: string, maxLength: 256 }
+        created_after: { type: string, format: date-time, description: Inclusive evaluation start; defaults to seven days before the end. }
+        created_before: { type: string, format: date-time, description: Inclusive evaluation end; defaults to observation time. Maximum window is 30 days and future bounds are rejected. }
+    WorkflowRecoveryPolicyAssessment:
+      type: object
+      description: Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed applications.
+      required: [eligibility, reason, preparation, execution_pressure]
+      properties:
+        eligibility: { type: string, enum: [qualifies, excluded, unknown] }
+        reason: { type: string }
+        preparation: { type: string, enum: [would_prepare, excluded, unknown, cooldown, hourly_budget, already_prepared] }
+        execution_pressure: { type: string, enum: [not_evaluated, not_enabled, observed_hourly_budget, observed_cooldown, insufficient_history] }
+    WorkflowRecoveryFailureEligibility:
+      type: object
+      description: Latest retained-state retry checks, observed after the original failure. No inputs or outputs are retained; this is not failure-time proof or an admission guarantee.
+      required: [observed_at, reason, blockers]
+      properties:
+        observed_at: { type: string, format: date-time }
+        parent_job_id: { type: string, format: uuid }
+        parent_position: { type: integer, format: int64 }
+        reason: { type: string }
+        blockers:
+          type: array
+          items: { type: string }
+    WorkflowRecoveryFailureEligibilityAssessment:
+      type: object
+      description: Policy filters applied to a separately timed later observation. Checks expire after 15 minutes; preparation and execution remain unproven. Historical totals never consume these observations.
+      required: [observation, freshness, current, proposed]
+      properties:
+        observation: { $ref: '#/components/schemas/WorkflowRecoveryFailureEligibility' }
+        freshness: { type: string, enum: [fresh, stale] }
+        current: { $ref: '#/components/schemas/WorkflowRecoveryPolicyAssessment' }
+        proposed: { $ref: '#/components/schemas/WorkflowRecoveryPolicyAssessment' }
+    WorkflowRecoveryPolicyEvaluationCandidate:
+      type: object
+      description: One retained historical decision with current and proposed settings applied to the same captured evidence.
+      required: [evidence_source, run_id, workflow, observed_at, resume_count, trigger, recorded_outcome, historical_failure_statuses, observed_hourly_executions, execution_evidence_ids, current, proposed]
+      properties:
+        later_eligibility: { $ref: '#/components/schemas/WorkflowRecoveryFailureEligibilityAssessment' }
+        evidence_source: { type: string, enum: [policy_review, failure_inventory], description: Source of historical candidate facts. }
+        failure_evidence_id: { type: string, description: Stable identifier for a captured policy-independent failure. }
+        candidate_evidence_id: { type: string, description: Durable history event containing the candidate facts when available. }
+        review_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        workflow: { type: string }
+        observed_at: { type: string, format: date-time }
+        policy_version: { type: integer, format: int64 }
+        position: { type: integer, format: int64 }
+        resume_count: { type: integer }
+        trigger: { type: string }
+        recorded_outcome: { type: string }
+        historical_failure_statuses:
+          type: array
+          description: Exact observed status as a singleton when captured; otherwise the legacy policy filter represents a possible status set. Empty means unrestricted and unrecorded.
+          items: { type: string }
+        observed_hourly_executions: { type: integer, minimum: 0 }
+        last_observed_execution_at: { type: string, format: date-time }
+        execution_evidence_ids:
+          type: array
+          maxItems: 5
+          description: Bounded application proof identifiers from recovery history, including last known cooldown evidence when older than one hour.
+          items: { type: string }
+        current: { $ref: '#/components/schemas/WorkflowRecoveryPolicyAssessment' }
+        proposed: { $ref: '#/components/schemas/WorkflowRecoveryPolicyAssessment' }
+    WorkflowRecoveryPolicyEvaluationTotals:
+      type: object
+      description: Counts of conditional preparation decisions and observed application pressure for the sampled candidates.
+      required: [candidates, would_prepare, excluded, unknown, cooldown, preparation_budget, deduplicated, execution_budget_pressure, execution_cooldown_pressure]
+      properties:
+        candidates: { type: integer, minimum: 0 }
+        would_prepare: { type: integer, minimum: 0 }
+        excluded: { type: integer, minimum: 0 }
+        unknown: { type: integer, minimum: 0 }
+        cooldown: { type: integer, minimum: 0 }
+        preparation_budget: { type: integer, minimum: 0 }
+        deduplicated: { type: integer, minimum: 0 }
+        execution_budget_pressure: { type: integer, minimum: 0 }
+        execution_cooldown_pressure: { type: integer, minimum: 0 }
+    WorkflowRecoveryFailureCoverage:
+      type: object
+      description: Coverage of the bounded policy-independent terminal-failure sample in the requested workflow/time window, before policy filters. Counts are sample counts; partial capture and pruning never establish that no other failures occurred. Review correlation uses the sampled reviews.
+      required: [capture_started_at, coverage, captured_failures, reviewed_failures, unreviewed_failures, missing_eligibility_evidence, truncated]
+      properties:
+        capture_started_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [partial], description: Prospective capture and retention limits prevent a claim of complete historical coverage. }
+        captured_failures: { type: integer, minimum: 0, maximum: 500 }
+        reviewed_failures: { type: integer, minimum: 0, maximum: 500 }
+        unreviewed_failures: { type: integer, minimum: 0, maximum: 500 }
+        missing_eligibility_evidence: { type: integer, minimum: 0, maximum: 500, description: Sampled failures without historical retry preflight proof. }
+        truncated: { type: boolean }
+    WorkflowRecoveryPolicyEvaluation:
+      type: object
+      description: Historical comparison under stated replay assumptions, with retained-evidence gaps and every bounded sample truncation disclosed.
+      required: [failure_coverage, current, proposed, observed_at, created_after, created_before, inspected_reviews, reviews_truncated, candidates_truncated, executions_truncated, observed_executions, current_totals, proposed_totals, candidates, coverage_notes]
+      properties:
+        failure_coverage: { $ref: '#/components/schemas/WorkflowRecoveryFailureCoverage' }
+        current: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        proposed: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        observed_at: { type: string, format: date-time }
+        created_after: { type: string, format: date-time }
+        created_before: { type: string, format: date-time }
+        inspected_reviews: { type: integer, minimum: 0, maximum: 100 }
+        reviews_truncated: { type: boolean }
+        candidates_truncated: { type: boolean }
+        executions_truncated: { type: boolean }
+        observed_executions: { type: integer, minimum: 0, maximum: 10000 }
+        current_totals: { $ref: '#/components/schemas/WorkflowRecoveryPolicyEvaluationTotals' }
+        proposed_totals: { $ref: '#/components/schemas/WorkflowRecoveryPolicyEvaluationTotals' }
+        candidates:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyEvaluationCandidate' }
+        coverage_notes:
+          type: array
+          items: { type: string }
+    WorkflowRecoveryPolicyChangeEntry:
+      type: object
+      description: Retained automatic queue entry and the effect of replacing its policy configuration.
+      required: [entry, effect]
+      properties:
+        entry: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticQueueEntry' }
+        effect: { type: string, enum: [would_suppress, retain_slot] }
+    WorkflowRecoveryPolicyChangeCandidate:
+      type: object
+      description: Matching retained native target, with preparation eligibility simulated under proposed settings and retained deduplication. Would_prepare never creates a plan and does not guarantee execution quota or admission. Policy_disabled means an eligible target would not be prepared while disabled.
+      required: [job_id, decision]
+      properties:
+        job_id: { type: string, format: uuid }
+        decision: { $ref: '#/components/schemas/WorkflowRecoveryPolicyDecision' }
+    WorkflowRecoveryPolicyChangePreview:
+      type: object
+      description: Consistent read-only snapshot of a proposed full replacement. Budget and cooldown observations retain spent charges and preparation targets across versions. Replacement clears automatic pause and failure streak; current contains that historical state. Remaining budgets describe proposed settings even when disabled. Serial slots, inspection errors and execution quota can still prevent progress. No update is authorized by this response; apply the same expected version with deploy write access and MFA. Queue and evidence may change without changing the configuration version.
+      required: [current, proposed, observed_at, next_version, pending_suppressed, outstanding_retained, entries, entries_truncated, automatic_execution_enabled, hourly_executions, remaining_execution_budget, hourly_prepared_actions, remaining_preparation_budget, inspected_jobs, jobs_truncated, candidates, candidates_truncated]
+      properties:
+        current: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        proposed: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        observed_at: { type: string, format: date-time }
+        next_version: { type: integer, format: int64, minimum: 1 }
+        pending_suppressed: { type: integer, minimum: 0 }
+        outstanding_retained: { type: integer, minimum: 0 }
+        entries: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyChangeEntry' } }
+        entries_truncated: { type: boolean }
+        automatic_execution_enabled: { type: boolean }
+        hourly_executions: { type: integer, minimum: 0 }
+        remaining_execution_budget: { type: integer, minimum: 0 }
+        execution_cooldown_until: { type: string, format: date-time }
+        hourly_prepared_actions: { type: integer, minimum: 0 }
+        remaining_preparation_budget: { type: integer, minimum: 0 }
+        preparation_cooldown_until: { type: string, format: date-time }
+        inspected_jobs: { type: integer, minimum: 0, maximum: 5 }
+        jobs_truncated: { type: boolean }
+        candidates: { type: array, maxItems: 25, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyChangeCandidate' } }
+        candidates_truncated: { type: boolean }
+    WorkflowRecoveryAutomaticQueueEntry:
+      type: object
+      description: One pending or unresolved applied automatic retry. Queued_at is the frozen review preparation time. Ages are whole nonnegative seconds relative to the queue observed_at. Waiting age is omitted until the worker records a wait; the saved reason may be historical.
+      required: [review_id, policy_version, action, queued_at, queued_age_seconds]
+      properties:
+        review_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        queued_at: { type: string, format: date-time }
+        queued_age_seconds: { type: integer, format: int64, minimum: 0 }
+        waiting_age_seconds: { type: integer, format: int64, minimum: 0 }
+        action: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticAction' }
+    WorkflowRecoveryAutomaticQueue:
+      type: object
+      description: Informational automatic retry queue snapshot. Outstanding means a child has been created but final proof has not been recorded; it does not assert the child is currently running. Pending counts current policy intents only. Charges survive review pruning and policy replacement. Paused policies retain their queue and committed children continue. Missing evidence is unresolved, never success or failure.
+      required: [policy, observed_at, pending, outstanding, hourly_executions, remaining_budget, entries, truncated]
+      properties:
+        health_incident: { $ref: '#/components/schemas/WorkflowRecoveryHealthIncident' }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicyResponse' }
+        observed_at: { type: string, format: date-time }
+        pending: { type: integer, minimum: 0 }
+        outstanding: { type: integer, minimum: 0 }
+        hourly_executions: { type: integer, minimum: 0 }
+        remaining_budget: { type: integer, minimum: 0 }
+        cooldown_until: { type: string, format: date-time }
+        entries: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/WorkflowRecoveryAutomaticQueueEntry' } }
+        truncated: { type: boolean }
+    SetWorkflowRecoveryPolicyRequest:
+      type: object
+      description: Explicit full policy replacement fenced to its observed version. A first configuration uses version zero.
+      required: [expected_version, policy]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+    WorkflowRecoveryPolicyResponse:
+      type: object
+      description: Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement resets its automatic failure pause and suppresses older pending automatic actions.
+      required: [app_id, version, policy, updated_at, actor_kind, actor_id, status]
+      properties:
+        automatic_execution: { $ref: '#/components/schemas/WorkflowRecoveryPolicyAutomaticExecution' }
+        app_id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        updated_at: { type: string, format: date-time }
+        actor_kind: { type: string }
+        actor_id: { type: string }
+        last_evaluation_at: { type: string, format: date-time }
+        status: { type: string, enum: [disabled, monitoring, review_limit, paused] }
+    WorkflowRecoveryPolicyDecision:
+      type: object
+      description: Frozen per-target explanation including eligibility refusals and policy suppression. The resume count identifies the reviewed admitted generation.
+      required: [position, run_id, resume_count, trigger, action, outcome]
+      properties:
+        failure_status: { type: string, description: Exact run status observed at candidate evaluation when available. }
+        preflight_outcome: { type: string, description: Eligibility result before policy preparation limits. }
+        preflight_blockers: { type: array, items: { type: string }, description: Frozen preflight blocker codes. }
+        position: { type: integer, format: int64 }
+        run_id: { type: string, format: uuid }
+        resume_count: { type: integer }
+        trigger: { type: string }
+        action: { type: string }
+        outcome: { type: string }
+    WorkflowRecoveryReviewNotification:
+      type: object
+      description: One durable review notification capture. Delivery outcomes are in the webhook delivery ledger; queued capture does not prove HTTP acknowledgement. Frozen receiver identifiers prevent replay to newly configured subscriptions.
+      required: [event_id, status, reason, captured_at, receiver_webhook_ids]
+      properties:
+        event_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, no_receivers, suppressed] }
+        reason: { type: string }
+        captured_at: { type: string, format: date-time }
+        receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
+    WorkflowRecoveryReviewReadyWebhookPayload:
+      type: object
+      description: Payload of automation.recovery_review_ready. Carries frozen prepared targets and review commands; approval and application remain explicit. Retries reuse the event identifier and delivery ledger.
+      required: [event_id, review_id, app_id, app, job_id, policy_version, prepared_at, observed_at, targets, review_url, status_url, review_command, export_command]
+      properties:
+        event_id: { type: string, format: uuid }
+        review_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app: { type: string }
+        job_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        prepared_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        targets: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyDecision' } }
+        review_url: { type: string }
+        status_url: { type: string }
+        review_command: { type: string }
+        export_command: { type: string }
+    WorkflowRecoveryReviewCompletionNotification:
+      type: object
+      description: Immutable final plan result and completion receiver capture. Queued means a durable event was prepared; HTTP acknowledgement is recorded separately in the delivery ledger.
+      required: [event_id, status, captured_at, receiver_webhook_ids, result]
+      properties:
+        event_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, no_receivers] }
+        captured_at: { type: string, format: date-time }
+        receiver_webhook_ids: { type: array, items: { type: string, format: uuid } }
+        result: { $ref: '#/components/schemas/WorkflowRecoveryReviewStatus' }
+    WorkflowRecoveryReviewFinishedWebhookPayload:
+      type: object
+      description: Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+      required: [event_id, review_id, app_id, app, job_id, policy_version, captured_at, result, review_url, status_url, status_command]
+      properties:
+        event_id: { type: string, format: uuid }
+        review_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app: { type: string }
+        job_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        captured_at: { type: string, format: date-time }
+        result: { $ref: '#/components/schemas/WorkflowRecoveryReviewStatus' }
+        review_url: { type: string }
+        status_url: { type: string }
+        status_command: { type: string }
+    WorkflowRecoveryReviewDecisionRequest:
+      type: object
+      description: Final review decision and required audit reason. Does not apply actions.
+      required: [decision, reason]
+      properties:
+        decision: { type: string, enum: [approved, dismissed] }
+        reason: { type: string }
+    WorkflowRecoveryReviewDecision:
+      type: object
+      description: Immutable review decision with trusted authenticated actor identity.
+      required: [decision, reason, decided_at, actor_kind, actor_id]
+      properties:
+        decision: { type: string, enum: [approved, dismissed] }
+        reason: { type: string }
+        decided_at: { type: string, format: date-time }
+        actor_kind: { type: string }
+        actor_id: { type: string }
+    WorkflowRecoveryReviewActionStatus:
+      type: object
+      description: Application freshness and execution outcome for one frozen action. A retry is complete only with saved terminal generation evidence or a terminal admission refusal.
+      required: [position, kind, status, reason, outcome, complete, run_id, resume_count, run_url]
+      properties:
+        position: { type: integer, format: int64 }
+        kind: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        outcome: { type: string, enum: [unknown, pending, running, succeeded, failed, cancelled] }
+        complete: { type: boolean }
+        run_id: { type: string, format: uuid }
+        resume_count: { type: integer, description: Exact execution generation; retry targets the next admitted generation. }
+        run_url: { type: string }
+        child_job_id: { type: string, format: uuid }
+        items_url: { type: string }
+        evidence_source: { type: string }
+        recorded_at: { type: string, format: date-time }
+        outcome_reason: { type: string }
+    WorkflowRecoveryReviewStatus:
+      type: object
+      description: Application status and aggregate execution outcome. Complete requires final proof for every action; retained completion snapshots take precedence over later generations and pruned execution rows.
+      required: [review_id, observed_at, status, actions, outcome, complete]
+      properties:
+        review_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        status: { type: string }
+        outcome: { type: string, enum: [no_plan, unknown, pending, running, succeeded, failed, cancelled, completed] }
+        complete: { type: boolean }
+        actions: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryReviewActionStatus' } }
+    WorkflowRecoveryPolicyReview:
+      type: object
+      description: Immutable policy evaluation with its settings snapshot and optional prepared response plan. Repeated unchanged decisions are deduplicated; retained reviews are capped at 1000 per app.
+      required: [id, app_id, job_id, policy_version, policy, observed_at, decisions]
+      properties:
+        automatic_execution: { $ref: '#/components/schemas/WorkflowRecoveryReviewAutomaticExecution' }
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        policy_version: { type: integer, format: int64 }
+        policy: { $ref: '#/components/schemas/WorkflowRecoveryPolicy' }
+        observed_at: { type: string, format: date-time }
+        decisions: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyDecision' } }
+        plan: { $ref: '#/components/schemas/WorkflowRecoveryResponsePlan' }
+        review_decision: { $ref: '#/components/schemas/WorkflowRecoveryReviewDecision' }
+        notification: { $ref: '#/components/schemas/WorkflowRecoveryReviewNotification' }
+        completion_notification: { $ref: '#/components/schemas/WorkflowRecoveryReviewCompletionNotification' }
+    WorkflowRecoveryPolicyReviews:
+      type: object
+      description: One identifier-ordered page of retained recovery policy reviews.
+      required: [reviews]
+      properties:
+        reviews: { type: array, items: { $ref: '#/components/schemas/WorkflowRecoveryPolicyReview' } }
+        next_after: { type: string, format: uuid }
+    WorkflowRecoveryActionReceipt:
+      type: object
+      description: Durable cancellation decision retained for the lifetime of its recovery job. The same action identifier returns the original outcome even after the run advances. Operator identity is resolved from authentication.
+      required: [request, response, captured_at, actor_kind, actor_id]
+      properties:
+        request: { $ref: '#/components/schemas/WorkflowRecoveryCancellationRequest' }
+        response: { $ref: '#/components/schemas/WorkflowRecoveryCancellationResponse' }
+        captured_at: { type: string, format: date-time }
+        actor_kind: { type: string }
+        actor_id: { type: string }
+    WorkflowRecoveryCancellationRequest:
+      type: object
+      additionalProperties: false
+      description: Exact admitted recovery item and generation reviewed by an operator. Preview is advisory and commit rechecks eligibility. Operator identity is resolved from authentication.
+      required: [position, expected_resume_count, reason]
+      properties:
+        request_id: { type: string, format: uuid, description: "Optional stable action identifier. Apply retains the original outcome including refusals; reusing it with changed arguments conflicts. Preview never writes a receipt." }
+        position: { type: integer, format: int64, minimum: 1, maximum: 25 }
+        expected_resume_count: { type: integer, minimum: 1, maximum: 16 }
+        reason: { type: string, minLength: 1, maxLength: 512, description: Nonblank UTF-8 reason without control characters. Limited to 512 bytes. }
+    WorkflowRecoveryCancellationResponse:
+      type: object
+      description: Read-only preview or cancellation result. Only eligible generations can be cancelled. Repeating a cancellation against the same cancelled generation does not append another history entry.
+      required: [job_id, position, resume_count, outcome, preview]
+      properties:
+        job_id: { type: string, format: uuid }
+        position: { type: integer, format: int64 }
+        run_id: { type: string, format: uuid }
+        resume_count: { type: integer }
+        status: { type: string }
+        outcome: { type: string, enum: [not_admitted, changed, unknown, operation_owned, already_cancelled, already_terminal, eligible, cancelled] }
+        preview: { type: boolean }
+    WorkflowRunRecoveryPlan:
+      type: object
+      additionalProperties: false
+      description: Explicit reviewed native workflow runs. Requires workflow mode and request_id; excludes event selections and receipt protection. Each resume checks the original count and eligibility atomically with its job outcome. Concurrency pressure leaves the item pending; changed or unsafe targets are skipped. Queued means a resume was admitted, not execution success. No new runs are selected. The original normalized request returns the retained job on retry; changes conflict.
+      required: [name, runs]
+      properties:
+        execution_deadline_seconds: { type: integer, minimum: 0, maximum: 604800, description: "Advisory deadline from each admission. Zero disables it; nonzero values must be at least 60 seconds." }
+        execution_stall_seconds: { type: integer, minimum: 0, maximum: 604800, description: "No observable progress threshold. Zero uses 900 seconds; nonzero values must be at least 60 seconds. Scheduled and capacity waits do not trigger stalled alerts." }
+        name: { type: string, minLength: 1, maxLength: 256 }
+        runs:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items: { $ref: '#/components/schemas/WorkflowRunRecoveryTarget' }
+    WorkflowRunRecoveryTarget:
+      description: One reviewed workflow run and resume count. Retry children also identify the saved parent item.
+      type: object
+      additionalProperties: false
+      required: [run_id, expected_resume_count]
+      properties:
+        run_id: { type: string, format: uuid }
+        expected_resume_count: { type: integer, minimum: 0, maximum: 16 }
+        parent_position: { type: integer, format: int64, minimum: 1, maximum: 25, description: "Required only with parent_job_id. Unique position of the queued parent item whose saved failed outcome matches this run and resume count." }
+
+    EventWorkflowRecoveryPlan:
+      type: object
+      additionalProperties: false
+      description: Explicit reviewed workflow acceptance recipients. Routing mode only, requires request_id and excludes parent and backlog filters. Creation freezes the exact selection. Before each admission the worker atomically compares published version, replay count and routing generation; changes are skipped. Repeated request_id returns the retained job, even after completion; a different normalized plan or rate conflicts. Preview and preflight are advisory; workflow fence eligibility is unknown in preflight. Queued means routing recovery was admitted, not workflow completion.
+      required: [name, published_version, source, events]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        published_version: { type: integer, format: int64, minimum: 1 }
+        source: { type: string, minLength: 1, maxLength: 256 }
+        events:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items: { $ref: '#/components/schemas/EventWorkflowRecoveryTarget' }
+    EventWorkflowRecoveryTarget:
+      type: object
+      additionalProperties: false
+      description: One captured workflow recipient; event IDs must be distinct. Generation is required for independent recipient routing and omitted for legacy receipts. Replay count also fences legacy recovery cycles. No delivery-age override is supported.
+      required: [event_id, subscription_id, replay_count]
+      properties:
+        event_id: { type: string, minLength: 1, maxLength: 256 }
+        subscription_id: { type: string, minLength: 1, maxLength: 256 }
+        replay_count: { type: integer, format: int64, minimum: 0 }
+        generation: { type: integer, format: int64, minimum: 0 }
+
     EventRecoveryExecution:
       type: object
       additionalProperties: false
-      description: Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take precedence and survive execution-history pruning until recovery job retention. Later replays never replace them. Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and items not admitted.
+      description: Read-only observation of the exact admitted replay or workflow resume. Invocation mode prefers saved confirmed terminal results, retained with the recovery job. Workflow mode prefers saved terminal results for the admitted resume, then live retained run and resume evidence. Missing evidence without a saved result is unknown. Native failed/dead runs both report failed. Pending and running workflow states report queued and running; awaiting_event also reports running. Without a saved result, later native resumes report superseded with no completion time. Saved native results survive workflow-history pruning for the recovery job retention period; the first confirmed terminal result wins across later resumes. Omitted for routing recovery and items not admitted.
       required: [observed_at, state, source, attempts]
       properties:
         recorded_at: { type: string, format: date-time, description: When terminal evidence was saved; present only for recovery_result. }
-        evidence_source: { type: string, enum: [invocation, attempt_history], description: Original source of a saved terminal result; present only for recovery_result. }
+        evidence_source: { type: string, enum: [invocation, attempt_history, workflow_run], description: Original source of a saved terminal result; present only for recovery_result. }
         observed_at: { type: string, format: date-time }
         state: { type: string, enum: [queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown] }
-        source: { type: string, enum: [invocation, attempt_history, recovery_result, unavailable] }
-        attempts: { type: integer, minimum: 0, description: Recorded dispatch attempt count for the tracked generation. }
+        source: { type: string, enum: [invocation, attempt_history, recovery_result, workflow_run, unavailable] }
+        attempts: { type: integer, minimum: 0, description: Recorded dispatch attempt count for the tracked invocation generation; zero for workflow-run observations. }
         completed_at: { type: string, format: date-time, description: Recorded terminal completion time when available. }
 
     EventRecoveryExecutionSummary:
       type: object
       additionalProperties: false
-      description: Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Saved results share recovery job retention.
+      description: Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal result, then live evidence of the exact admitted generation. Later native resumes report superseded only without an earlier saved terminal result. Missing evidence without a saved result is unknown. Native failed/dead runs count as failed. Counts sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Saved results in both modes share recovery job retention.
       required: [observed_at, tracked_count, saved_results, queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown]
       properties:
         saved_results: { type: integer, format: int64, minimum: 0, maximum: 10000, description: Subset of tracked_count with saved confirmed terminal evidence. Not an additional state bucket. }
@@ -59582,8 +60963,10 @@ components:
       description: Metadata-only selected recipient. In execution mode invocation_id identifies the selected failure. Queued means replay was admitted, not that the handler succeeded.
       required: [position, event_source, event_id, event_type, subscription_id, failed_at, failure_code, retryable, state]
       properties:
-        parent_job_id: { type: string, format: uuid, description: Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is pruned. }
-        parent_position: { type: integer, format: int64, minimum: 1, maximum: 10000, description: Selected item position in the parent recovery. }
+        workflow_run_id: { type: string, format: uuid, description: Native workflow target; event identity fields are empty for these items. }
+        expected_resume_count: { type: integer, minimum: 0, maximum: 16, description: Original reviewed count; queued means the next resume was admitted. }
+        parent_job_id: { type: string, format: uuid, description: "Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is pruned." }
+        parent_position: { type: integer, format: int64, minimum: 1, maximum: 10000, description: "Selected item position in the parent recovery." }
         invocation_id: { type: string, format: uuid }
         replay_invocation_id: { type: string, format: uuid, description: Exact replay admitted by this job; omitted for routing recovery and legacy items. }
         replay_generation: { type: integer, format: int64, minimum: 0, description: Frozen admitted generation including zero for new replay children. }
@@ -59606,7 +60989,7 @@ components:
       required: [observed_at, coverage, matched_count, exceeds_job_limit, sample]
       properties:
         observed_at: { type: string, format: date-time }
-        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions] }
+        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions, reviewed_workflow_runs] }
         matched_count: { type: integer, format: int64, minimum: 0, maximum: 10001, description: Exact up to the job limit; a lower bound when exceeds_job_limit is true. }
         exceeds_job_limit: { type: boolean }
         sample:
@@ -59638,7 +61021,7 @@ components:
         id: { type: string, format: uuid }
         execution: { $ref: '#/components/schemas/EventRecoveryExecutionSummary' }
         app_id: { type: string, format: uuid }
-        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions] }
+        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions, reviewed_workflow_runs] }
         selection: { $ref: '#/components/schemas/EventRecoveryRequest' }
         state: { type: string, enum: [running, paused, completed, cancelled] }
         selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
@@ -59652,23 +61035,34 @@ components:
         completed_at: { type: string, format: date-time }
 
     EventRecoveryPreflightItem:
-      description: "Sampled pending recovery item eligibility and current wait or skip diagnostics."
+      description: "Sampled pending recovery eligibility or a saved native workflow retry target, with current wait and skip diagnostics."
       type: object
       additionalProperties: false
       required: [position, status, reason]
       properties:
+        workflow_run_id: { type: string, format: uuid }
+        expected_resume_count: { type: integer, minimum: 0, maximum: 17, description: Original reviewed count for pending native items; admitted parent count for retry targets. Non-admitted items may exceed the resume limit and are never selectable. }
+        saved_outcome: { type: string, enum: [queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown] }
+        blockers:
+          type: array
+          items: { type: string }
+          description: Safe resume blocker codes without workflow payloads or provider errors.
         receipt_retain_until: { type: string, format: date-time, description: Nominal receipt retention boundary when routing has settled. }
         receipt_retention_held: { type: boolean, description: Current backfill or recovery hold; ends when its owning job or item releases it. }
         position: { type: integer, format: int64, minimum: 1 }
         status: { type: string, enum: [eligible, waiting, likely_skipped, unknown] }
-        reason: { type: string, enum: [eligible, capacity, legacy_claim, changed, expired, target_unavailable, receipt_expired, unknown] }
+        reason: { type: string, enum: [eligible, capacity, legacy_claim, changed, expired, target_unavailable, receipt_expired, unknown, not_admitted, outcome_not_saved, outcome_not_failed, run_not_retained, resume_ineligible, resume_limit_reached] }
         capacity_scope: { type: string, enum: [account, app, consumer] }
     EventRecoveryPreflight:
-      description: "Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job."
+      description: "Read-only eligibility and capacity for pending recovery items or saved native retry outcomes. Timing fields always describe the parent job; observations do not reserve capacity."
       type: object
       additionalProperties: false
       required: [job_id, observed_at, state, active, pending_count, eligible_count, waiting_count, likely_skipped_count, unknown_count, reason_counts, capacity_scopes, rate_per_second, remaining_lifetime_seconds, minimum_drain_seconds, earliest_drain_at, fits_before_expiry, assumes_immediate_resume, sample]
       properties:
+        review_mode: { type: string, enum: [workflow_retry], description: Present only for the saved native retry view. }
+        app_id: { type: string, format: uuid, description: Native recovery application scope. }
+        workflow_name: { type: string, description: Native recovery workflow scope. }
+        reviewed_count: { type: integer, format: int64, minimum: 0, maximum: 25, description: Number of saved parent items reviewed in retry mode. Pending count remains zero; status counters partition this count and sample includes every item. }
         receipt_protection_until: { type: string, format: date-time, description: This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted after expiry or terminal state; does not protect execution history or extend delivery deadlines. }
         receipt_retention_warning_count: { type: integer, format: int64, minimum: 0, description: Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and optimistic drain. }
         receipt_retention_held_count: { type: integer, format: int64, minimum: 0, description: Pending items with known nominal deadlines currently held by backfill or recovery. }
@@ -59676,7 +61070,7 @@ components:
         minimum_drain_crosses_receipt_retention: { type: boolean, description: Rate-only optimistic drain reaches or exceeds the earliest currently unheld receipt boundary; false is not a retention guarantee. }
         job_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }
-        state: { type: string, enum: [running, paused, completed, cancelled] }
+        state: { type: string, enum: [running, paused, completed, cancelled, expired] }
         active: { type: boolean, description: Running or paused and not expired at the observation time. }
         pending_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
         eligible_count: { type: integer, format: int64, minimum: 0 }
@@ -59726,7 +61120,7 @@ components:
           $ref: '#/components/schemas/EventRecoveryCapacityWait'
           description: Latest tracked capacity episode. Omitted when no diagnostics have been observed. Preserved while paused; cleared on resume or item progress. Use eligible_at for the next eligible retry.
         job_id: { type: string, format: uuid }
-        mode: { type: string, enum: [routing, execution] }
+        mode: { type: string, enum: [routing, execution, workflow] }
         state: { type: string, enum: [running, paused] }
         status: { type: string, enum: [running, paused, finishing, expired, stalled, capacity_wait, legacy_claim_wait, paced] }
         pending_count: { type: integer, format: int64, minimum: 0 }
@@ -59894,7 +61288,7 @@ components:
       description: Exact receiver selection and expected delivery generation copied from a recovery notification retry preview. Repeated delivery IDs are rejected.
       required: [kind, webhook_id, delivery_id, expected_replay_generation]
       properties:
-        kind: { type: string, enum: [admission, execution] }
+        kind: { type: string, enum: [admission, execution, attention] }
         webhook_id: { type: string, format: uuid }
         delivery_id: { type: string, format: uuid }
         expected_replay_generation: { type: integer, minimum: 0, maximum: 2147483646 }
@@ -59928,7 +61322,7 @@ components:
       description: One observed receiver with its current generation and eligibility. Missing delivery identity prevents selecting this receiver for retry.
       required: [kind, webhook_id, replay_generation, status, eligible]
       properties:
-        kind: { type: string, enum: [admission, execution] }
+        kind: { type: string, enum: [admission, execution, attention] }
         webhook_id: { type: string, format: uuid }
         delivery_id: { type: string, format: uuid }
         replay_generation: { type: integer, minimum: 0 }
@@ -59990,7 +61384,7 @@ components:
       required: [job_id, kind, capture_status, acknowledgement_status, evidence_source, overdue, dead, unknown, no_receivers]
       properties:
         job_id: { type: string, format: uuid }
-        kind: { type: string, enum: [admission, execution] }
+        kind: { type: string, enum: [admission, execution, attention] }
         event: { type: string }
         capture_status: { type: string }
         acknowledgement_status: { type: string }
@@ -60003,7 +61397,7 @@ components:
         no_receivers: { type: boolean }
     EventRecoveryExecutionHealth:
       type: object
-      description: Oldest retained terminal admission jobs still missing exact saved execution
+      description: Oldest retained admission jobs including active native recovery jobs still missing exact saved execution
         results. Counts overlap and are lower bounds when counts_complete is false. Reads
         do not capture results or notifications.
       required:
@@ -60027,6 +61421,8 @@ components:
           type: integer
           format: int64
           minimum: 0
+        stalled_jobs: { type: integer, format: int64, minimum: 0 }
+        deadline_exceeded_jobs: { type: integer, format: int64, minimum: 0 }
         waiting_jobs:
           type: integer
           format: int64
@@ -60064,7 +61460,7 @@ components:
             $ref: '#/components/schemas/EventRecoveryExecutionJobHealth'
     EventRecoveryExecutionJobHealth:
       type: object
-      description: Wait age starts at admission completion; prolonged waits do not assert
+      description: Wait age starts at admission completion or creation while admission is active; prolonged waits do not assert
         scheduler or handler failure. retain_until is the nominal job retention boundary.
         Unknown includes admitted items without replay identity. Awaiting saved results
         counts known terminal observations without saved confirmation.
@@ -60085,6 +61481,7 @@ components:
       - awaiting_saved_results_count
       - execution
       properties:
+        attention: { $ref: '#/components/schemas/WorkflowRecoveryExecutionAttention' }
         job_id:
           type: string
           format: uuid
@@ -60094,16 +61491,24 @@ components:
         state:
           type: string
           enum:
+          - running
+          - paused
           - completed
           - cancelled
+          - expired
         status:
           type: string
           enum:
+          - stalled
+          - deadline_exceeded
+          - capacity_wait
+          - scheduled_wait
           - waiting
           - prolonged_wait
           - unknown
           - retention_risk
         completed_at:
+          description: Admission completion time or job creation time while admission is active.
           type: string
           format: date-time
         wait_age_seconds:
@@ -60172,7 +61577,7 @@ components:
         notifications:
           type: array
           minItems: 2
-          maxItems: 2
+          maxItems: 3
           items:
             $ref: '#/components/schemas/EventRecoveryNotification'
     EventRecoveryNotification:
@@ -60204,6 +61609,7 @@ components:
           enum:
           - admission
           - execution
+          - attention
         event:
           type: string
           enum:
@@ -60211,6 +61617,7 @@ components:
           - event_recovery.cancelled
           - event_recovery.expired
           - event_recovery.execution_finished
+          - event_recovery.execution_attention
         event_id:
           type: string
           format: uuid
@@ -60376,7 +61783,7 @@ components:
         event_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        mode: { type: string, enum: [routing, execution] }
+        mode: { type: string, enum: [routing, execution, workflow] }
         state: { type: string, enum: [completed, cancelled] }
         outcome: { type: string, enum: [completed, cancelled, expired] }
         selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
@@ -60390,14 +61797,14 @@ components:
     EventRecoveryExecutionFinishedWebhookPayload:
       type: object
       additionalProperties: false
-      description: Frozen confirmed terminal execution results for all queued deliveries after admission finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver acknowledged.
+      description: Frozen confirmed terminal execution results for all queued invocation deliveries or workflow resumes after admission finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver acknowledged.
       required: [event_id, job_id, app_id, mode, state, outcome, selected_count, pending_count, queued_count, skipped_count, cancelled_count, created_at, expires_at, completed_at, execution, execution_finished_at, unresolved_count]
       properties:
         event_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        mode: { type: string, enum: [execution] }
-        state: { type: string, enum: [completed, cancelled] }
+        mode: { type: string, enum: [execution, workflow] }
+        state: { type: string, enum: [completed, cancelled, expired] }
         outcome: { type: string, enum: [all_succeeded, finished_with_non_success] }
         selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
         pending_count: { type: integer, format: int64, enum: [0] }
@@ -60409,6 +61816,7 @@ components:
         completed_at: { type: string, format: date-time }
         execution: { $ref: '#/components/schemas/EventRecoveryExecutionSummary' }
         execution_finished_at: { type: string, format: date-time }
+        items_url: { type: string, format: uri-reference, description: Authenticated relative API link to paginated recovery items and their invocation/run identifiers. }
         unresolved_count: { type: integer, format: int64, enum: [0], description: Unknown or nonterminal queued deliveries; capture requires zero. }
     EventRecoveryControlRequest:
       description: "Optional audit reason attached to a recovery pause, resume or cancellation."
@@ -60425,9 +61833,12 @@ components:
       additionalProperties: false
       required: [id, occurred_at, action, actor_kind, actor_id, previous_state, state, previous_rate, rate]
       properties:
+        target_position: { type: integer, format: int64, minimum: 1, maximum: 25 }
+        target_run_id: { type: string, format: uuid }
+        target_resume_count: { type: integer, minimum: 1, maximum: 16 }
         id: { type: integer, format: int64, minimum: 1 }
         occurred_at: { type: string, format: date-time }
-        action: { type: string, enum: [created, paused, resumed, rate_changed, cancelled, expired] }
+        action: { type: string, enum: [created, paused, resumed, rate_changed, cancelled, expired, workflow_cancelled] }
         actor_kind: { type: string, enum: [account, api_key, internal, system] }
         actor_id: { type: string, description: "Authenticated account or API key ID, or an internal/system identifier. No credential values." }
         reason: { type: string, maxLength: 512 }
@@ -61262,12 +62673,24 @@ components:
           description: Terminal recipient routing failures; empty when none exist.
         next_fanout_before: { type: string, description: Opaque cursor for the next older page of pre-invocation failures. }
 
+    EventRoutingRecoveryExpectation:
+      description: Reviewed acceptance-time automation routing state. All comparisons occur in the replay transaction; mismatches return 409 event_recovery_changed without queuing a replay. Generation must be supplied for recipient routing and omitted for legacy routing. Does not bypass admission rules.
+      type: object
+      additionalProperties: false
+      required: [workflow_name, published_version, replay_count]
+      properties:
+        workflow_name: { type: string, minLength: 1 }
+        published_version: { type: integer, format: int64, minimum: 1 }
+        replay_count: { type: integer, format: int64, minimum: 0 }
+        generation: { type: integer, format: int64, minimum: 0 }
+
     ReplayEventFanoutFailureRequest:
       description: Identity of one terminal fanout failure to replay.
       type: object
       additionalProperties: false
       required: [event_id, event_source, subscription_id]
       properties:
+        recovery_expectation: { $ref: "#/components/schemas/EventRoutingRecoveryExpectation" }
         allow_expired: { type: boolean, default: false, description: "Allow expired in the replay event fanout failure request: explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls." }
         event_id: { type: string }
         event_source: { type: string }
@@ -62052,11 +63475,11 @@ components:
         cold-boot replacement instance has a grace period to settle.
       type: object
       properties:
-        path: { type: string, pattern: '^/', description: "HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing listener — no runner changes (issue #554 §4). Set exactly one of path or grpc." }
+        path: { type: string, pattern: '^/', description: "HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing listener — no runner changes (issue #554 \u00a74). Set exactly one of path or grpc." }
         grpc: { $ref: '#/components/schemas/DeploymentGRPCLivenessProbe', description: "Use the standard gRPC health.v1 Check RPC. Set exactly one of path or grpc; Pro and Scale plans only." }
-        interval_s: { type: integer, minimum: 0, maximum: 60, description: "Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale → 5 s). Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]." }
+        interval_s: { type: integer, minimum: 0, maximum: 60, description: "Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale \u2192 5 s). Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]." }
         timeout_s:  { type: integer, minimum: 0, maximum: 5, description: "Per-probe HTTP or gRPC timeout in seconds; 0 = inherit 2 s default. A timeout is treated identically to a non-2xx response by the failure counter." }
-        consecutive_failures: { type: integer, minimum: 0, maximum: 10, description: "N at which DestroyForLivenessFailure fires; 0 = inherit per-plan default (Hobby/Pro/Scale → 3). The counter is reset to 0 on the first 2xx and survives an intermittent 5xx across the consecutive window (AC #2 — flaky app does NOT oscillate)." }
+        consecutive_failures: { type: integer, minimum: 0, maximum: 10, description: "N at which DestroyForLivenessFailure fires; 0 = inherit per-plan default (Hobby/Pro/Scale \u2192 3). The counter is reset to 0 on the first 2xx and survives an intermittent 5xx across the consecutive window (AC #2 — flaky app does NOT oscillate)." }
         cooldown_s: { type: integer, minimum: 0, maximum: 600, description: "Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the vmmd-side probe loop short-circuits the failure counter so the cold-boot replacement has time to settle (issue #554 closure / ADR-078). 0 = no cooldown (Free-plan / legacy behaviour); clamped to [MinLivenessCooldownSeconds=10, MaxLivenessCooldownSeconds=600] when the field is populated by a Pro/Scale deployment override." }
 
     DeploymentGRPCLivenessProbe:
@@ -65118,7 +66541,7 @@ components:
         severity: { type: string, enum: [error, warn] }
         reason: { type: string }
         field: { type: string, description: "Optional scope-wide ('memory') or per-row ('environment.<scope>.<key>')." }
-        observed: { description: "JSON-encoded observed value (int / string / []string / …)." }
+        observed: { description: "JSON-encoded observed value (int / string / []string / \u2026)." }
         limit:    { description: "JSON-encoded limit value." }
 
     DiffPayload:
@@ -71027,7 +72450,7 @@ components:
         request_duration: { $ref: '#/components/schemas/SLODuration' }
         error_rate_pct: { type: number, description: "Share of 5xx requests in the window for this app. Client-caused 4xx responses do not consume availability budget." }
         cold_boot_rate_pct: { type: number, description: "Share of requests that triggered a cold boot." }
-        instance_hours: { type: number, description: "Sum of instance × minute / 60 over the window (from `usage_minutes`)." }
+        instance_hours: { type: number, description: "Sum of instance \u00d7 minute / 60 over the window (from `usage_minutes`)." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
         wake_queue_p95_ms:
           type: [number, "null"]
@@ -71088,7 +72511,7 @@ components:
         request_count: { type: integer, format: int64, description: "Total distinct request rows for this fingerprint." }
         first_seen_at: { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time }
-        sample_message: { type: string, description: "PII-redacted sample message (already-redacted at write time; ≤AppErrorsSampleMessageCapBytes=512 bytes)." }
+        sample_message: { type: string, description: "PII-redacted sample message (already-redacted at write time; \u2264AppErrorsSampleMessageCapBytes=512 bytes)." }
         last_instance_id: { type: string, description: "Most recent platform instance that produced this fingerprint." }
         last_node_id: { type: string, description: "Most recent compute node that produced this fingerprint." }
         last_region: { type: string }
@@ -72511,7 +73934,7 @@ components:
             max_attempts:    { type: integer, minimum: 0, maximum: 25 }
             base_seconds:    { type: number }
             max_seconds:     { type: number }
-            jitter_seconds:  { type: number, description: "Fraction (0..1). 0.2 means ±20%." }
+            jitter_seconds:  { type: number, description: "Fraction (0..1). 0.2 means \u00b120%." }
         retention_seconds:
           { type: [integer, "null"], description: "ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)." }
         destinations:
@@ -72726,7 +74149,7 @@ components:
         max_attempts:    { type: integer, minimum: 0, maximum: 25, description: "Total delivery attempts including the original. 0 inherits the current plan cap; it never means unlimited." }
         base_seconds:    { type: number }
         max_seconds:     { type: number }
-        jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }
+        jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means \u00b120% jitter on top of the exponential curve." }
 
     DelayedTaskRequest:
       description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
@@ -74816,7 +76239,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -75716,7 +77139,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -75798,7 +77221,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -81513,13 +82936,13 @@ components:
 
     AutomationConflict:
       description: "code: automation_version_conflict | automation_ownership_conflict\
-        \ \u2014 reload a stale revision or explicitly confirm transfer of YAML ownership."
+        \ — reload a stale revision or explicitly confirm transfer of YAML ownership."
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
     AutomationInvalid:
-      description: "code: automation_invalid | validation_failed \u2014 the definition,\
+      description: "code: automation_invalid | validation_failed — the definition,\
         \ revision, or request fields are invalid."
       content:
         application/problem+json:

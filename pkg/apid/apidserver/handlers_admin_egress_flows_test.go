@@ -1,5 +1,5 @@
 // adr: 371 — egress flow log lookup.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestParseEgressFlowFilter(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	parse := func(query string) (state.EgressFlowFilter, *api.Problem) {
-		return parseEgressFlowFilter(httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows?"+query, nil), now)
+		return apidserver.ParseEgressFlowFilter(httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows?"+query, nil), now)
 	}
 	f, prob := parse("")
 	if prob != nil || !f.To.Equal(now) || !f.From.Equal(now.Add(-24*time.Hour)) || f.Limit != 200 || f.Remote.IsValid() {
@@ -41,9 +42,9 @@ func TestParseEgressFlowFilter(t *testing.T) {
 }
 
 func TestAdminEgressFlows_LookupByAddress(t *testing.T) {
-	e := newIssueCreditEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	mem := e.store
-	at := timeNow().UTC().Add(-time.Hour)
+	e := apidserver.NewIssueCreditEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	mem := (*e.Store())
+	at := (*apidserver.TimeNow)().UTC().Add(-time.Hour)
 	if err := mem.InsertEgressFlows(context.Background(), []state.EgressFlowRecord{
 		{ObservedAt: at, NodeName: "fsn-2", AccountID: "acct-1", AppID: "app-1", InstanceID: "i-1",
 			RemoteIP: netip.MustParseAddr("198.51.100.10"), RemotePort: 443},
@@ -53,9 +54,9 @@ func TestAdminEgressFlows_LookupByAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows?remote=198.51.100.0/24", nil)
-	e.addAdminSession(t, req)
+	e.AddAdminSession(t, req)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -70,8 +71,8 @@ func TestAdminEgressFlows_LookupByAddress(t *testing.T) {
 }
 
 func TestAdminEgressFlows_NonOperatorForbidden(t *testing.T) {
-	e := newIssueCreditEnv(t, api.ScopesAdminOnly, "allowed@example.com", "intruder@example.com")
+	e := apidserver.NewIssueCreditEnv(t, api.ScopesAdminOnly, "allowed@example.com", "intruder@example.com")
 	rec := httptest.NewRecorder()
-	e.s.requireOperator(e.s.listEgressFlows)(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows", nil), e.acct)
-	assertProblem(t, rec, http.StatusForbidden, "admin_required")
+	(*e.S()).RequireOperator((*e.S()).ListEgressFlows)(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows", nil), (*e.Acct()))
+	apidserver.AssertProblem(t, rec, http.StatusForbidden, "admin_required")
 }

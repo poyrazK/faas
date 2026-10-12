@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -41,23 +42,23 @@ func (s *rolloutEvidenceStore) ListFeatureFlagRequestEvidence(context.Context, s
 	return nil, nil
 }
 
-func setupProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow) (testEnv, state.FeatureFlagScope, *rolloutEvidenceStore) {
+func setupProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow) (apidserver.TestEnv, state.FeatureFlagScope, *rolloutEvidenceStore) {
 	t.Helper()
-	e := setup(t, api.PlanPro)
-	e.s.featureFlagsEnabled = true
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).FeatureFlagsEnabled()) = true
 	ctx := context.Background()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "rollouts", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "rollouts", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := e.store.ProjectEnvironmentBySlug(ctx, e.acct.ID, project.ID, "production")
+	env, err := (*e.Store()).ProjectEnvironmentBySlug(ctx, (*e.Acct()).ID, project.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "rollout-api", Status: state.AppActive}); err != nil {
+	if _, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "rollout-api", Status: state.AppActive}); err != nil {
 		t.Fatal(err)
 	}
-	scope := state.FeatureFlagScope{AccountID: e.acct.ID, ProjectID: project.ID, EnvironmentID: env.ID}
+	scope := state.FeatureFlagScope{AccountID: (*e.Acct()).ID, ProjectID: project.ID, EnvironmentID: env.ID}
 	rollout := 100
 	config := flags.Config{Flags: []flags.Flag{{
 		Key: "new-export", Enabled: true,
@@ -67,11 +68,11 @@ func setupProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOut
 			MaximumP95LatencyMS: 500, WindowSeconds: 300,
 		}}},
 	}}}
-	if _, err := e.store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, Config: config, Actor: e.acct.ID}); err != nil {
+	if _, err := (*e.Store()).UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, Config: config, Actor: (*e.Acct()).ID}); err != nil {
 		t.Fatal(err)
 	}
-	evidenceStore := &rolloutEvidenceStore{MemStore: e.store, rows: evidence}
-	e.s.store = evidenceStore
+	evidenceStore := &rolloutEvidenceStore{MemStore: (*e.Store()), rows: evidence}
+	(*(*e.S()).Store()) = evidenceStore
 	return e, scope, evidenceStore
 }
 
@@ -81,11 +82,11 @@ func TestFeatureFlagRolloutPromotionAdvancesOnlyTargetRule(t *testing.T) {
 	})
 	path := "/v1/projects/rollouts/environments/production/flags/new-export/rollout/promote"
 	one := int64(1)
-	res := e.do(t, http.MethodPost, path, promoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil)
+	res := e.Do(t, http.MethodPost, path, apidserver.PromoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("promote: %d %s", res.Code, res.Body.String())
 	}
-	var response featureFlagRolloutPromotionResponse
+	var response apidserver.FeatureFlagRolloutPromotionResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestFeatureFlagRolloutPromotionAdvancesOnlyTargetRule(t *testing.T) {
 	if evidenceStore.query.FlagKey != "new-export" || evidenceStore.query.RuleID != "selected" || evidenceStore.query.ConfigVersion != 1 || evidenceStore.query.ReceivedUntil.Time.Sub(evidenceStore.query.ReceivedFrom.Time) != 5*time.Minute || len(evidenceStore.query.AppIds) != 1 {
 		t.Fatalf("evidence query=%+v", evidenceStore.query)
 	}
-	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestFeatureFlagRolloutPromotionAdvancesOnlyTargetRule(t *testing.T) {
 	if current.Version != 2 || rule.Progression.CurrentStage != 1 || *rule.Rollout != 1000 {
 		t.Fatalf("published progression=%+v version=%d", rule, current.Version)
 	}
-	if res = e.do(t, http.MethodPost, path, promoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil); res.Code != http.StatusConflict {
+	if res = e.Do(t, http.MethodPost, path, apidserver.PromoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil); res.Code != http.StatusConflict {
 		t.Fatalf("stale promotion=%d %s", res.Code, res.Body.String())
 	}
 }
@@ -127,18 +128,18 @@ func TestFeatureFlagRolloutPromotionHoldsOnMissingOrUnhealthyEvidence(t *testing
 			}
 			e, scope, _ := setupProgressiveRollout(t, rows)
 			one := int64(1)
-			res := e.do(t, http.MethodPost, "/v1/projects/rollouts/environments/production/flags/new-export/rollout/promote", promoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil)
+			res := e.Do(t, http.MethodPost, "/v1/projects/rollouts/environments/production/flags/new-export/rollout/promote", apidserver.PromoteFeatureFlagRolloutRequest{ExpectedVersion: &one, RuleID: "selected"}, nil)
 			if res.Code != http.StatusOK {
 				t.Fatalf("promote: %d %s", res.Code, res.Body.String())
 			}
-			var response featureFlagRolloutPromotionResponse
+			var response apidserver.FeatureFlagRolloutPromotionResponse
 			if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
 			if response.Status != "held" || response.Reason != tt.reason {
 				t.Fatalf("hold response=%+v", response)
 			}
-			current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+			current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,22 +152,22 @@ func TestFeatureFlagRolloutPromotionHoldsOnMissingOrUnhealthyEvidence(t *testing
 
 func TestFeatureFlagRolloutPromotionReportsCompletedPlan(t *testing.T) {
 	e, scope, evidenceStore := setupProgressiveRollout(t, nil)
-	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rollout := 10000
 	current.Flags[0].Rules[0].Rollout = &rollout
 	current.Flags[0].Rules[0].Progression.CurrentStage = 2
-	if _, err := e.store.UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: e.acct.ID}); err != nil {
+	if _, err := (*e.Store()).UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: (*e.Acct()).ID}); err != nil {
 		t.Fatal(err)
 	}
 	two := int64(2)
-	res := e.do(t, http.MethodPost, "/v1/projects/rollouts/environments/production/flags/new-export/rollout/promote", promoteFeatureFlagRolloutRequest{ExpectedVersion: &two, RuleID: "selected"}, nil)
+	res := e.Do(t, http.MethodPost, "/v1/projects/rollouts/environments/production/flags/new-export/rollout/promote", apidserver.PromoteFeatureFlagRolloutRequest{ExpectedVersion: &two, RuleID: "selected"}, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("promote complete rollout: %d %s", res.Code, res.Body.String())
 	}
-	var response featureFlagRolloutPromotionResponse
+	var response apidserver.FeatureFlagRolloutPromotionResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -175,19 +176,19 @@ func TestFeatureFlagRolloutPromotionReportsCompletedPlan(t *testing.T) {
 	}
 }
 
-func setupAutomaticProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow, stageStartedAt time.Time) (testEnv, state.FeatureFlagScope, *rolloutStageClockStore) {
+func setupAutomaticProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow, stageStartedAt time.Time) (apidserver.TestEnv, state.FeatureFlagScope, *rolloutStageClockStore) {
 	t.Helper()
 	e, scope, evidenceStore := setupProgressiveRollout(t, evidence)
-	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	current.Flags[0].Rules[0].Progression.AutoAdvance = true
-	if _, err := e.store.UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: e.acct.ID}); err != nil {
+	if _, err := (*e.Store()).UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: (*e.Acct()).ID}); err != nil {
 		t.Fatal(err)
 	}
 	clockStore := &rolloutStageClockStore{rolloutEvidenceStore: evidenceStore, stageStartedAt: stageStartedAt}
-	e.s.store = clockStore
+	(*(*e.S()).Store()) = clockStore
 	return e, scope, clockStore
 }
 
@@ -197,10 +198,10 @@ func TestFeatureFlagAutoAdvanceWaitsForFullWindowAndAdvancesOneStage(t *testing.
 		{DecisionType: "boolean", DecisionValue: "true", RequestCount: 50, UsedCount: 50, ErrorCount: 0, P95LatencyMs: 300},
 	}, now.Add(-4*time.Minute))
 	candidate := state.FeatureFlagAutoRolloutCandidate{Scope: scope, ProjectSlug: "rollouts", EnvironmentSlug: "production"}
-	if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+	if err := (*e.S()).AutoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
 		t.Fatal(err)
 	}
-	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,15 +213,15 @@ func TestFeatureFlagAutoAdvanceWaitsForFullWindowAndAdvancesOneStage(t *testing.
 	}
 
 	evidenceStore.stageStartedAt = now.Add(-5 * time.Minute)
-	if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+	if err := (*e.S()).AutoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
 		t.Fatal(err)
 	}
-	current, err = e.store.GetFeatureFlags(context.Background(), scope, 0)
+	current, err = (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rule := current.Flags[0].Rules[0]
-	if current.Version != 3 || rule.Progression.CurrentStage != 1 || *rule.Rollout != 1000 || current.Actor != featureFlagAutoAdvanceActor {
+	if current.Version != 3 || rule.Progression.CurrentStage != 1 || *rule.Rollout != 1000 || current.Actor != apidserver.FeatureFlagAutoAdvanceActor {
 		t.Fatalf("automatic promotion=%+v actor=%q", rule, current.Actor)
 	}
 	if evidenceStore.query.FlagKey != "new-export" || evidenceStore.query.RuleID != "selected" || evidenceStore.query.ConfigVersion != 2 || evidenceStore.query.ReceivedUntil.Time.Sub(evidenceStore.query.ReceivedFrom.Time) != 5*time.Minute {
@@ -242,20 +243,20 @@ func TestFeatureFlagAutoAdvanceHoldsOnUnhealthyEvidenceAndDefaultsToManual(t *te
 		t.Run(tt.name, func(t *testing.T) {
 			e, scope, evidenceStore := setupAutomaticProgressiveRollout(t, tt.rows, now.Add(-5*time.Minute))
 			if !tt.automatic {
-				current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+				current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 				current.Flags[0].Rules[0].Progression.AutoAdvance = false
-				if _, err := e.store.UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: e.acct.ID}); err != nil {
+				if _, err := (*e.Store()).UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: (*e.Acct()).ID}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			candidate := state.FeatureFlagAutoRolloutCandidate{Scope: scope, ProjectSlug: "rollouts", EnvironmentSlug: "production"}
-			if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+			if err := (*e.S()).AutoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
 				t.Fatal(err)
 			}
-			current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+			current, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0)
 			if err != nil {
 				t.Fatal(err)
 			}

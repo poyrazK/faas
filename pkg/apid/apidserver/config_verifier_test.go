@@ -5,7 +5,7 @@
 // that a nil verifier degrades to the stdlib trust path.
 //
 // Sister file: config_test.go (LoadConfig + Load*TLS without verifier).
-package apidserver
+package apidserver_test
 
 import (
 	"crypto/ecdsa"
@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -128,7 +129,7 @@ func writePKIMaterial(t *testing.T, dir string) (caPath, certPath, keyPath strin
 
 // configureWithPKI fills the three TLS-path fields on c from a fresh
 // PKI material write. Used by NonNilVerifierInstallsHook tests.
-func configureWithPKI(t *testing.T, c *Config, caPath, certPath, keyPath string, prefix string) {
+func configureWithPKI(t *testing.T, c *apidserver.Config, caPath, certPath, keyPath string, prefix string) {
 	t.Helper()
 	switch prefix {
 	case "advisory_":
@@ -152,7 +153,7 @@ func configureWithPKI(t *testing.T, c *Config, caPath, certPath, keyPath string,
 
 func TestConfig_LoadAdvisoryTLSWithVerifier_NilVerifierReturnsAllowAll(t *testing.T) {
 	// Empty cluster → (nil, nil) is the single-box back-compat path.
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadAdvisoryTLSWithVerifier(nil)
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -181,7 +182,7 @@ func TestConfig_LoadAdvisoryTLSWithVerifier_NilVerifierReturnsAllowAll(t *testin
 func TestConfig_LoadAdvisoryTLSWithVerifier_NonNilVerifierInstallsHook(t *testing.T) {
 	dir := t.TempDir()
 	ca, cert, key := writePKIMaterial(t, dir)
-	c := &Config{}
+	c := &apidserver.Config{}
 	configureWithPKI(t, c, ca, cert, key, "advisory_")
 
 	stub := &recordingVerifier{accept: true}
@@ -214,7 +215,7 @@ func TestConfig_LoadAdvisoryTLSWithVerifier_NonNilVerifierInstallsHook(t *testin
 }
 
 func TestConfig_LoadAdvisoryTLSWithVerifier_PartialClusterStillRejected(t *testing.T) {
-	c := &Config{AdvisoryTLSCertPath: "/some/cert"}
+	c := &apidserver.Config{AdvisoryTLSCertPath: "/some/cert"}
 	if _, err := c.LoadAdvisoryTLSWithVerifier(&recordingVerifier{}); err == nil {
 		t.Errorf("partial (cert only): expected error naming missing fields")
 	} else if !strings.Contains(err.Error(), "advisory_tls_key_path") || !strings.Contains(err.Error(), "advisory_tls_ca_path") {
@@ -225,7 +226,7 @@ func TestConfig_LoadAdvisoryTLSWithVerifier_PartialClusterStillRejected(t *testi
 // --- LoadGithubdBridgeTLSWithVerifier ---
 
 func TestConfig_LoadGithubdBridgeTLSWithVerifier_NilVerifierReturnsAllowAll(t *testing.T) {
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadGithubdBridgeTLSWithVerifier(nil)
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -249,7 +250,7 @@ func TestConfig_LoadGithubdBridgeTLSWithVerifier_NilVerifierReturnsAllowAll(t *t
 func TestConfig_LoadGithubdBridgeTLSWithVerifier_NonNilVerifierInstallsHook(t *testing.T) {
 	dir := t.TempDir()
 	ca, cert, key := writePKIMaterial(t, dir)
-	c := &Config{}
+	c := &apidserver.Config{}
 	configureWithPKI(t, c, ca, cert, key, "githubd_bridge_")
 
 	stub := &recordingVerifier{accept: true}
@@ -273,7 +274,7 @@ func TestConfig_LoadGithubdBridgeTLSWithVerifier_NonNilVerifierInstallsHook(t *t
 }
 
 func TestConfig_LoadGithubdBridgeTLSWithVerifier_PartialClusterStillRejected(t *testing.T) {
-	c := &Config{GithubdBridgeTLSCertPath: "/some/cert"}
+	c := &apidserver.Config{GithubdBridgeTLSCertPath: "/some/cert"}
 	if _, err := c.LoadGithubdBridgeTLSWithVerifier(&recordingVerifier{}); err == nil {
 		t.Errorf("partial (cert only): expected error naming missing fields")
 	} else if !strings.Contains(err.Error(), "githubd_bridge_tls_key_path") || !strings.Contains(err.Error(), "githubd_bridge_tls_ca_path") {
@@ -284,7 +285,7 @@ func TestConfig_LoadGithubdBridgeTLSWithVerifier_PartialClusterStillRejected(t *
 // --- LoadGithubdTLSWithVerifier ---
 
 func TestConfig_LoadGithubdTLSWithVerifier_NilVerifierReturnsAllowAll(t *testing.T) {
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadGithubdTLSWithVerifier(nil)
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -308,7 +309,7 @@ func TestConfig_LoadGithubdTLSWithVerifier_NilVerifierReturnsAllowAll(t *testing
 func TestConfig_LoadGithubdTLSWithVerifier_NonNilVerifierInstallsHook(t *testing.T) {
 	dir := t.TempDir()
 	ca, cert, key := writePKIMaterial(t, dir)
-	c := &Config{}
+	c := &apidserver.Config{}
 	configureWithPKI(t, c, ca, cert, key, "githubd_")
 
 	stub := &recordingVerifier{accept: true}
@@ -332,7 +333,7 @@ func TestConfig_LoadGithubdTLSWithVerifier_NonNilVerifierInstallsHook(t *testing
 }
 
 func TestConfig_LoadGithubdTLSWithVerifier_PartialClusterStillRejected(t *testing.T) {
-	c := &Config{GithubdClientTLSCertPath: "/some/cert"}
+	c := &apidserver.Config{GithubdClientTLSCertPath: "/some/cert"}
 	if _, err := c.LoadGithubdTLSWithVerifier(&recordingVerifier{}); err == nil {
 		t.Errorf("partial (cert only): expected error naming missing fields")
 	} else if !strings.Contains(err.Error(), "githubd_tls_key_path") || !strings.Contains(err.Error(), "githubd_tls_ca_path") {

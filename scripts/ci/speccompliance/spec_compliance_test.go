@@ -343,6 +343,9 @@ var dtoExclude = map[string]bool{
 	// EdgeRuleParamKind is an internal enum for kind=validate parameter
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
+
+	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
+	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
 	// Workflow list options encode URL query parameters, not JSON request bodies.
 	"OperationWorkflowReadinessQueueOptions":      true, // Go query builder; parameters are described on each queue route.
 	"OperationWorkflowAttentionOptions":           true,
@@ -1068,8 +1071,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_consumer_execution_health.go"),
 		filepath.Join(root, "pkg", "api", "event_consumer_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
+		filepath.Join(root, "pkg", "api", "event_workflow_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_run_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_history.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_policy.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_change.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_evaluation.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_health.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_health_alerts.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_history.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_report.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -21,7 +23,7 @@ func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T)
 		rows = append(rows, dependencyHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 300, "error"))
 	}
 
-	got, edges, truncated, represented, samples := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	got, edges, truncated, represented, samples := apidserver.BuildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
 	if truncated {
 		t.Fatal("unexpected truncation")
 	}
@@ -58,7 +60,7 @@ func TestBuildDebugDependencyLatencyHistoryDetectsRecentRegression(t *testing.T)
 func TestBuildDebugDependencyLatencyHistoryBuildsNormalizedEdgesAndExclusiveTime(t *testing.T) {
 	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
 	startNanos := uint64(start.UnixNano())
-	raw, err := json.Marshal([]debugEvidenceSpan{
+	raw, err := json.Marshal([]apidserver.DebugEvidenceSpan{
 		{
 			SpanID:            "root",
 			Name:              "handler",
@@ -100,7 +102,7 @@ func TestBuildDebugDependencyLatencyHistoryBuildsNormalizedEdgesAndExclusiveTime
 		SpansSummary: raw,
 	}}
 
-	dependencies, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	dependencies, edges, truncated, _, _ := apidserver.BuildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
 	if truncated || len(dependencies) != 3 || len(edges) != 3 {
 		t.Fatalf("rollup = (dependencies=%d edges=%d truncated=%v), want (3, 3, false)", len(dependencies), len(edges), truncated)
 	}
@@ -132,7 +134,7 @@ func TestBuildDebugDependencyLatencyHistoryIncludesEdgeExemplars(t *testing.T) {
 		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
 	}
 
-	_, edges, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	_, edges, truncated, _, _ := apidserver.BuildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
 	if truncated {
 		t.Fatal("unexpected truncation")
 	}
@@ -162,13 +164,13 @@ func TestBuildDebugDependencyLatencyHistoryIncludesEdgeExemplars(t *testing.T) {
 
 func TestBuildDebugDependencyLatencyHistoryCapsGroupsAndUsesApplicationFallback(t *testing.T) {
 	start := time.Date(2026, 9, 19, 8, 0, 0, 0, time.UTC)
-	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, debugDependencyHistoryMaxGroups+1)
-	for i := 0; i < debugDependencyHistoryMaxGroups+1; i++ {
+	rows := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, apidserver.DebugDependencyHistoryMaxGroups+1)
+	for i := 0; i < apidserver.DebugDependencyHistoryMaxGroups+1; i++ {
 		rows = append(rows, dependencyHistoryTestRowWithName(start.Add(time.Minute), uint64(i+1), "ok", fmt.Sprintf("unique-%d", i)))
 	}
-	got, _, truncated, _, _ := buildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
-	if !truncated || len(got) != debugDependencyHistoryMaxOutput {
-		t.Fatalf("cap = (groups=%d truncated=%v), want (%d, true)", len(got), truncated, debugDependencyHistoryMaxOutput)
+	got, _, truncated, _, _ := apidserver.BuildDebugDependencyLatencyHistory(rows, start, start.Add(2*time.Hour))
+	if !truncated || len(got) != apidserver.DebugDependencyHistoryMaxOutput {
+		t.Fatalf("cap = (groups=%d truncated=%v), want (%d, true)", len(got), truncated, apidserver.DebugDependencyHistoryMaxOutput)
 	}
 	for _, item := range got {
 		if item.Type != "application" {
@@ -187,7 +189,7 @@ func TestBuildDebugCriticalPathHistoryDetectsRecentRegression(t *testing.T) {
 		rows = append(rows, criticalPathHistoryTestRow(start.Add(time.Hour+time.Duration(i)*time.Minute), 400, true))
 	}
 
-	got, truncated, complete, represented, samples := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	got, truncated, complete, represented, samples := apidserver.BuildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
 	if truncated || !complete {
 		t.Fatalf("history state = (truncated=%v complete=%v), want (false, true)", truncated, complete)
 	}
@@ -223,7 +225,7 @@ func TestBuildDebugCriticalPathHistoryIncludesExemplarsAndDominantSegment(t *tes
 		criticalPathHistoryTestRowWithIdentity(start.Add(80*time.Minute), 250, 500, "cccccccccccccccccccccccccccccccc"),
 	}
 
-	got, truncated, complete, _, _ := buildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
+	got, truncated, complete, _, _ := apidserver.BuildDebugCriticalPathHistory(rows, start, start.Add(2*time.Hour))
 	if truncated || !complete || len(got) != 1 {
 		t.Fatalf("history = (paths=%d truncated=%v complete=%v), want one complete path", len(got), truncated, complete)
 	}
@@ -264,7 +266,7 @@ func criticalPathHistoryTestRow(at time.Time, durationMS uint64, errorStatus boo
 	if errorStatus {
 		status = "error"
 	}
-	raw, _ := json.Marshal([]debugEvidenceSpan{
+	raw, _ := json.Marshal([]apidserver.DebugEvidenceSpan{
 		{
 			SpanID:            "child",
 			ParentSpanID:      "root",
@@ -298,7 +300,7 @@ func dependencyHistoryTestRow(at time.Time, durationMS uint64, status string) sq
 }
 
 func dependencyHistoryTestRowWithName(at time.Time, durationMS uint64, status, name string) sqlc.ListRequestTelemetryDependencySpansRow {
-	raw, _ := json.Marshal([]debugEvidenceSpan{{
+	raw, _ := json.Marshal([]apidserver.DebugEvidenceSpan{{
 		Name:          name,
 		DurationNanos: durationMS * uint64(time.Millisecond),
 		Status:        status,
@@ -309,7 +311,7 @@ func dependencyHistoryTestRowWithName(at time.Time, durationMS uint64, status, n
 	}})
 	if name != "db.query" {
 		// Deliberately leave the classification absent for the cardinality test.
-		var spans []debugEvidenceSpan
+		var spans []apidserver.DebugEvidenceSpan
 		_ = json.Unmarshal(raw, &spans)
 		spans[0].Attributes = nil
 		raw, _ = json.Marshal(spans)

@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,32 +7,33 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAPIInvocationDefaultIngressRejectsStagePins(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := t.Context()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "api-invoke-stage"})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "api-invoke-stage"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+	if _, err := (*e.Store()).CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "api-invoke-stage", Type: state.AppTypeApp,
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "api-invoke-stage", Type: state.AppTypeApp,
 		RAMMB: 256, MaxConcurrency: 2, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage})
+	dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, dep.ID); err != nil {
 		t.Fatal(err)
 	}
-	release, err := e.store.PublishProjectReleaseSet(ctx, e.acct.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}})
+	release, err := (*e.Store()).PublishProjectReleaseSet(ctx, (*e.Acct()).ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +45,13 @@ func TestAPIInvocationDefaultIngressRejectsStagePins(t *testing.T) {
 				req.Headers, _ = json.Marshal(requestHeaders)
 				requestHeaders = nil
 			}
-			response := e.do(t, http.MethodPost, "/v1/apps/api-invoke-stage/invoke/async", req, requestHeaders)
+			response := e.Do(t, http.MethodPost, "/v1/apps/api-invoke-stage/invoke/async", req, requestHeaders)
 			if response.Code != http.StatusGone {
 				t.Fatalf("%s body=%t default ingress = %d %s", pin.header, bodyPin, response.Code, response.Body.String())
 			}
 		}
 	}
-	rows, err := e.store.ListInvocationsForApp(ctx, app.ID)
+	rows, err := (*e.Store()).ListInvocationsForApp(ctx, app.ID)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("stage-pin rejection persisted work: %d %v", len(rows), err)
 	}

@@ -27,6 +27,7 @@ from ..models.event_recovery_execution_finished_webhook_payload_unresolved_count
     EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount,
     check_event_recovery_execution_finished_webhook_payload_unresolved_count,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_recovery_execution_summary import EventRecoveryExecutionSummary
@@ -37,9 +38,9 @@ T = TypeVar("T", bound="EventRecoveryExecutionFinishedWebhookPayload")
 
 @_attrs_define
 class EventRecoveryExecutionFinishedWebhookPayload:
-    """Frozen confirmed terminal execution results for all queued deliveries after admission finishes. Unknown outcomes
-    block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver
-    acknowledged.
+    """Frozen confirmed terminal execution results for all queued invocation deliveries or workflow resumes after admission
+    finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution
+    succeeded or any receiver acknowledged.
 
     """
 
@@ -58,12 +59,16 @@ class EventRecoveryExecutionFinishedWebhookPayload:
     expires_at: datetime.datetime
     completed_at: datetime.datetime
     execution: EventRecoveryExecutionSummary
-    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
-    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission
-    state. Omitted for routing recovery. Saved results share recovery job retention."""
+    """Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal
+    result, then live evidence of the exact admitted generation. Later native resumes report superseded only without
+    an earlier saved terminal result. Missing evidence without a saved result is unknown. Native failed/dead runs
+    count as failed. Counts sum to tracked_count and are separate from job admission state. Omitted for routing
+    recovery. Saved results in both modes share recovery job retention."""
     execution_finished_at: datetime.datetime
     unresolved_count: EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount
     """Unknown or nonterminal queued deliveries; capture requires zero."""
+    items_url: str | Unset = UNSET
+    """Authenticated relative API link to paginated recovery items and their invocation/run identifiers."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = str(self.event_id)
@@ -100,6 +105,8 @@ class EventRecoveryExecutionFinishedWebhookPayload:
 
         unresolved_count: int = self.unresolved_count
 
+        items_url = self.items_url
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -123,6 +130,8 @@ class EventRecoveryExecutionFinishedWebhookPayload:
                 "unresolved_count": unresolved_count,
             }
         )
+        if items_url is not UNSET:
+            field_dict["items_url"] = items_url
 
         return field_dict
 
@@ -167,6 +176,8 @@ class EventRecoveryExecutionFinishedWebhookPayload:
             d.pop("unresolved_count")
         )
 
+        items_url = d.pop("items_url", UNSET)
+
         event_recovery_execution_finished_webhook_payload = cls(
             event_id=event_id,
             job_id=job_id,
@@ -185,6 +196,7 @@ class EventRecoveryExecutionFinishedWebhookPayload:
             execution=execution,
             execution_finished_at=execution_finished_at,
             unresolved_count=unresolved_count,
+            items_url=items_url,
         )
 
         return event_recovery_execution_finished_webhook_payload

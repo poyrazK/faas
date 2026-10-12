@@ -51,6 +51,53 @@ func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (h
 	return true, poolFor(spec).invoke(ctx, request, response)
 }
 
+// OpenIfSupported sends request to a reused worker and returns the worker's
+// response lines: one complete response, or a streamed response's head and
+// the frames after it (ADR-999). The caller reads what it needs and then
+// closes the Lines, healthy only when the response ended cleanly, since a
+// worker left mid-response would hand its remaining frames to the next
+// request. handled=false asks the caller to retain the legacy one-shot path.
+func OpenIfSupported(ctx context.Context, spec Spec, request any) (lines *Lines, handled bool, err error) {
+	if !supportsPersistentProtocol(spec) {
+		return nil, false, nil
+	}
+	lines, err = poolFor(spec).open(ctx, request)
+	return lines, true, err
+}
+
+// Lines is one invocation's response stream from a pooled worker.
+type Lines struct {
+	ctx  context.Context
+	pool *pool
+	w    *worker
+	once sync.Once
+}
+
+// Next returns the worker's next stdout line, or ctx's error once the
+// invocation is canceled or out of time.
+func (l *Lines) Next() ([]byte, error) {
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		line, readErr := l.w.stdout.ReadBytes('\n')
+		result <- readResult{line: line, err: readErr}
+	}()
+	select {
+	case <-l.ctx.Done():
+		return nil, l.ctx.Err()
+	case got := <-result:
+		return got.line, got.err
+	}
+}
+
+// Close returns the worker to its pool, or retires it when healthy is false.
+func (l *Lines) Close(healthy bool) {
+	l.once.Do(func() { l.pool.release(l.w, healthy) })
+}
+
 // PrewarmIfSupported starts and fully initializes one generated adapter before
 // the runner advertises readiness. The idle process is then included in the
 // init snapshot, so a restored VM does not pay interpreter and module-import
@@ -219,45 +266,44 @@ func (p *pool) release(w *worker, healthy bool) {
 	}
 }
 
+// invoke sends one request and decodes a single-line response.
 func (p *pool) invoke(ctx context.Context, request, response any) error {
-	w, err := p.acquire(ctx)
+	lines, err := p.open(ctx, request)
 	if err != nil {
 		return err
 	}
-	healthy := false
-	defer func() { p.release(w, healthy) }()
+	line, err := lines.Next()
+	if err != nil {
+		lines.Close(false)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("workerpool: read response: %w", err)
+	}
+	if err := json.Unmarshal(line, response); err != nil {
+		lines.Close(false)
+		return fmt.Errorf("workerpool: decode response: %w", err)
+	}
+	lines.Close(true)
+	return nil
+}
 
+func (p *pool) open(ctx context.Context, request any) (*Lines, error) {
+	w, err := p.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("workerpool: encode request: %w", err)
+		p.release(w, false)
+		return nil, fmt.Errorf("workerpool: encode request: %w", err)
 	}
 	payload = append(payload, '\n')
 	if _, err := w.stdin.Write(payload); err != nil {
-		return fmt.Errorf("workerpool: write request: %w", err)
+		p.release(w, false)
+		return nil, fmt.Errorf("workerpool: write request: %w", err)
 	}
-
-	type readResult struct {
-		line []byte
-		err  error
-	}
-	result := make(chan readResult, 1)
-	go func() {
-		line, readErr := w.stdout.ReadBytes('\n')
-		result <- readResult{line: line, err: readErr}
-	}()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case got := <-result:
-		if got.err != nil {
-			return fmt.Errorf("workerpool: read response: %w", got.err)
-		}
-		if err := json.Unmarshal(got.line, response); err != nil {
-			return fmt.Errorf("workerpool: decode response: %w", err)
-		}
-		healthy = true
-		return nil
-	}
+	return &Lines{ctx: ctx, pool: p, w: w}, nil
 }
 
 type worker struct {

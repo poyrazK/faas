@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPreviewEventUsesRouterMatcherWithoutPublishing(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	matchedAppID := mustSeedApp(t, e, "preview-matched")
-	filteredAppID := mustSeedApp(t, e, "preview-filtered")
-	unrelatedAppID := mustSeedApp(t, e, "preview-unrelated")
+	e := apidserver.Setup(t, api.PlanPro)
+	matchedAppID := apidserver.MustSeedApp(t, e, "preview-matched")
+	filteredAppID := apidserver.MustSeedApp(t, e, "preview-filtered")
+	unrelatedAppID := apidserver.MustSeedApp(t, e, "preview-unrelated")
 	for _, subscription := range []struct {
 		appID  string
 		source string
@@ -25,13 +26,12 @@ func TestPreviewEventUsesRouterMatcherWithoutPublishing(t *testing.T) {
 		{filteredAppID, "billing.*", "invoice.paid", `{"data":{"amount":{"$gt":200}}}`},
 		{unrelatedAppID, "shipping.*", "invoice.paid", `{}`},
 	} {
-		if _, _, err := e.store.UpsertEventSubscription(context.Background(), e.acct.ID,
-			subscription.appID, subscription.source, subscription.typ, json.RawMessage(subscription.filter)); err != nil {
+		if _, _, err := (*e.Store()).UpsertEventSubscription(context.Background(), (*e.Acct()).ID, subscription.appID, subscription.source, subscription.typ, json.RawMessage(subscription.filter)); err != nil {
 			t.Fatalf("seed subscription for %s: %v", subscription.appID, err)
 		}
 	}
 
-	rec := e.do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
 		ID:     "preview-invoice-1",
 		Source: "billing.stripe",
 		Type:   "invoice.paid",
@@ -54,7 +54,7 @@ func TestPreviewEventUsesRouterMatcherWithoutPublishing(t *testing.T) {
 		t.Fatalf("non-matches = %+v", got.NonMatches)
 	}
 
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 100)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 100)
 	if err != nil {
 		t.Fatalf("list account events: %v", err)
 	}
@@ -66,8 +66,8 @@ func TestPreviewEventUsesRouterMatcherWithoutPublishing(t *testing.T) {
 }
 
 func TestPreviewEventRejectsInvalidEnvelope(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
 		Source: "",
 		Type:   "invoice.paid",
 		Data:   json.RawMessage(`{}`),
@@ -78,13 +78,13 @@ func TestPreviewEventRejectsInvalidEnvelope(t *testing.T) {
 }
 
 func TestPreviewEventDoesNotRevealOtherAccountsSubscriptions(t *testing.T) {
-	owner := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, owner, "private-preview-worker")
-	if _, _, err := owner.store.UpsertEventSubscription(context.Background(), owner.acct.ID, appID,
+	owner := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, owner, "private-preview-worker")
+	if _, _, err := (*owner.Store()).UpsertEventSubscription(context.Background(), (*owner.Acct()).ID, appID,
 		"billing.*", "invoice.paid", json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("seed private subscription: %v", err)
 	}
-	foreignAcct, err := owner.store.CreateAccount(context.Background(), "preview-foreign@example.com", api.PlanPro)
+	foreignAcct, err := (*owner.Store()).CreateAccount(context.Background(), "preview-foreign@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("create foreign account: %v", err)
 	}
@@ -92,14 +92,14 @@ func TestPreviewEventDoesNotRevealOtherAccountsSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate foreign key: %v", err)
 	}
-	if _, err := owner.store.CreateAPIKey(context.Background(), foreignAcct.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
+	if _, err := (*owner.Store()).CreateAPIKey(context.Background(), foreignAcct.ID, foreignHash, "foreign", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("create foreign key: %v", err)
 	}
 	foreign := owner
-	foreign.acct = foreignAcct
-	foreign.key = foreignToken
+	(*foreign.Acct()) = foreignAcct
+	(*foreign.Key()) = foreignToken
 
-	rec := foreign.do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
+	rec := foreign.Do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
 		Source: "billing.stripe",
 		Type:   "invoice.paid",
 		Data:   json.RawMessage(`{}`),

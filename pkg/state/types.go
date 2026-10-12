@@ -3776,10 +3776,17 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryQueueBlocked             AppWebhookEvent = "automation.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert              AppWebhookEvent = "automation.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered          AppWebhookEvent = "automation.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused             AppWebhookEvent = "automation.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished           AppWebhookEvent = "automation.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady              AppWebhookEvent = "automation.recovery_review_ready"
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
 	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
+	AppWebhookEventRecoveryExecutionAttention       AppWebhookEvent = "event_recovery.execution_attention"
 	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
@@ -3839,7 +3846,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/focus"
 )
 
 // adr:381
 func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var logs bytes.Buffer
-	e.s.log = slog.New(slog.NewTextHandler(&logs, nil))
-	e.s.stripeWebhookSecret = stripeWebhookSecretForTest
-	e.s.WithBillingProvider(&consumeRefundProvider{})
-	if err := e.store.UpdateAccountProviderCustomerID(context.Background(), e.acct.ID, "cus_test_123"); err != nil {
+	(*(*e.S()).Log()) = slog.New(slog.NewTextHandler(&logs, nil))
+	(*(*e.S()).StripeWebhookSecret()) = apidserver.StripeWebhookSecretForTest
+	(*e.S()).WithBillingProvider(&apidserver.ConsumeRefundProvider{})
+	if err := (*e.Store()).UpdateAccountProviderCustomerID(context.Background(), (*e.Acct()).ID, "cus_test_123"); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile("../../../pkg/billing/testdata/invoices/stripe.json")
@@ -35,20 +36,20 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 	raw = bytes.ReplaceAll(raw, []byte("cus_invoice"), []byte("cus_test_123"))
 	send := func(body []byte) {
 		req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
-		req.Header.Set("Stripe-Signature", stripe.SignForTest(body, stripeWebhookSecretForTest, time.Now()))
+		req.Header.Set("Stripe-Signature", stripe.SignForTest(body, apidserver.StripeWebhookSecretForTest, time.Now()))
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("webhook status=%d body=%s logs=%s", rec.Code, rec.Body, logs.String())
 		}
 	}
 	send(raw)
-	first, err := e.store.GetInvoiceByProviderID(context.Background(), e.acct.ID, "stripe", "in_invoice")
+	first, err := (*e.Store()).GetInvoiceByProviderID(context.Background(), (*e.Acct()).ID, "stripe", "in_invoice")
 	if err != nil {
 		t.Fatal(err)
 	}
 	send(raw) // the same signed event is replayed before export
-	stored, err := e.store.GetInvoiceByID(context.Background(), first.ID)
+	stored, err := (*e.Store()).GetInvoiceByID(context.Background(), first.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +62,11 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 		}
 	}
 	key, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "focus-export", api.ScopesUsageReadSurface); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(context.Background(), (*e.Acct()).ID, hash, "focus-export", api.ScopesUsageReadSurface); err != nil {
 		t.Fatal(err)
 	}
-	e.key = key
-	rec := e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
+	(*e.Key()) = key
+	rec := e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=csv", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status=%d body=%s", rec.Code, rec.Body)
 	}
@@ -85,7 +86,7 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 			t.Fatal("download did not use persisted record timestamps")
 		}
 	}
-	rec = e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=metadata", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=metadata", nil, nil)
 	var m focus.Metadata
 	if json.Unmarshal(rec.Body.Bytes(), &m) != nil || m.Projection.SourceCoverage.DetailedInvoices != 1 || len(m.Projection.MissingRequiredFields) != 0 {
 		t.Fatalf("metadata=%s", rec.Body)
@@ -97,7 +98,7 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 
 // adr:381
 func TestFOCUSArtifactLimitProblem(t *testing.T) {
-	problem := focusExportProblem(&focus.LimitError{Kind: "rows", Limit: api.MaxFOCUSExportRows, Observed: api.MaxFOCUSExportRows + 1})
+	problem := apidserver.FocusExportProblem(&focus.LimitError{Kind: "rows", Limit: api.MaxFOCUSExportRows, Observed: api.MaxFOCUSExportRows + 1})
 	if problem.Status != http.StatusUnprocessableEntity || !strings.Contains(problem.Detail, "rows") {
 		t.Fatalf("problem=%+v", problem)
 	}

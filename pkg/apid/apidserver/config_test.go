@@ -1,18 +1,20 @@
 // Tests for apid config loading (issue #678 PR-0): defaults,
 // missing file, parse errors, env overlay, NodeName round-trip,
 // TLS partial-cluster rejection.
-package apidserver
+package apidserver_test
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.toml")
-	cfg, err := LoadConfig(path)
+	cfg, err := apidserver.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("missing file: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.AppsDomain != "gregale.dev" {
 		t.Errorf("AppsDomain = %q, want public default", cfg.AppsDomain)
 	}
-	if cfg.CLIAuthURLBase != defaultCLIAuthURLBase {
+	if cfg.CLIAuthURLBase != apidserver.DefaultCLIAuthURLBase {
 		t.Errorf("CLIAuthURLBase = %q, want public console default", cfg.CLIAuthURLBase)
 	}
 	if cfg.NodeName != "" {
@@ -88,7 +90,7 @@ opentelemetry = "registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path)
+	cfg, err := apidserver.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -146,7 +148,7 @@ func TestLoadConfig_PartialTOMLKeepsDefaults(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path)
+	cfg, err := apidserver.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestLoadConfig_BadTOMLErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not valid toml === ==="), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadConfig(path)
+	_, err := apidserver.LoadConfig(path)
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
@@ -181,7 +183,7 @@ func TestLoadConfig_RejectsMutableCompanionImage(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+	if _, err := apidserver.LoadConfig(path); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
 		t.Fatalf("LoadConfig error = %v, want immutable companion image rejection", err)
 	}
 }
@@ -189,7 +191,7 @@ func TestLoadConfig_RejectsMutableCompanionImage(t *testing.T) {
 func TestLoadConfig_ReadErrorOther(t *testing.T) {
 	// A path that exists but is a directory produces a non-ENOENT read error.
 	dir := t.TempDir()
-	_, err := LoadConfig(dir)
+	_, err := apidserver.LoadConfig(dir)
 	if err == nil {
 		t.Fatal("expected error reading a directory")
 	}
@@ -200,7 +202,7 @@ func TestLoadConfig_ReadErrorOther(t *testing.T) {
 
 func TestConfig_LoadAdvisoryTLS(t *testing.T) {
 	// Empty cluster → (nil, nil) is the single-box back-compat path.
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadAdvisoryTLS()
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -217,7 +219,7 @@ func TestConfig_LoadAdvisoryTLS(t *testing.T) {
 }
 
 func TestConfig_LoadGithubdBridgeTLS(t *testing.T) {
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadGithubdBridgeTLS()
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -232,7 +234,7 @@ func TestConfig_LoadGithubdBridgeTLS(t *testing.T) {
 }
 
 func TestConfig_LoadGithubdTLS(t *testing.T) {
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadGithubdTLS()
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -247,7 +249,7 @@ func TestConfig_LoadGithubdTLS(t *testing.T) {
 }
 
 func TestConfig_LoadAppErrorsTLS(t *testing.T) {
-	c := &Config{}
+	c := &apidserver.Config{}
 	tls, err := c.LoadAppErrorsTLS()
 	if err != nil || tls != nil {
 		t.Errorf("all-empty: tls=%v err=%v, want nil", tls, err)
@@ -266,7 +268,7 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 	// env var. The containerised-deploys path uses env-only config
 	// (no TOML file at all); the e2e harness stamps env overrides
 	// to pick loopback ports without a TOML round-trip.
-	c := &Config{
+	c := &apidserver.Config{
 		ListenAddr:        "0.0.0.0:8081",
 		MetricsAddr:       "127.0.0.1:9101",
 		AdvisorySock:      "/run/faas/apid.sock",
@@ -336,14 +338,14 @@ func TestConfig_GetHelpersEnvOverlay(t *testing.T) {
 	if got := c.GetCLIAuthURLBase(empty); got != "https://api.toml.com" {
 		t.Errorf("GetCLIAuthURLBase (empty env) = %q, want normalized TOML value", got)
 	}
-	if got := (&Config{}).GetAppErrorsTarget(empty); got != "/run/faas/app_errors.sock" {
+	if got := (&apidserver.Config{}).GetAppErrorsTarget(empty); got != "/run/faas/app_errors.sock" {
 		t.Errorf("GetAppErrorsTarget (empty config) = %q, want legacy socket", got)
 	}
 }
 
 func TestConfig_GetSpansWriterTargetFollowsTopology(t *testing.T) {
 	t.Run("explicit target wins", func(t *testing.T) {
-		c := &Config{AppErrorsTarget: "tcp://apid.toml:9093"}
+		c := &apidserver.Config{AppErrorsTarget: "tcp://apid.toml:9093"}
 		env := func(key string) string {
 			if key == "FAAS_APID_OTEL_SPANS_WRITER_SOCKET" {
 				return "unix:///run/faas/custom-spans.sock"
@@ -356,7 +358,7 @@ func TestConfig_GetSpansWriterTargetFollowsTopology(t *testing.T) {
 	})
 
 	t.Run("split-box target reuses request telemetry endpoint", func(t *testing.T) {
-		c := &Config{AppErrorsTarget: "tcp://apid.toml:9093"}
+		c := &apidserver.Config{AppErrorsTarget: "tcp://apid.toml:9093"}
 		env := func(key string) string {
 			if key == "FAAS_APID_REQUEST_TELEMETRY_TARGET" {
 				return "tcp://telemetry.faas:9443"
@@ -369,7 +371,7 @@ func TestConfig_GetSpansWriterTargetFollowsTopology(t *testing.T) {
 	})
 
 	t.Run("single-box uses dedicated socket", func(t *testing.T) {
-		if got := (&Config{}).GetSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
+		if got := (&apidserver.Config{}).GetSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
 			t.Fatalf("single-box target = %q", got)
 		}
 	})
@@ -385,13 +387,13 @@ func TestNormalizeCLIAuthURLBase(t *testing.T) {
 		{name: "bare hostname", in: "api.example.com", want: "https://api.example.com"},
 		{name: "http local", in: "http://127.0.0.1:8081///", want: "http://127.0.0.1:8081"},
 		{name: "path prefix", in: "https://api.example.com/control/", want: "https://api.example.com/control"},
-		{name: "query rejected", in: "https://api.example.com/?redirect=bad", want: defaultCLIAuthURLBase},
-		{name: "scheme rejected", in: "ftp://api.example.com", want: defaultCLIAuthURLBase},
-		{name: "empty", in: "", want: defaultCLIAuthURLBase},
+		{name: "query rejected", in: "https://api.example.com/?redirect=bad", want: apidserver.DefaultCLIAuthURLBase},
+		{name: "scheme rejected", in: "ftp://api.example.com", want: apidserver.DefaultCLIAuthURLBase},
+		{name: "empty", in: "", want: apidserver.DefaultCLIAuthURLBase},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeCLIAuthURLBase(tt.in); got != tt.want {
+			if got := apidserver.NormalizeCLIAuthURLBase(tt.in); got != tt.want {
 				t.Errorf("normalizeCLIAuthURLBase(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
@@ -405,7 +407,7 @@ func TestNormalizeCLIAuthURLBase(t *testing.T) {
 func TestLoadConfig_RoleEnvOverlay(t *testing.T) {
 	// Empty TOML + empty env → RoleSingleBox.
 	path := filepath.Join(t.TempDir(), "no-role.toml")
-	cfg, err := LoadConfig(path)
+	cfg, err := apidserver.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("missing file: %v", err)
 	}
@@ -421,7 +423,7 @@ func TestLoadConfig_RoleEnvOverlay(t *testing.T) {
 	if err := os.WriteFile(path2, []byte(`role = "control-plane"`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = LoadConfig(path2)
+	cfg, err = apidserver.LoadConfig(path2)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}

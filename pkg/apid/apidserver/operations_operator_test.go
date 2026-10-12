@@ -1,5 +1,5 @@
 // adr: 521
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	operationcontracts "github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -92,8 +93,8 @@ func testOperationOperatorHTTP(t *testing.T, store operationOperatorTestStore) {
 		}
 		operations = append(operations, op)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	handler := srv.handler()
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	handler := srv.Handler()
 	base := "/v1/apps/" + app.Slug + "/operations"
 	idPath := base + "/" + operations[0].ID
 	call := func(method, path, bearer string, body any) *httptest.ResponseRecorder {

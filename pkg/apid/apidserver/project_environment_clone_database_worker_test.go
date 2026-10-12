@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -31,19 +32,19 @@ func capturedDatabasePlanningFixture() (state.ProjectEnvironmentCloneOperation, 
 
 func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testing.T) {
 	op, views, catalogue := capturedDatabasePlanningFixture()
-	plans, err := buildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
-	if err != nil || len(plans) != 1 || plans[0].source.ID != "shared-db" {
+	plans, err := apidserver.BuildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
+	if err != nil || len(plans) != 1 || (*plans[0].Source()).ID != "shared-db" {
 		t.Fatalf("shared plans = %+v, %v", plans, err)
 	}
 	// Legacy receipts retain their hash, but are no longer cloneable sources.
 	legacy := catalogue[0].Postgres[0]
 	legacy.DataResourceID = ""
 	legacyHash, err := state.ProjectEnvironmentCloneDatabaseSourceHash(legacy)
-	if err != nil || plans[0].hash == legacyHash {
+	if err != nil || (*plans[0].Hash()) == legacyHash {
 		t.Fatal("exact dataset identity is absent from the source hash")
 	}
 	if legacyHash != "a3210e328478e053a41dcc26ebe93cad5736506069ef314f78c7dbd22836fc7a" {
-		t.Fatalf("database definition receipt encoding changed: %s", plans[0].hash)
+		t.Fatalf("database definition receipt encoding changed: %s", (*plans[0].Hash()))
 	}
 	otherOp := op
 	otherOp.ID = "new-operation"
@@ -51,8 +52,8 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 	for i := range otherViews {
 		otherViews[i].OperationID = otherOp.ID
 	}
-	otherPlans, err := buildCapturedProjectEnvironmentDatabasePlans(otherOp, otherViews, catalogue)
-	if err != nil || otherPlans[0].name == plans[0].name || otherPlans[0].hash != plans[0].hash {
+	otherPlans, err := apidserver.BuildCapturedProjectEnvironmentDatabasePlans(otherOp, otherViews, catalogue)
+	if err != nil || (*otherPlans[0].Name()) == (*plans[0].Name()) || (*otherPlans[0].Hash()) != (*plans[0].Hash()) {
 		t.Fatalf("operation-specific target identity changed source definition: %+v, %v", otherPlans, err)
 	}
 	for _, fault := range []string{"missing_catalogue", "duplicate_workload", "duplicate_catalogue", "foreign_operation", "scope", "hash", "shared_database_spec", "shared_database_provider", "invalid_spec", "no_restore_window", "missing_data_identity", "shared_database_data"} {
@@ -84,7 +85,7 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 			case "no_restore_window":
 				catalogue[0].Postgres[0].RestoreWindowSeconds = 0
 			}
-			if _, err := buildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue); !errors.Is(err, state.ErrProjectEnvironmentCloneBindingCapture) {
+			if _, err := apidserver.BuildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue); !errors.Is(err, state.ErrProjectEnvironmentCloneBindingCapture) {
 				t.Fatalf("invalid catalogue accepted: %v", err)
 			}
 		})
@@ -93,14 +94,14 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 
 func TestCapturedCloneDatabaseResourcesRequireExactRosterAndPoint(t *testing.T) {
 	op, views, catalogue := capturedDatabasePlanningFixture()
-	plans, err := buildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
+	plans, err := apidserver.BuildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
 	if err != nil {
 		t.Fatal(err)
 	}
 	point := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
 	for _, fault := range []string{"valid", "missing", "duplicate", "hash", "point_missing", "point_precision", "point_future", "point_noncanonical", "shared_target", "ready_without_target", "unsupported_status", "unexpected_database"} {
 		t.Run(fault, func(t *testing.T) {
-			resources, err := capturedProjectEnvironmentDatabaseResources(plans, point)
+			resources, err := apidserver.CapturedProjectEnvironmentDatabaseResources(plans, point)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +131,7 @@ func TestCapturedCloneDatabaseResourcesRequireExactRosterAndPoint(t *testing.T) 
 				extra.Name, extra.SourceID = "other-db", "other-db"
 				resources = append(resources, extra)
 			}
-			_, recorded, err := validateCapturedProjectEnvironmentDatabaseResources(plans, resources)
+			_, recorded, err := apidserver.ValidateCapturedProjectEnvironmentDatabaseResources(plans, resources)
 			if (err == nil) != (fault == "valid") || fault == "valid" && !recorded.Equal(point) {
 				t.Fatalf("point = %v, error = %v", recorded, err)
 			}
@@ -141,16 +142,16 @@ func TestCapturedCloneDatabaseResourcesRequireExactRosterAndPoint(t *testing.T) 
 	catalogue[1].Postgres[0].DatabaseID = "other-db"
 	catalogue[1].Postgres[0].DatabaseName = "other-orders"
 	catalogue[1].Postgres[0].ProviderResourceID = "other-provider"
-	plans, err = buildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
+	plans, err = apidserver.BuildCapturedProjectEnvironmentDatabasePlans(op, views, catalogue)
 	if err != nil || len(plans) != 2 {
 		t.Fatalf("independent database plans = %+v, %v", plans, err)
 	}
-	resources, err := capturedProjectEnvironmentDatabaseResources(plans, point)
+	resources, err := apidserver.CapturedProjectEnvironmentDatabaseResources(plans, point)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resources[1].CapturePoint = point.Add(time.Second).Format(time.RFC3339Nano)
-	if _, _, err := validateCapturedProjectEnvironmentDatabaseResources(plans, resources); !errors.Is(err, state.ErrConflict) {
+	if _, _, err := apidserver.ValidateCapturedProjectEnvironmentDatabaseResources(plans, resources); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("different recovery times accepted: %v", err)
 	}
 }

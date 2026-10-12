@@ -1,9 +1,10 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,7 +45,7 @@ func TestEnvironmentAppsWithoutLiveDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := environmentAppsWithoutLiveDeployment(ctx, store,
+	got, err := apidserver.EnvironmentAppsWithoutLiveDeployment(ctx, store,
 		[]state.App{deployedInStaging, neverInStaging, alreadyChanged}, "staging", nil, []state.App{alreadyChanged})
 	if err != nil {
 		t.Fatal(err)
@@ -53,11 +54,11 @@ func TestEnvironmentAppsWithoutLiveDeployment(t *testing.T) {
 		t.Fatalf("first builds = %+v, want only %s (live in production, never in staging)", got, neverInStaging.Slug)
 	}
 	for _, env := range []string{"", "default", "production"} {
-		if !reconcileProductionEnvironment(env) {
+		if !apidserver.ReconcileProductionEnvironment(env) {
 			t.Errorf("reconcileProductionEnvironment(%q) = false; unchanged production apps must not rebuild", env)
 		}
 	}
-	if reconcileProductionEnvironment("staging") {
+	if apidserver.ReconcileProductionEnvironment("staging") {
 		t.Error("staging treated as the production scope")
 	}
 }

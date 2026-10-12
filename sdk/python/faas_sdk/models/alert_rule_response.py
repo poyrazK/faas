@@ -37,7 +37,8 @@ class AlertRuleResponse:
     metric: AlertRuleResponseMetric
     """MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1
     when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat
-    with value 1."""
+    with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds,
+    zero with no holds); its alerts support webhook action only."""
     comparison: AlertRuleResponseComparison
     threshold: float
     window_spec: AlertRuleResponseWindowSpec
@@ -51,9 +52,10 @@ class AlertRuleResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"
-    """What to do when the rule fires. webhook fires the configured webhook; rollback restores the last live
-    deployment; demote pins the current canary step; promote advances to 100%. Pre-auth target, MCP task,
-    event consumer, and workflow metrics support webhook only."""
+    """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
+    the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
+    promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow
+    metrics support webhook only."""
     event_subscription_id: UUID | Unset = UNSET
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""

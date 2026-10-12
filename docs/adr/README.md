@@ -60,6 +60,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
 | 1112 | [Verified issue grouping explanations](1112-issue-grouping-explanations.md) | accepted | Retained occurrences expose selected sanitized evidence only when it reproduces the saved group fingerprint |
 | 1111 | [Opt-in failure-site issue grouping](1111-issue-failure-site-grouping.md) | accepted | Version 2 groups the nearest application frame with a stable code or normalized message; version 1 identities remain unchanged |
+
+| 992 | [Combined managed PostgreSQL rollout readiness](992-managed-postgres-combined-rollout-readiness.md) | accepted; native execution pending | Offline provider/durable and native guest evidence bound to one clean source revision and independently approved qualification bundle; optional staging enforcement |
 | 831 | [Edge WAF signatures, bot challenge, and client certificates](831-edge-waf-bot-challenge-mtls.md) | proposed | Sequenced plan: Coraza + OWASP CRS `kind=waf` first (observe-only preview, latency gate), then a proof-of-work `kind=challenge`, then custom-domain-only mTLS on demand |
 | 830 | [Platform security headers on customer app responses](830-customer-response-security-headers.md) | accepted | Customer responses keep app-set security headers; platform fills defaults only when absent, drops `includeSubDomains` on custom domains, and stops forcing `X-Frame-Options`/`Permissions-Policy` on customer apps |
 | 829 | [New apps observe the pre-auth source limit by default](829-default-pre-auth-observe.md) | accepted | New apps get an observe-only, plan-clamped per-source guard unless the create request sets `pre_auth_rate_limit`; existing apps unchanged; amendment 1 adds the advisory enforce suggestion and `gregale app --pre-auth` |
@@ -693,6 +695,46 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
+## Automation recovery lifecycle
+
+- [ADR-1000: Reviewed workflow event recovery jobs](1000-reviewed-workflow-event-recovery-jobs.md) — durable submission of pinned automation event plans.
+
+- [ADR-1001: Durable recovery of reviewed native workflow runs](1001-durable-workflow-run-recovery.md)
+
+- [ADR-1002: Observe the admitted workflow recovery generation](1002-workflow-recovery-execution-observations.md)
+- [ADR-1003: Retain workflow recovery outcomes and notify execution completion](1003-workflow-recovery-terminal-results.md)
+- [ADR-1004: Reviewed retries from saved workflow recovery failures](1004-reviewed-workflow-recovery-retries.md)
+- [ADR-1005: Server-side native workflow recovery preflight](1005-workflow-recovery-preflight.md)
+- [ADR-1006: Workflow recovery execution attention](1006-workflow-recovery-execution-attention.md)
+- [ADR-1007: Reviewed workflow recovery cancellation](1007-reviewed-workflow-recovery-cancellation.md)
+- [ADR-1008: Saved workflow recovery response plans](1008-saved-workflow-recovery-response-plans.md)
+- [ADR-1009: Preview workflow recovery policies](1009-preview-workflow-recovery-policies.md)
+
+- [ADR-1010: Policy recovery review decisions and live freshness](1010-policy-recovery-review-decisions.md)
+
+- [ADR-1011: Durable recovery review-ready notifications](1011-recovery-review-ready-notifications.md)
+
+- [ADR-1012: Recovery review execution outcomes and completion notification](1012-recovery-review-execution-completion.md)
+
+- [ADR-1013: Bounded automatic recovery retries](1013-bounded-automatic-recovery-retries.md)
+- [ADR-1014: Recovery queue visibility and operator controls](1014-recovery-queue-and-operator-controls.md)
+- [ADR-1015: Queued retry suppression and blocked notifications](1015-queued-retry-suppression-and-blocked-notifications.md)
+
+- [ADR-1016: Automatic retry queue evaluation evidence](1016-automatic-retry-queue-evaluation-evidence.md)
+
+- [ADR-1017: Recovery policy change preview](1017-recovery-policy-change-preview.md)
+- [ADR-1018: Recovery automation health](1018-recovery-automation-health.md)
+- [ADR-1019: Recovery health alert incidents](1019-recovery-health-alert-incidents.md)
+- [ADR-1020: Read-only retained recovery history](1020-recovery-retained-history.md)
+- [ADR-1021: Durable recovery policy, worker and incident events](1021-durable-recovery-history.md)
+- [ADR-1022: Observed recovery automation effectiveness report](1022-recovery-effectiveness-report.md)
+- [ADR-1023: Evidence-limited historical recovery policy evaluation](1023-historical-recovery-policy-evaluation.md)
+
+- [ADR-1024: Durable recovery candidate evidence](1024-durable-recovery-candidate-evidence.md)
+- [ADR-1025: Policy-independent workflow failure evidence](1025-policy-independent-workflow-failure-evidence.md)
+
+- [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
+
 ## Events and delivery
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
@@ -822,3 +864,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
+
+- [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)

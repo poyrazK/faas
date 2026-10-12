@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,29 +8,31 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantRateCardAPIAndStatementPricing(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	appID := mustSeedApp(t, e, "tenant-rate-card")
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "commercial-customer", "Commercial Customer", 250)
+	e := apidserver.Setup(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "tenant-rate-card")
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "commercial-customer", "Commercial Customer", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := e.store.CreateAPIConsumer(context.Background(), e.acct.ID, appID, "commercial-customer", "Commercial Customer")
+	consumer, err := (*e.Store()).CreateAPIConsumer(context.Background(), (*e.Acct()).ID, appID, "commercial-customer", "Commercial Customer")
 	if err != nil {
 		t.Fatal(err)
 	}
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	appCard, err := e.store.CreateAPIConsumerRateCard(context.Background(), e.acct.ID, appID, "EUR", 10, minute)
+	appCard, err := (*e.Store()).CreateAPIConsumerRateCard(context.Background(), (*e.Acct()).ID, appID, "EUR", 10, minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tenantRatePath := "/v1/account/platform-tenants/" + tenant.ID + "/rate-cards"
 	tenantEffective := minute.Add(time.Minute)
-	createdCard := e.do(t, http.MethodPost, tenantRatePath, api.CreatePlatformTenantRateCardRequest{
+	createdCard := e.Do(t, http.MethodPost, tenantRatePath, api.CreatePlatformTenantRateCardRequest{
 		Currency: "eur", PriceMillicentsPerUnit: 25, EffectiveFrom: &tenantEffective,
 	}, nil)
 	if createdCard.Code != http.StatusCreated {
@@ -43,7 +45,7 @@ func TestPlatformTenantRateCardAPIAndStatementPricing(t *testing.T) {
 	if tenantRate.TenantID != tenant.ID || tenantRate.Currency != "EUR" || tenantRate.Unit != "request" || tenantRate.ID == "" {
 		t.Fatalf("tenant rate card = %+v", tenantRate)
 	}
-	listed := e.do(t, http.MethodGet, tenantRatePath, nil, nil)
+	listed := e.Do(t, http.MethodGet, tenantRatePath, nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list tenant rate cards: %d %s", listed.Code, listed.Body)
 	}
@@ -52,7 +54,7 @@ func TestPlatformTenantRateCardAPIAndStatementPricing(t *testing.T) {
 		t.Fatalf("rate-card history = %+v, err=%v", history, err)
 	}
 	changedEffective := tenantEffective.Add(time.Minute)
-	changedCurrency := e.do(t, http.MethodPost, tenantRatePath, api.CreatePlatformTenantRateCardRequest{
+	changedCurrency := e.Do(t, http.MethodPost, tenantRatePath, api.CreatePlatformTenantRateCardRequest{
 		Currency: "USD", PriceMillicentsPerUnit: 30, EffectiveFrom: &changedEffective,
 	}, nil)
 	if changedCurrency.Code != http.StatusUnprocessableEntity {
@@ -63,8 +65,8 @@ func TestPlatformTenantRateCardAPIAndStatementPricing(t *testing.T) {
 		at    time.Time
 		units int64
 	}{{minute, 1}, {tenantEffective, 2}} {
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID, ConsumerKey: consumer.ID,
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appID, ConsumerKey: consumer.ID,
 			PlatformTenantID: tenant.ID, WindowStart: usage.at, RequestCount: usage.units, BillableUnits: usage.units,
 		}); err != nil {
 			t.Fatalf("record usage %d: %v", i, err)
@@ -72,7 +74,7 @@ func TestPlatformTenantRateCardAPIAndStatementPricing(t *testing.T) {
 	}
 	end := minute.Add(time.Hour)
 	statementPath := "/v1/account/platform-tenants/" + tenant.ID + "/usage-statements"
-	statementResp := e.do(t, http.MethodPost, statementPath, api.CreateAPIConsumerUsageStatementRequest{
+	statementResp := e.Do(t, http.MethodPost, statementPath, api.CreateAPIConsumerUsageStatementRequest{
 		PeriodStart: &minute, PeriodEnd: &end,
 	}, nil)
 	if statementResp.Code != http.StatusCreated {

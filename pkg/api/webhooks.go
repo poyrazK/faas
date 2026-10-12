@@ -103,6 +103,10 @@ var AllowedAppWebhookEvents = []string{
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
+	"event_recovery.execution_attention",
+	"automation.recovery_review_ready", "automation.recovery_review_finished",
+	"automation.recovery_policy_paused", "automation.recovery_queue_blocked",
+	"automation.recovery_health_alert", "automation.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events

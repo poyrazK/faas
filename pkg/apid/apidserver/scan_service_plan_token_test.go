@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestApplyProject_StalePlanTokenWritesOneProblem pins issue #2172: a stale
@@ -19,7 +20,7 @@ func TestApplyProject_StalePlanTokenWritesOneProblem(t *testing.T) {
 	spool := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -27,7 +28,7 @@ func TestApplyProject_StalePlanTokenWritesOneProblem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create source part: %v", err)
 	}
-	if _, err := fw.Write(applyProjectOneWorkloadTarGz(t)); err != nil {
+	if _, err := fw.Write(apidserver.ApplyProjectOneWorkloadTarGz(t)); err != nil {
 		t.Fatalf("write source part: %v", err)
 	}
 	if err := mw.WriteField("project_slug", "stale-token"); err != nil {
@@ -38,10 +39,10 @@ func TestApplyProject_StalePlanTokenWritesOneProblem(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/projects?plan_token=bogus-token", &body)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("apply status = %d, want %d; body=%s", rec.Code, http.StatusConflict, rec.Body.String())
 	}

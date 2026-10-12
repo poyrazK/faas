@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/devpatch"
 	"github.com/onebox-faas/faas/pkg/sourcedelta"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -20,7 +21,7 @@ import (
 // the test spool root, where openDevSourceArchive accepts it.
 func writeDevSourceArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
-	f, err := os.CreateTemp(spoolRoot(), "source-*.tar.gz")
+	f, err := os.CreateTemp(apidserver.SpoolRoot(), "source-*.tar.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func writeDevSourceArchive(t *testing.T, files map[string]string) string {
 }
 
 type devPatchFixture struct {
-	e      testEnv
+	e      apidserver.TestEnv
 	store  *state.MemStore
 	app    state.App
 	liveID string
@@ -60,16 +61,16 @@ type devPatchFixture struct {
 
 func newDevPatchFixture(t *testing.T, base map[string]string, withManifest bool) devPatchFixture {
 	t.Helper()
-	e := setup(t, api.PlanPro)
-	t.Setenv(sourceSpoolRootEnv, t.TempDir())
+	e := apidserver.Setup(t, api.PlanPro)
+	t.Setenv(apidserver.SourceSpoolRootEnv, t.TempDir())
 	ctx := context.Background()
-	store := e.store
-	app, err := store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "dev-patch-live", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
+	store := (*e.Store())
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "dev-patch-live", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
 	live, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, BuildID: "build-live", Kind: state.DeploymentKindTarball,
-		Status: state.DeployLive, ImageDigest: appTaskTestDigest, CreatedAt: time.Now().UTC()})
+		Status: state.DeployLive, ImageDigest: apidserver.AppTaskTestDigest, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,17 +80,17 @@ func newDevPatchFixture(t *testing.T, base map[string]string, withManifest bool)
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
 	if withManifest {
-		archive, err := openDevSourceArchive(writeDevSourceArchive(t, base))
+		archive, err := apidserver.OpenDevSourceArchive(writeDevSourceArchive(t, base))
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest, err := sourcedelta.Inspect(archive, sourceDeltaLimits(limits))
+		manifest, err := sourcedelta.Inspect(archive, apidserver.SourceDeltaLimits(limits))
 		_ = archive.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := store.RecordDevSourceManifest(ctx, state.DevSourceManifest{DeploymentID: live.ID, AppID: app.ID,
-			Entries: devPatchEntriesToState(manifest)}, devSourceManifestsKept); err != nil {
+			Entries: apidserver.DevPatchEntriesToState(manifest)}, apidserver.DevSourceManifestsKept); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,24 +119,24 @@ func TestDevPatchPlanPreview(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newDevPatchFixture(t, devPatchBaseSource, tc.withManifest)
-			plan := f.e.s.planDevPatch(context.Background(), f.app, writeDevSourceArchive(t, tc.current), "", f.limits)
-			if plan.preview == nil || *plan.preview != tc.want {
-				t.Fatalf("preview = %+v, want %+v", plan.preview, tc.want)
+			plan := (*f.e.S()).PlanDevPatch(context.Background(), f.app, writeDevSourceArchive(t, tc.current), "", f.limits)
+			if (*plan.Preview()) == nil || *(*plan.Preview()) != tc.want {
+				t.Fatalf("preview = %+v, want %+v", (*plan.Preview()), tc.want)
 			}
 		})
 	}
 }
 
 func TestDevPatchPlanWithoutLiveBuild(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	t.Setenv(sourceSpoolRootEnv, t.TempDir())
-	app, err := e.store.CreateApp(context.Background(), state.App{AccountID: e.acct.ID, Slug: "dev-patch-none", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
+	e := apidserver.Setup(t, api.PlanPro)
+	t.Setenv(apidserver.SourceSpoolRootEnv, t.TempDir())
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "dev-patch-none", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := e.s.planDevPatch(context.Background(), app, writeDevSourceArchive(t, devPatchBaseSource), "", api.MustLimitsFor(api.PlanPro))
-	if plan.preview == nil || plan.preview.Reason != api.DevPatchReasonNoLiveBuild {
-		t.Fatalf("preview = %+v, want no_live_build", plan.preview)
+	plan := (*e.S()).PlanDevPatch(context.Background(), app, writeDevSourceArchive(t, devPatchBaseSource), "", api.MustLimitsFor(api.PlanPro))
+	if (*plan.Preview()) == nil || (*plan.Preview()).Reason != api.DevPatchReasonNoLiveBuild {
+		t.Fatalf("preview = %+v, want no_live_build", (*plan.Preview()))
 	}
 }
 
@@ -144,19 +145,19 @@ func TestDevPatchPublishedOnlyWithDeliveryFlag(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		f := newDevPatchFixture(t, devPatchBaseSource, true)
 		if enabled {
-			t.Setenv(devPatchDeliveryEnv, "1")
+			t.Setenv(apidserver.DevPatchDeliveryEnv, "1")
 		} else {
-			t.Setenv(devPatchDeliveryEnv, "")
+			t.Setenv(apidserver.DevPatchDeliveryEnv, "")
 		}
 		ctx := context.Background()
 		sourcePath := writeDevSourceArchive(t, current)
-		plan := f.e.s.planDevPatch(ctx, f.app, sourcePath, "", f.limits)
+		plan := (*f.e.S()).PlanDevPatch(ctx, f.app, sourcePath, "", f.limits)
 		newDeployment, err := f.store.CreateDeployment(ctx, state.Deployment{AppID: f.app.ID, Kind: state.DeploymentKindTarball,
-			Status: state.DeployPending, ImageDigest: appTaskTestDigest, CreatedAt: time.Now().UTC()})
+			Status: state.DeployPending, ImageDigest: apidserver.AppTaskTestDigest, CreatedAt: time.Now().UTC()})
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.e.s.recordDevPatchSource(ctx, f.app, newDeployment.ID, sourcePath, "", plan)
+		(*f.e.S()).RecordDevPatchSource(ctx, f.app, newDeployment.ID, sourcePath, "", plan)
 		if _, err := f.store.DevSourceManifest(ctx, newDeployment.ID); err != nil {
 			t.Fatalf("new deployment manifest not recorded: %v", err)
 		}

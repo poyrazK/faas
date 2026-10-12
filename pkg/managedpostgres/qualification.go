@@ -180,15 +180,18 @@ type QualificationReadiness struct {
 // qualification command. It contains only provider-neutral specs, stable
 // check codes, and non-secret backend identity material.
 type QualificationArtifact struct {
-	Version            int                           `json:"version"`
-	BackendID          string                        `json:"backend_id"`
-	BackendFingerprint string                        `json:"backend_fingerprint"`
-	Spec               Spec                          `json:"spec"`
-	Report             QualificationReport           `json:"report"`
-	Lifecycle          *LifecycleQualificationReport `json:"lifecycle,omitempty"`
-	Approval           *QualificationApproval        `json:"approval,omitempty"`
-	ApprovalEnv        map[string]string             `json:"approval_env,omitempty"`
-	Readiness          QualificationReadiness        `json:"readiness"`
+	Version              int                           `json:"version"`
+	SourceRevision       string                        `json:"source_revision,omitempty"`
+	SourceClean          bool                          `json:"source_clean,omitempty"`
+	SourceEvidenceSHA256 string                        `json:"source_evidence_sha256,omitempty"`
+	BackendID            string                        `json:"backend_id"`
+	BackendFingerprint   string                        `json:"backend_fingerprint"`
+	Spec                 Spec                          `json:"spec"`
+	Report               QualificationReport           `json:"report"`
+	Lifecycle            *LifecycleQualificationReport `json:"lifecycle,omitempty"`
+	Approval             *QualificationApproval        `json:"approval,omitempty"`
+	ApprovalEnv          map[string]string             `json:"approval_env,omitempty"`
+	Readiness            QualificationReadiness        `json:"readiness"`
 }
 
 // LoadQualificationArtifact reads one operator-owned qualification artifact

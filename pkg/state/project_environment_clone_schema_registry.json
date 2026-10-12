@@ -3370,7 +3370,10 @@
       "previous_state",
       "rate",
       "reason",
-      "state"
+      "state",
+      "target_position",
+      "target_resume_count",
+      "target_run_id"
     ],
     "kind": "operational"
   },
@@ -3406,6 +3409,7 @@
       "capacity_wait_started_at",
       "completed_at",
       "created_at",
+      "execution_attention_next_at",
       "execution_finished_at",
       "execution_notification_captured",
       "execution_notification_next_at",
@@ -3424,6 +3428,20 @@
       "wait_reason",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_workflow_results",
+    "columns": [
+      "admitted_at",
+      "completed_at",
+      "job_id",
+      "position",
+      "recorded_at",
+      "resume_number",
+      "run_id",
+      "state"
     ],
     "kind": "operational"
   },
@@ -9559,6 +9577,167 @@
       "run_id",
       "step_name",
       "webhook_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_action_receipts",
+    "columns": [
+      "actor_id",
+      "actor_kind",
+      "captured_at",
+      "job_id",
+      "request",
+      "request_id",
+      "response"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_failure_capture",
+    "columns": [
+      "max_entries",
+      "retention_seconds",
+      "singleton",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_failure_evidence",
+    "columns": [
+      "app_id",
+      "completed_at",
+      "eligibility",
+      "eligibility_observed_at",
+      "failure_status",
+      "id",
+      "observed_at",
+      "resume_count",
+      "run_id",
+      "sequence",
+      "workflow"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_health_incidents",
+    "columns": [
+      "app_id",
+      "incident"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_history_events",
+    "columns": [
+      "app_id",
+      "entry",
+      "id",
+      "occurred_at",
+      "recorded_at",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_policies",
+    "columns": [
+      "actor_id",
+      "actor_kind",
+      "app_id",
+      "automatic_failures",
+      "automatic_pause_reason",
+      "automatic_paused_at",
+      "enabled",
+      "job_cursor",
+      "last_evaluated_at",
+      "next_evaluate_at",
+      "next_execute_at",
+      "next_health_at",
+      "policy",
+      "status",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "workflow_recovery_policy_controls",
+    "columns": [
+      "actor_id",
+      "actor_kind",
+      "app_id",
+      "controlled_at",
+      "id",
+      "operation",
+      "policy_version",
+      "reason"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_policy_execution_charges",
+    "columns": [
+      "action_id",
+      "app_id",
+      "applied_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_policy_executions",
+    "columns": [
+      "action_id",
+      "app_id",
+      "applied_at",
+      "blocked_notification",
+      "child_job_id",
+      "last_evaluation",
+      "next_blocked_at",
+      "policy_version",
+      "position",
+      "reason",
+      "result",
+      "review_id",
+      "status",
+      "suppression"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_policy_reviews",
+    "columns": [
+      "app_id",
+      "fingerprint",
+      "id",
+      "job_id",
+      "observed_at",
+      "review",
+      "review_decision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_policy_targets",
+    "columns": [
+      "action",
+      "app_id",
+      "prepared_at",
+      "resume_count",
+      "review_id",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_recovery_review_notifications",
+    "columns": [
+      "completion",
+      "next_at",
+      "next_completion_at",
+      "receipt",
+      "review_id"
     ],
     "kind": "operational"
   },

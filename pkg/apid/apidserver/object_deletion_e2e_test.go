@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -42,8 +43,8 @@ func TestObjectDeletionRecoveryMissingPlacementPG(t *testing.T) {
 			}
 			// An empty catalog models removal of this placement, without
 			// changing the bucket's immutable placement identity.
-			s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(&objectstorage.Registry{Accounting: f.policy})
-			if e = s.object.ReconcileObjectDeletions(ctx, nil); e != nil {
+			s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(&objectstorage.Registry{Accounting: f.policy})
+			if e = (*s.Object()).ReconcileObjectDeletions(ctx, nil); e != nil {
 				t.Fatal(e)
 			}
 			j, e = f.st.GetObjectDeletion(ctx, f.account.ID, f.bucket.ID, j.ID)
@@ -134,8 +135,8 @@ func TestObjectDeletionControlRecoveryPG(t *testing.T) {
 	if _, e = f.st.CreateAPIKey(ctx, f.account.ID, hash, "owner", api.ScopesAdminOnly); e != nil {
 		t.Fatal(e)
 	}
-	s := newServer(f.st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	srv := httptest.NewServer(s.handler())
+	s := apidserver.NewServer(f.st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	client := api.NewClient(srv.URL, token)
 	id := uuid.NewString()
@@ -151,17 +152,17 @@ func TestObjectDeletionControlRecoveryPG(t *testing.T) {
 	// Reconstruct the store and server; recovery works with customer ingress off.
 	f.enabled.Store(false)
 	srv.Close()
-	s = newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	if s.object.ObjectStorageEnabled() {
+	s = apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+	if (*s.Object()).ObjectStorageEnabled() {
 		t.Fatal("recovery fixture unexpectedly enabled ingress")
 	}
-	srv = httptest.NewServer(s.handler())
+	srv = httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	client = api.NewClient(srv.URL, token)
 	if _, e = f.pool.Exec(ctx, `UPDATE object_deletions SET retry_at=now() WHERE id=$1`, id); e != nil {
 		t.Fatal(e)
 	}
-	if e = s.object.ReconcileObjectDeletions(ctx, nil); e != nil {
+	if e = (*s.Object()).ReconcileObjectDeletions(ctx, nil); e != nil {
 		t.Fatal(e)
 	}
 	receipt, e = client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, id)

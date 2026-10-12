@@ -2,7 +2,7 @@
 // server_test.go; this file targets the error branches that the matrix
 // doesn't hit.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -17,26 +17,27 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestCreateApp_DuplicateSlug409(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dupe"}, nil); rec.Code != 201 {
+	e := apidserver.Setup(t, api.PlanPro)
+	if rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dupe"}, nil); rec.Code != 201 {
 		t.Fatalf("first create: %d %s", rec.Code, rec.Body)
 	}
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dupe"}, nil)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dupe"}, nil)
 	if rec.Code != 409 {
 		t.Errorf("duplicate slug: %d %s", rec.Code, rec.Body)
 	}
-	assertProblem(t, rec, 409, api.CodeValidation)
+	apidserver.AssertProblem(t, rec, 409, api.CodeValidation)
 }
 
 func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
 		t.Run(string(plan), func(t *testing.T) {
-			e := setup(t, plan)
-			rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-app", Visibility: "internal"}, nil)
+			e := apidserver.Setup(t, plan)
+			rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "private-app", Visibility: "internal"}, nil)
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("internal visibility: %d %s", rec.Code, rec.Body)
 			}
@@ -48,12 +49,12 @@ func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
 				t.Fatalf("created visibility=%q, want internal", out.Visibility)
 			}
 			public := string(api.AppVisibilityPublic)
-			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &public}, nil)
+			rec = e.Do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &public}, nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("switch to public: %d %s", rec.Code, rec.Body)
 			}
 			internal := string(api.AppVisibilityInternal)
-			rec = e.do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &internal}, nil)
+			rec = e.Do(t, "PATCH", "/v1/apps/private-app", api.UpdateAppRequest{Visibility: &internal}, nil)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("switch back to internal: %d %s", rec.Code, rec.Body)
 			}
@@ -62,35 +63,35 @@ func TestCreateApp_InternalVisibilityPlanGateAndRoundTrip(t *testing.T) {
 }
 
 func TestCreateApp_BadJSONBody(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	req := newRawRequest(t, "POST", "/v1/apps", "not json {{{", map[string]string{
-		"Authorization": "Bearer " + e.key,
+		"Authorization": "Bearer " + (*e.Key()),
 	})
-	rec := serveRaw(e.h, req)
+	rec := serveRaw((*e.H()), req)
 	if rec.Code != 400 {
 		t.Errorf("bad json: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func TestCreateApp_InvalidType(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "weird", Type: "widget"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "weird", Type: "widget"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("invalid type: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func TestCreateApp_FunctionMissingRuntime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "fn-no-rt", Type: "function"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "fn-no-rt", Type: "function"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("function without runtime: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func TestCreateApp_FunctionBadRuntime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-bad-rt", Type: "function", Runtime: "ruby33"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("function bad runtime: %d %s", rec.Code, rec.Body)
@@ -104,8 +105,8 @@ func TestCreateApp_FunctionBadRuntime(t *testing.T) {
 // widened in migrations/00035_app_runtime_go124.sql. If this test
 // breaks, one of the two guards is out of sync.
 func TestCreateApp_FunctionGo124Runtime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-go124-rt", Type: "function", Runtime: "go124"}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("function with runtime=go124: %d %s", rec.Code, rec.Body)
@@ -123,8 +124,8 @@ func TestCreateApp_FunctionGo124Runtime(t *testing.T) {
 // runtime that LOOKS like go124 but is misspelled must still be
 // rejected with 400. The allow-list is exhaustive, not "go124*".
 func TestCreateApp_FunctionGo124BadRuntime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-go124-bad", Type: "function", Runtime: "go124beta"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("function with runtime=go124beta: %d %s, want 400", rec.Code, rec.Body)
@@ -137,8 +138,8 @@ func TestCreateApp_FunctionGo124BadRuntime(t *testing.T) {
 // allow-list in cmd/apid/handlers.go and the DB CHECK widening must
 // stay in lockstep; if either regresses this test fires.
 func TestCreateApp_FunctionNode24Runtime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-node24-rt", Type: "function", Runtime: "node24"}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("function with runtime=node24: %d %s", rec.Code, rec.Body)
@@ -158,8 +159,8 @@ func TestCreateApp_FunctionNode24Runtime(t *testing.T) {
 // wire — `/app/handler.py` — but the runtime id distinguishes the
 // function base.
 func TestCreateApp_FunctionPython313Runtime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-py313-rt", Type: "function", Runtime: "python313"}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("function with runtime=python313: %d %s", rec.Code, rec.Body)
@@ -178,8 +179,8 @@ func TestCreateApp_FunctionPython313Runtime(t *testing.T) {
 // still be rejected with 400. The allow-list is exhaustive over the
 // six runtime ids, not "node*".
 func TestCreateApp_FunctionNode24BadRuntime(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "fn-node24-bad", Type: "function", Runtime: "node24beta"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("function with runtime=node24beta: %d %s, want 400", rec.Code, rec.Body)
@@ -187,8 +188,8 @@ func TestCreateApp_FunctionNode24BadRuntime(t *testing.T) {
 }
 
 func TestCreateApp_AppliesDefaults(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "defaults-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "defaults-app"}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
@@ -212,8 +213,8 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 }
 
 func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
-	e := setup(t, api.PlanScale) // highest limits
-	rec := e.do(t, "POST", "/v1/apps",
+	e := apidserver.Setup(t, api.PlanScale) // highest limits
+	rec := e.Do(t, "POST", "/v1/apps",
 		api.CreateAppRequest{Slug: "explicit", RAMMB: 256, MaxConcurrency: 4}, nil)
 	if rec.Code != 201 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -226,8 +227,8 @@ func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 }
 
 func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	good := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{
+	e := apidserver.Setup(t, api.PlanScale)
+	good := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{
 		Slug: "cpu-ram-shape", RAMMB: 1024, VCPU: 4,
 	}, nil)
 	if good.Code != http.StatusCreated {
@@ -241,18 +242,18 @@ func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
 		t.Fatalf("vCPU shape = %+v, want 4", out)
 	}
 
-	bad := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{
+	bad := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{
 		Slug: "cpu-ram-invalid", RAMMB: 128, VCPU: 8,
 	}, nil)
-	assertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidCPURAMPair)
+	apidserver.AssertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidCPURAMPair)
 	if !strings.Contains(bad.Body.String(), "invalid (ram_mb, vcpu) pair for plan") {
 		t.Fatalf("invalid pair response = %s", bad.Body.String())
 	}
 }
 
 func TestCreateApp_ExplicitCPU(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cpu-shape", CPUMillicores: 500}, nil)
+	e := apidserver.Setup(t, api.PlanScale)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cpu-shape", CPUMillicores: 500}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
@@ -262,8 +263,8 @@ func TestCreateApp_ExplicitCPU(t *testing.T) {
 		t.Fatalf("CPU shape not reflected: %+v", out)
 	}
 
-	bad := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "bad-cpu", CPUMillicores: 750}, nil)
-	assertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidAppCPU)
+	bad := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "bad-cpu", CPUMillicores: 750}, nil)
+	apidserver.AssertProblem(t, bad, http.StatusUnprocessableEntity, api.CodeInvalidAppCPU)
 }
 
 func TestCreateDeployment_AppNotOwned(t *testing.T) {
@@ -281,8 +282,8 @@ func TestCreateDeployment_AppNotOwned(t *testing.T) {
 		AccountID: acctA.ID, Slug: "a-app", Status: state.AppActive,
 	})
 
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).handler()
-	digest := "sha256:" + repeat("a", 64)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).Handler()
+	digest := "sha256:" + apidserver.Repeat("a", 64)
 
 	// B tries to deploy to A's slug.
 	body := `{"image":"r/x@` + digest + `"}`
@@ -296,20 +297,20 @@ func TestCreateDeployment_AppNotOwned(t *testing.T) {
 }
 
 func TestCreateDeployment_BadJSONBody(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 	req := newRawRequest(t, "POST", "/v1/apps/dep-app/deployments", "{not json",
-		map[string]string{"Authorization": "Bearer " + e.key})
-	rec := serveRaw(e.h, req)
+		map[string]string{"Authorization": "Bearer " + (*e.Key())})
+	rec := serveRaw((*e.H()), req)
 	if rec.Code != 400 {
 		t.Errorf("bad json deploy: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func TestCreateDeployment_ImageNoShaPrefix(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
-	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "registry.x/no-sha-prefix"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("image without @sha256: should 400, got %d %s", rec.Code, rec.Body)
@@ -317,10 +318,10 @@ func TestCreateDeployment_ImageNoShaPrefix(t *testing.T) {
 }
 
 func TestCreateDeployment_ImageBadDigest(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 	// Has @sha256: but the digest part is the wrong length / format.
-	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+	rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@sha256:short"}, nil)
 	if rec.Code != 400 {
 		t.Errorf("image with short digest should 400, got %d %s", rec.Code, rec.Body)
@@ -329,7 +330,7 @@ func TestCreateDeployment_ImageBadDigest(t *testing.T) {
 
 func workflowDeploymentRequest() api.CreateDeploymentRequest {
 	return api.CreateDeploymentRequest{
-		Image: "registry.example.com/workflow@sha256:" + repeat("a", 64),
+		Image: "registry.example.com/workflow@sha256:" + apidserver.Repeat("a", 64),
 		Workflows: []api.WorkflowSpec{{
 			Name:    "process_order",
 			Trigger: &api.WorkflowTriggerSpec{Type: "manual"},
@@ -344,30 +345,30 @@ func workflowDeploymentRequest() api.CreateDeploymentRequest {
 }
 
 func TestCreateDeployment_WorkflowPlanGate(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
 
-	rec := e.do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
+	rec := e.Do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("workflow deployment on Free: status %d, want 402: %s", rec.Code, rec.Body)
 	}
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanWorkflowsNotAllowed)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanWorkflowsNotAllowed)
 }
 
 func TestCreateDeployment_WorkflowDefinitionsPersist(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "workflow-app"}, nil)
 
-	rec := e.do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
+	rec := e.Do(t, "POST", "/v1/apps/workflow-app/deployments", workflowDeploymentRequest(), nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("workflow deployment on Hobby: status %d, want 202: %s", rec.Code, rec.Body)
 	}
 
-	app, err := e.store.AppBySlug(context.Background(), "workflow-app")
+	app, err := (*e.Store()).AppBySlug(context.Background(), "workflow-app")
 	if err != nil {
 		t.Fatalf("AppBySlug: %v", err)
 	}
-	deployments, err := e.store.ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
+	deployments, err := (*e.Store()).ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("ListDeploymentsForApp: %v", err)
 	}
@@ -391,10 +392,10 @@ func TestCreateDeployment_WorkflowDefinitionsPersist(t *testing.T) {
 //     including the plaintext env values (only the key set on
 //     override_env_keys).
 func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 
-	digest := "sha256:" + repeat("a", 64)
+	digest := "sha256:" + apidserver.Repeat("a", 64)
 	overrides := &api.CreateDeploymentOverrides{
 		Entrypoint: []string{"/usr/bin/node", "/srv/app.js"},
 		Cmd:        []string{"--port", "9090"},
@@ -414,7 +415,7 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 		},
 		ReadinessProbe: &api.DeploymentReadinessProbe{Path: "/readyz"},
 	}
-	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+	rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@" + digest, Overrides: overrides}, nil)
 	if rec.Code != 202 {
 		t.Fatalf("POST deploy: %d %s", rec.Code, rec.Body)
@@ -465,7 +466,7 @@ func TestDeploymentResponse_EchoesMainDependencies(t *testing.T) {
 		{Status: state.DeployLive, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
 		{Status: state.DeployFailed, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
 	} {
-		response := (&server{}).deploymentResponse(t.Context(), dep, state.App{})
+		response := (&apidserver.Server{}).DeploymentResponse(t.Context(), dep, state.App{})
 		if !response.HasOverrides {
 			t.Fatal("HasOverrides = false, want true for persisted main dependencies")
 		}
@@ -485,7 +486,7 @@ func TestValidateOverrides_GRPCPrimaryLivenessPlanGate(t *testing.T) {
 					GRPC: &api.DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
 				},
 			}}
-			_, problem := validateOverrides(req, api.MustLimitsFor(plan), plan)
+			_, problem := apidserver.ValidateOverrides(req, api.MustLimitsFor(plan), plan)
 			if wantAllowed && problem != nil {
 				t.Fatalf("gRPC liveness rejected on %s: %s", plan, problem.Detail)
 			}
@@ -501,10 +502,10 @@ func TestValidateOverrides_GRPCPrimaryLivenessPlanGate(t *testing.T) {
 // request 400s with a code=validation_failed Problem (ADR-053
 // §Decision 2).
 func TestCreateDeployment_Overrides_RejectsInvalid(t *testing.T) {
-	e := setup(t, api.PlanFree) // Free caps env at 8 entries / 4 KiB per value
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanFree) // Free caps env at 8 entries / 4 KiB per value
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 
-	digest := "sha256:" + repeat("a", 64)
+	digest := "sha256:" + apidserver.Repeat("a", 64)
 	cases := []struct {
 		name       string
 		overrides  *api.CreateDeploymentOverrides
@@ -541,7 +542,7 @@ func TestCreateDeployment_Overrides_RejectsInvalid(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+			rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 				api.CreateDeploymentRequest{Image: "r/x@" + digest, Overrides: tc.overrides}, nil)
 			if rec.Code != 400 {
 				t.Fatalf("expected 400, got %d %s", rec.Code, rec.Body)
@@ -558,11 +559,11 @@ func TestCreateDeployment_Overrides_RejectsInvalid(t *testing.T) {
 // `overrides` field is byte-for-byte the same as before issue #460
 // landed (no behaviour change, no echo fields on the response).
 func TestCreateDeployment_Overrides_NoOverrideIsUnchanged(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 
-	digest := "sha256:" + repeat("a", 64)
-	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+	digest := "sha256:" + apidserver.Repeat("a", 64)
+	rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@" + digest}, nil)
 	if rec.Code != 202 {
 		t.Fatalf("POST deploy: %d %s", rec.Code, rec.Body)
@@ -599,17 +600,17 @@ func TestCreateDeployment_Overrides_NoOverrideIsUnchanged(t *testing.T) {
 // have violated: a customer who redeploys the same image with a
 // different port must NOT have to PATCH the app AND redeploy.
 func TestCreateDeployment_Overrides_RedeployDifferentPort(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 
 	// Two distinct image digests. The OCI digest IS the only
 	// difference between the two deploys — same app, same plan,
 	// same override shape except the port.
-	digestA := "sha256:" + repeat("a", 64)
-	digestB := "sha256:" + repeat("b", 64)
+	digestA := "sha256:" + apidserver.Repeat("a", 64)
+	digestB := "sha256:" + apidserver.Repeat("b", 64)
 
 	deployPort := func(digest string, port int) api.DeploymentResponse {
-		rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
+		rec := e.Do(t, "POST", "/v1/apps/dep-app/deployments",
 			api.CreateDeploymentRequest{
 				Image: "r/x@" + digest,
 				Overrides: &api.CreateDeploymentOverrides{
@@ -646,14 +647,14 @@ func TestCreateDeployment_Overrides_RedeployDifferentPort(t *testing.T) {
 	// their distinct port values. This is the property that a
 	// per-app column would fail — a per-app override_port would
 	// overwrite on the second deploy.
-	depA, err := e.store.DeploymentByID(context.Background(), respA.ID)
+	depA, err := (*e.Store()).DeploymentByID(context.Background(), respA.ID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(A): %v", err)
 	}
 	if depA.OverridePort != 9090 {
 		t.Errorf("store.A OverridePort = %d, want 9090", depA.OverridePort)
 	}
-	depB, err := e.store.DeploymentByID(context.Background(), respB.ID)
+	depB, err := (*e.Store()).DeploymentByID(context.Background(), respB.ID)
 	if err != nil {
 		t.Fatalf("DeploymentByID(B): %v", err)
 	}
@@ -691,7 +692,7 @@ func TestParseImageDigest_PureUnit(t *testing.T) {
 		"foo/bar@sha256:" + digest + "\n": false, // trailing newline (log-injection)
 	}
 	for in, want := range cases {
-		_, ok := parseImageDigest(in)
+		_, ok := apidserver.ParseImageDigest(in)
 		if ok != want {
 			t.Errorf("parseImageDigest(%q) ok=%v want=%v", in, ok, want)
 		}
@@ -717,7 +718,7 @@ func TestIsDigestPinned(t *testing.T) {
 		"foo/bar@sha256:" + digest + "\n":       false,
 	}
 	for in, want := range cases {
-		if got := isDigestPinned(in); got != want {
+		if got := apidserver.IsDigestPinned(in); got != want {
 			t.Errorf("isDigestPinned(%q) = %v, want %v", in, got, want)
 		}
 	}
@@ -735,16 +736,16 @@ func TestIsDigestPinned(t *testing.T) {
 // Mirrors the dto_test.go "unknown-field-is-rejected" case but at the
 // handler+transport layer.
 func TestCreateDeployment_Overrides_RejectsUnknownField(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dep-app"}, nil)
 
 	// volume_mounts is a field shaped for a future ADR (mountPoints
 	// mount type). Sending it on the override object today must 400.
-	body := `{"image":"r/x@sha256:` + repeat("a", 64) +
+	body := `{"image":"r/x@sha256:` + apidserver.Repeat("a", 64) +
 		`","overrides":{"volume_mounts":[{"path":"/data","size_mb":1024}]}}`
 	req := newRawRequest(t, "POST", "/v1/apps/dep-app/deployments", body,
-		map[string]string{"Authorization": "Bearer " + e.key})
-	rec := serveRaw(e.h, req)
+		map[string]string{"Authorization": "Bearer " + (*e.Key())})
+	rec := serveRaw((*e.H()), req)
 	if rec.Code != 400 {
 		t.Fatalf("unknown override field should 400, got %d %s", rec.Code, rec.Body)
 	}

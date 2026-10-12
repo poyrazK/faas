@@ -1,10 +1,11 @@
-package apidserver
+package apidserver_test
 
 // adr: 157 — operator capacity and usage views report the resolved app shape.
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,7 +21,7 @@ func TestBuildObsCapacityProfiles(t *testing.T) {
 		{AppID: "custom", State: string(state.StateParked)},
 	}
 
-	got := buildObsCapacityProfiles(apps, instances)
+	got := apidserver.BuildObsCapacityProfiles(apps, instances)
 	if len(got) != 2 {
 		t.Fatalf("profile rows = %d, want 2: %+v", len(got), got)
 	}
@@ -42,7 +43,7 @@ func TestBuildObsTenantUsageProfiles(t *testing.T) {
 		{AppID: "custom", MBSeconds: 512 * 3600, Requests: 2, ColdBootCount: 1},
 	}
 
-	got := buildObsTenantUsageProfiles(rows, apps)
+	got := apidserver.BuildObsTenantUsageProfiles(rows, apps)
 	if len(got) != 2 {
 		t.Fatalf("profile rows = %d, want 2: %+v", len(got), got)
 	}

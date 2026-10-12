@@ -18388,6 +18388,12 @@ WITH selected AS MATERIALIZED (
 )
 SELECT count(*)::bigint AS moved_event_count FROM selected;
 
+
+
+-- name: FinishWorkflowRunCancellation :one
+UPDATE workflow_runs SET status='failed',last_error=sqlc.arg(reason)::text,
+ finished_at=now(),updated_at=now(),cancelled_at=now()
+WHERE id=sqlc.arg(run_id)::uuid RETURNING *;
 -- name: ListCustomerOperationRetainedMilestonePrerequisites :many
 WITH matching AS (
 SELECT
