@@ -611,6 +611,14 @@ func sortedServiceGatewaySet(values map[string]struct{}) []string {
 }
 
 func (e *Engine) updateServiceRolloutHandoff(ctx context.Context, deploymentID string, mutate func(*state.ServiceRolloutHandoff)) {
+	// A runtime-configuration restart converges routes without a deployment
+	// rollout and passes no rollout id. Looking up "" made Postgres reject
+	// the uuid on every phase update (production-us hunt #9, H9-102: a burst
+	// of "load service rollout handoff: invalid input syntax for type uuid"
+	// warnings per restart).
+	if deploymentID == "" {
+		return
+	}
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
