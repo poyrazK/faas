@@ -75,6 +75,9 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 			// Drop apid's copy so the edge's already-stamped value is
 			// the only customer-visible X-Faas-Request-ID.
 			resp.Header.Del(api.RequestIDHeader)
+			// Cloudflare replaces origin 502/504 bodies; carry apid's
+			// problem across the Worker hop like the runtime proxy does.
+			gateway.EncodeEdgeTransportResponse(resp)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
