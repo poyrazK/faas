@@ -60,7 +60,7 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 		{Kind: chaos.KindDNSNXDomain},
 	} {
 		rule.From, rule.To, rule.Percent = "api", "worker", 100
-		rec := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{DurationMS: 1000, Rules: []api.ScenarioTestChaosRule{rule}}, nil)
+		rec := e.Do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{DurationMS: 1000, Rules: []api.ScenarioTestChaosRule{rule}}, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("DNS plan %s: %d %s", rule.Kind, rec.Code, rec.Body.String())
 		}

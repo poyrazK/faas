@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"

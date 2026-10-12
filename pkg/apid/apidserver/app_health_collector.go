@@ -5,9 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/apphealth"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/onebox-faas/faas/pkg/apphealth"
 )
 
 func (s *server) runAppHealthCollector(ctx context.Context) {

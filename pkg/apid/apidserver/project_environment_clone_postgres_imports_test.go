@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"filippo.io/age"
-	"github.com/onebox-faas/faas/pkg/storage"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,8 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
+	"github.com/onebox-faas/faas/pkg/storage"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/state"

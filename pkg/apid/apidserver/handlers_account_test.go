@@ -24,7 +24,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"filippo.io/age"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,6 +35,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"

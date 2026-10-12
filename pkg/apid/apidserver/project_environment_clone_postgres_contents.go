@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"

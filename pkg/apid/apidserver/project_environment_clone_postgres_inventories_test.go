@@ -12,6 +12,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
