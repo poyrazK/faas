@@ -3996,8 +3996,8 @@ var cliCommands = []cliCommand{
 				{Name: "storage-bytes", Short: "storage limit in bytes", Value: "N"},
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
-			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database_id>"}},
-			{Name: "delete", Short: "Delete a managed PostgreSQL database", Positionals: []string{"<database_id>"}},
+			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database", Positionals: []string{"<database>"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
@@ -4008,7 +4008,7 @@ var cliCommands = []cliCommand{
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
 			}},
 			{Name: "resize-status", Short: "Read compute resize progress", Positionals: []string{"<database>", "<request_uuid>"}},
-			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database_id>"}, Flags: []cliFlag{
+			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
@@ -4019,7 +4019,7 @@ var cliCommands = []cliCommand{
 				{Name: "cancel", Short: "Revoke staged credentials and release pins", Positionals: []string{"<id>"}},
 			}},
 			{Name: "bindings", Short: "Manage app database bindings", Subcommands: []cliSub{
-				{Name: "list", Short: "List a database's bindings", Positionals: []string{"<database_id>"}},
+				{Name: "list", Short: "List a database's bindings", Positionals: []string{"<database>"}},
 				{Name: "create", Short: "Bind a database to an app by app ID (attach takes slugs)", Positionals: []string{"<database_id>"}, Flags: []cliFlag{
 					{Name: "app", Short: "app ID", Req: true, Value: "APP_ID"},
 					{Name: "scope", Short: "environment scope", Req: true, Value: "SCOPE"},

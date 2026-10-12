@@ -83,7 +83,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 || !managedPostgresPlanAllows(limits, target) || (!target.ScaleToZero && !limits.AlwaysOnAllowed) {
-				return managedpostgres.ErrQuotaExceeded
+				return managedpostgres.ErrNotInPlan
 			}
 			return nil
 		},
