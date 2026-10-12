@@ -116,6 +116,29 @@ wall p50/p90 ms), and the raw harness above:
 - **Guest `mitigations=off`**: boot, request latency, CPU-bound requests and
   restore were unchanged within noise over 3 interleaved rounds, so the
   guest keeps its default mitigations.
+- **UFFD handler variants** (2026-10-12, Node app, 1 GiB guest), first byte
+  and the next CPU-bound request, warm:
+
+  | handler | first byte | CPU-bound request | private memory per VM | faults |
+  |---|---|---|---|---|
+  | File (today) | 65–93 ms | 414 ms | 14 MB | — |
+  | on demand, 4 KiB | 170–177 ms | 1.73–1.82 s | 104 MB | 26,000 |
+  | 64 KiB fault-around, zero pages mapped | 107–110 ms | 580 ms | 172 MB | 2,730 |
+  | 2 MiB fault-around | 125–307 ms | 406–417 ms | 246 MB | 126 |
+  | eager copy of non-zero pages | 157–168 ms | 431–502 ms | 237–252 MB | 544–1,021 |
+
+  With a cold page cache, 2 MiB fault-around ran the CPU-bound request in
+  695–730 ms against File's 1.33 s. Six concurrent restores reached first
+  byte at p50 779 ms against File's 655 ms, and held 164 MB of host memory
+  per VM against 6.7 MB. No variant beats File for local snapshots; the
+  shared page cache is worth more than fewer faults.
+- **2 MiB huge pages for guest memory** (`huge_pages: "2M"`): the File
+  backend refuses to restore a hugetlbfs-backed snapshot. Through UFFD it
+  restores to first byte in 78–82 ms, and the next CPU-bound request took
+  28 ms against 363 ms for a 4 KiB guest restored from File. But every VM
+  pins its whole guest RAM in hugetlb pages, so free page reporting,
+  reclaim and overcommit all stop working. That fits a dedicated
+  latency-first tier, not the shared fleet.
 
 ## Qualification
 

@@ -121,6 +121,14 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
   reclaimed: the longer the hold and the more pressure, the more pages fault
   back in.
 
+## Zswap sizing (measured 2026-10-12)
+
+In the ADR-909 overcommit prototype, six freezes moved 318–573 MB each into
+zram, and then the 3 GB device was full. zram's `disksize` caps the
+*uncompressed* bytes, so the pool filled long before its RAM did. With zswap,
+size the pool (`max_pool_percent`) by the compressed bytes the host can
+spare. A node must stop freezing and start parking when the pool is full.
+
 ## Prototype results
 
 `TestMetalFreezeThawCycle`, n2 test node (nested KVM), Firecracker 1.17,

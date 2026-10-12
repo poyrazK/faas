@@ -98,6 +98,38 @@ counts:
 Their ratio on production nodes, over real traffic, is the evidence this ADR
 needs before admission itself changes.
 
+## More reclaim levers, measured (2026-10-12)
+
+- **virtio-mem at scale:** six Node VMs served requests round robin while
+  each plugged 768 MiB, used 576 MB of it, freed it and unplugged.
+
+  | step | per-VM time | memory | request p50 / p99 |
+  |---|---|---|---|
+  | baseline | — | — | 1.4 / 5.3 ms |
+  | plug + use | 195–413 ms | VMs 5,059 MB | 1.3 / 14.7 ms |
+  | unplug | 1.7–1.9 s | VMs 1,586 MB | 1.9 / 413 ms |
+
+  Unplug returned 3.5 GB but stalled requests while the guests migrated
+  pages, so it suits idle VMs, not serving ones.
+- **Balloon inflation:** taking 400 MiB from a guest holding 576 MB took
+  155 ms and dropped the VM to 299 MB on the host. With `deflate_on_oom` the
+  app could still grow by 576 MB: the balloon deflated to 193 MiB, though
+  the growth took 4.0 s. Without it the guest kernel panicked ("System is
+  deadlocked on memory"). A balloon must keep `deflate_on_oom`.
+- **Overcommit with freeze-based eviction** (raw prototype of proposal 3):
+  - Setup: twenty 1 GiB Node VMs with free page reporting (5.0 GB
+    available at steady state), then each grew by 320 MB in turn, about
+    11.6 GB of demand on ~10 GB. Before each growth, if MemAvailable would
+    drop under 2.5 GB, the least recently grown VM was frozen (paused,
+    memory reclaimed into 3 GB of zram).
+  - Six freezes freed 318–573 MB each in 0.7–2.1 s. After that the zram
+    device was full and further freezes freed nothing.
+  - MemAvailable bottomed at 1.1 GB. The kernel OOM-killed nothing and all
+    twenty VMs stayed alive.
+  - Thawed VMs reached first byte in p50 163 ms, max 204 ms.
+  - Eviction must therefore track compressed-swap capacity, and park
+    (destroy) once it is full.
+
 ## Validation plan
 
 - Property tests: the charge never exceeds plan + 8 MB, Σ(plan + 8) never
