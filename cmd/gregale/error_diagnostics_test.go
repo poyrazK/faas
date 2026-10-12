@@ -11,6 +11,9 @@ import (
 // installation without the execution runtime got 501 and the generic 5xx
 // advice to check service status and deployment state, which cannot help.
 func TestDiagnosticProblemFallbackHints(t *testing.T) {
+	// H9-134: a sync invoke past apid's wait answered 504 long_poll_timeout
+	// and got the outage hint, although the invocation was still running and
+	// a retry would run it twice.
 	for _, tc := range []struct {
 		status int
 		code   string
@@ -25,6 +28,7 @@ func TestDiagnosticProblemFallbackHints(t *testing.T) {
 		// service and deployment status.
 		{status: 503, code: api.CodeTenantSurfacesNotEnabled, want: "not enabled on this Gregale installation"},
 		{status: 503, code: "object_storage_unavailable", want: "service status"},
+		{status: 504, code: "long_poll_timeout", want: "instead of retrying"},
 	} {
 		got := diagnosticProblem(api.Problem{Status: tc.status, Code: tc.code, Title: "x"})
 		if !strings.Contains(got.Hint, tc.want) {

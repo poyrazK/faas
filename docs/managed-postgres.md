@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -151,6 +151,16 @@ Provider management is simulated; a nested-node run remains diagnostic and
 does not replace fresh provider v8 and supported native-host qualification.
 The probe verifies writer and reader readiness in parallel within the bounded
 restore callback; both must succeed before it accepts traffic.
+
+The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
+joins provider v8 evidence with a versioned report from actual execution of all
+thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+approved qualification-bundle manifest, PostgreSQL major, native host class,
+cleanup and expiry without making provider or SQL calls. Before a staging
+canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`
+and configure the guest report and expected manifest paths. Partial inputs
+cannot fall back to environment-only approval; production admission stays
+closed. Provider-only verification remains useful for isolated diagnostics.
 
 Save the JSON output as an operator-owned artifact and verify it without making
 provider calls:
