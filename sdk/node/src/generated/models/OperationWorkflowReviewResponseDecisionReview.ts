@@ -8,6 +8,30 @@ import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
   /**
+   * OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode began; unknown legacy ownership prevents automatic handoff.
+   */
+  initial_owner?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.owner_changed. Ownership changed during this episode, including a move away and back; prevents automatic handoff.
+   */
+  owner_changed?: boolean;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.fallback_owner. Distinct fallback team pinned when this episode began; future policy edits do not rewrite it.
+   */
+  fallback_owner?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.previous_owner. Responsible team immediately before the deadline evaluation.
+   */
+  previous_owner?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.owner. Responsible team after the deadline evaluation, whether handoff occurred or was protected.
+   */
+  owner?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.reassigned. Whether the overdue evaluation transferred both response and inbox ownership.
+   */
+  reassigned?: boolean;
+  /**
    * OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the response review window; legacy flags are backfilled.
    */
   due_at?: string;

@@ -40,6 +40,10 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    decision_review_fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for
+    future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes
+    retain their pinned fallback."""
     decision_review_after_seconds: int | Unset = UNSET
     """OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window;
     defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
@@ -65,6 +69,8 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        decision_review_fallback_owner = self.decision_review_fallback_owner
 
         decision_review_after_seconds = self.decision_review_after_seconds
 
@@ -93,6 +99,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if decision_review_fallback_owner is not UNSET:
+            field_dict["decision_review_fallback_owner"] = decision_review_fallback_owner
         if decision_review_after_seconds is not UNSET:
             field_dict["decision_review_after_seconds"] = decision_review_after_seconds
         if decision is not UNSET:
@@ -120,6 +128,8 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        decision_review_fallback_owner = d.pop("decision_review_fallback_owner", UNSET)
 
         decision_review_after_seconds = d.pop("decision_review_after_seconds", UNSET)
 
@@ -152,6 +162,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            decision_review_fallback_owner=decision_review_fallback_owner,
             decision_review_after_seconds=decision_review_after_seconds,
             decision=decision,
             fallback_owner=fallback_owner,

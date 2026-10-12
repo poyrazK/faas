@@ -1,6 +1,7 @@
 package state
 
 import (
+	"slices"
 	"sort"
 	"time"
 
@@ -73,6 +74,29 @@ func applyReviewDecisionDeadline(r *readinessSubscriptionRecord, n api.Operation
 		return n, nil, true
 	}
 	review.DeadlineNotifiedAt = &now
+	review.PreviousOwner = updated.Owner
+	review.Owner = updated.Owner
+	if review.FallbackOwner != "" && review.FallbackOwner != updated.Owner && review.InitialOwner != "" && review.InitialOwner == updated.Owner && !review.OwnerChanged && n.Coordination != nil && n.Coordination.Owner == updated.Owner && n.Coordination.Completion == nil && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
+		coordination := *n.Coordination
+		coordination.Owner = review.FallbackOwner
+		coordination.Revision++
+		coordination.UpdatedAt = now
+		coordination.UpdatedBy = "system:review-decision-deadline"
+		n.Coordination = &coordination
+		updated.Owner = review.FallbackOwner
+		updated.CheckInOwnerChanged = true
+		updated.UpdatedAt = now
+		updated.UpdatedBy = coordination.UpdatedBy
+		review.Owner = updated.Owner
+		review.OwnerChanged = true
+		review.Reassigned = true
+		updated.History = append(slices.Clone(updated.History), api.OperationWorkflowReviewResponseChange{Reason: "decision_review_overdue", DecisionReviewFallbackOwner: updated.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: updated.DecisionReviewAfterSeconds, FallbackOwner: updated.FallbackOwner, Owner: updated.Owner, Plan: updated.Plan, Status: updated.Status, CheckInAt: updated.CheckInAt, At: now, Actor: updated.UpdatedBy})
+		if len(updated.History) > 16 {
+			updated.History = updated.History[len(updated.History)-16:]
+			updated.HistoryTruncated = true
+		}
+	}
+	n.ReviewResponse = &updated
 	notice := readinessSubscriptionNotify(r, "review_response_decision_review_overdue", "The decision revalidation deadline passed without a new explicit decision. Review current plan health and record continue, revise or pause; acknowledgment does not satisfy this obligation.", nil)
 	if n.BusinessImpact != nil {
 		impact := *n.BusinessImpact
@@ -80,6 +104,6 @@ func applyReviewDecisionDeadline(r *readinessSubscriptionRecord, n api.Operation
 		notice.BusinessImpact = &impact
 	}
 	notice.DecisionReview = &api.OperationWorkflowReviewResponseDecisionReviewEvent{SourceNotificationID: n.ID, SourceSequence: n.Sequence, Decision: *response.Decision, Review: *review}
-	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: response.Owner, UpdatedAt: now, UpdatedBy: "system:review-decision-deadline"}
+	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: updated.Owner, UpdatedAt: now, UpdatedBy: "system:review-decision-deadline"}
 	return n, []api.OperationWorkflowReadinessNotification{notice}, true
 }

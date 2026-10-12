@@ -80663,6 +80663,24 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        initial_owner:
+          type: string
+          description: OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode began; unknown legacy ownership prevents automatic handoff.
+        owner_changed:
+          type: boolean
+          description: OperationWorkflowReviewResponseDecisionReview.owner_changed. Ownership changed during this episode, including a move away and back; prevents automatic handoff.
+        fallback_owner:
+          type: string
+          description: OperationWorkflowReviewResponseDecisionReview.fallback_owner. Distinct fallback team pinned when this episode began; future policy edits do not rewrite it.
+        previous_owner:
+          type: string
+          description: OperationWorkflowReviewResponseDecisionReview.previous_owner. Responsible team immediately before the deadline evaluation.
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseDecisionReview.owner. Responsible team after the deadline evaluation, whether handoff occurred or was protected.
+        reassigned:
+          type: boolean
+          description: OperationWorkflowReviewResponseDecisionReview.reassigned. Whether the overdue evaluation transferred both response and inbox ownership.
         due_at:
           type: string
           format: date-time
@@ -80740,6 +80758,10 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        decision_review_fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseRequest.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
         decision_review_after_seconds:
           type: integer
           format: int64
@@ -80930,6 +80952,10 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        decision_review_fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
         decision_review_after_seconds:
           type: integer
           format: int64
@@ -81015,6 +81041,10 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        decision_review_fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
         decision_review_after_seconds:
           type: integer
           format: int64
@@ -81029,7 +81059,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue]
+          enum: [human_update, check_in_overdue, decision_review_overdue]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

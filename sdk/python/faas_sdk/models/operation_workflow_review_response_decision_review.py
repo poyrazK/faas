@@ -33,6 +33,24 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    initial_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode
+    began; unknown legacy ownership prevents automatic handoff."""
+    owner_changed: bool | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.owner_changed. Ownership changed during this episode,
+    including a move away and back; prevents automatic handoff."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.fallback_owner. Distinct fallback team pinned when this
+    episode began; future policy edits do not rewrite it."""
+    previous_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.previous_owner. Responsible team immediately before the
+    deadline evaluation."""
+    owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.owner. Responsible team after the deadline evaluation, whether
+    handoff occurred or was protected."""
+    reassigned: bool | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.reassigned. Whether the overdue evaluation transferred both
+    response and inbox ownership."""
     due_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the
     response review window; legacy flags are backfilled."""
@@ -48,6 +66,18 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = self.changes
 
         health = self.health.to_dict()
+
+        initial_owner = self.initial_owner
+
+        owner_changed = self.owner_changed
+
+        fallback_owner = self.fallback_owner
+
+        previous_owner = self.previous_owner
+
+        owner = self.owner
+
+        reassigned = self.reassigned
 
         due_at: str | Unset = UNSET
         if not isinstance(self.due_at, Unset):
@@ -67,6 +97,18 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if initial_owner is not UNSET:
+            field_dict["initial_owner"] = initial_owner
+        if owner_changed is not UNSET:
+            field_dict["owner_changed"] = owner_changed
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
+        if previous_owner is not UNSET:
+            field_dict["previous_owner"] = previous_owner
+        if owner is not UNSET:
+            field_dict["owner"] = owner
+        if reassigned is not UNSET:
+            field_dict["reassigned"] = reassigned
         if due_at is not UNSET:
             field_dict["due_at"] = due_at
         if deadline_notified_at is not UNSET:
@@ -87,6 +129,18 @@ class OperationWorkflowReviewResponseDecisionReview:
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
 
+        initial_owner = d.pop("initial_owner", UNSET)
+
+        owner_changed = d.pop("owner_changed", UNSET)
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
+        previous_owner = d.pop("previous_owner", UNSET)
+
+        owner = d.pop("owner", UNSET)
+
+        reassigned = d.pop("reassigned", UNSET)
+
         _due_at = d.pop("due_at", UNSET)
         due_at: datetime.datetime | Unset
         if isinstance(_due_at, Unset):
@@ -106,6 +160,12 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            initial_owner=initial_owner,
+            owner_changed=owner_changed,
+            fallback_owner=fallback_owner,
+            previous_owner=previous_owner,
+            owner=owner,
+            reassigned=reassigned,
             due_at=due_at,
             deadline_notified_at=deadline_notified_at,
         )

@@ -12,6 +12,10 @@ import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowRev
  */
 export type OperationWorkflowReviewResponse = {
   /**
+   * OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
+   */
+  decision_review_fallback_owner?: string;
+  /**
    * OperationWorkflowReviewResponse.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
    */
   decision_review_after_seconds?: number;

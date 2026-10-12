@@ -82,6 +82,9 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			if req.ReviewResponse.Decision == nil {
 				response.Decision = n.ReviewResponse.Decision
 				response.DecisionReview = pinnedDecisionReview(n.ReviewResponse)
+				if response.DecisionReview != nil {
+					response.DecisionReview.OwnerChanged = response.DecisionReview.OwnerChanged || n.ReviewResponse.Owner != response.Owner
+				}
 			}
 			response.Health = n.ReviewResponse.Health
 			response.CreatedAt = n.ReviewResponse.CreatedAt
@@ -107,7 +110,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		if req.ReviewResponse.Decision != nil {
 			decisionForHistory = response.Decision
 		}
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true

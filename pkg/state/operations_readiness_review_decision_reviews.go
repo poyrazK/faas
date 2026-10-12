@@ -15,7 +15,7 @@ func applyReviewResponseDecisionReview(r *readinessSubscriptionRecord, n api.Ope
 	if response == nil || response.Status != "active" || response.Decision == nil || response.Health == nil || response.DecisionReview != nil || response.Decision.Health.Fingerprint == "" || response.Health.Fingerprint == "" || response.Health.Fingerprint == response.Decision.Health.Fingerprint {
 		return n, nil, true
 	}
-	review := api.OperationWorkflowReviewResponseDecisionReview{DecisionAt: response.Decision.At, RequiredAt: response.Health.CheckedAt, Changes: reviewResponseDecisionChanges(response.Decision.Health, *response.Health), Health: *response.Health}
+	review := api.OperationWorkflowReviewResponseDecisionReview{InitialOwner: response.Owner, FallbackOwner: response.DecisionReviewFallbackOwner, DecisionAt: response.Decision.At, RequiredAt: response.Health.CheckedAt, Changes: reviewResponseDecisionChanges(response.Decision.Health, *response.Health), Health: *response.Health}
 	due := review.RequiredAt.Add(time.Duration(effectiveDecisionReviewWindow(response)) * time.Second)
 	review.DueAt = &due
 	updated := *response

@@ -8,6 +8,10 @@ import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflo
  */
 export type OperationWorkflowReviewResponseChange = {
   /**
+   * OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
+   */
+  decision_review_fallback_owner?: string;
+  /**
    * OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window; defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy.
    */
   decision_review_after_seconds?: number;
@@ -22,7 +26,7 @@ export type OperationWorkflowReviewResponseChange = {
   /**
    * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
    */
-  reason?: 'human_update' | 'check_in_overdue';
+  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue';
   /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */

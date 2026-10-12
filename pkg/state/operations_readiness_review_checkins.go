@@ -56,6 +56,11 @@ func applyReviewResponseCheckIn(r *readinessSubscriptionRecord, n api.OperationW
 		n.Coordination = &c
 		response.Owner = c.Owner
 		response.CheckInOwnerChanged = true
+		if response.DecisionReview != nil {
+			review := *response.DecisionReview
+			review.OwnerChanged = true
+			response.DecisionReview = &review
+		}
 		reassigned = true
 	}
 	response.CheckInNotifiedAt = &now

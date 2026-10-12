@@ -22,6 +22,9 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if req.Completion != nil || !text(input.Owner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || (strings.TrimSpace(input.Plan) == "" || len(input.Plan) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(input.Plan) || strings.IndexFunc(input.Plan, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0) || (input.Status != "active" && input.Status != "resolved") || len(input.Reviews) > 16 {
 		return nil, ErrInvalidArgument
 	}
+	if input.DecisionReviewFallbackOwner != nil && *input.DecisionReviewFallbackOwner != "" && (!text(*input.DecisionReviewFallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.DecisionReviewFallbackOwner == input.Owner) {
+		return nil, ErrInvalidArgument
+	}
 	if input.FallbackOwner != nil && *input.FallbackOwner != "" && (!text(*input.FallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.FallbackOwner == input.Owner) {
 		return nil, ErrInvalidArgument
 	}
@@ -54,7 +57,11 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	}
 	response := &api.OperationWorkflowReviewResponse{DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
 	if alert.ReviewResponse != nil {
+		response.DecisionReviewFallbackOwner = alert.ReviewResponse.DecisionReviewFallbackOwner
 		response.DecisionReviewAfterSeconds = effectiveDecisionReviewWindow(alert.ReviewResponse)
+	}
+	if input.DecisionReviewFallbackOwner != nil {
+		response.DecisionReviewFallbackOwner = *input.DecisionReviewFallbackOwner
 	}
 	if input.DecisionReviewAfterSeconds != nil {
 		response.DecisionReviewAfterSeconds = *input.DecisionReviewAfterSeconds
