@@ -277,8 +277,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 owner_user = %q
 kernel_path = %q
 resource_journal_dir = %q
+failure_report_dir = %q
 `,
-			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"),
+			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
 		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
