@@ -392,6 +392,7 @@ func cmdAddPostgres(args []string) int {
 	if err != nil {
 		return printErr("Managed PostgreSQL binding is not ready", err)
 	}
+	ensurePostgresEgress(ctx, client, app)
 
 	result := addPostgresResult{AppID: app.ID, Database: database, Binding: binding, DatabaseCreated: databaseCreated}
 	if jsonOutput {

@@ -18,6 +18,7 @@ type managedPostgresCatalogClient interface {
 
 type manifestPostgresClient interface {
 	managedPostgresCatalogClient
+	postgresEgressClient
 	GetApp(context.Context, string) (api.AppResponse, error)
 	CreateManagedPostgresBinding(context.Context, string, api.CreateManagedPostgresBindingRequest) (api.ManagedPostgresBinding, error)
 }
@@ -134,6 +135,7 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: database %s attached as %s\n", slug, database.Name, binding.EnvironmentKey)
 		}
 	}
+	ensurePostgresEgress(ctx, client, app)
 	return nil
 }
 

@@ -108,6 +108,7 @@ func cmdPostgresAttach(args []string) int {
 	if err != nil {
 		return printErr("Could not attach managed PostgreSQL database", err)
 	}
+	ensurePostgresEgress(context.Background(), client, app)
 	if jsonOutput {
 		return jsonOut(writeJSON(binding))
 	}
