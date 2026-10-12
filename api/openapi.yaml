@@ -28859,48 +28859,52 @@ paths:
       - invocations
       operationId: inspectDurableEntityTenantQuotas
       summary: Inspect Durable Entity Tenant Quotas.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Inspect durable entity tenant quotas: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Inspect durable entity tenant quotas \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Inspect durable entity tenant quotas \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Inspect durable entity tenant quotas \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Inspect durable entity tenant quotas \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Inspect durable entity tenant quotas \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Inspect durable entity tenant quotas \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -28911,7 +28915,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Inspect durable entity tenant quotas \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -28923,7 +28928,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Inspect durable entity tenant quotas \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -28934,23 +28940,24 @@ paths:
       - invocations
       operationId: getDurableEntityReadiness
       summary: Get Durable Entity Readiness.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Get durable entity readiness: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Get durable entity readiness \u2014 responses / 200: Bounded preview result. Metadata revisions\
+            \ remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Get durable entity readiness \u2014 responses / 200 / content / application/json / schema:\
+                  \ Operator preview metadata, including nullable checkpoints and advisory observations. No business\
+                  \ state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -28961,7 +28968,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Get durable entity readiness \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -28973,7 +28981,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Get durable entity readiness \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -28984,53 +28993,58 @@ paths:
       - invocations
       operationId: planDurableEntityQuotaMigration
       summary: Plan Durable Entity Quota Migration.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Plan durable entity quota migration: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Plan durable entity quota migration \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Plan durable entity quota migration \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Plan durable entity quota migration \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Plan durable entity quota migration \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       - name: cursor
         in: query
-        description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+        description: "Plan durable entity quota migration \u2014 parameters / cursor: Opaque continuation from the\
+          \ preceding page; restart listing after revision or cursor conflicts."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Plan durable entity quota migration \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Plan durable entity quota migration \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29041,7 +29055,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Plan durable entity quota migration \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29053,7 +29068,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Plan durable entity quota migration \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -29064,48 +29080,52 @@ paths:
       - invocations
       operationId: inspectDurableEntityQuotaMigration
       summary: Inspect Durable Entity Quota Migration.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Inspect durable entity quota migration: Opt-in durable-object preview. Requires the configured
+        application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+        Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation.
+        Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the
+        durable entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Inspect durable entity quota migration \u2014 parameters / namespace: Exact entity namespace\
+          \ selecting the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Inspect durable entity quota migration \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Inspect durable entity quota migration \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Inspect durable entity quota migration \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Inspect durable entity quota migration \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Inspect durable entity quota migration \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29116,7 +29136,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Inspect durable entity quota migration \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29128,7 +29149,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Inspect durable entity quota migration \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -29139,48 +29161,52 @@ paths:
       - invocations
       operationId: startDurableEntityQuotaMigration
       summary: Start Durable Entity Quota Migration.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Start durable entity quota migration: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Start durable entity quota migration \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Start durable entity quota migration \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Start durable entity quota migration \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Start durable entity quota migration \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Start durable entity quota migration \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Start durable entity quota migration \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29191,7 +29217,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Start durable entity quota migration \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29203,30 +29230,39 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Start durable entity quota migration \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Start durable entity quota migration \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Start durable entity quota migration \u2014 requestBody / content / application/json /\
+                \ schema: Preview mutation input with server-side size, scope and revision validation."
               properties:
                 migration_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Start durable entity quota migration \u2014 requestBody / content / application/json\
+                    \ / schema / properties / migration id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_migration_id:
                   type: string
-                  description: Prior migration identity, or empty for an initial migration.
+                  description: "Start durable entity quota migration \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected migration id: Prior migration identity, or empty for an initial\
+                    \ migration."
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Start durable entity quota migration \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect\
+                    \ after uncertain outcomes."
                   minimum: 0
               required:
               - migration_id
@@ -29237,48 +29273,52 @@ paths:
       - invocations
       operationId: stepDurableEntityQuotaMigration
       summary: Step Durable Entity Quota Migration.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Step durable entity quota migration: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Step durable entity quota migration \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Step durable entity quota migration \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Step durable entity quota migration \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Step durable entity quota migration \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Step durable entity quota migration \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Step durable entity quota migration \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29289,7 +29329,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Step durable entity quota migration \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29301,27 +29342,34 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Step durable entity quota migration \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Step durable entity quota migration \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Step durable entity quota migration \u2014 requestBody / content / application/json /\
+                \ schema: Preview mutation input with server-side size, scope and revision validation."
               properties:
                 migration_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Step durable entity quota migration \u2014 requestBody / content / application/json\
+                    \ / schema / properties / migration id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Step durable entity quota migration \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect\
+                    \ after uncertain outcomes."
                   minimum: 0
               required:
               - migration_id
@@ -29332,48 +29380,52 @@ paths:
       - invocations
       operationId: inspectDurableEntityQuotaPolicy
       summary: Inspect Durable Entity Quota Policy.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Inspect durable entity quota policy \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Inspect durable entity quota policy \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Inspect durable entity quota policy \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Inspect durable entity quota policy \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Inspect durable entity quota policy \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Inspect durable entity quota policy \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29384,7 +29436,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Inspect durable entity quota policy \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29396,7 +29449,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Inspect durable entity quota policy \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -29407,48 +29461,52 @@ paths:
       - invocations
       operationId: previewDurableEntityQuotaPolicy
       summary: Preview Durable Entity Quota Policy.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Preview durable entity quota policy \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Preview durable entity quota policy \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Preview durable entity quota policy \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Preview durable entity quota policy \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Preview durable entity quota policy \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Preview durable entity quota policy \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29459,7 +29517,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Preview durable entity quota policy \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29471,62 +29530,85 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Preview durable entity quota policy \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Preview durable entity quota policy \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Preview durable entity quota policy \u2014 requestBody / content / application/json /\
+                \ schema: Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / operation id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect\
+                    \ after uncertain outcomes."
                   minimum: 0
                 expected_migration_id:
                   type: string
-                  description: Observed completed migration identity.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected migration id: Observed completed migration identity."
                 expected_migration_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected migration revision: Exact observed numeric checkpoint revision;\
+                    \ inspect after uncertain outcomes."
                   minimum: 0
                 migration_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / migration id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 limits:
                   type: object
-                  description: Proposed tenant admission caps; all fields are required.
+                  description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / limits: Proposed tenant admission caps; all fields are required."
                   properties:
                     connections:
                       type: integer
-                      description: Approved connections cap; server validates bounds and monotonic increases.
+                      description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / connections: Approved connections cap; server\
+                        \ validates bounds and monotonic increases."
                       minimum: 1
                     grants_per_minute:
                       type: integer
-                      description: Approved grants per minute cap; server validates bounds and monotonic increases.
+                      description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / grants per minute: Approved grants per minute\
+                        \ cap; server validates bounds and monotonic increases."
                       minimum: 1
                     invocations_per_minute:
                       type: integer
-                      description: Approved invocations per minute cap; server validates bounds and monotonic increases.
+                      description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / invocations per minute: Approved invocations\
+                        \ per minute cap; server validates bounds and monotonic increases."
                       minimum: 1
                     retained_bytes:
                       type: integer
-                      description: Approved retained bytes cap; server validates bounds and monotonic increases.
+                      description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / retained bytes: Approved retained bytes cap;\
+                        \ server validates bounds and monotonic increases."
                       minimum: 1
                     entity_bytes:
                       type: integer
-                      description: Approved entity bytes cap; server validates bounds and monotonic increases.
+                      description: "Preview durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / entity bytes: Approved entity bytes cap; server\
+                        \ validates bounds and monotonic increases."
                       minimum: 1
                   required:
                   - connections
@@ -29546,48 +29628,52 @@ paths:
       - invocations
       operationId: applyDurableEntityQuotaPolicy
       summary: Apply Durable Entity Quota Policy.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Apply durable entity quota policy: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Apply durable entity quota policy \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Apply durable entity quota policy \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Apply durable entity quota policy \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Apply durable entity quota policy \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Apply durable entity quota policy \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Apply durable entity quota policy \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29598,7 +29684,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Apply durable entity quota policy \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29610,62 +29697,85 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Apply durable entity quota policy \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Apply durable entity quota policy \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Apply durable entity quota policy \u2014 requestBody / content / application/json / schema:\
+                \ Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / operation id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect\
+                    \ after uncertain outcomes."
                   minimum: 0
                 expected_migration_id:
                   type: string
-                  description: Observed completed migration identity.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected migration id: Observed completed migration identity."
                 expected_migration_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected migration revision: Exact observed numeric checkpoint revision;\
+                    \ inspect after uncertain outcomes."
                   minimum: 0
                 migration_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / migration id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 limits:
                   type: object
-                  description: Proposed tenant admission caps; all fields are required.
+                  description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                    \ / schema / properties / limits: Proposed tenant admission caps; all fields are required."
                   properties:
                     connections:
                       type: integer
-                      description: Approved connections cap; server validates bounds and monotonic increases.
+                      description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / connections: Approved connections cap; server\
+                        \ validates bounds and monotonic increases."
                       minimum: 1
                     grants_per_minute:
                       type: integer
-                      description: Approved grants per minute cap; server validates bounds and monotonic increases.
+                      description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / grants per minute: Approved grants per minute\
+                        \ cap; server validates bounds and monotonic increases."
                       minimum: 1
                     invocations_per_minute:
                       type: integer
-                      description: Approved invocations per minute cap; server validates bounds and monotonic increases.
+                      description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / invocations per minute: Approved invocations\
+                        \ per minute cap; server validates bounds and monotonic increases."
                       minimum: 1
                     retained_bytes:
                       type: integer
-                      description: Approved retained bytes cap; server validates bounds and monotonic increases.
+                      description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / retained bytes: Approved retained bytes cap;\
+                        \ server validates bounds and monotonic increases."
                       minimum: 1
                     entity_bytes:
                       type: integer
-                      description: Approved entity bytes cap; server validates bounds and monotonic increases.
+                      description: "Apply durable entity quota policy \u2014 requestBody / content / application/json\
+                        \ / schema / properties / limits / properties / entity bytes: Approved entity bytes cap; server\
+                        \ validates bounds and monotonic increases."
                       minimum: 1
                   required:
                   - connections
@@ -29685,53 +29795,58 @@ paths:
       - invocations
       operationId: listDurableEntityRegistry
       summary: List Durable Entity Registry.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'List durable entity registry: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "List durable entity registry \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "List durable entity registry \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "List durable entity registry \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "List durable entity registry \u2014 parameters / platform tenant id: Optional same-account platform\
+          \ tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       - name: cursor
         in: query
-        description: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+        description: "List durable entity registry \u2014 parameters / cursor: Opaque continuation from the preceding\
+          \ page; restart listing after revision or cursor conflicts."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "List durable entity registry \u2014 responses / 200: Bounded preview result. Metadata revisions\
+            \ remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "List durable entity registry \u2014 responses / 200 / content / application/json / schema:\
+                  \ Operator preview metadata, including nullable checkpoints and advisory observations. No business\
+                  \ state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29742,7 +29857,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "List durable entity registry \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29754,7 +29870,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "List durable entity registry \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -29765,48 +29882,52 @@ paths:
       - invocations
       operationId: enableDurableEntityRegistry
       summary: Enable Durable Entity Registry.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Enable durable entity registry: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Enable durable entity registry \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Enable durable entity registry \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Enable durable entity registry \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Enable durable entity registry \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Enable durable entity registry \u2014 responses / 200: Bounded preview result. Metadata revisions\
+            \ remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Enable durable entity registry \u2014 responses / 200 / content / application/json /\
+                  \ schema: Operator preview metadata, including nullable checkpoints and advisory observations. No\
+                  \ business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29817,7 +29938,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Enable durable entity registry \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29829,27 +29951,34 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Enable durable entity registry \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Enable durable entity registry \u2014 requestBody: Exact operation input. Retain operation identity\
+          \ and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Enable durable entity registry \u2014 requestBody / content / application/json / schema:\
+                \ Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Enable durable entity registry \u2014 requestBody / content / application/json / schema\
+                    \ / properties / operation id: Fresh operation identity; replay must retain this identity and\
+                    \ the exact request."
                   format: uuid
                 expected_revision:
                   type: string
-                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  description: "Enable durable entity registry \u2014 requestBody / content / application/json / schema\
+                    \ / properties / expected revision: Exact opaque revision returned by inspection; never convert\
+                    \ it to a number."
                   minLength: 1
               required:
               - operation_id
@@ -29860,48 +29989,52 @@ paths:
       - invocations
       operationId: inspectDurableEntityRegistryCleanup
       summary: Inspect Durable Entity Registry Cleanup.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Inspect durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+        application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+        Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation.
+        Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the
+        durable entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Inspect durable entity registry cleanup \u2014 parameters / namespace: Exact entity namespace\
+          \ selecting the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Inspect durable entity registry cleanup \u2014 parameters / key: Exact entity key selecting\
+          \ the scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Inspect durable entity registry cleanup \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Inspect durable entity registry cleanup \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Inspect durable entity registry cleanup \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Inspect durable entity registry cleanup \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29912,7 +30045,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Inspect durable entity registry cleanup \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29924,7 +30058,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Inspect durable entity registry cleanup \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -29935,48 +30070,52 @@ paths:
       - invocations
       operationId: startDurableEntityRegistryCleanup
       summary: Start Durable Entity Registry Cleanup.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+        application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+        Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation.
+        Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the
+        durable entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Start durable entity registry cleanup \u2014 parameters / namespace: Exact entity namespace\
+          \ selecting the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Start durable entity registry cleanup \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Start durable entity registry cleanup \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Start durable entity registry cleanup \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Start durable entity registry cleanup \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Start durable entity registry cleanup \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -29987,7 +30126,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Start durable entity registry cleanup \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -29999,27 +30139,34 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Start durable entity registry cleanup \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Start durable entity registry cleanup \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Start durable entity registry cleanup \u2014 requestBody / content / application/json\
+                \ / schema: Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Start durable entity registry cleanup \u2014 requestBody / content / application/json\
+                    \ / schema / properties / operation id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_revision:
                   type: string
-                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  description: "Start durable entity registry cleanup \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact opaque revision returned by inspection; never\
+                    \ convert it to a number."
                   minLength: 1
               required:
               - operation_id
@@ -30030,48 +30177,52 @@ paths:
       - invocations
       operationId: stepDurableEntityRegistryCleanup
       summary: Step Durable Entity Registry Cleanup.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Step durable entity registry cleanup: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Step durable entity registry cleanup \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Step durable entity registry cleanup \u2014 parameters / key: Exact entity key selecting the\
+          \ scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Step durable entity registry cleanup \u2014 parameters / environment: Registered environment,\
+          \ defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Step durable entity registry cleanup \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Step durable entity registry cleanup \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Step durable entity registry cleanup \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -30082,7 +30233,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Step durable entity registry cleanup \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30094,31 +30246,40 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Step durable entity registry cleanup \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Step durable entity registry cleanup \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Step durable entity registry cleanup \u2014 requestBody / content / application/json /\
+                \ schema: Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Step durable entity registry cleanup \u2014 requestBody / content / application/json\
+                    \ / schema / properties / operation id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Step durable entity registry cleanup \u2014 requestBody / content / application/json\
+                    \ / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect\
+                    \ after uncertain outcomes."
                   minimum: 0
                 restart_cleanup:
                   type: boolean
-                  description: Restart bounded listing passes while preserving the existing epoch fence.
+                  description: "Step durable entity registry cleanup \u2014 requestBody / content / application/json\
+                    \ / schema / properties / restart cleanup: Restart bounded listing passes while preserving the\
+                    \ existing epoch fence."
                   default: false
               required:
               - operation_id
@@ -30129,48 +30290,52 @@ paths:
       - invocations
       operationId: previewDurableEntityRetirement
       summary: Preview Durable Entity Retirement.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Preview durable entity retirement: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Preview durable entity retirement \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Preview durable entity retirement \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Preview durable entity retirement \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Preview durable entity retirement \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Preview durable entity retirement \u2014 responses / 200: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Preview durable entity retirement \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -30181,7 +30346,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Preview durable entity retirement \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30193,7 +30359,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Preview durable entity retirement \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -30204,48 +30371,52 @@ paths:
       - invocations
       operationId: startDurableEntityRetirement
       summary: Start Durable Entity Retirement.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Start durable entity retirement: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Start durable entity retirement \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Start durable entity retirement \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Start durable entity retirement \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Start durable entity retirement \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Start durable entity retirement \u2014 responses / 200: Bounded preview result. Metadata revisions\
+            \ remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Start durable entity retirement \u2014 responses / 200 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -30256,7 +30427,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Start durable entity retirement \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30268,31 +30440,39 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Start durable entity retirement \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Start durable entity retirement \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Start durable entity retirement \u2014 requestBody / content / application/json / schema:\
+                \ Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Start durable entity retirement \u2014 requestBody / content / application/json /\
+                    \ schema / properties / operation id: Fresh operation identity; replay must retain this identity\
+                    \ and the exact request."
                   format: uuid
                 expected_version:
                   type: integer
-                  description: Exact entity version observed in the retirement preview.
+                  description: "Start durable entity retirement \u2014 requestBody / content / application/json /\
+                    \ schema / properties / expected version: Exact entity version observed in the retirement preview."
                   minimum: 0
                 expected_recovery_revision:
                   type: string
-                  description: Exact opaque revision returned by inspection; never convert it to a number.
+                  description: "Start durable entity retirement \u2014 requestBody / content / application/json /\
+                    \ schema / properties / expected recovery revision: Exact opaque revision returned by inspection;\
+                    \ never convert it to a number."
                   minLength: 1
               required:
               - operation_id
@@ -30304,48 +30484,52 @@ paths:
       - invocations
       operationId: stepDurableEntityRetirement
       summary: Step Durable Entity Retirement.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Step durable entity retirement: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Step durable entity retirement \u2014 parameters / namespace: Exact entity namespace selecting\
+          \ the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Step durable entity retirement \u2014 parameters / key: Exact entity key selecting the scope;\
+          \ scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Step durable entity retirement \u2014 parameters / environment: Registered environment, defaulting\
+          \ to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Step durable entity retirement \u2014 parameters / platform tenant id: Optional same-account\
+          \ platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '200':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Step durable entity retirement \u2014 responses / 200: Bounded preview result. Metadata revisions\
+            \ remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Step durable entity retirement \u2014 responses / 200 / content / application/json /\
+                  \ schema: Operator preview metadata, including nullable checkpoints and advisory observations. No\
+                  \ business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -30356,7 +30540,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Step durable entity retirement \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30368,31 +30553,39 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Step durable entity retirement \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Step durable entity retirement \u2014 requestBody: Exact operation input. Retain operation identity\
+          \ and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Step durable entity retirement \u2014 requestBody / content / application/json / schema:\
+                \ Preview mutation input with server-side size, scope and revision validation."
               properties:
                 operation_id:
                   type: string
-                  description: Fresh operation identity; replay must retain this identity and the exact request.
+                  description: "Step durable entity retirement \u2014 requestBody / content / application/json / schema\
+                    \ / properties / operation id: Fresh operation identity; replay must retain this identity and\
+                    \ the exact request."
                   format: uuid
                 expected_revision:
                   type: integer
-                  description: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+                  description: "Step durable entity retirement \u2014 requestBody / content / application/json / schema\
+                    \ / properties / expected revision: Exact observed numeric checkpoint revision; inspect after\
+                    \ uncertain outcomes."
                   minimum: 0
                 restart_cleanup:
                   type: boolean
-                  description: Restart verified retirement cleanup after an uncertain outcome.
+                  description: "Step durable entity retirement \u2014 requestBody / content / application/json / schema\
+                    \ / properties / restart cleanup: Restart verified retirement cleanup after an uncertain outcome."
                   default: false
               required:
               - operation_id
@@ -30403,23 +30596,24 @@ paths:
       - invocations
       operationId: mintDurableEntitySessionGrant
       summary: Mint Durable Entity Session Grant.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Mint durable entity session grant: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       responses:
         '201':
-          description: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in
-            the operator guide.
+          description: "Mint durable entity session grant \u2014 responses / 201: Bounded preview result. Metadata\
+            \ revisions remain opaque or exact integers as documented in the operator guide."
           content:
             application/json:
               schema:
                 type: object
-                description: Operator preview metadata, including nullable checkpoints and advisory observations.
-                  No business state is returned.
+                description: "Mint durable entity session grant \u2014 responses / 201 / content / application/json\
+                  \ / schema: Operator preview metadata, including nullable checkpoints and advisory observations.\
+                  \ No business state is returned."
                 additionalProperties: true
         '400':
           $ref: '#/components/responses/ValidationFailed'
@@ -30430,7 +30624,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Mint durable entity session grant \u2014 responses / 409: Observed revision, ownership, migration\
+            \ or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30442,55 +30637,67 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Mint durable entity session grant \u2014 responses / 410: Entity identity is permanently retired.\
+            \ Use a new identity for new work."
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
       requestBody:
         required: true
-        description: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+        description: "Mint durable entity session grant \u2014 requestBody: Exact operation input. Retain operation\
+          \ identity and payload when replaying an uncertain mutation."
         content:
           application/json:
             schema:
               type: object
-              description: Preview mutation input with server-side size, scope and revision validation.
+              description: "Mint durable entity session grant \u2014 requestBody / content / application/json / schema:\
+                \ Preview mutation input with server-side size, scope and revision validation."
               properties:
                 namespace:
                   type: string
-                  description: Exact entity namespace.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / namespace: Exact entity namespace."
                   minLength: 1
                   maxLength: 256
                 key:
                   type: string
-                  description: Exact logical entity key.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / key: Exact logical entity key."
                   minLength: 1
                   maxLength: 256
                 env:
                   type: string
-                  description: Registered environment; defaults to production.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / env: Registered environment; defaults to production."
                 platform_tenant_id:
                   type: string
-                  description: Optional same-account platform tenant.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / platform tenant id: Optional same-account platform tenant."
                 session_id:
                   type: string
-                  description: Existing logical session identity.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / session id: Existing logical session identity."
                 generation:
                   type: integer
-                  description: Current session generation.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / generation: Current session generation."
                   minimum: 1
                 origin:
                   type: string
-                  description: Exact browser origin without a path, query or fragment.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / origin: Exact browser origin without a path, query or fragment."
                   format: uri
                 commands:
                   type: array
-                  description: Allowed command names; delegation does not grant other commands.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / commands: Allowed command names; delegation does not grant other commands."
                   items:
                     type: string
                 ttl_seconds:
                   type: integer
-                  description: Credential lifetime in seconds.
+                  description: "Mint durable entity session grant \u2014 requestBody / content / application/json\
+                    \ / schema / properties / ttl seconds: Credential lifetime in seconds."
                   minimum: 1
                   maximum: 300
               required:
@@ -30507,23 +30714,24 @@ paths:
       - invocations
       operationId: revokeDurableEntitySessionGrant
       summary: Revoke Durable Entity Session Grant.
-      description: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-        gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and
-        app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements
-        must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery
-        contract.
+      description: 'Revoke durable entity session grant: Opt-in durable-object preview. Requires the configured application
+        allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner
+        HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader
+        grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable
+        entity operator guides for the bounded recovery contract.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: grant
         in: path
         required: true
-        description: Grant identity returned when minting the credential.
+        description: "Revoke durable entity session grant \u2014 parameters / grant: Grant identity returned when\
+          \ minting the credential."
         schema:
           type: string
           format: uuid
       responses:
         '204':
-          description: Credential revoked.
+          description: "Revoke durable entity session grant \u2014 responses / 204: Credential revoked."
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -30533,7 +30741,8 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.
+          description: "Revoke durable entity session grant \u2014 responses / 409: Observed revision, ownership,\
+            \ migration or request identity conflicts. Inspect before replaying."
           content:
             application/problem+json:
               schema:
@@ -30545,7 +30754,8 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: Entity identity is permanently retired. Use a new identity for new work.
+          description: "Revoke durable entity session grant \u2014 responses / 410: Entity identity is permanently\
+            \ retired. Use a new identity for new work."
           content:
             application/problem+json:
               schema:
@@ -30556,40 +30766,44 @@ paths:
       - invocations
       operationId: connectDurableEntity
       summary: Upgrade a scoped durable entity session to WebSocket.
-      description: Service transport requires Bearer authentication, MFA, deploy write access and exact entity selectors.
-        Origin headers are rejected. Every frame re-enters authentication and immutable-scope admission. Feature gates
-        and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session
-        helper handles framing, replay and generation fences.
+      description: 'Upgrade a scoped durable entity session to websocket: Service transport requires Bearer authentication,
+        MFA, deploy write access and exact entity selectors. Origin headers are rejected. Every frame re-enters authentication
+        and immutable-scope admission. Feature gates and the application allowlist must be enabled; native acceptance
+        remains pending. The Node durable-session helper handles framing, replay and generation fences.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       - name: namespace
         in: query
         required: true
-        description: Exact entity namespace selecting the scope.
+        description: "Upgrade a scoped durable entity session to websocket \u2014 parameters / namespace: Exact entity\
+          \ namespace selecting the scope."
         schema:
           type: string
       - name: key
         in: query
         required: true
-        description: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant
-          registry.
+        description: "Upgrade a scoped durable entity session to websocket \u2014 parameters / key: Exact entity key\
+          \ selecting the scope; scope management affects the entire account/app/environment/tenant registry."
         schema:
           type: string
       - name: environment
         in: query
         required: false
-        description: Registered environment, defaulting to production.
+        description: "Upgrade a scoped durable entity session to websocket \u2014 parameters / environment: Registered\
+          \ environment, defaulting to production."
         schema:
           type: string
       - name: platform_tenant_id
         in: query
         required: false
-        description: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+        description: "Upgrade a scoped durable entity session to websocket \u2014 parameters / platform tenant id:\
+          \ Optional same-account platform tenant; customer self-service tokens cannot manage scope state."
         schema:
           type: string
       responses:
         '101':
-          description: WebSocket upgrade; subsequent frames follow the documented durable-session protocol.
+          description: "Upgrade a scoped durable entity session to websocket \u2014 responses / 101: WebSocket upgrade;\
+            \ subsequent frames follow the documented durable-session protocol."
         '403':
           $ref: '#/components/responses/Forbidden'
         '503':
@@ -30600,16 +30814,17 @@ paths:
       - invocations
       operationId: connectDurableEntityBrowserSession
       summary: Upgrade a scoped durable entity session to WebSocket.
-      description: Browser transport authenticates the short-lived grant through Sec-WebSocket-Protocol and requires
-        the exact Origin bound at issuance. Authorization headers and query parameters are rejected. Issuer revocation,
-        scope and generation are rechecked for commands. Feature gates and the application allowlist must be enabled;
-        native acceptance remains pending. The Node durable-session helper handles framing, replay and generation
-        fences.
+      description: 'Upgrade a scoped durable entity session to websocket: Browser transport authenticates the short-lived
+        grant through Sec-WebSocket-Protocol and requires the exact Origin bound at issuance. Authorization headers
+        and query parameters are rejected. Issuer revocation, scope and generation are rechecked for commands. Feature
+        gates and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+        helper handles framing, replay and generation fences.'
       parameters:
       - $ref: '#/components/parameters/Slug'
       responses:
         '101':
-          description: WebSocket upgrade; subsequent frames follow the documented durable-session protocol.
+          description: "Upgrade a scoped durable entity session to websocket \u2014 responses / 101: WebSocket upgrade;\
+            \ subsequent frames follow the documented durable-session protocol."
         '403':
           $ref: '#/components/responses/Forbidden'
         '503':
