@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 // AIPrice is one resolved price-list entry in millicents per million tokens
@@ -56,13 +57,45 @@ func matchAIPrice(prices []AIPrice, model string) (AIPrice, bool) {
 	return best, found
 }
 
-// aiCostMillicents prices one call, rounding up to a whole millicent so a
-// budget never under-counts. Uncached input excludes cached reads and cache
-// writes, which have their own prices. Big integers keep tokens times price
-// from overflowing.
+// aiPriceFor resolves one model's price (ADR-992): the integration's own
+// list first, where "*" catches every model, then the built-in catalog for
+// the integration's provider.
+func aiPriceFor(integration Integration, model string) (AIPrice, bool) {
+	if price, ok := matchAIPrice(integration.AIPrices, model); ok {
+		return price, true
+	}
+	entry, ok := aiprices.Default().Lookup(integration.AIProvider, model)
+	if !ok {
+		return AIPrice{}, false
+	}
+	return AIPrice{ModelPrefix: entry.Model, Input: entry.Price.Input, CachedInput: entry.Price.CachedInput,
+		CacheWrite: entry.Price.CacheWrite, Output: entry.Price.Output}, true
+}
+
+// aiCallCostMillicents prices one call of an integration.
+func aiCallCostMillicents(integration Integration, usage AIUsage) int64 {
+	price, ok := aiPriceFor(integration, usage.Model)
+	if !ok {
+		return 0
+	}
+	return priceCostMillicents(price, usage)
+}
+
+// aiCostMillicents prices one call from a price list alone.
 func aiCostMillicents(prices []AIPrice, usage AIUsage) int64 {
 	price, ok := matchAIPrice(prices, usage.Model)
-	if !ok || !usage.Known {
+	if !ok {
+		return 0
+	}
+	return priceCostMillicents(price, usage)
+}
+
+// priceCostMillicents prices one call, rounding up to a whole millicent so
+// a budget never under-counts. Uncached input excludes cached reads and
+// cache writes, which have their own prices. Big integers keep tokens times
+// price from overflowing.
+func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
+	if !usage.Known {
 		return 0
 	}
 	uncached := usage.InputTokens - usage.CachedInputTokens - usage.CacheWriteTokens

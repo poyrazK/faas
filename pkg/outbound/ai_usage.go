@@ -49,6 +49,8 @@ type AIUsageRecord struct {
 	CostMillicents int64
 	// Log, when set, adds one metadata row to the AI request log (ADR-991).
 	Log *AIRequestLog
+	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-992).
+	EndUser string
 }
 
 // AIRequestLog is the non-usage metadata of one logged AI call. It never
@@ -114,6 +116,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	}
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
+	}
+	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
+		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
 	}
 	return validateAIRequestLog(record.Log)
 }

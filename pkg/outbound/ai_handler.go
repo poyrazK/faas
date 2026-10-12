@@ -99,6 +99,8 @@ type aiSettlement struct {
 	attempts int
 	started  time.Time
 	routeID  string
+	// endUser is the call's X-Gregale-AI-User value (ADR-992).
+	endUser string
 }
 
 // settleAIUsage records one finished AI call. It runs after the response copy,
@@ -115,7 +117,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if first := observer.FirstByteAt(); !first.IsZero() && first.After(upstreamStarted) {
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
-	cost := aiCostMillicents(integration.AIPrices, usage)
+	cost := aiCallCostMillicents(integration, usage)
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
@@ -135,6 +137,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	defer cancel()
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
+		EndUser: settlement.endUser,
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())

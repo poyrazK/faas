@@ -54,5 +54,13 @@ export type OutboundIntegrationOffer = {
    * Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
    */
   ai_request_log_enabled?: boolean;
+  /**
+   * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-992).
+   */
+  ai_user_daily_token_limit?: number | null;
+  /**
+   * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-992).
+   */
+  ai_user_daily_cost_limit_millicents?: number | null;
 };
 

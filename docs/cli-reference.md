@@ -14,7 +14,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs |
+| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1415,7 +1415,7 @@ Show feature maturity and plan availability
 
 ## ai
 
-AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs
+AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs
 
 `gregale ai [<subcommand>]`
 
@@ -1426,6 +1426,9 @@ gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 -
 gregale ai guardrails <integration-id> --app my-api --rpm 60 --models 'gpt-4o-mini,o3*' --max-output-tokens 2048
 gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60
 gregale ai usage <integration-id> --date 2026-10-11
+gregale ai policy <integration-id> --user-daily-tokens 200000 --user-daily-cost 2
+gregale ai users <integration-id> --limit 20
+gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
@@ -1435,7 +1438,7 @@ gregale ai logs <integration-id> --limit 20
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1444,6 +1447,8 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
+| `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
 
 ### ai app-limit
 
@@ -1480,6 +1485,16 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 |---|---|---|
 | `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
 
+### ai catalog
+
+Show the built-in prices that apply to models missing from a price list
+
+`gregale ai catalog [--model <NAME>] <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--model <NAME>` | show only the entry that prices this model |  |
+
 ### ai usage
 
 Show one UTC day of token usage and cost by caller and model
@@ -1489,6 +1504,18 @@ Show one UTC day of token usage and cost by caller and model
 | Flag | Meaning | |
 |---|---|---|
 | `--date <YYYY-MM-DD>` | UTC day within the last 90 days |  |
+
+### ai users
+
+Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first
+
+`gregale ai users [--date <YYYY-MM-DD>] [--user <ID>] [--limit <N>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--date <YYYY-MM-DD>` | UTC day within the last 31 days |  |
+| `--user <ID>` | show only this end user |  |
+| `--limit <N>` | end users to show, 1 to 1000 |  |
 
 ### ai routes
 

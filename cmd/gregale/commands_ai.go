@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|app-limit|guardrails|prices|usage|routes|keys|alerts|logs> ..."
+const aiUsageText = "usage: gregale ai <policy|app-limit|guardrails|prices|catalog|usage|users|routes|keys|alerts|logs> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -34,6 +34,10 @@ func cmdAI(args []string) int {
 		return cmdAIPrices(args[1:])
 	case "usage":
 		return cmdAIUsage(args[1:])
+	case "catalog":
+		return cmdAICatalog(args[1:])
+	case "users":
+		return cmdAIUsers(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
 	case "guardrails":
@@ -120,7 +124,8 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 }
 
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
-	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off]"
+	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off] " +
+	"[--user-daily-tokens N|none] [--user-daily-cost EUR|none]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
@@ -129,6 +134,8 @@ func cmdAIPolicy(args []string) int {
 	dailyTokens := fs.String("daily-tokens", "", "UTC-day input+output token limit, or none")
 	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in EUR, or none")
 	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
+	userDailyTokens := fs.String("user-daily-tokens", "", "each end user's UTC-day token limit, or none")
+	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in EUR, or none")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai policy arguments", errors.New(aiPolicyUsage))
 	}
@@ -142,7 +149,8 @@ func cmdAIPolicy(args []string) int {
 	}
 	req := api.PutOutboundAIPolicyRequest{AIProvider: current.AIProvider, DailyTokenLimit: current.AIDailyTokenLimit,
 		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
-		RequestLogEnabled: current.AIRequestLogEnabled}
+		RequestLogEnabled: current.AIRequestLogEnabled, UserDailyTokenLimit: current.AIUserDailyTokenLimit,
+		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents}
 	switch *provider {
 	case "":
 	case "off":
@@ -162,6 +170,11 @@ func cmdAIPolicy(args []string) int {
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
 		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {
 			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseEuroMillicents)
+		}
+	}
+	if err == nil {
+		if req.UserDailyTokenLimit, err = optionalLimit(*userDailyTokens, req.UserDailyTokenLimit, parseTokenCount); err == nil {
+			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseEuroMillicents)
 		}
 	}
 	if err != nil || !req.Valid() {

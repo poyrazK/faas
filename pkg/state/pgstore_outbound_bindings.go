@@ -26,6 +26,7 @@ func outboundAITokenLimit(limit pgtype.Int8) *int64 {
 func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var id, accountID pgtype.UUID
 	var dailyRequestLimit, aiDailyTokenLimit, aiDailyCostLimit, aiMonthlyCostLimit pgtype.Int8
+	var aiUserDailyTokenLimit, aiUserDailyCostLimit pgtype.Int8
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
 	var offer OutboundIntegrationOffer
@@ -35,9 +36,12 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&requestPolicy.MaxRetries, &requestPolicy.ResponseCacheTTLSeconds,
 		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
 		&requestPolicy.RetryBudgetPerMinute, &offer.AIProvider, &aiDailyTokenLimit,
-		&aiDailyCostLimit, &aiMonthlyCostLimit, &offer.AIRequestLogEnabled); err != nil {
+		&aiDailyCostLimit, &aiMonthlyCostLimit, &offer.AIRequestLogEnabled,
+		&aiUserDailyTokenLimit, &aiUserDailyCostLimit); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
+	offer.AIUserDailyTokenLimit = outboundAITokenLimit(aiUserDailyTokenLimit)
+	offer.AIUserDailyCostLimit = outboundAITokenLimit(aiUserDailyCostLimit)
 	offer.AIDailyTokenLimit = outboundAITokenLimit(aiDailyTokenLimit)
 	offer.AIDailyCostLimit = outboundAITokenLimit(aiDailyCostLimit)
 	offer.AIMonthlyCostLimit = outboundAITokenLimit(aiMonthlyCostLimit)
@@ -126,7 +130,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.retry_budget_per_minute,
 		       COALESCE(integration.ai_provider, ''), integration.ai_daily_token_limit,
 		       integration.ai_daily_cost_limit_millicents, integration.ai_monthly_cost_limit_millicents,
-		       integration.ai_request_log_enabled
+		       integration.ai_request_log_enabled,
+		       integration.ai_user_daily_token_limit, integration.ai_user_daily_cost_limit_millicents
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential

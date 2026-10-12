@@ -37,6 +37,9 @@ const (
 	// Per-app per-minute AI limits (ADR-991).
 	ReasonRequestsPerMinute = "requests_per_minute_limit"
 	ReasonTokensPerMinute   = "tokens_per_minute_limit"
+	// Per-end-user UTC-day AI limits (ADR-992).
+	ReasonUserDailyTokenLimit = "user_daily_token_limit"
+	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -100,6 +103,10 @@ type Integration struct {
 	BindingAIGuardrails map[string]AIGuardrails
 	// AIRequestLogEnabled records per-call metadata at settlement.
 	AIRequestLogEnabled bool
+	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
+	// call names with X-Gregale-AI-User per UTC day (ADR-992).
+	AIUserDailyTokenLimit *int64
+	AIUserDailyCostLimit  *int64
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
@@ -207,6 +214,9 @@ func (i Integration) Validate() error {
 	if i.AIRequestLogEnabled && i.AIProvider == "" {
 		return fmt.Errorf("%w: the AI request log requires an AI provider", ErrInvalidIntegration)
 	}
+	if !api.ValidOutboundAIUserLimits(i.AIProvider, i.AIUserDailyTokenLimit, i.AIUserDailyCostLimit) {
+		return fmt.Errorf("%w: per-end-user AI limits are invalid", ErrInvalidIntegration)
+	}
 	for appID, limit := range i.BindingDailyRequestLimits {
 		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
 			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
@@ -299,6 +309,12 @@ type AdmissionSpec struct {
 	// per-minute limits; the Postgres backend reads the stored values.
 	BindingRequestsPerMinute *int64
 	BindingTokensPerMinute   *int64
+	// AIEndUser is the call's X-Gregale-AI-User value (ADR-992). With it,
+	// UserDailyAITokenLimit and UserDailyAICostLimit cap that end user's UTC
+	// day; the Postgres backend reads the stored limits.
+	AIEndUser             string
+	UserDailyAITokenLimit *int64
+	UserDailyAICostLimit  *int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string
@@ -402,6 +418,8 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		copyItem.DailyAICostLimit = copyInt64Pointer(item.DailyAICostLimit)
 		copyItem.MonthlyAICostLimit = copyInt64Pointer(item.MonthlyAICostLimit)
 		copyItem.AIPrices = append([]AIPrice(nil), item.AIPrices...)
+		copyItem.AIUserDailyTokenLimit = copyInt64Pointer(item.AIUserDailyTokenLimit)
+		copyItem.AIUserDailyCostLimit = copyInt64Pointer(item.AIUserDailyCostLimit)
 		copyItem.BindingAIGuardrails = copyAIGuardrails(item.BindingAIGuardrails)
 		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
@@ -433,6 +451,8 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.DailyAICostLimit = copyInt64Pointer(i.DailyAICostLimit)
 	i.MonthlyAICostLimit = copyInt64Pointer(i.MonthlyAICostLimit)
 	i.AIPrices = append([]AIPrice(nil), i.AIPrices...)
+	i.AIUserDailyTokenLimit = copyInt64Pointer(i.AIUserDailyTokenLimit)
+	i.AIUserDailyCostLimit = copyInt64Pointer(i.AIUserDailyCostLimit)
 	i.BindingAIGuardrails = copyAIGuardrails(i.BindingAIGuardrails)
 	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)

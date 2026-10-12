@@ -743,6 +743,15 @@ const (
 	OutboundAIBudgetAlertsPageMax               = 100
 	OutboundAIBudgetAlertWarnPercent            = 80
 	OutboundAIBudgetAlertFullPercent            = 100
+	// Per-end-user attribution (ADR-992): the distinct X-Gregale-AI-User
+	// values rolled up per integration and UTC day (later ones aggregate
+	// under "~other" and only integration and app budgets limit them), how
+	// long those rollups stay, the page size of their listing and the
+	// longest end-user or session ID.
+	OutboundAIUsersPerDay            = 10_000
+	OutboundAIUserUsageRetentionDays = 31
+	OutboundAIUserUsagePageMax       = 1_000
+	OutboundAIUserIDMaxBytes         = 64
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

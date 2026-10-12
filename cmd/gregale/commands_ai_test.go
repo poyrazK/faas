@@ -82,6 +82,12 @@ func TestCmdAIJSONOutput(t *testing.T) {
 				Items: []api.OutboundAIUsageItem{{Caller: "runs", Model: "gpt-4o", Requests: 1, InputTokens: 30, OutputTokens: 12}}})
 		case "/v1/outbound/integrations/int-1/ai-alerts":
 			_ = json.NewEncoder(w).Encode(api.OutboundAIBudgetAlertList{Items: []api.OutboundAIBudgetAlert{{ID: "a1", Budget: "daily_cost", ThresholdPercent: 80}}})
+		case "/v1/outbound/ai-price-catalog":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIPriceCatalogResponse{AIProvider: "openai", USDPerEUR: "1.1206",
+				Entries: []api.OutboundAIPriceEntry{{ModelPrefix: "gpt-4o", InputMillicentsPerMTok: 223_096, OutputMillicentsPerMTok: 892_380}}})
+		case "/v1/outbound/integrations/int-1/ai-usage/users":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIUserUsageResponse{UsageDate: "2026-10-12", TrackedUsers: 1,
+				Items: []api.OutboundAIUserUsageItem{{EndUser: "user-1", Requests: 2, Tokens: 30, CostMillicents: 5}}})
 		case "/v1/outbound/integrations/int-1/credential-keys":
 			_ = json.NewEncoder(w).Encode(api.OutboundCredentialKeyList{Items: []api.OutboundCredentialKey{{ID: "k1", Label: "second"}}})
 		default:
@@ -97,7 +103,7 @@ func TestCmdAIJSONOutput(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	for _, args := range [][]string{{"usage", "int-1"}, {"alerts", "int-1"}, {"keys", "list", "int-1"}} {
+	for _, args := range [][]string{{"usage", "int-1"}, {"alerts", "int-1"}, {"keys", "list", "int-1"}, {"catalog", "openai"}, {"users", "int-1"}} {
 		buf.Reset()
 		if code := cmdAI(args); code != 0 {
 			t.Fatalf("gregale ai %v --json = %d", args, code)

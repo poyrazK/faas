@@ -24046,6 +24046,8 @@ CREATE TABLE public.outbound_admission_leases (
     binding_app_id uuid,
     ai_reserved_tokens bigint DEFAULT 0 NOT NULL,
     ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
+    ai_end_user text,
+    CONSTRAINT outbound_admission_leases_ai_end_user_chk CHECK (((ai_end_user IS NULL) OR (ai_end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0)))
 );
 
@@ -24107,6 +24109,25 @@ CREATE TABLE public.outbound_ai_usage_daily (
     CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
     CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
     CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))
+);
+
+
+--
+-- Name: outbound_ai_user_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_user_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    end_user text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_user_usage_daily_end_user_chk CHECK (((end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text) OR (end_user = '~other'::text))),
+    CONSTRAINT outbound_ai_user_usage_daily_values_chk CHECK (((requests >= 0) AND ((error_requests >= 0) AND (error_requests <= requests)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0)))
 );
 
 
@@ -24181,7 +24202,9 @@ CREATE TABLE public.outbound_ai_request_log (
     duration_ms integer NOT NULL,
     ttfb_ms integer,
     attempts smallint NOT NULL,
+    end_user text,
     CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
+    CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
     CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
@@ -24352,11 +24375,14 @@ CREATE TABLE public.outbound_integrations (
     ai_daily_cost_limit_millicents bigint,
     ai_monthly_cost_limit_millicents bigint,
     ai_request_log_enabled boolean DEFAULT false NOT NULL,
+    ai_user_daily_token_limit bigint,
+    ai_user_daily_cost_limit_millicents bigint,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_ai_cost_limits_chk CHECK ((((ai_daily_cost_limit_millicents IS NULL) AND (ai_monthly_cost_limit_millicents IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_daily_cost_limit_millicents IS NULL) OR ((ai_daily_cost_limit_millicents >= 1) AND (ai_daily_cost_limit_millicents <= '1000000000000'::bigint))) AND ((ai_monthly_cost_limit_millicents IS NULL) OR ((ai_monthly_cost_limit_millicents >= 1) AND (ai_monthly_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
     CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text, 'gemini'::text, 'azure_openai'::text, 'bedrock'::text, 'vertex'::text])))),
     CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
+    CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
     CONSTRAINT outbound_integrations_burst_check CHECK ((burst > 0)),
@@ -33232,6 +33258,14 @@ ALTER TABLE ONLY public.outbound_ai_usage_daily
 
 
 --
+-- Name: outbound_ai_user_usage_daily outbound_ai_user_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_user_usage_daily
+    ADD CONSTRAINT outbound_ai_user_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, end_user);
+
+
+--
 -- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40323,6 +40357,13 @@ CREATE INDEX outbound_admission_leases_expiry_idx ON public.outbound_admission_l
 --
 
 CREATE INDEX outbound_ai_usage_daily_usage_date_idx ON public.outbound_ai_usage_daily USING btree (usage_date);
+
+
+--
+-- Name: outbound_ai_user_usage_daily_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_user_usage_daily_prune_idx ON public.outbound_ai_user_usage_daily USING btree (usage_date);
 
 
 --
@@ -51195,6 +51236,14 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 ALTER TABLE ONLY public.outbound_ai_usage_daily
     ADD CONSTRAINT outbound_ai_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_user_usage_daily outbound_ai_user_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_user_usage_daily
+    ADD CONSTRAINT outbound_ai_user_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

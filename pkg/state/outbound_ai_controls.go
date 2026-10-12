@@ -70,6 +70,8 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64
 	TTFBMS            *int64
 	Attempts          int
+	// EndUser is empty when the call named no end user (ADR-992).
+	EndUser string
 }
 
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and
