@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -21,8 +21,8 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Sockets = entitysocket.New()
-	e.s.durable.SessionGrants = &entitysocket.Grants{Store: bucket}
+	e.s.Durable().Sockets = entitysocket.New()
+	e.s.Durable().SessionGrants = &entitysocket.Grants{Store: bucket}
 	session := uuid.NewString()
 	input := map[string]any{"namespace": "counters", "key": "a", "session_id": session, "generation": 0, "origin": "https://example.com", "commands": []string{"open", "message", "status"}, "ttl_seconds": 60}
 	response := e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/session-grants", input, nil)
@@ -169,7 +169,7 @@ func TestDurableEntitySocketBrowserGrantCommandsAndStorage(t *testing.T) {
 }
 func TestDurableEntitySocketBrowserFlagRequiresServiceSockets(t *testing.T) {
 	e := entityAPISetup(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED" {
 			return "1"
 		}
@@ -185,14 +185,14 @@ func TestDurableEntitySocketBrowserIssuerRevocation(t *testing.T) {
 	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Sockets = entitysocket.New()
-	e.s.durable.SessionGrants = &entitysocket.Grants{Store: bucket}
+	e.s.Durable().Sockets = entitysocket.New()
+	e.s.Durable().SessionGrants = &entitysocket.Grants{Store: bucket}
 	keys, err := e.store.ListAPIKeys(t.Context(), e.acct.ID)
 	if err != nil || len(keys) != 1 {
 		t.Fatal(err)
 	}
 	session := uuid.NewString()
-	_, token, err := e.s.durable.SessionGrants.Mint(t.Context(), entitysocket.Grant{Entity: durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: app.ID, Namespace: "counters", Key: "a"}, IssuerID: keys[0].ID, SessionID: session, Origin: "https://example.com", Commands: []string{"open"}}, time.Minute)
+	_, token, err := e.s.Durable().SessionGrants.Mint(t.Context(), entitysocket.Grant{Entity: durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: app.ID, Namespace: "counters", Key: "a"}, IssuerID: keys[0].ID, SessionID: session, Origin: "https://example.com", Commands: []string{"open"}}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

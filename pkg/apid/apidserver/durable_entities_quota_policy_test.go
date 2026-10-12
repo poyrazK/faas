@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,8 +13,8 @@ import (
 
 func TestDurableEntitySocketQuotaPolicyIncreaseCoordinatesMigration(t *testing.T) {
 	e, app, dispatch, q := entityQuotaFixture(t)
-	e.s.durable.QuotaMigrationEnabled = true
-	e.s.durable.QuotaPolicyEnabled = true
+	e.s.Durable().QuotaMigrationEnabled = true
+	e.s.Durable().QuotaPolicyEnabled = true
 	if r := e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("seed"), nil); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}
@@ -33,7 +33,7 @@ func TestDurableEntitySocketQuotaPolicyIncreaseCoordinatesMigration(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine = engine
+	e.s.Durable().Engine = engine
 	path := "/v1/apps/" + app.Slug + "/entities/quota-policy"
 	selectors := "?namespace=counters&key=customer:456"
 	readKey, hash, err := api.GenerateAPIKey()
@@ -92,14 +92,14 @@ func TestDurableEntitySocketQuotaPolicyIncreaseCoordinatesMigration(t *testing.T
 	if r = e.do(t, "POST", path+"/apply"+selectors, stale, nil); r.Code != 409 {
 		t.Fatal("stale policy changed", r.Code, r.Body.String())
 	}
-	e.s.durable.QuotaPolicyEnabled = false
+	e.s.Durable().QuotaPolicyEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
 		t.Fatal("disabled policy available", r.Code)
 	}
 }
 func TestDurableEntitySocketQuotaPolicyRequiresMigration(t *testing.T) {
 	e := entityAPISetup(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED" {
 			return "1"
 		}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,12 +15,12 @@ import (
 
 func TestDurableEntitySocketQuotaMigrationBackfillsHistoricalState(t *testing.T) {
 	e, app, dispatch, q := entityQuotaFixture(t)
-	e.s.durable.QuotaMigrationEnabled = true
+	e.s.Durable().QuotaMigrationEnabled = true
 	now := time.Now()
 	q.Now = func() time.Time { return now }
 	id := durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: app.ID, Namespace: "counters", Key: "customer:456"}
 	// Simulate committed data created before shared tenant admission existed.
-	_, err := e.s.durable.Engine.Invoke(t.Context(), id, "legacy-owner", durableentity.Request{ID: "historical", Payload: json.RawMessage(`{}`)}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
+	_, err := e.s.Durable().Engine.Invoke(t.Context(), id, "legacy-owner", durableentity.Request{ID: "historical", Payload: json.RawMessage(`{}`)}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
 		return durableentity.Transition{Data: json.RawMessage(`{"count":1}`), Result: json.RawMessage(`{}`)}, nil
 	})
 	if err != nil {
@@ -95,7 +95,7 @@ func TestDurableEntitySocketQuotaMigrationBackfillsHistoricalState(t *testing.T)
 	if response = e.do(t, "POST", base+"/start"+selectors, map[string]any{"migration_id": uuid.NewString()}, readHeaders); response.Code != 403 {
 		t.Fatal("read scope can start migration", response.Code, response.Body.String())
 	}
-	e.s.durable.QuotaMigrationEnabled = false
+	e.s.Durable().QuotaMigrationEnabled = false
 	if response = e.do(t, "GET", base+selectors, nil, nil); response.Code != 503 {
 		t.Fatal("disabled migration available", response.Code)
 	}
@@ -103,7 +103,7 @@ func TestDurableEntitySocketQuotaMigrationBackfillsHistoricalState(t *testing.T)
 
 func TestDurableEntitySocketQuotaMigrationRequiresQuotas(t *testing.T) {
 	e := entityAPISetup(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED" {
 			return "1"
 		}

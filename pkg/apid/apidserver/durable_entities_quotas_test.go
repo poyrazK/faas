@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -26,11 +26,11 @@ func entityQuotaFixture(t *testing.T) (entityHTTPEnv, state.App, *entityDispatch
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine = engine
+	e.s.Durable().Engine = engine
 	q := &entitysocket.Quotas{Store: bucket, Limits: entitysocket.TenantLimits{Connections: 1, GrantsPerMinute: 1, InvocationsPerMinute: 1, RetainedBytes: 16 << 20, EntityBytes: 1 << 20}}
-	e.s.durable.TenantQuotas = q
-	e.s.durable.Sockets = entitysocket.New()
-	e.s.durable.SessionGrants = &entitysocket.Grants{Store: bucket, Quotas: q}
+	e.s.Durable().TenantQuotas = q
+	e.s.Durable().Sockets = entitysocket.New()
+	e.s.Durable().SessionGrants = &entitysocket.Grants{Store: bucket, Quotas: q}
 	enabled := true
 	if _, err = e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestDurableEntitySocketTenantQuotaHTTPAdmissionAndUsage(t *testing.T) {
 		}
 	}
 	id := durableentity.ID{AccountID: e.acct.ID, AppID: app.ID, EnvironmentID: app.ID, Namespace: "counters", Key: "customer:456"}
-	_, restoreErr := e.s.durable.PerformRestore(t.Context(), e.acct, app, "prod", id, api.DurableEntityRestoreRequest{})
+	_, restoreErr := e.s.Durable().PerformRestore(t.Context(), e.acct, app, "prod", id, api.DurableEntityRestoreRequest{})
 	var quota *entitysocket.QuotaError
 	if !errors.As(restoreErr, &quota) || quota.Budget != "invocations" {
 		t.Fatal("restore bypassed tenant admission", restoreErr)
@@ -190,7 +190,7 @@ func TestDurableEntitySocketTenantQuotaConfiguration(t *testing.T) {
 		t.Fatal("unbounded entity storage admitted")
 	}
 	e := entityAPISetup(t)
-	err = e.s.configureDurableEntities(t.Context(), func(name string) string {
+	err = e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED" {
 			return "1"
 		}

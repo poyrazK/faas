@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ func TestDurableEntitySocketReplaysAfterReconnectAndRechecksAppAdmission(t *test
 	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Sockets = entitysocket.New()
+	e.s.Durable().Sockets = entitysocket.New()
 	server := httptest.NewServer(e.h)
 	defer server.Close()
 	dial := func() *websocket.Conn {
@@ -90,7 +90,7 @@ func TestDurableEntitySocketRevokedCredentialCannotDispatchNextFrame(t *testing.
 	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWebSocketEnabled: true, WebSocketEnabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Sockets = entitysocket.New()
+	e.s.Durable().Sockets = entitysocket.New()
 	server := httptest.NewServer(e.h)
 	defer server.Close()
 	conn, handshake, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/connect?namespace=counters&key=customer:456", http.Header{"Authorization": []string{"Bearer " + e.key}})
@@ -121,13 +121,13 @@ func TestDurableEntitySocketRevokedCredentialCannotDispatchNextFrame(t *testing.
 }
 func TestDurableEntitySocketFlagRequiresInvocationPreview(t *testing.T) {
 	e := entityAPISetup(t)
-	err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_SOCKETS_ENABLED" {
 			return "1"
 		}
 		return ""
 	})
-	if err == nil || e.s.durable.Sockets != nil {
+	if err == nil || e.s.Durable().Sockets != nil {
 		t.Fatal("socket flag enabled without invocation preview")
 	}
 }

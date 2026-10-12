@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,9 +13,9 @@ import (
 
 func TestDurableEntitySocketRegistryAuthorizationMigrationAndListing(t *testing.T) {
 	e, app, _, q := entityQuotaFixture(t)
-	e.s.durable.QuotaMigrationEnabled = true
-	e.s.durable.QuotaPolicyEnabled = true
-	e.s.durable.RegistryEnabled = true
+	e.s.Durable().QuotaMigrationEnabled = true
+	e.s.Durable().QuotaPolicyEnabled = true
+	e.s.Durable().RegistryEnabled = true
 	cache, cacheErr := entitysocket.NewRegistryCache(q.Store, 8<<20, 256, 16)
 	if cacheErr != nil {
 		t.Fatal(cacheErr)
@@ -40,7 +40,7 @@ func TestDurableEntitySocketRegistryAuthorizationMigrationAndListing(t *testing.
 	now := m.NotBefore
 	q.Now = func() time.Time { return now }
 	for m.Phase != "complete" {
-		m, err = q.StepMigration(t.Context(), id, m.ID, m.Revision, e.s.durable.Engine)
+		m, err = q.StepMigration(t.Context(), id, m.ID, m.Revision, e.s.Durable().Engine)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,14 +80,14 @@ func TestDurableEntitySocketRegistryAuthorizationMigrationAndListing(t *testing.
 	if r = e.do(t, "GET", path+selectors+"&cursor=invalid", nil, headers); r.Code != 409 {
 		t.Fatal("invalid cursor", r.Code, r.Body.String())
 	}
-	e.s.durable.RegistryEnabled = false
+	e.s.Durable().RegistryEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
 		t.Fatal("disabled", r.Code)
 	}
 }
 func TestDurableEntitySocketRegistryRequiresManagedPolicy(t *testing.T) {
 	e, _, _, _ := entityQuotaFixture(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_REGISTRY_ENABLED" {
 			return "1"
 		}

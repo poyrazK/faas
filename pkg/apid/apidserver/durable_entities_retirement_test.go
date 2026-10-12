@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 
 func TestDurableEntitySocketRetirementVerifiedReclamationAndPermanentFence(t *testing.T) {
 	e, app, dispatch, q := entityQuotaFixture(t)
-	e.s.durable.QuotaMigrationEnabled, e.s.durable.QuotaPolicyEnabled, e.s.durable.RetirementEnabled = true, true, true
+	e.s.Durable().QuotaMigrationEnabled, e.s.Durable().QuotaPolicyEnabled, e.s.Durable().RetirementEnabled = true, true, true
 	if r := e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("seed"), nil); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}
@@ -36,7 +36,7 @@ func TestDurableEntitySocketRetirementVerifiedReclamationAndPermanentFence(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine = engine
+	e.s.Durable().Engine = engine
 	for m.Phase != "complete" {
 		m, err = q.StepMigration(t.Context(), id, m.ID, m.Revision, engine)
 		if err != nil {
@@ -113,14 +113,14 @@ func TestDurableEntitySocketRetirementVerifiedReclamationAndPermanentFence(t *te
 	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", fresh, nil); r.Code != 200 || dispatch.calls.Load() != 2 {
 		t.Fatal(r.Code, r.Body.String(), dispatch.calls.Load())
 	}
-	e.s.durable.RetirementEnabled = false
+	e.s.Durable().RetirementEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
 		t.Fatal("disabled endpoint available", r.Code)
 	}
 }
 func TestDurableEntitySocketRetirementRequiresPolicyManagement(t *testing.T) {
 	e := entityAPISetup(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED" {
 			return "1"
 		}

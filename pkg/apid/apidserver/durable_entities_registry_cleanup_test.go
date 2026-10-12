@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,10 +15,10 @@ import (
 func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *testing.T) {
 	e, app, dispatch, q := entityQuotaFixture(t)
 	q.Limits.InvocationsPerMinute = 10
-	e.s.durable.QuotaMigrationEnabled = true
-	e.s.durable.QuotaPolicyEnabled = true
-	e.s.durable.RegistryEnabled = true
-	e.s.durable.RegistryCleanupEnabled = true
+	e.s.Durable().QuotaMigrationEnabled = true
+	e.s.Durable().QuotaPolicyEnabled = true
+	e.s.Durable().RegistryEnabled = true
+	e.s.Durable().RegistryCleanupEnabled = true
 	cache, err := entitysocket.NewRegistryCache(q.Store, 8<<20, 256, 16)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	now := m.NotBefore
 	q.Now = func() time.Time { return now }
 	for m.Phase != "complete" {
-		m, err = q.StepMigration(t.Context(), id, m.ID, m.Revision, e.s.durable.Engine)
+		m, err = q.StepMigration(t.Context(), id, m.ID, m.Revision, e.s.Durable().Engine)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	}
 	now = result.Cleanup.NotBefore
 	dispatchedDuringCollection := false
-	e.s.durable.RegistryCleanupWorkerEnabled = true
+	e.s.Durable().RegistryCleanupWorkerEnabled = true
 	for i := 0; result.Cleanup.Phase != "complete"; i++ {
 		if i > 100 {
 			t.Fatal("cleanup stuck")
@@ -144,14 +144,14 @@ func TestDurableEntitySocketRegistryCleanupAuthorizationConcurrentAdmission(t *t
 	if r = e.do(t, "POST", "/v1/apps/"+app.Slug+"/entities/invoke", entityRequest("after-cleanup"), nil); r.Code != 200 || dispatch.calls.Load() != 4 {
 		t.Fatal("admission failed after cleanup", r.Code, r.Body.String())
 	}
-	e.s.durable.RegistryCleanupEnabled = false
+	e.s.Durable().RegistryCleanupEnabled = false
 	if r = e.do(t, "GET", path+selectors, nil, nil); r.Code != 503 {
 		t.Fatal("disabled route", r.Code)
 	}
 }
 func TestDurableEntitySocketRegistryCleanupRequiresRegistryManagement(t *testing.T) {
 	e, _, _, _ := entityQuotaFixture(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED" {
 			return "1"
 		}
@@ -163,7 +163,7 @@ func TestDurableEntitySocketRegistryCleanupRequiresRegistryManagement(t *testing
 
 func TestDurableEntitySocketRegistryCleanupWorkerRequiresManagementAndCancels(t *testing.T) {
 	e, _, _, _ := entityQuotaFixture(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(name string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(name string) string {
 		if name == "FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED" {
 			return "1"
 		}
@@ -172,12 +172,12 @@ func TestDurableEntitySocketRegistryCleanupWorkerRequiresManagementAndCancels(t 
 		t.Fatal("worker enabled without cleanup management")
 	}
 	e, _, _, _ = entityQuotaFixture(t)
-	e.s.durable.RunDurableEntityRegistryCleanup(t.Context()) // Disabled worker returns.
-	e.s.durable.RegistryCleanupEnabled = true
-	e.s.durable.RegistryCleanupWorkerEnabled = true
+	e.s.Durable().RunDurableEntityRegistryCleanup(t.Context()) // Disabled worker returns.
+	e.s.Durable().RegistryCleanupEnabled = true
+	e.s.Durable().RegistryCleanupWorkerEnabled = true
 	ctx, cancel := context.WithCancel(t.Context())
 	finished := make(chan struct{})
-	go func() { e.s.durable.RunDurableEntityRegistryCleanup(ctx); close(finished) }()
+	go func() { e.s.Durable().RunDurableEntityRegistryCleanup(ctx); close(finished) }()
 	cancel()
 	select {
 	case <-finished:

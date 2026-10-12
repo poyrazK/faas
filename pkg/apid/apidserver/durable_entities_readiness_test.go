@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -36,14 +36,14 @@ func TestDurableEntitySocketReadinessDoesNotAdmitOrClaimAcceptance(t *testing.T)
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &usage) != nil || usage["invocations"] != float64(0) || usage["connections"] != float64(0) {
 		t.Fatal(response.Body.String())
 	}
-	e.s.durable.TenantQuotas = nil
+	e.s.Durable().TenantQuotas = nil
 	response = e.do(t, "GET", path, nil, nil)
 	var disabled durable.DurableEntityReadiness
 	if json.Unmarshal(response.Body.Bytes(), &disabled) != nil || disabled.ConfigurationReady {
 		t.Fatal("missing quotas accepted", response.Body.String())
 	}
-	e.s.durable.TenantQuotas = q
-	delete(e.s.durable.Apps, app.ID)
+	e.s.Durable().TenantQuotas = q
+	delete(e.s.Durable().Apps, app.ID)
 	response = e.do(t, "GET", path, nil, nil)
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &disabled) != nil || disabled.ConfigurationReady {
 		t.Fatal("disabled app cannot inspect blockers", response.Body.String())
