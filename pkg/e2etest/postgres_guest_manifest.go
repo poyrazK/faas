@@ -27,7 +27,7 @@ func PostgresGuestRuntimeManifest(paths map[string]string, revision string, comp
 		if path == "" {
 			return result, errors.New("missing guest qualification artifact")
 		}
-		if name != "kernel" && name != "builder_base" && name != "probe_base" && name != "node22_base" && name != "firecracker" && name != "jailer" && name != "e2e_test" {
+		if name != "kernel" && name != "builder_base" && name != "probe_base" && name != "node22_base" && name != "firecracker" && name != "jailer" {
 			info, err := buildinfo.ReadFile(path)
 			if err != nil || !postgresGuestBinaryRevision(info, revision) {
 				return result, errors.New("guest qualification binary revision mismatch")

@@ -140,7 +140,7 @@ the production PostgreSQL server's configuration or billing plan.
 ## Combined rollout verification
 
 The runner requires a clean checkout and matching clean Linux amd64 VCS metadata
-on its Go daemons and guest init. Reused harness binaries from another revision
+on its Go daemons, test executable and guest init. Reused harness binaries from another revision
 are rejected. It fingerprints the actual execution bundle and the two published
 runtime bases, verifies unchanged artifacts after workload shutdown, and emits
 a version-1 guest report only after all test, SQL and host cleanup succeeds.
@@ -174,7 +174,13 @@ evidence. Fresh provider v8 output must contain clean executable-source
 provenance matching the bundle revision; older unstamped provider reports stay
 diagnostic even when their configuration fingerprint matches. Build the
 qualifier and native bundle from the same clean checkout with Go VCS stamping
-enabled. A nested diagnostic report never supplies native readiness. Digests
+enabled. Use a regular clone with a `.git` directory: the pinned Go toolchain
+does not discover the `.git` file used by Git worktrees. Build the qualifier and
+guest init with `-buildvcs=true`; the runner forces this flag for the test and
+harness builds. The general `make build` disables VCS stamping for reproducible
+production builds and cannot supply these qualification executables. Confirm
+`go version -m` lists the intended `vcs.revision` and `vcs.modified=false` before
+using prebuilt files. A nested diagnostic report never supplies native readiness. Digests
 detect inconsistent evidence; operator custody and a trusted test host remain
 necessary because these documents are not signed remote attestation.
 

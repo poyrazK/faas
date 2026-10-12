@@ -46,6 +46,14 @@ The guest report requires:
 - A transcript digest and a digest of the bounded report. Free-form output,
   filesystem paths, credentials and provider identities never enter it.
 
+The runner forces `-buildvcs=true` for test and harness builds. Qualification
+executables, including prebuilt guest init and the provider qualifier, must be
+built in a regular clean clone whose `.git` is a directory; the pinned Go
+toolchain does not discover Git worktree metadata files. General reproducible
+production builds deliberately disable VCS stamping and cannot provide these
+qualification executables. Build metadata is checked rather than inferring
+executable provenance from the caller's checkout.
+
 Reports are published privately, atomically and without overwriting existing
 evidence. Nested reports remain usable diagnostics but cannot return guest
 readiness. The expected qualification-bundle manifest is separately approved

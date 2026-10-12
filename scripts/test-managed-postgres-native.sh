@@ -97,6 +97,10 @@ ip address add "$probe_ip/32" dev lo
 probe_address_owned=1
 export GREGALE_POSTGRES_NATIVE_SQL_IP="$probe_ip"
 export GREGALE_POSTGRES_NATIVE_ACCEPTANCE=1
+# Qualification needs executable provenance, including the test executable.
+# Preserve bounded compiler flags while overriding diagnostic buildvcs=false.
+GOFLAGS="${GOFLAGS:-} -buildvcs=true"
+export GOFLAGS
 probe_status=0
 "${GO:-go}" test -p 1 -race -tags metal,managed_postgres_native -json ./cmd/e2e -count=1 -timeout 30m \
   -run '^TestManagedPostgresNativeMetal$' > "$probe_results" || probe_status=$?
