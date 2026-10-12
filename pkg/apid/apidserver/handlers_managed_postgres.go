@@ -171,7 +171,7 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 	view := api.ManagedPostgresUsageResponse{
 		PeriodStart: summary.Snapshot.PeriodStart, PolicyEnabled: summary.PolicyEnabled,
 		Fresh: summary.Fresh, GuardrailState: state,
-		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: limits.DatabasesMax,
+		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: summary.EnforcedDatabaseLimit(limits.DatabasesMax),
 		StorageLimitBytes:       limits.StorageLimitBytes,
 		ComputeUnitSeconds:      summary.Snapshot.ComputeUnitSeconds,
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,

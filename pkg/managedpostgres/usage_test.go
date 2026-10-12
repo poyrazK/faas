@@ -149,6 +149,27 @@ func TestServiceUsageSummaryDisabledPolicyIsNotFresh(t *testing.T) {
 	}
 }
 
+func TestServiceUsageSummaryReportsEnforcedDatabaseLimit(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities()}
+	registry := testRegistry(t, provider, nil)
+	limit, limitErr := 3, error(nil)
+	service, err := NewService(registry, NewMemoryStore(), ServiceOptions{
+		MaxDatabasesPerAccount: func(context.Context, string) (int, error) { return limit, limitErr },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := service.UsageSummary(context.Background(), "account-1", time.Now().UTC(), UsageCeilings{})
+	if err != nil || summary.DatabaseLimit != 3 {
+		t.Fatalf("summary = %+v, %v; want database limit 3", summary, err)
+	}
+	limitErr = ErrQuotaExceeded
+	summary, err = service.UsageSummary(context.Background(), "account-1", time.Now().UTC(), UsageCeilings{})
+	if err != nil || summary.DatabaseLimit != 0 {
+		t.Fatalf("unresolvable limit: summary = %+v, %v; want usage with database limit 0", summary, err)
+	}
+}
+
 func TestMemoryUsageLedgerIsIdempotentAndAdmitsFreshAccounts(t *testing.T) {
 	store := NewMemoryStore()
 	backend := "primary-a"
