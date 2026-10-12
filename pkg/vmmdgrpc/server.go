@@ -327,6 +327,9 @@ type Server struct {
 	// forwardSessions lets instance teardown end the instance's open
 	// WebSocket and private TCP forward streams (H9-129).
 	forwardSessions forwardSessions
+	// databases runs database VMs on database nodes (ADR-1027). nil keeps
+	// the database RPCs UNIMPLEMENTED.
+	databases DatabaseRuntime
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil

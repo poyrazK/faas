@@ -1191,6 +1191,10 @@ type HostRenderer interface {
 	SetStaticEgressRules(rules []netns.StaticEgressRule)
 }
 
+// JailLeases is the host's jail-identity allocator. Database VMs (ADR-1027)
+// take their jail uid from it so they never share one with an app VM.
+func (m *Manager) JailLeases() *Allocator { return m.alloc }
+
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).
 // metrics may be nil (e.g. unit tests that don't care about Prometheus); the

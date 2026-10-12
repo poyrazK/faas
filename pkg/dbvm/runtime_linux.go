@@ -4,6 +4,7 @@ package dbvm
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -132,13 +133,12 @@ func jailProcesses(jailID string) []int {
 // mountsUnder lists mount points below dir from /proc/self/mountinfo in
 // lexical order; unmountJail detaches them in reverse, children first.
 func mountsUnder(dir string) []string {
-	f, err := os.Open("/proc/self/mountinfo")
+	raw, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = f.Close() }()
 	var out []string
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) > 4 && strings.HasPrefix(fields[4], dir+"/") {

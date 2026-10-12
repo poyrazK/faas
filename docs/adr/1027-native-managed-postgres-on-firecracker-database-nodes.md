@@ -113,6 +113,20 @@ Application compute stays stateless and the stateful base-image denylist is
 unchanged: customers still cannot deploy PostgreSQL images as apps. Database
 nodes are the one sanctioned stateful workload, operated by the platform.
 
+### vmmd surface
+
+A database node enables database VMs with a `[database_vms]` table in
+`vmmd.toml` (`kernel_path`, one base per major under `bases`, optional
+`jail_base` default `/srv/fc/dbjail`, `volume_root` default
+`/srv/db/volumes`, `parent_cgroup` default `faas.slice/faas-db.slice`).
+Without it the database RPCs return UNIMPLEMENTED. vmmd exposes
+`CreateDatabaseVolume`, `DeleteDatabaseVolume`, `StartDatabase`,
+`StopDatabase` and `DatabaseControl` (status and bootstrap only; stop always
+goes through `StopDatabase` so the jail is torn down with the VM). Database
+jails take their uid from the same allocator as app VMs, live under their
+own chroot base so the app-VM orphan sweep never touches them, and are
+recovered by jail id after a vmmd restart.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through

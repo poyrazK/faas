@@ -74,6 +74,11 @@ const (
 	Vmmd_AdoptMigratedInstance_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
 	Vmmd_AcknowledgeMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_CreateDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CreateDatabaseVolume"
+	Vmmd_DeleteDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DeleteDatabaseVolume"
+	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
+	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
+	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -522,6 +527,23 @@ type VmmdClient interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(ctx context.Context, in *CancelLiveMigrationRequest, opts ...grpc.CallOption) (*CancelLiveMigrationResponse, error)
+	// Database VMs (ADR-1027). One Firecracker VM per managed database on a
+	// database node, with a persistent volume and no network interface. vmmd
+	// returns UNIMPLEMENTED unless the node runs database VMs.
+	//
+	// CreateDatabaseVolume creates and formats the database's volume.
+	CreateDatabaseVolume(ctx context.Context, in *CreateDatabaseVolumeRequest, opts ...grpc.CallOption) (*CreateDatabaseVolumeResponse, error)
+	// DeleteDatabaseVolume removes a stopped database's volume. Deleting a
+	// missing volume succeeds.
+	DeleteDatabaseVolume(ctx context.Context, in *DeleteDatabaseVolumeRequest, opts ...grpc.CallOption) (*DeleteDatabaseVolumeResponse, error)
+	// StartDatabase cold-boots the database VM and returns once guest-init
+	// answers. Database VMs are never snapshotted.
+	StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error)
+	// StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
+	// jail teardown.
+	StopDatabase(ctx context.Context, in *StopDatabaseRequest, opts ...grpc.CallOption) (*StopDatabaseResponse, error)
+	// DatabaseControl relays one guest control request (status, bootstrap).
+	DatabaseControl(ctx context.Context, in *DatabaseControlRequest, opts ...grpc.CallOption) (*DatabaseControlResponse, error)
 }
 
 type vmmdClient struct {
@@ -1094,6 +1116,56 @@ func (c *vmmdClient) CancelLiveMigration(ctx context.Context, in *CancelLiveMigr
 	return out, nil
 }
 
+func (c *vmmdClient) CreateDatabaseVolume(ctx context.Context, in *CreateDatabaseVolumeRequest, opts ...grpc.CallOption) (*CreateDatabaseVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateDatabaseVolumeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CreateDatabaseVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) DeleteDatabaseVolume(ctx context.Context, in *DeleteDatabaseVolumeRequest, opts ...grpc.CallOption) (*DeleteDatabaseVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteDatabaseVolumeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DeleteDatabaseVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartDatabaseResponse)
+	err := c.cc.Invoke(ctx, Vmmd_StartDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) StopDatabase(ctx context.Context, in *StopDatabaseRequest, opts ...grpc.CallOption) (*StopDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopDatabaseResponse)
+	err := c.cc.Invoke(ctx, Vmmd_StopDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlRequest, opts ...grpc.CallOption) (*DatabaseControlResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseControlResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DatabaseControl_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1540,6 +1612,23 @@ type VmmdServer interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error)
+	// Database VMs (ADR-1027). One Firecracker VM per managed database on a
+	// database node, with a persistent volume and no network interface. vmmd
+	// returns UNIMPLEMENTED unless the node runs database VMs.
+	//
+	// CreateDatabaseVolume creates and formats the database's volume.
+	CreateDatabaseVolume(context.Context, *CreateDatabaseVolumeRequest) (*CreateDatabaseVolumeResponse, error)
+	// DeleteDatabaseVolume removes a stopped database's volume. Deleting a
+	// missing volume succeeds.
+	DeleteDatabaseVolume(context.Context, *DeleteDatabaseVolumeRequest) (*DeleteDatabaseVolumeResponse, error)
+	// StartDatabase cold-boots the database VM and returns once guest-init
+	// answers. Database VMs are never snapshotted.
+	StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error)
+	// StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
+	// jail teardown.
+	StopDatabase(context.Context, *StopDatabaseRequest) (*StopDatabaseResponse, error)
+	// DatabaseControl relays one guest control request (status, bootstrap).
+	DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1705,6 +1794,21 @@ func (UnimplementedVmmdServer) AcknowledgeMigration(context.Context, *Acknowledg
 }
 func (UnimplementedVmmdServer) CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelLiveMigration not implemented")
+}
+func (UnimplementedVmmdServer) CreateDatabaseVolume(context.Context, *CreateDatabaseVolumeRequest) (*CreateDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateDatabaseVolume not implemented")
+}
+func (UnimplementedVmmdServer) DeleteDatabaseVolume(context.Context, *DeleteDatabaseVolumeRequest) (*DeleteDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteDatabaseVolume not implemented")
+}
+func (UnimplementedVmmdServer) StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartDatabase not implemented")
+}
+func (UnimplementedVmmdServer) StopDatabase(context.Context, *StopDatabaseRequest) (*StopDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopDatabase not implemented")
+}
+func (UnimplementedVmmdServer) DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseControl not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -2587,6 +2691,96 @@ func _Vmmd_CancelLiveMigration_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_CreateDatabaseVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateDatabaseVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CreateDatabaseVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CreateDatabaseVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CreateDatabaseVolume(ctx, req.(*CreateDatabaseVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_DeleteDatabaseVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteDatabaseVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DeleteDatabaseVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DeleteDatabaseVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DeleteDatabaseVolume(ctx, req.(*DeleteDatabaseVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_StartDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).StartDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_StartDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).StartDatabase(ctx, req.(*StartDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_StopDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).StopDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_StopDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).StopDatabase(ctx, req.(*StopDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_DatabaseControl_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseControlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DatabaseControl(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DatabaseControl_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DatabaseControl(ctx, req.(*DatabaseControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2769,6 +2963,26 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelLiveMigration",
 			Handler:    _Vmmd_CancelLiveMigration_Handler,
+		},
+		{
+			MethodName: "CreateDatabaseVolume",
+			Handler:    _Vmmd_CreateDatabaseVolume_Handler,
+		},
+		{
+			MethodName: "DeleteDatabaseVolume",
+			Handler:    _Vmmd_DeleteDatabaseVolume_Handler,
+		},
+		{
+			MethodName: "StartDatabase",
+			Handler:    _Vmmd_StartDatabase_Handler,
+		},
+		{
+			MethodName: "StopDatabase",
+			Handler:    _Vmmd_StopDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseControl",
+			Handler:    _Vmmd_DatabaseControl_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

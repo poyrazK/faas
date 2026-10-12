@@ -29,6 +29,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// DatabaseVMs enables database VMs on a database node (ADR-1027).
+	DatabaseVMs *DatabaseVMConfig `toml:"database_vms"`
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`

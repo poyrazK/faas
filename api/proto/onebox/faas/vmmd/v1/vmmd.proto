@@ -511,6 +511,24 @@ service Vmmd {
   // paused VM and returns it to RUNNING; the snapshot stays
   // where it was (the dying vmmd's drive1 + mem are intact).
   rpc CancelLiveMigration(CancelLiveMigrationRequest) returns (CancelLiveMigrationResponse);
+
+  // Database VMs (ADR-1027). One Firecracker VM per managed database on a
+  // database node, with a persistent volume and no network interface. vmmd
+  // returns UNIMPLEMENTED unless the node runs database VMs.
+  //
+  // CreateDatabaseVolume creates and formats the database's volume.
+  rpc CreateDatabaseVolume(CreateDatabaseVolumeRequest) returns (CreateDatabaseVolumeResponse);
+  // DeleteDatabaseVolume removes a stopped database's volume. Deleting a
+  // missing volume succeeds.
+  rpc DeleteDatabaseVolume(DeleteDatabaseVolumeRequest) returns (DeleteDatabaseVolumeResponse);
+  // StartDatabase cold-boots the database VM and returns once guest-init
+  // answers. Database VMs are never snapshotted.
+  rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
+  // StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
+  // jail teardown.
+  rpc StopDatabase(StopDatabaseRequest) returns (StopDatabaseResponse);
+  // DatabaseControl relays one guest control request (status, bootstrap).
+  rpc DatabaseControl(DatabaseControlRequest) returns (DatabaseControlResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -2551,4 +2569,54 @@ message RestoreEnvironmentQualificationRequest {
 message RestoreEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   WakeResponse wake = 2;
+}
+
+// Database VMs (ADR-1027). database_id is the managed database's UUID.
+message CreateDatabaseVolumeRequest {
+  string database_id = 1;
+  int64 size_bytes = 2;
+}
+
+message CreateDatabaseVolumeResponse {}
+
+message DeleteDatabaseVolumeRequest {
+  string database_id = 1;
+}
+
+message DeleteDatabaseVolumeResponse {}
+
+message StartDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  int32 vcpu_count = 3;
+  int32 mem_size_mib = 4;
+  // Optional volume ceilings per service class; zero means unlimited.
+  int64 volume_bandwidth_bytes_per_sec = 5;
+  int64 volume_ops_per_sec = 6;
+}
+
+message StartDatabaseResponse {
+  // Guest state after boot: needs_bootstrap, starting or ready.
+  string state = 1;
+}
+
+message StopDatabaseRequest {
+  string database_id = 1;
+}
+
+message StopDatabaseResponse {}
+
+message DatabaseControlRequest {
+  string database_id = 1;
+  // One of status, bootstrap. Stop goes through StopDatabase.
+  string op = 2;
+  // Bootstrap only. Sensitive: never logged.
+  string superuser_password = 3;
+}
+
+message DatabaseControlResponse {
+  string state = 1;
+  int32 postgres_major = 2;
+  // Stable guest error code; never PostgreSQL output.
+  string error_code = 3;
 }
