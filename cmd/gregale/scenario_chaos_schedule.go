@@ -43,22 +43,23 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 		totalDuration += phase.Duration
 	}
 	for i, phase := range phases {
-		phaseTransitioned := false
 		if i == 0 {
 			clock.start(startedAt)
 		} else {
 			if !waitUntilTestChaosSchedule(ctx, startedAt.Add(offset)) {
 				return result, ctx.Err()
 			}
+			if active != nil && len(phase.Rules) > 0 {
+				return result, fmt.Errorf("fault phase %q must be followed by a no-rule phase before phase %q", phases[activeIndex].Name, phase.Name)
+			}
+			// Requests can continue while the control API applies the next plan.
+			// Start the measurement window first so they are attributed to the phase
+			// whose state they observe, not the phase that just ended.
+			clock.transition(i, time.Now())
 			if active != nil {
-				if len(phase.Rules) > 0 {
-					return result, fmt.Errorf("fault phase %q must be followed by a no-rule phase before phase %q", phases[activeIndex].Name, phase.Name)
-				}
 				if clearErr := client.ClearScenarioTestChaos(ctx, runID); clearErr != nil {
 					return result, fmt.Errorf("clear chaos before phase %q: %w", phase.Name, clearErr)
 				}
-				clock.transition(i, time.Now())
-				phaseTransitioned = true
 				activeCaptured = true
 				captureErr := captureTestChaosMatches(ctx, client, runID, active)
 				result.Phases[activeIndex] = active
@@ -82,9 +83,6 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 				active = newTestChaosEvidence(&testChaosSpec{Rules: phase.Rules}, plan, installed)
 				activeIndex, activeCaptured = i, false
 				result.Phases[i] = active
-			}
-			if !phaseTransitioned {
-				clock.transition(i, time.Now())
 			}
 		}
 		offset += phase.Duration
