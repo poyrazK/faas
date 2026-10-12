@@ -51,12 +51,9 @@ class AlertRuleResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"
-    """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
-    the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
-    promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task metrics support webhook only.
-   """
-    promote = short-circuit the canary ladder to 100%. Pre-auth target and event consumer and workflow metrics
-    support webhook only."""
+    """What to do when the rule fires. webhook fires the configured webhook; rollback restores the last live
+    deployment; demote pins the current canary step; promote advances to 100%. Pre-auth target, MCP task,
+    event consumer, and workflow metrics support webhook only."""
     event_subscription_id: UUID | Unset = UNSET
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
