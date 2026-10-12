@@ -765,6 +765,7 @@ var cliCommands = []cliCommand{
 			"gregale ai usage <integration-id> --date 2026-10-11",
 			"gregale ai policy <integration-id> --user-daily-tokens 200000 --user-daily-cost 2",
 			"gregale ai users <integration-id> --limit 20",
+			"gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv",
 			"gregale ai catalog openai --model gpt-4o-mini",
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
@@ -800,10 +801,13 @@ var cliCommands = []cliCommand{
 			{Name: "usage", Short: "Show one UTC day of token usage and cost by caller and model", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 90 days", Value: "YYYY-MM-DD"},
 			}},
-			{Name: "users", Short: "Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "users", Short: "Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range", Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 31 days", Value: "YYYY-MM-DD"},
 				{Name: "user", Short: "show only this end user", Value: "ID"},
 				{Name: "limit", Short: "end users to show, 1 to 1000", Value: "N"},
+				{Name: "from", Short: "export: first UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
+				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
+				{Name: "format", Short: "export format", Value: "csv|ndjson", ClosedSet: []string{"csv", "ndjson"}},
 			}},
 			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes", Positionals: []string{"<list|create|set|rm>", "[<route-id>]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},

@@ -144,7 +144,7 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, budget, app_id, period_start, threshold_percent, limit_value, used_value, crossed_at
+		SELECT id, budget, app_id, COALESCE(end_user, ''), period_start, threshold_percent, limit_value, used_value, crossed_at
 		  FROM outbound_ai_budget_alerts
 		 WHERE account_id = $1 AND integration_id = $2
 		 ORDER BY crossed_at DESC, threshold_percent DESC, id
@@ -158,7 +158,7 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		var id, appID pgtype.UUID
 		var periodStart time.Time
 		alert := OutboundAIBudgetAlert{IntegrationID: integrationID}
-		if err := rows.Scan(&id, &alert.Budget, &appID, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used, &alert.CrossedAt); err != nil {
+		if err := rows.Scan(&id, &alert.Budget, &appID, &alert.EndUser, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used, &alert.CrossedAt); err != nil {
 			return nil, mapErr(err)
 		}
 		alert.ID, alert.PeriodStart, alert.CrossedAt = pgUUIDString(id), periodStart.UTC(), alert.CrossedAt.UTC()

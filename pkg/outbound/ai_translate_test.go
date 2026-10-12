@@ -101,10 +101,10 @@ func TestOpenAIToGeminiRequest(t *testing.T) {
 
 func TestTranslationRefusesWhatItCannotExpress(t *testing.T) {
 	for name, tc := range map[string]struct{ provider, body, model string }{
-		"n above one":       {api.OutboundAIProviderAnthropic, `{"n":2,"messages":[{"role":"user","content":"x"}]}`, "c"},
-		"unknown role":      {api.OutboundAIProviderAnthropic, `{"messages":[{"role":"function","content":"x"}]}`, "c"},
-		"no model":          {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":"x"}]}`, ""},
-		"remote gemini img": {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, "g"},
+		"n above one":        {api.OutboundAIProviderAnthropic, `{"n":2,"messages":[{"role":"user","content":"x"}]}`, "c"},
+		"unknown role":       {api.OutboundAIProviderAnthropic, `{"messages":[{"role":"function","content":"x"}]}`, "c"},
+		"no model":           {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":"x"}]}`, ""},
+		"remote gemini img":  {api.OutboundAIProviderGemini, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, "g"},
 		"bedrock remote img": {api.OutboundAIProviderBedrock, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, "b"},
 	} {
 		if _, err := translateRouteRequest(Integration{AIProvider: tc.provider}, "/v1/chat/completions", "", []byte(tc.body), tc.model); !errors.Is(err, errTranslationUnsupported) {

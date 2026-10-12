@@ -80,6 +80,16 @@ func TestEndUserDailyLimitsAndAttribution(t *testing.T) {
 	if len(log) != 3 || log[0].EndUser != "user:alice@example.com" || log[1].EndUser != "user:bob" || log[2].EndUser != "" {
 		t.Fatalf("request log end users = %+v", log)
 	}
+	// ADR-993: 50 of each user's 60 tokens crosses that user's 80% alert.
+	userAlerts := map[string]int{}
+	for _, alert := range backend.AIBudgetAlerts("integration-1") {
+		if alert.Budget == api.OutboundAIBudgetUserDailyTokens {
+			userAlerts[alert.EndUser] = alert.ThresholdPercent
+		}
+	}
+	if len(userAlerts) != 2 || userAlerts["user:alice@example.com"] != 80 || userAlerts["user:bob"] != 80 {
+		t.Fatalf("per-user alerts = %v", userAlerts)
+	}
 }
 
 func TestMemoryBackendCapsDistinctEndUsers(t *testing.T) {

@@ -166,6 +166,10 @@ func (s *Service) ListBudgetAlerts(w http.ResponseWriter, r *http.Request, acct 
 				appID := alert.AppID
 				item.AppID = &appID
 			}
+			if alert.EndUser != "" {
+				endUser := alert.EndUser
+				item.EndUser = &endUser
+			}
 			out.Items = append(out.Items, item)
 		}
 		w.Header().Set("Cache-Control", "no-store")

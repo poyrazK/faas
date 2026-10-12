@@ -31,16 +31,19 @@ func postgresAIUserState(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 // insertAIUserUsageRollup adds a call that names an end user to that user's
 // UTC-day row. A new user may only add a row while the day has fewer than
 // the capped number of distinct users; later ones aggregate under the
-// overflow row, so a caller cannot grow the table without bound.
-func insertAIUserUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord) error {
+// overflow row, so a caller cannot grow the table without bound. It returns
+// the row the call landed in, with its day totals, for budget alerts
+// (ADR-993).
+func insertAIUserUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord) (aiUserDay, error) {
 	if record.EndUser == "" {
-		return nil
+		return aiUserDay{}, nil
 	}
 	var errorRequests int64
 	if record.Outcome == AIUsageOutcomeError {
 		errorRequests = 1
 	}
-	_, err := tx.Exec(ctx, `
+	var day aiUserDay
+	err := tx.QueryRow(ctx, `
 		INSERT INTO outbound_ai_user_usage_daily AS usage
 		    (integration_id, usage_date, end_user, requests, error_requests, input_tokens, output_tokens, cost_millicents)
 		SELECT $1, day.today,
@@ -58,8 +61,15 @@ func insertAIUserUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.
 		    input_tokens = usage.input_tokens + EXCLUDED.input_tokens,
 		    output_tokens = usage.output_tokens + EXCLUDED.output_tokens,
 		    cost_millicents = usage.cost_millicents + EXCLUDED.cost_millicents,
-		    updated_at = now()`,
+		    updated_at = now()
+		RETURNING end_user, input_tokens + output_tokens, cost_millicents`,
 		integrationID, record.EndUser, api.OutboundAIUsersPerDay, api.OutboundAIUserOverflow, errorRequests,
-		record.Usage.InputTokens, record.Usage.OutputTokens, record.CostMillicents)
-	return err
+		record.Usage.InputTokens, record.Usage.OutputTokens, record.CostMillicents).Scan(&day.endUser, &day.tokens, &day.cost)
+	return day, err
+}
+
+// aiUserDay is the per-user rollup row a settlement landed in.
+type aiUserDay struct {
+	endUser      string
+	tokens, cost int64
 }

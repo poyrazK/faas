@@ -5616,6 +5616,7 @@ type OutboundAiBudgetAlert struct {
 	LimitValue       int64
 	UsedValue        int64
 	CrossedAt        pgtype.Timestamptz
+	EndUser          pgtype.Text
 }
 
 type OutboundAiPriceEntry struct {

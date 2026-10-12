@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +113,37 @@ func TestCmdAIJSONOutput(t *testing.T) {
 		if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 			t.Fatalf("gregale ai %v --json is not JSON: %v\n%s", args, err, buf.String())
 		}
+	}
+}
+
+// adr: 993 — `gregale ai users export` writes the server's CSV unchanged
+// and asks for the requested range.
+func TestCmdAIUsersExport(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/outbound/integrations/int-1/ai-usage/users/export" {
+			http.NotFound(w, r)
+			return
+		}
+		query = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/csv")
+		_, _ = io.WriteString(w, "usage_date,end_user\n2026-10-12,user-1\n")
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdAI([]string{"users", "export", "int-1", "--from", "2026-10-01"}); code != 0 {
+		t.Fatalf("export exit = %d", code)
+	}
+	if buf.String() != "usage_date,end_user\n2026-10-12,user-1\n" || query != "format=csv&from=2026-10-01" {
+		t.Fatalf("export output %q, query %q", buf.String(), query)
+	}
+	if code := cmdAI([]string{"users", "export", "int-1", "--format", "xml"}); code == 0 {
+		t.Fatal("an unknown export format was accepted")
 	}
 }
 

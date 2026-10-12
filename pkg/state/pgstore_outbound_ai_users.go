@@ -12,6 +12,58 @@ import (
 
 var _ OutboundAIUserStore = (*PgStore)(nil)
 
+// outboundAIUserExportBatch is the keyset page size of a per-user export.
+const outboundAIUserExportBatch = 2000
+
+// ExportOutboundAIUserUsage pages the range by (usage_date, end_user), so
+// a whole retention window of capped rows streams without being held.
+func (s *PgStore) ExportOutboundAIUserUsage(ctx context.Context, accountID, integrationID, from, to string,
+	visit func(OutboundAIUserUsageRow) error) error {
+	from, to, ok := outboundAIUserExportRange(from, to, time.Now())
+	if !ok {
+		return ErrInvalidArgument
+	}
+	if err := s.outboundManagedIntegrationExists(ctx, accountID, integrationID); err != nil {
+		return err
+	}
+	afterDate, afterUser := from, ""
+	for {
+		rows, err := s.pool.Query(ctx, `
+			SELECT usage_date::text, end_user, requests, error_requests, input_tokens, output_tokens, cost_millicents
+			  FROM outbound_ai_user_usage_daily
+			 WHERE integration_id = $1 AND (usage_date, end_user) > ($2::date, $3) AND usage_date <= $4::date
+			 ORDER BY usage_date, end_user
+			 LIMIT $5`, mustPgUUID(integrationID), afterDate, afterUser, to, outboundAIUserExportBatch)
+		if err != nil {
+			return mapErr(err)
+		}
+		batch := make([]OutboundAIUserUsageRow, 0, outboundAIUserExportBatch)
+		for rows.Next() {
+			var row OutboundAIUserUsageRow
+			if err := rows.Scan(&row.UsageDate, &row.EndUser, &row.Requests, &row.ErrorRequests, &row.InputTokens,
+				&row.OutputTokens, &row.CostMillicents); err != nil {
+				rows.Close()
+				return mapErr(err)
+			}
+			batch = append(batch, row)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return mapErr(err)
+		}
+		for _, row := range batch {
+			if err := visit(row); err != nil {
+				return err
+			}
+		}
+		if len(batch) < outboundAIUserExportBatch {
+			return nil
+		}
+		last := batch[len(batch)-1]
+		afterDate, afterUser = last.UsageDate, last.EndUser
+	}
+}
+
 // GetOutboundAIUserUsage reads one UTC day of per-end-user rollups (ADR-992),
 // ordered by cost, then tokens, then end user.
 func (s *PgStore) GetOutboundAIUserUsage(ctx context.Context, accountID, integrationID, usageDate, endUser string, limit int) (OutboundAIUserUsage, error) {

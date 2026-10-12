@@ -6527,6 +6527,7 @@
       "app_id",
       "budget",
       "crossed_at",
+      "end_user",
       "id",
       "integration_id",
       "limit_value",

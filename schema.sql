@@ -24146,8 +24146,10 @@ CREATE TABLE public.outbound_ai_budget_alerts (
     limit_value bigint NOT NULL,
     used_value bigint NOT NULL,
     crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    end_user text,
     CONSTRAINT outbound_ai_budget_alerts_app_chk CHECK (((budget = 'app_daily_tokens'::text) = (app_id IS NOT NULL))),
-    CONSTRAINT outbound_ai_budget_alerts_budget_chk CHECK ((budget = ANY (ARRAY['daily_tokens'::text, 'app_daily_tokens'::text, 'daily_cost'::text, 'monthly_cost'::text]))),
+    CONSTRAINT outbound_ai_budget_alerts_budget_chk CHECK ((budget = ANY (ARRAY['daily_tokens'::text, 'app_daily_tokens'::text, 'daily_cost'::text, 'monthly_cost'::text, 'user_daily_tokens'::text, 'user_daily_cost'::text]))),
+    CONSTRAINT outbound_ai_budget_alerts_end_user_chk CHECK ((((budget = ANY (ARRAY['user_daily_tokens'::text, 'user_daily_cost'::text])) = (end_user IS NOT NULL)) AND ((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)))),
     CONSTRAINT outbound_ai_budget_alerts_threshold_chk CHECK ((threshold_percent = ANY (ARRAY[80, 100]))),
     CONSTRAINT outbound_ai_budget_alerts_values_chk CHECK (((limit_value >= 1) AND (used_value >= 0)))
 );
@@ -40370,7 +40372,7 @@ CREATE INDEX outbound_ai_user_usage_daily_prune_idx ON public.outbound_ai_user_u
 -- Name: outbound_ai_budget_alerts_once_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), period_start, threshold_percent);
+CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(end_user, ''::text), period_start, threshold_percent);
 
 
 --

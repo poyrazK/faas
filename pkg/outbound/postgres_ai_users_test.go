@@ -123,6 +123,22 @@ func TestPostgresEndUserDailyTokenLimit(t *testing.T) {
 	if err != nil || len(offers) != 1 || offers[0].AIUserDailyTokenLimit == nil || *offers[0].AIUserDailyTokenLimit != userLimit {
 		t.Fatalf("offers = %+v, %v", offers, err)
 	}
+	// ADR-993: 50 of alice's 60 tokens records her 80% alert once.
+	alerts, err := store.ListOutboundAIBudgetAlerts(ctx, account.ID, offer.ID, 10)
+	if err != nil || len(alerts) != 1 || alerts[0].Budget != api.OutboundAIBudgetUserDailyTokens || alerts[0].EndUser != "alice" ||
+		alerts[0].ThresholdPercent != 80 || alerts[0].AppID != "" || alerts[0].Used != 50 {
+		t.Fatalf("alerts = %+v, %v", alerts, err)
+	}
+	var exported []state.OutboundAIUserUsageRow
+	if err := store.ExportOutboundAIUserUsage(ctx, account.ID, offer.ID, "", "", func(row state.OutboundAIUserUsageRow) error {
+		exported = append(exported, row)
+		return nil
+	}); err != nil || len(exported) != 1 || exported[0].EndUser != "alice" || exported[0].InputTokens != 40 {
+		t.Fatalf("export = %+v, %v", exported, err)
+	}
+	if err := store.ExportOutboundAIUserUsage(ctx, account.ID, offer.ID, "2001-01-01", "", func(state.OutboundAIUserUsageRow) error { return nil }); err == nil {
+		t.Fatal("an export outside the retention was accepted")
+	}
 	if _, err := backend.PruneAIUsage(ctx); err != nil {
 		t.Fatal(err)
 	}

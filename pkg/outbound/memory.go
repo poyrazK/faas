@@ -212,7 +212,8 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
 	state.aiLimits = aiBudgetLimits{dailyTokens: copyInt64Pointer(spec.DailyAITokenLimit),
-		dailyCost: copyInt64Pointer(spec.DailyAICostLimit), monthlyCost: copyInt64Pointer(spec.MonthlyAICostLimit)}
+		dailyCost: copyInt64Pointer(spec.DailyAICostLimit), monthlyCost: copyInt64Pointer(spec.MonthlyAICostLimit),
+		userTokens: copyInt64Pointer(spec.UserDailyAITokenLimit), userCost: copyInt64Pointer(spec.UserDailyAICostLimit)}
 	if spec.BindingAppID != "" {
 		if state.bindingTokenLimits == nil {
 			state.bindingTokenLimits = make(map[string]*int64)
@@ -564,17 +565,19 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.OutputTokens += record.Usage.OutputTokens
 	row.CostMillicents += record.CostMillicents
 	state.aiUsage[key] = row
-	if record.EndUser != "" {
-		state.recordUserUsage(record)
-	}
 	crossings := []aiBudgetCrossing{
-		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount},
-		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost},
-		{api.OutboundAIBudgetMonthlyCost, "", utcMonthStart(utcNow), state.aiLimits.monthlyCost, before.monthlyCost, state.monthlyAICost},
+		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, ""},
+		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost, ""},
+		{api.OutboundAIBudgetMonthlyCost, "", utcMonthStart(utcNow), state.aiLimits.monthlyCost, before.monthlyCost, state.monthlyAICost, ""},
+	}
+	if record.EndUser != "" {
+		endUser, totals := state.recordUserUsage(record)
+		crossings = append(crossings, userBudgetCrossings(endUser, utcDayStart(utcNow), state.aiLimits.userTokens, state.aiLimits.userCost,
+			totals.InputTokens+totals.OutputTokens, totals.CostMillicents, record.Usage.InputTokens+record.Usage.OutputTokens, record.CostMillicents)...)
 	}
 	if record.Caller != AIUsageCallerRuns {
 		crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, utcDayStart(utcNow),
-			state.bindingTokenLimits[record.Caller], before.bindingTokens, state.bindingAITokenCounts[record.Caller]})
+			state.bindingTokenLimits[record.Caller], before.bindingTokens, state.bindingAITokenCounts[record.Caller], ""})
 	}
 	var recorded []AIBudgetAlert
 	for _, alert := range aiBudgetAlertsFor(record.IntegrationID, crossings, utcNow) {
@@ -595,8 +598,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 }
 
 // recordUserUsage adds a call to its end user's rollup. Beyond the per-day
-// cap of distinct users, calls aggregate under the overflow row.
-func (s *memoryState) recordUserUsage(record AIUsageRecord) {
+// cap of distinct users, calls aggregate under the overflow row. It returns
+// the row's user and totals.
+func (s *memoryState) recordUserUsage(record AIUsageRecord) (string, AIUserUsageTotals) {
 	endUser := record.EndUser
 	if _, exists := s.userUsage[endUser]; !exists && len(s.userUsage) >= api.OutboundAIUsersPerDay {
 		endUser = api.OutboundAIUserOverflow
@@ -610,6 +614,7 @@ func (s *memoryState) recordUserUsage(record AIUsageRecord) {
 	row.OutputTokens += record.Usage.OutputTokens
 	row.CostMillicents += record.CostMillicents
 	s.userUsage[endUser] = row
+	return endUser, row
 }
 
 // AIUserUsage reports one end user's UTC-day rollup for tests.
@@ -626,7 +631,7 @@ func (b *MemoryBackend) AIUserUsage(integrationID, endUser string) (AIUserUsageT
 
 func memoryAlertSeen(alerts []AIBudgetAlert, alert AIBudgetAlert) bool {
 	for _, seen := range alerts {
-		if seen.Budget == alert.Budget && seen.AppID == alert.AppID && seen.PeriodStart.Equal(alert.PeriodStart) &&
+		if seen.Budget == alert.Budget && seen.AppID == alert.AppID && seen.EndUser == alert.EndUser && seen.PeriodStart.Equal(alert.PeriodStart) &&
 			seen.ThresholdPercent == alert.ThresholdPercent {
 			return true
 		}

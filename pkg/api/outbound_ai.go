@@ -307,7 +307,15 @@ const (
 	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
 	OutboundAIBudgetDailyCost      = "daily_cost"
 	OutboundAIBudgetMonthlyCost    = "monthly_cost"
+	// Per-end-user UTC-day budgets (ADR-993); their alerts name EndUser.
+	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
+	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
 )
+
+// OutboundAIBudgetIsPerUser reports whether a budget is one end user's.
+func OutboundAIBudgetIsPerUser(budget string) bool {
+	return budget == OutboundAIBudgetUserDailyTokens || budget == OutboundAIBudgetUserDailyCost
+}
 
 // OutboundAIBudgetAlert records the first settlement that reached a
 // threshold of one budget in one period. Limit and Used are tokens for
@@ -317,6 +325,7 @@ type OutboundAIBudgetAlert struct {
 	IntegrationID    string    `json:"integration_id"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -336,6 +345,7 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	IntegrationName  string    `json:"integration_name"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -424,6 +434,17 @@ type OutboundAIUserUsageResponse struct {
 	TrackedUsers                 int64                     `json:"tracked_users"`
 	Items                        []OutboundAIUserUsageItem `json:"items"`
 }
+
+// OutboundAIUserUsageExportRow is one NDJSON line of a per-end-user usage
+// export (ADR-993); the CSV export has the same columns in this order.
+type OutboundAIUserUsageExportRow struct {
+	UsageDate string `json:"usage_date"`
+	OutboundAIUserUsageItem
+}
+
+// OutboundAIUserUsageExportColumns names the CSV export's header row.
+var OutboundAIUserUsageExportColumns = []string{"usage_date", "end_user", "requests", "error_requests",
+	"input_tokens", "output_tokens", "tokens", "cost_millicents"}
 
 // OutboundAIRequestLogList is one newest-first page. NextBefore, when set,
 // is the created_at cursor for the next page.

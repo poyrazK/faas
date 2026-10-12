@@ -28,10 +28,28 @@ type OutboundAIUserUsage struct {
 	Items               []OutboundAIUserUsageItem
 }
 
+// OutboundAIUserUsageRow is one end user's UTC day in an export (ADR-993).
+type OutboundAIUserUsageRow struct {
+	UsageDate string
+	OutboundAIUserUsageItem
+}
+
 // OutboundAIUserStore reads the per-end-user rollups outboundd writes. An
 // empty endUser lists the day's top users; otherwise only that user's row.
 type OutboundAIUserStore interface {
 	GetOutboundAIUserUsage(ctx context.Context, accountID, integrationID, usageDate, endUser string, limit int) (OutboundAIUserUsage, error)
+	// ExportOutboundAIUserUsage visits every per-user row of the UTC days
+	// from through to, ordered by day and end user (ADR-993). It returns
+	// ErrNotFound or ErrInvalidArgument before visiting any row.
+	ExportOutboundAIUserUsage(ctx context.Context, accountID, integrationID, from, to string, visit func(OutboundAIUserUsageRow) error) error
+}
+
+// outboundAIUserExportRange validates an export's inclusive day range; both
+// days must be inside the per-user rollup retention.
+func outboundAIUserExportRange(from, to string, now time.Time) (string, string, bool) {
+	from, okFrom := outboundAIUserUsageQuery(from, "", now)
+	to, okTo := outboundAIUserUsageQuery(to, "", now)
+	return from, to, okFrom && okTo && from <= to
 }
 
 // outboundAIUserUsageQuery validates a per-user usage read and defaults the

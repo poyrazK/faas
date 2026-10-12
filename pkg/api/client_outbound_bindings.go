@@ -147,6 +147,24 @@ func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ExportOutboundAIUserUsage downloads the per-end-user usage of the UTC
+// days from through to (empty means today) as "csv" or "ndjson" (the
+// server default) (ADR-993).
+func (c *Client) ExportOutboundAIUserUsage(ctx context.Context, integrationID, from, to, format string) ([]byte, error) {
+	query := url.Values{}
+	for name, value := range map[string]string{"from": from, "to": to, "format": format} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/users/export"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) ListOutboundAIRoutes(ctx context.Context) (OutboundAIRouteList, error) {
 	var out OutboundAIRouteList
 	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes", nil, &out)

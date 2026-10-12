@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -46,6 +47,45 @@ func (m *MemStore) GetOutboundAIUserUsage(_ context.Context, accountID, integrat
 		usage.Items = usage.Items[:page]
 	}
 	return usage, nil
+}
+
+// ExportOutboundAIUserUsage mirrors the PgStore export over seeded rollups.
+func (m *MemStore) ExportOutboundAIUserUsage(_ context.Context, accountID, integrationID, from, to string,
+	visit func(OutboundAIUserUsageRow) error) error {
+	from, to, ok := outboundAIUserExportRange(from, to, time.Now())
+	if !ok {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	offer, found := m.outboundIntegrationOffers[integrationID]
+	var rows []OutboundAIUserUsageRow
+	if found && offer.AccountID == accountID {
+		for key, items := range m.outboundAIUserUsage {
+			id, day, _ := strings.Cut(key, "/")
+			if id != integrationID || day < from || day > to {
+				continue
+			}
+			for _, item := range items {
+				rows = append(rows, OutboundAIUserUsageRow{UsageDate: day, OutboundAIUserUsageItem: item})
+			}
+		}
+	}
+	m.mu.Unlock()
+	if !found || offer.AccountID != accountID {
+		return ErrNotFound
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].UsageDate != rows[j].UsageDate {
+			return rows[i].UsageDate < rows[j].UsageDate
+		}
+		return rows[i].EndUser < rows[j].EndUser
+	})
+	for _, row := range rows {
+		if err := visit(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SeedOutboundAIUserUsage stands in for outboundd's per-user rollup writes

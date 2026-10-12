@@ -51,10 +51,14 @@ func cmdAICatalog(args []string) int {
 	return 0
 }
 
-const aiUsersUsage = "usage: gregale ai users <integration-id> [--date YYYY-MM-DD] [--user ID] [--limit N]"
+const aiUsersUsage = "usage: gregale ai users <integration-id> [--date YYYY-MM-DD] [--user ID] [--limit N] | " +
+	"gregale ai users export <integration-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--format csv|ndjson]"
 
 // cmdAIUsers lists one UTC day's end users by cost, then tokens.
 func cmdAIUsers(args []string) int {
+	if len(args) > 0 && args[0] == "export" {
+		return cmdAIUsersExport(args[1:])
+	}
 	fs := newFlagSet("ai users", flag.ContinueOnError)
 	date := fs.String("date", "", "UTC day within the last 31 days (default today)")
 	user := fs.String("user", "", "show only this end user")
@@ -82,5 +86,27 @@ func cmdAIUsers(args []string) int {
 			item.InputTokens, item.OutputTokens, financialMoney(item.CostMillicents))
 	}
 	_ = tw.Flush()
+	return 0
+}
+
+// cmdAIUsersExport writes a day range of per-end-user usage to stdout, CSV
+// by default, for billing an app's own users (ADR-993).
+func cmdAIUsersExport(args []string) int {
+	fs := newFlagSet("ai users export", flag.ContinueOnError)
+	from := fs.String("from", "", "first UTC day within the last 31 days (default today)")
+	to := fs.String("to", "", "last UTC day (default today)")
+	format := fs.String("format", "csv", "csv or ndjson")
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || (*format != "csv" && *format != "ndjson") {
+		return printErr("Invalid ai users export arguments", errors.New(aiUsersUsage))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	body, err := client.ExportOutboundAIUserUsage(context.Background(), fs.Arg(0), *from, *to, *format)
+	if err != nil {
+		return printErr("Could not export AI usage by end user", err)
+	}
+	_, _ = osStdout.Write(body)
 	return 0
 }
