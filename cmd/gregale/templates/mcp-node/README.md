@@ -340,7 +340,7 @@ with `previousVersions: { '1': executeV1 }` or keep the old worker until it drai
 
 `npm run start:tasks-observer` publishes aggregate queue metrics from a separate
 always-running process, allowing worker replicas to start from zero. Give it a
-read-only database credential with `SELECT` on both `gregale_mcp_tasks` and
+read-only database credential with `SELECT` on `gregale_mcp_tasks`, `gregale_mcp_task_workers` and
 `gregale_mcp_task_worker_handlers`, the shared namespace and worker scaling metrics
 credentials. Set `MCP_TASKS_SCALING_APP_SLUG` to the worker slug you pass as
 `--app`. It needs no owner key and never migrates schema or claims tasks.

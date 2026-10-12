@@ -1007,28 +1007,30 @@ function createDeploymentCompatibilityObserver({ pool, namespace, verifyReadOnly
     ].some(Boolean)) {
       throw new Error('MCP task observer requires read-only PostgreSQL access');
     }
-    const capabilityResult = await pool.query(`
-      SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
-                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
-                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
-                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
-             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
-             COALESCE((SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
-                         FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
-                        WHERE c.oid=pg_catalog.to_regclass($1)::oid), false) AS can_create_in_task_schema
-    `, [WORKER_HANDLERS_TABLE]);
-    const capabilityRow = capabilityResult.rows?.[0];
-    if (!capabilityRow || capabilityRow.table_exists !== true || [
-      capabilityRow.can_insert, capabilityRow.can_update, capabilityRow.can_delete,
-      capabilityRow.can_truncate, capabilityRow.can_reference, capabilityRow.can_create_trigger,
-      capabilityRow.can_create_in_task_schema,
-    ].some(Boolean)) {
-      throw new Error('MCP task observer requires read-only PostgreSQL access');
+    for (const capabilityTable of [WORKER_HANDLERS_TABLE, WORKER_TABLE]) {
+      const capabilityResult = await pool.query(`
+        SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
+               COALESCE((SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
+                           FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
+                          WHERE c.oid=pg_catalog.to_regclass($1)::oid), false) AS can_create_in_task_schema
+      `, [capabilityTable]);
+      const capabilityRow = capabilityResult.rows?.[0];
+      if (!capabilityRow || capabilityRow.table_exists !== true || [
+        capabilityRow.can_insert, capabilityRow.can_update, capabilityRow.can_delete,
+        capabilityRow.can_truncate, capabilityRow.can_reference, capabilityRow.can_create_trigger,
+        capabilityRow.can_create_in_task_schema,
+      ].some(Boolean)) {
+        throw new Error('MCP task observer requires read-only PostgreSQL access');
+      }
     }
   }
 
