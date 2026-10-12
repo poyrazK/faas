@@ -1089,10 +1089,50 @@ if (process.env.FAAS_PERSISTENT_WORKER === "1") {
   process.stdout.write(JSON.stringify({ __faas_ready: true }) + "\n");
 }
 
+// Response frames (ADR-999): one line is a complete response; a "head" line
+// starts a streamed one that "chunk" lines continue and "end" closes.
+let streaming = false;
+const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
+const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
+  : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
+  : Buffer.from(String(piece));
+const emitWhole = (status, headers, bytes) => emit({ status, headers, body_b64: bytes.toString("base64") });
+const emitHead = (status, headers) => { streaming = true; emit({ frame: "head", status, headers }); };
+const emitChunk = (bytes) => { if (bytes.length > 0) emit({ frame: "chunk", body_b64: bytes.toString("base64") }); };
+const isStreamBody = (body) => body !== null && typeof body === "object" && !Buffer.isBuffer(body) &&
+  !(body instanceof Uint8Array) && typeof body[Symbol.asyncIterator] === "function";
+async function streamIterable(status, headers, body) {
+  emitHead(status, headers);
+  for await (const piece of body) emitChunk(toBuffer(piece));
+  emit({ frame: "end" });
+}
+// A Fetch API body already complete within one turn of the event loop is
+// sent as one response, exactly as before; a body still being produced
+// (server-sent events, generated text) is streamed as it arrives.
+async function respondFetchBody(status, headers, body) {
+  if (!body) { emitWhole(status, headers, Buffer.alloc(0)); return; }
+  const reader = body.getReader();
+  const pending = Symbol("pending");
+  const buffered = [];
+  let read = reader.read();
+  for (;;) {
+    const next = await Promise.race([read, new Promise((resolve) => setImmediate(resolve, pending))]);
+    if (next === pending) break;
+    if (next.done) { emitWhole(status, headers, Buffer.concat(buffered)); return; }
+    buffered.push(toBuffer(next.value));
+    read = reader.read();
+  }
+  emitHead(status, headers);
+  emitChunk(Buffer.concat(buffered));
+  for (let next = await read; !next.done; next = await reader.read()) emitChunk(toBuffer(next.value));
+  emit({ frame: "end" });
+}
+
 const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of lines) {
   if (!line.trim()) continue;
   let invocationID = "";
+  streaming = false;
   try {
   const env = JSON.parse(line);
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
@@ -1144,34 +1184,52 @@ for await (const line of lines) {
     };
     value = await eventHandler(event, ctx);
   }
+  if (value && typeof value === "object" && typeof value.arrayBuffer === "function" &&
+      typeof value.status === "number" && value.headers) {
+    // Every Set-Cookie line survives (ADR-999); other repeated headers are
+    // already combined by the Headers object.
+    const fetchHeaders = {};
+    for (const [key, item] of value.headers.entries()) {
+      if (key.toLowerCase() !== "set-cookie") fetchHeaders[key] = item;
+    }
+    const cookies = typeof value.headers.getSetCookie === "function" ? value.headers.getSetCookie() : [];
+    if (cookies.length > 0) fetchHeaders["set-cookie"] = cookies;
+    await respondFetchBody(value.status, fetchHeaders, value.body);
+    continue;
+  }
   let status = 200;
   let responseHeaders = {};
   let responseBody = value;
-  if (value && typeof value === "object" && typeof value.arrayBuffer === "function" &&
-      typeof value.status === "number" && value.headers) {
-    status = value.status;
-    responseHeaders = Object.fromEntries(value.headers.entries());
-    responseBody = Buffer.from(await value.arrayBuffer());
-  } else if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
+  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
     status = Number(value.statusCode ?? value.status ?? 200);
     responseHeaders = value.headers || {};
     if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+  }
+  // A header value may be a list, one line per element (ADR-999).
+  const normalizedHeaders = {};
+  for (const [key, item] of Object.entries(responseHeaders)) {
+    normalizedHeaders[key] = Array.isArray(item) ? item.map(String) : String(item);
+  }
+  // An async iterable body (async generator, Node stream) is streamed.
+  if (isStreamBody(responseBody)) {
+    await streamIterable(status, normalizedHeaders, responseBody);
+    continue;
   }
   if (responseBody === undefined || responseBody === null) responseBody = "";
   if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
     responseBody = JSON.stringify(responseBody);
   }
-  const normalizedHeaders = {};
-  for (const [key, value] of Object.entries(responseHeaders)) normalizedHeaders[key] = String(value);
-  process.stdout.write(JSON.stringify({
-    status,
-    headers: normalizedHeaders,
-    body_b64: Buffer.from(responseBody).toString("base64"),
-  }) + "\n");
+  emitWhole(status, normalizedHeaders, Buffer.from(responseBody));
   } catch (err) {
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
     console.error(err && err.stack ? err.stack : err);
+    // The status is already sent once a stream has started; the error
+    // frame tells the runner to abort the response.
+    if (streaming) {
+      emit({ frame: "error", message });
+      continue;
+    }
     const responseBody = JSON.stringify({
       error: "handler_error",
       message,
@@ -1239,10 +1297,38 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
+# Response frames (ADR-999): one line is a complete response; a "head" line
+# starts a streamed one that "chunk" lines continue and "end" closes.
+def _emit(frame):
+    real_stdout.write(json.dumps(frame) + "\n")
+    real_stdout.flush()
+
+def _to_bytes(piece):
+    if isinstance(piece, (bytes, bytearray)):
+        return bytes(piece)
+    return str(piece).encode("utf-8")
+
+def _emit_chunk(piece):
+    data = _to_bytes(piece)
+    if data:
+        _emit({"frame": "chunk", "body_b64": base64.b64encode(data).decode("ascii")})
+
+async def _drain_async(body):
+    async for piece in body:
+        _emit_chunk(piece)
+
+def _is_stream_body(body):
+    # A generator, async generator or other iterator streams; str, bytes,
+    # dicts and lists are complete bodies.
+    if isinstance(body, (str, bytes, bytearray, dict, list, tuple)):
+        return False
+    return hasattr(body, "__aiter__") or (hasattr(body, "__iter__") and hasattr(body, "__next__"))
+
 for line in sys.stdin:
     if not line.strip():
         continue
     invocation_id = ""
+    streaming = False
     # One failing request must not end the persistent worker. An uncaught
     # exception used to escape this loop: the worker died, the runner
     # answered a plain-text 500 that the platform treats as a retryable
@@ -1286,13 +1372,26 @@ for line in sys.stdin:
             status = int(result.get("statusCode", result.get("status", 200)))
             response_headers = result.get("headers") or {}
             if "body" in result: response_body = result["body"]
+        # A header value may be a list, one line per element (ADR-999).
+        headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
+                       for k, v in response_headers.items()}
+        if _is_stream_body(response_body):
+            streaming = True
+            _emit({"frame": "head", "status": status, "headers": headers_out})
+            if hasattr(response_body, "__aiter__"):
+                loop.run_until_complete(_drain_async(response_body))
+            else:
+                for piece in response_body:
+                    _emit_chunk(piece)
+            _emit({"frame": "end"})
+            continue
         if response_body is None: response_body = ""
         if not isinstance(response_body, (str, bytes, bytearray)):
             response_body = json.dumps(response_body)
         if isinstance(response_body, str): response_body = response_body.encode("utf-8")
         envelope = {
             "status": status,
-            "headers": {str(k): str(v) for k, v in response_headers.items()},
+            "headers": headers_out,
             "body_b64": base64.b64encode(response_body).decode("ascii"),
         }
     except Exception as exc:
@@ -1300,6 +1399,11 @@ for line in sys.stdin:
         # Python slices str by code point, so this never splits a character.
         detail = str(exc)
         message = detail if len(detail) <= 256 else detail[:256] + "\u2026"
+        if streaming:
+            # The status is already sent; the error frame tells the runner
+            # to abort the response.
+            _emit({"frame": "error", "message": message})
+            continue
         error_body = json.dumps({"error": "handler_error", "message": message, "invocation_id": invocation_id})
         envelope = {
             "status": 500,

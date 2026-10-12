@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -143,11 +144,55 @@ func TestServeResponseDefaults(t *testing.T) {
 	if got.Status != http.StatusOK {
 		t.Fatalf("status = %d", got.Status)
 	}
-	if got.Headers["Vary"] != "Accept, Origin" || got.Headers["Set-Cookie"] != "a=1" {
+	// adr: 999 — every value of a repeated header is sent.
+	if !reflect.DeepEqual(got.Headers["Vary"], []any{"Accept", "Origin"}) ||
+		!reflect.DeepEqual(got.Headers["Set-Cookie"], []any{"a=1", "b=2"}) {
 		t.Fatalf("headers = %v", got.Headers)
 	}
-	if !strings.HasPrefix(got.Headers["Content-Type"], "text/html") {
+	if ct, _ := got.Headers["Content-Type"].(string); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("sniffed content type = %q", got.Headers["Content-Type"])
+	}
+}
+
+// adr: 999
+func TestServeStreamsOnFlush(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Add("Set-Cookie", "a=1")
+		w.Header().Add("Set-Cookie", "b=2")
+		rc := http.NewResponseController(w)
+		_, _ = io.WriteString(w, "data: one\n\n")
+		if err := rc.Flush(); err != nil {
+			t.Errorf("flush: %v", err)
+		}
+		_, _ = io.WriteString(w, "data: two\n\n")
+		if r.URL.Path == "/boom" {
+			panic("upstream closed")
+		}
+	})
+	in := requestLine(t, envelope{Path: "/sse"}) + requestLine(t, envelope{Path: "/boom"}) + requestLine(t, envelope{Path: "/sse"})
+	var out bytes.Buffer
+	if err := serve(h, strings.NewReader(in), &out, false); err != nil {
+		t.Fatal(err)
+	}
+	got := decodeResponses(t, out.String())
+	var kinds []string
+	for _, r := range got {
+		kinds = append(kinds, r.Frame)
+	}
+	want := []string{"head", "chunk", "chunk", "end", "head", "chunk", "error", "head", "chunk", "chunk", "end"}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("frames = %v, want %v", kinds, want)
+	}
+	if got[0].Status != http.StatusOK || got[0].Headers["Content-Type"] != "text/event-stream" ||
+		!reflect.DeepEqual(got[0].Headers["Set-Cookie"], []any{"a=1", "b=2"}) {
+		t.Fatalf("head = %+v", got[0])
+	}
+	if body(t, got[1]) != "data: one\n\n" || body(t, got[2]) != "data: two\n\n" {
+		t.Fatalf("chunks = %q, %q", body(t, got[1]), body(t, got[2]))
+	}
+	if got[6].Message != "upstream closed" {
+		t.Fatalf("error frame = %+v", got[6])
 	}
 }
 
@@ -157,7 +202,7 @@ func TestServeEmptyHandlerIsOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := decodeResponses(t, out.String())[0]
-	if got.Status != http.StatusOK || got.BodyB64 != "" || got.Headers["Content-Type"] != "" {
+	if got.Status != http.StatusOK || got.BodyB64 != "" || got.Headers["Content-Type"] != nil {
 		t.Fatalf("response = %+v", got)
 	}
 }

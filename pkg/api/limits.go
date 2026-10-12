@@ -1231,6 +1231,32 @@ var VCPUPerPlan = map[Plan]int{
 	PlanScale: 4,
 }
 
+// BlockRateLimit is a VM's sustained limit on its writable app-layer drive
+// (ADR-910): Firecracker token buckets on bandwidth and on operations. It
+// keeps one tenant's disk flood from starving its neighbours' I/O; the
+// one-time bursts below keep startup unthrottled.
+type BlockRateLimit struct {
+	BandwidthMBps int
+	IOPS          int
+}
+
+// BlockRateLimitPerPlan is each plan's BlockRateLimit. Every value was
+// measured on the n2 node to keep a neighbour's fdatasync latency at its
+// unloaded p50 (ADR-910).
+var BlockRateLimitPerPlan = map[Plan]BlockRateLimit{
+	PlanFree:  {BandwidthMBps: 50, IOPS: 2000},
+	PlanHobby: {BandwidthMBps: 100, IOPS: 4000},
+	PlanPro:   {BandwidthMBps: 200, IOPS: 8000},
+	PlanScale: {BandwidthMBps: 200, IOPS: 8000},
+}
+
+// BlockRateLimitBurstMB and BlockRateLimitBurstOps are the one-time bursts a
+// VM may use above its BlockRateLimit before the sustained rate applies.
+const (
+	BlockRateLimitBurstMB  = 256
+	BlockRateLimitBurstOps = 20000
+)
+
 // PlanResourceShapeFor returns the canonical joint shape for p. The bool is
 // false for an unknown plan so callers fail closed instead of inheriting a
 // higher-tier topology.
