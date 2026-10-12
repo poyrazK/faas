@@ -12,6 +12,8 @@ def test_issue_reporter_captures_context_without_locals():
         def do_POST(self):
             assert self.path == "/v1/apps/exports/issue-events"
             assert self.headers["Authorization"] == "Bearer g_issue_test"
+            # Cloudflare rejects the default "Python-urllib/3.x" agent on api.gregale.dev.
+            assert self.headers["User-Agent"].startswith("gregale-python-sdk/")
             received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             self.send_response(202)
             self.end_headers()
