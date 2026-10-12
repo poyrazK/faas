@@ -495,6 +495,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
+				if !errors.Is(err, state.ErrNotFound) {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 				// Fall through to the session-cookie branch —
 				// the key may have been deleted or the hash is
 				// simply unknown; both surface as "invalid
@@ -617,6 +621,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				next(w, r, acct)
 				return
 			}
+			if !errors.Is(err, state.ErrNotFound) {
+				m.credentialStoreUnavailable(w, r, err)
+				return
+			}
 			// ErrNotFound → fall through to the cookie branch (the
 			// same "the bearer may have been deleted or simply
 			// unknown" semantics as the fp_live_ branch's
@@ -676,6 +684,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
+				if !errors.Is(err, state.ErrNotFound) {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 			}
 		}
 
@@ -687,14 +699,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {
+						// RequireSessionCookie has already answered: the
+						// session could not be checked, so it kept the
+						// cookie and returned a retryable 503.
 						if m.Log != nil {
 							m.Log.Warn("session cross-check error",
 								"path", logsanitize.Field(r.URL.Path), "error", cookieErr.Error())
 						}
-						m.clearSessionCookie(w)
-						api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
-							api.CodeSessionExpired, "Session expired",
-							"session validation failed; sign in again"))
 						return
 					}
 					if handled {
@@ -734,6 +745,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						// rolling migration; see RequireStepUp).
 						*r = *r.WithContext(WithStepUp(r.Context(), env.StepUpAt))
 						next(w, r, acct)
+						return
+					} else if !errors.Is(err, state.ErrNotFound) {
+						m.credentialStoreUnavailable(w, r, err)
 						return
 					}
 					// AccountByID err: AEAD-bound env.AccountID
@@ -895,13 +909,16 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	}
 	// (2) row lookup. ErrNotFound = never-valid sid.
 	sess, err := m.Lookups.GetSession(ctx, env.Sid)
-	if err != nil {
+	switch {
+	case errors.Is(err, state.ErrNotFound):
 		m.clearSessionCookie(w)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
 			"Session expired", "this dashboard session has been revoked; sign in again"))
-		if errors.Is(err, state.ErrNotFound) {
-			return state.Session{}, true, nil
-		}
+		return state.Session{}, true, nil
+	case err != nil:
+		// The row could not be read, which says nothing about the
+		// session: keep the cookie and answer a retryable 503.
+		api.WriteProblem(w, credentialStoreUnavailableProblem())
 		return state.Session{}, true, fmt.Errorf("session lookup: %w", err)
 	}
 	// (3) revoked-row = possibly-stolen cookie. Distinct audit.
@@ -1652,3 +1669,22 @@ func prefix8(s string) string {
 // IsMFAAllowlisted reports whether an mfa_pending session may reach path.
 // Exported for route-table tests in cmd/apid.
 func IsMFAAllowlisted(path string) bool { return isMFAAllowlisted(path) }
+
+// credentialStoreUnavailable answers a request whose credential could not be
+// checked because the store failed (a timeout, an exhausted pool), not because
+// the credential is unknown, expired or revoked. Answering 401 there told
+// valid callers to sign in again, counted toward the per-IP failed-auth budget
+// (so a slow database also produced 429s), and on the session path cleared the
+// cookie as "revoked" (production-us hunt #9, H9-160).
+func (m *Middleware) credentialStoreUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	if m.Log != nil {
+		m.Log.Warn("auth: credential lookup failed",
+			"path", logsanitize.Field(r.URL.Path), "error", err.Error())
+	}
+	api.WriteProblem(w, credentialStoreUnavailableProblem())
+}
+
+func credentialStoreUnavailableProblem() *api.Problem {
+	return api.ErrCapacity("could not verify credentials; retry shortly").
+		WithHeader("Retry-After", "1")
+}
