@@ -42,7 +42,7 @@ func (m *MemStore) ClaimPreviewTeardown(_ context.Context, observed App, now tim
 			return App{}, ErrNotFound
 		}
 		app.PreviewPrState = PreviewPrStateTearingDown
-		m.apps[app.ID] = app
+		m.putAppLocked(app.ID, app)
 	}
 	return app, nil
 }

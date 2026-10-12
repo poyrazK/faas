@@ -1324,6 +1324,53 @@ $$;
 
 
 --
+-- Name: capture_regional_runtime_floor_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_regional_runtime_floor_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ kind_arg text;
+ old_app uuid;
+ new_app uuid;
+ old_object uuid;
+ new_object uuid;
+ old_claims jsonb;
+ new_claims jsonb;
+ changed_at timestamptz;
+BEGIN
+ IF TG_TABLE_NAME='apps' THEN
+  kind_arg:='app';
+  IF TG_OP<>'INSERT' THEN old_app:=OLD.id;old_object:=OLD.id;old_claims:=regional_runtime_app_floor_claims(OLD); END IF;
+  IF TG_OP<>'DELETE' THEN new_app:=NEW.id;new_object:=NEW.id;new_claims:=regional_runtime_app_floor_claims(NEW); END IF;
+ ELSE
+  kind_arg:='deployment';
+  IF TG_OP<>'INSERT' THEN old_app:=OLD.app_id;old_object:=OLD.id;old_claims:=regional_runtime_deployment_floor_claims(OLD); END IF;
+  IF TG_OP<>'DELETE' THEN new_app:=NEW.app_id;new_object:=NEW.id;new_claims:=regional_runtime_deployment_floor_claims(NEW); END IF;
+ END IF;
+ IF TG_OP='UPDATE' AND (old_app,old_object,old_claims) IS NOT DISTINCT FROM (new_app,new_object,new_claims) THEN RETURN NULL; END IF;
+ IF LEAST(old_app,new_app) IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||LEAST(old_app,new_app)::text,0));
+ END IF;
+ IF GREATEST(old_app,new_app) IS DISTINCT FROM LEAST(old_app,new_app) THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||GREATEST(old_app,new_app)::text,0));
+ END IF;
+ changed_at:=clock_timestamp();
+ IF old_object IS NOT NULL THEN
+  UPDATE regional_runtime_floor_intervals SET ended_at=GREATEST(started_at,changed_at)
+   WHERE kind=kind_arg AND object_id=old_object AND ended_at IS NULL;
+ END IF;
+ IF new_object IS NOT NULL THEN
+  INSERT INTO regional_runtime_floor_intervals(app_id,object_id,kind,started_at,state_claims)
+   VALUES(new_app,new_object,kind_arg,changed_at,new_claims);
+ END IF;
+ RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: capture_service_binding_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7754,6 +7801,28 @@ END; $$;
 
 
 --
+-- Name: guard_regional_runtime_floor_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_floor_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR pg_trigger_depth()<2 THEN
+  RAISE EXCEPTION 'regional floor history is intent owned' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (
+  (NEW.id,NEW.app_id,NEW.object_id,NEW.kind,NEW.started_at,NEW.state_claims) IS DISTINCT FROM
+  (OLD.id,OLD.app_id,OLD.object_id,OLD.kind,OLD.started_at,OLD.state_claims)
+  OR OLD.ended_at IS NOT NULL OR NEW.ended_at IS NULL) THEN
+  RAISE EXCEPTION 'regional floor interval cannot be rewritten' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_regional_runtime_launch_source(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11425,6 +11494,19 @@ $$;
 
 
 --
+-- Name: refuse_regional_runtime_floor_history_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_runtime_floor_history_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'regional floor history is retained' USING ERRCODE='23514';
+END
+$$;
+
+
+--
 -- Name: refuse_regional_runtime_quota_truncate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11454,6 +11536,204 @@ CREATE FUNCTION public.regional_release_actor_allowed(app_id_arg uuid, owner_arg
                     ON m.account_id=issuer.id AND m.org_id=o.id
                     WHERE issuer.id=actor_arg AND issuer.status='active' AND issuer.abuse_hold_at IS NULL
                     AND issuer.email_verified_at IS NOT NULL AND m.removed_at IS NULL AND m.role IN ('owner','admin')))))))
+$$;
+
+
+--
+-- Name: apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    type text DEFAULT 'app'::text NOT NULL,
+    runtime text,
+    ram_mb integer NOT NULL,
+    idle_timeout_s integer,
+    max_concurrency integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_install_id bigint,
+    github_repo_full_name text,
+    github_production_branch text,
+    min_instances integer DEFAULT 0 NOT NULL,
+    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    autoscale_target_rps integer,
+    autoscale_target_cpu_pct integer,
+    github_install_binding_id text,
+    github_install_account_id uuid,
+    github_install_linked_at timestamp with time zone,
+    project_id uuid,
+    root_dir text DEFAULT ''::text NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    workload_class text DEFAULT 'http'::text NOT NULL,
+    start_command text,
+    streaming_enabled boolean DEFAULT false NOT NULL,
+    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_scale_out_at timestamp with time zone,
+    last_scale_in_at timestamp with time zone,
+    require_signed boolean DEFAULT false NOT NULL,
+    node_id uuid,
+    reassigned_at timestamp with time zone,
+    org_id uuid,
+    migrated_at timestamp with time zone,
+    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
+    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
+    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
+    require_authn boolean DEFAULT false NOT NULL,
+    public_auth_mode text DEFAULT 'open'::text NOT NULL,
+    public_auth_basic bytea,
+    websocket_enabled boolean DEFAULT false NOT NULL,
+    auth_default_flipped_at timestamp with time zone,
+    overflow_node uuid,
+    route_metrics_enabled boolean DEFAULT false NOT NULL,
+    preview_of_slug text,
+    preview_pr_number integer,
+    preview_pr_state text,
+    preview_expires_at timestamp with time zone,
+    cors_default_enabled boolean DEFAULT false NOT NULL,
+    cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
+    last_deploy_failed_email_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_grace_until timestamp with time zone,
+    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    purge_claimed_at timestamp with time zone,
+    visibility text DEFAULT 'public'::text NOT NULL,
+    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    warm_pool_size integer DEFAULT 0 NOT NULL,
+    security_policy text DEFAULT 'off'::text NOT NULL,
+    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
+    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
+    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
+    request_rate_limit_rps integer,
+    request_rate_limit_burst integer,
+    github_owner_id bigint,
+    github_repo_id bigint,
+    park_transition_id uuid,
+    wake_transition_id uuid,
+    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
+    platform_tenant_required boolean DEFAULT false NOT NULL,
+    managed_postgres_admission_cutover_id uuid,
+    managed_postgres_admission_fenced_at timestamp with time zone,
+    compute_region text DEFAULT ''::text NOT NULL,
+    service_address_index integer,
+    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
+    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
+    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_compute_region_chk CHECK (((compute_region = ''::text) OR ((length(compute_region) <= 63) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
+    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
+    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
+    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
+    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
+    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
+    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
+    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
+    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
+    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
+    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
+    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
+    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
+    CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
+    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
+    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
+    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
+    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
+    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+);
+
+
+--
+-- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
+
+
+--
+-- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
+
+
+--
+-- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
+
+
+--
+-- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+
+
+--
+-- Name: regional_runtime_app_floor_claims(public.apps); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.regional_runtime_app_floor_claims(a public.apps) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('RAMMB',a.ram_mb,'MinInstances',a.min_instances,'Status',a.status,'ScalingPolicy',jsonb_build_object('min_instances',COALESCE(a.scaling_policy->'min_instances','0'::jsonb),'timezone',COALESCE(a.scaling_policy->'timezone','""'::jsonb),'schedules',COALESCE(a.scaling_policy->'schedules','null'::jsonb)))
+$$;
+
+
+--
+-- Name: regional_runtime_deployment_floor_claims(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.regional_runtime_deployment_floor_claims(d public.deployments) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('MinInstances',d.min_instances,'Status',d.status,'Scope',d.scope,'CreatedAt',to_char(d.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
 $$;
 
 
@@ -14709,182 +14989,6 @@ CREATE TABLE public.app_work_policies (
     CONSTRAINT app_work_policies_pending_updates_check CHECK ((pending_updates = ANY (ARRAY['all'::text, 'keep_latest'::text]))),
     CONSTRAINT app_work_policies_revision_check CHECK ((revision > 0))
 );
-
-
---
--- Name: apps; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.apps (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    org_id uuid,
-    migrated_at timestamp with time zone,
-    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
-    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
-    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
-    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
-    require_authn boolean DEFAULT false NOT NULL,
-    public_auth_mode text DEFAULT 'open'::text NOT NULL,
-    public_auth_basic bytea,
-    websocket_enabled boolean DEFAULT false NOT NULL,
-    auth_default_flipped_at timestamp with time zone,
-    overflow_node uuid,
-    route_metrics_enabled boolean DEFAULT false NOT NULL,
-    preview_of_slug text,
-    preview_pr_number integer,
-    preview_pr_state text,
-    preview_expires_at timestamp with time zone,
-    cors_default_enabled boolean DEFAULT false NOT NULL,
-    cors_default_origins text[],
-    maintenance_mode boolean DEFAULT false NOT NULL,
-    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    static_egress_ip inet,
-    static_egress_ip_set_at timestamp with time zone,
-    preview_destroy_commented_at timestamp with time zone,
-    app_protocol text DEFAULT 'http1'::text NOT NULL,
-    cpu_millicores integer DEFAULT 1000 NOT NULL,
-    last_deploy_failed_email_at timestamp with time zone,
-    deleted_at timestamp with time zone,
-    delete_grace_until timestamp with time zone,
-    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
-    only_declared_routes boolean DEFAULT false NOT NULL,
-    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
-    purge_claimed_at timestamp with time zone,
-    visibility text DEFAULT 'public'::text NOT NULL,
-    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    warm_pool_size integer DEFAULT 0 NOT NULL,
-    security_policy text DEFAULT 'off'::text NOT NULL,
-    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
-    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
-    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
-    request_rate_limit_rps integer,
-    request_rate_limit_burst integer,
-    github_owner_id bigint,
-    github_repo_id bigint,
-    park_transition_id uuid,
-    wake_transition_id uuid,
-    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
-    platform_tenant_required boolean DEFAULT false NOT NULL,
-    managed_postgres_admission_cutover_id uuid,
-    managed_postgres_admission_fenced_at timestamp with time zone,
-    compute_region text DEFAULT ''::text NOT NULL,
-    service_address_index integer,
-    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
-    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_compute_region_chk CHECK (((compute_region = ''::text) OR ((length(compute_region) <= 63) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
-    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
-    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
-    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
-    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
-    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
-    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
-    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
-    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
-    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
-    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
-    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
-    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
-    CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
-    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
-    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
-    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
-    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
-);
-
-
---
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
-
-
---
--- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
 
 
 --
@@ -24165,6 +24269,57 @@ CREATE TABLE public.regional_runtime_consents (
 
 
 --
+-- Name: regional_runtime_floor_history_start; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_floor_history_start (
+    singleton boolean DEFAULT true NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT regional_runtime_floor_history_start_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: regional_runtime_floor_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_floor_intervals (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    object_id uuid NOT NULL,
+    kind text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    state_claims jsonb NOT NULL,
+    CONSTRAINT regional_runtime_floor_intervals_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_floor_intervals_check CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
+    CONSTRAINT regional_runtime_floor_intervals_check1 CHECK (((kind <> 'app'::text) OR (object_id = app_id))),
+    CONSTRAINT regional_runtime_floor_intervals_kind_check CHECK ((kind = ANY (ARRAY['app'::text, 'deployment'::text]))),
+    CONSTRAINT regional_runtime_floor_intervals_object_id_check CHECK ((object_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_floor_intervals_state_claims_check CHECK ((jsonb_typeof(state_claims) = 'object'::text))
+);
+
+
+--
+-- Name: regional_runtime_floor_intervals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.regional_runtime_floor_intervals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: regional_runtime_floor_intervals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.regional_runtime_floor_intervals_id_seq OWNED BY public.regional_runtime_floor_intervals.id;
+
+
+--
 -- Name: regional_runtime_launch_sources; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26294,6 +26449,13 @@ ALTER TABLE ONLY public.regional_app_task_billing_intervals ALTER COLUMN id SET 
 --
 
 ALTER TABLE ONLY public.regional_runtime_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.regional_runtime_billing_intervals_id_seq'::regclass);
+
+
+--
+-- Name: regional_runtime_floor_intervals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_floor_intervals ALTER COLUMN id SET DEFAULT nextval('public.regional_runtime_floor_intervals_id_seq'::regclass);
 
 
 --
@@ -31243,6 +31405,22 @@ ALTER TABLE ONLY public.regional_runtime_capacity_receipts
 
 ALTER TABLE ONLY public.regional_runtime_consents
     ADD CONSTRAINT regional_runtime_consents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: regional_runtime_floor_history_start regional_runtime_floor_history_start_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_floor_history_start
+    ADD CONSTRAINT regional_runtime_floor_history_start_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: regional_runtime_floor_intervals regional_runtime_floor_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_floor_intervals
+    ADD CONSTRAINT regional_runtime_floor_intervals_pkey PRIMARY KEY (id);
 
 
 --
@@ -36893,6 +37071,20 @@ CREATE INDEX regional_runtime_consents_app ON public.regional_runtime_consents U
 
 
 --
+-- Name: regional_runtime_floor_app_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_floor_app_page_idx ON public.regional_runtime_floor_intervals USING btree (app_id, id);
+
+
+--
+-- Name: regional_runtime_floor_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX regional_runtime_floor_open_idx ON public.regional_runtime_floor_intervals USING btree (kind, object_id) WHERE (ended_at IS NULL);
+
+
+--
 -- Name: regional_runtime_inventory_seat_scan; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -38545,6 +38737,13 @@ CREATE TRIGGER apps_record_control_plane_change_trg AFTER INSERT OR DELETE OR UP
 
 
 --
+-- Name: apps apps_regional_floor_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_regional_floor_truncate_guard BEFORE TRUNCATE ON public.apps FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_floor_history_truncate();
+
+
+--
 -- Name: apps apps_reserved_slug_allocation_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39368,6 +39567,13 @@ CREATE TRIGGER deployments_lifecycle_webhooks AFTER UPDATE OF status ON public.d
 --
 
 CREATE TRIGGER deployments_record_traffic_change_trg AFTER UPDATE OF traffic_percent ON public.deployments FOR EACH ROW WHEN ((old.traffic_percent IS DISTINCT FROM new.traffic_percent)) EXECUTE FUNCTION public.deployments_record_traffic_change();
+
+
+--
+-- Name: deployments deployments_regional_floor_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_regional_floor_truncate_guard BEFORE TRUNCATE ON public.deployments FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_floor_history_truncate();
 
 
 --
@@ -41513,6 +41719,34 @@ CREATE TRIGGER regional_runtime_consent_truncate_guard BEFORE TRUNCATE ON public
 
 
 --
+-- Name: regional_runtime_floor_intervals regional_runtime_floor_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_floor_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_floor_intervals FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_floor_history();
+
+
+--
+-- Name: regional_runtime_floor_history_start regional_runtime_floor_start_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_floor_start_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_floor_history_start FOR EACH ROW EXECUTE FUNCTION public.refuse_regional_runtime_floor_history_truncate();
+
+
+--
+-- Name: regional_runtime_floor_history_start regional_runtime_floor_start_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_floor_start_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_floor_history_start FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_floor_history_truncate();
+
+
+--
+-- Name: regional_runtime_floor_intervals regional_runtime_floor_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_floor_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_floor_intervals FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_floor_history_truncate();
+
+
+--
 -- Name: regional_runtime_quota_receipts regional_runtime_quota_advance_head; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42070,6 +42304,20 @@ CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.
 --
 
 CREATE TRIGGER zz_app_tasks_regional_billing_history AFTER INSERT OR DELETE OR UPDATE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.capture_regional_app_task_billing_history();
+
+
+--
+-- Name: apps zz_apps_regional_runtime_floor_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_apps_regional_runtime_floor_history AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_regional_runtime_floor_history();
+
+
+--
+-- Name: deployments zz_deployments_regional_runtime_floor_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_deployments_regional_runtime_floor_history AFTER INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_regional_runtime_floor_history();
 
 
 --

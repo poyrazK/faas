@@ -124,6 +124,6 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 		return err
 	}
 	m.reactivateCronsForAppLocked(dep.AppID)
-	m.deployments[id] = dep
+	m.putDeploymentFloorLocked(id, dep)
 	return nil
 }

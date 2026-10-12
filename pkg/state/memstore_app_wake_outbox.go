@@ -50,7 +50,7 @@ func (m *MemStore) BeginAppWakeTransition(_ context.Context, appID string) (AppW
 	m.appWakeTransitions[id] = transition
 	m.appWakeTransitionByApp[appID] = id
 	app.Status = AppActive
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	return transition.AppWakeTransition, true, nil
 }
 
@@ -68,7 +68,7 @@ func (m *MemStore) AbortAppWakeTransition(_ context.Context, transitionID string
 	}
 	m.supersedeAppWakeTransitionLocked(transitionID)
 	app.Status = AppEvictedCold
-	m.apps[transition.AppID] = app
+	m.putAppLocked(transition.AppID, app)
 	delete(m.appWakeTransitionByApp, transition.AppID)
 	return true, nil
 }

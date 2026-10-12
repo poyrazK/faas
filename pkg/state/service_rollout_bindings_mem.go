@@ -37,7 +37,7 @@ func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deplo
 	err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{recipientID: 100})
 	if IsBindingReleaseRequired(err) {
 		target = queueServiceBindingCheck(target, action, recipientID, predecessorID, reason)
-		m.deployments[target.ID] = target
+		m.putDeploymentFloorLocked(target.ID, target)
 		return target, ErrBindingReleaseRequired
 	}
 	if err != nil {
@@ -87,7 +87,7 @@ func (m *MemStore) UpdateServiceRolloutBindingStatus(_ context.Context, id, requ
 	}
 	target.ServiceRolloutHandoff.BindingsCheck = blockedServiceBindingGate(gate, code, blockers)
 	target.ServiceRolloutHandoff.LastError = target.ServiceRolloutHandoff.BindingsCheck.Code
-	m.deployments[id] = target
+	m.putDeploymentFloorLocked(id, target)
 	return nil
 }
 
@@ -111,6 +111,6 @@ func (m *MemStore) RequestServiceRolloutAbort(_ context.Context, appID, id, pred
 	if err != nil {
 		return target, 0, err
 	}
-	m.deployments[id] = target
+	m.putDeploymentFloorLocked(id, target)
 	return target, auditID, nil
 }

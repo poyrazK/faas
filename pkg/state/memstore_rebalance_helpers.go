@@ -64,6 +64,6 @@ func (m *MemStore) SetAppReassignedAtForTest(_ context.Context, appID string, at
 		return ErrNotFound
 	}
 	a.ReassignedAt = &at
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return nil
 }

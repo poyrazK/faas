@@ -1594,6 +1594,7 @@ type Querier interface {
 	ListRegionalAppTaskBillingIntervals(ctx context.Context, db DBTX, arg ListRegionalAppTaskBillingIntervalsParams) ([]ListRegionalAppTaskBillingIntervalsRow, error)
 	ListRegionalRuntimeBillingIntervals(ctx context.Context, db DBTX, arg ListRegionalRuntimeBillingIntervalsParams) ([]ListRegionalRuntimeBillingIntervalsRow, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
+	ListRegionalRuntimeFloorIntervals(ctx context.Context, db DBTX, arg ListRegionalRuntimeFloorIntervalsParams) ([]RegionalRuntimeFloorInterval, error)
 	// ADR-763: issued capacity survives app/instance collection and grant replacement.
 	ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error)
 	ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, arg ListRegionalRuntimeRetirementsParams) ([]ListRegionalRuntimeRetirementsRow, error)
@@ -2650,6 +2651,8 @@ type Querier interface {
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
 	RegionalRuntimeConsent(ctx context.Context, db DBTX, id pgtype.UUID) (RegionalRuntimeConsent, error)
+	// adr: 801
+	RegionalRuntimeFloorHistoryStart(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	RegionalRuntimeLaunchWasResumed(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchWasResumedParams) (bool, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)

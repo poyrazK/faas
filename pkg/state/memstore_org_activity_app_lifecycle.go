@@ -14,6 +14,7 @@ var _ OrgActivityAppLifecycleMutationStore = (*MemStore)(nil)
 func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	rollbackFloor := m.regionalFloorRollbackLocked()
 	created, err := m.createAppIfUnderQuotaLocked(app, limits)
 	if err != nil {
 		return App{}, 0, err
@@ -27,7 +28,8 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App,
 	}
 	entry, err = bindOrgActivityToApp(entry, created)
 	if err != nil {
-		delete(m.apps, created.ID)
+		m.deleteAppLocked(created.ID)
+		rollbackFloor()
 		return App{}, 0, err
 	}
 	return created, m.enqueueOrgActivityOutboxLocked(entry), nil
@@ -74,7 +76,7 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 		a.DeleteGraceUntil = &deadline
 	}
 	a.Status = AppDeleted
-	m.apps[id] = a
+	m.putAppLocked(id, a)
 	if !wasDeleted {
 		for _, memory := range sources {
 			touchGitOpsMemoryIntent(memory)

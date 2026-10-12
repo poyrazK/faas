@@ -264,6 +264,10 @@ type MemStore struct {
 	regionalRuntimeBillingStart   time.Time
 	regionalRuntimeBillingNext    int64
 	regionalRuntimeBillingRows    map[int64]RegionalRuntimeBillingInterval
+	regionalRuntimeFloorStart     time.Time
+	regionalRuntimeFloorNext      int64
+	regionalRuntimeFloorRows      []regionalRuntimeFloorMemoryRow
+	regionalRuntimeFloorHeads     map[string]int
 	regionalAppTaskBillingStart   time.Time
 	regionalAppTaskBillingNext    int64
 	regionalAppTaskBillingRows    map[int64]RegionalAppTaskBillingInterval
@@ -1208,6 +1212,8 @@ func NewMemStore() *MemStore {
 		regionalRuntimeLaunchSources:  map[string]RegionalRuntimeLaunchSource{},
 		regionalRuntimeBillingStart:   time.Now().UTC(),
 		regionalRuntimeBillingRows:    map[int64]RegionalRuntimeBillingInterval{},
+		regionalRuntimeFloorStart:     time.Now().UTC(),
+		regionalRuntimeFloorHeads:     map[string]int{},
 		regionalAppTaskBillingStart:   time.Now().UTC(),
 		regionalAppTaskBillingRows:    map[int64]RegionalAppTaskBillingInterval{},
 		regionalRuntimeServingSeats:   map[string]RegionalRuntimeServingSeatReceipt{},
@@ -2044,7 +2050,7 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 		for appID, app := range m.apps {
 			if app.AccountID == id && app.StreamingEnabled {
 				app.StreamingEnabled = false
-				m.apps[appID] = app
+				m.putAppLocked(appID, app)
 			}
 		}
 	}
@@ -3333,7 +3339,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	for appID, a := range m.apps {
 		if a.ProjectID == projectID {
 			a.ProjectID = ""
-			m.apps[appID] = a
+			m.putAppLocked(appID, a)
 		}
 	}
 	for environmentID, env := range m.projectEnvironments {
@@ -3819,7 +3825,7 @@ func (m *MemStore) ApplyProjectPlan(
 			if a.Status == "" {
 				a.Status = AppActive
 			}
-			m.apps[a.ID] = a
+			m.putAppLocked(a.ID, a)
 		}
 		err := m.checkServiceCapacityChangeLocked(before, false)
 		m.apps = backup
@@ -3863,7 +3869,7 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 		a.CreatedAt = now
 		m.ensureServiceAddressIndexLocked(&a)
-		m.apps[a.ID] = a
+		m.putAppLocked(a.ID, a)
 		insertedApps = append(insertedApps, a)
 	}
 
@@ -3917,7 +3923,9 @@ func (m *MemStore) ApplyProjectReconcile(
 		cronsBackup[id] = cron
 	}
 	projectBackup := storedProject
+	rollbackFloor := m.regionalFloorRollbackLocked()
 	rollback := func(err error) (ProjectReconcileResult, error) {
+		rollbackFloor()
 		m.apps = appsBackup
 		m.crons = cronsBackup
 		m.projects[project.ID] = projectBackup
@@ -4067,7 +4075,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
 				m.ensureServiceAddressIndexLocked(&tombstone)
-				m.apps[tombstone.ID] = tombstone
+				m.putAppLocked(tombstone.ID, tombstone)
 				out.Added = append(out.Added, tombstone)
 				continue
 			}
@@ -4094,7 +4102,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				app.CreatedAt = time.Now()
 			}
 			m.ensureServiceAddressIndexLocked(&app)
-			m.apps[app.ID] = app
+			m.putAppLocked(app.ID, app)
 			out.Added = append(out.Added, app)
 		case "update":
 			app := m.apps[mutation.App.ID]
@@ -4107,7 +4115,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			if mutation.SetPlatformTenantRequired {
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
 			}
-			m.apps[app.ID] = app
+			m.putAppLocked(app.ID, app)
 			if routeCheckAppInputsChanged(before, app) {
 				m.enqueueRoutePolicyChecksLocked(app.ID)
 			}
@@ -4123,7 +4131,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			if app.DeleteGraceUntil == nil {
 				app.DeleteGraceUntil = &deadline
 			}
-			m.apps[app.ID] = app
+			m.putAppLocked(app.ID, app)
 			out.Removed = append(out.Removed, app)
 		}
 	}
@@ -4290,7 +4298,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	}
 	m.ensureAppOrgLocked(&app)
 	m.ensureServiceAddressIndexLocked(&app)
-	m.apps[app.ID] = app
+	m.putAppLocked(app.ID, app)
 	return app, nil
 }
 
@@ -4322,11 +4330,13 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	}
 	created := make([]App, 0, len(apps))
 	insertedIDs := make([]string, 0, len(apps))
+	rollbackFloor := m.regionalFloorRollbackLocked()
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
 			m.dropRuntimeLogArchivesForAppLocked(id)
-			delete(m.apps, id)
+			m.deleteAppLocked(id)
 		}
+		rollbackFloor()
 		return nil, err
 	}
 	for _, app := range apps {
@@ -4454,7 +4464,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	}
 	m.ensureAppOrgLocked(&app)
 	m.ensureServiceAddressIndexLocked(&app)
-	m.apps[app.ID] = app
+	m.putAppLocked(app.ID, app)
 	return app, nil
 }
 
@@ -4607,7 +4617,7 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 		return App{}, ErrNotFound
 	}
 	a.PreviewPrState = prState
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -4627,7 +4637,7 @@ func (m *MemStore) ClosePRPreview(_ context.Context, appID string, expiresAt tim
 		a.PreviewExpiresAt = &expiry
 	}
 	a.PreviewPrState = PreviewPrStateClosed
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -4645,7 +4655,7 @@ func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt 
 	t := expiresAt
 	a.PreviewPrState = PreviewPrStateOpen
 	a.PreviewExpiresAt = &t
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -4663,7 +4673,7 @@ func (m *MemStore) RefreshPRPreview(_ context.Context, appID string, expiresAt t
 	t := expiresAt
 	a.PreviewPrState = PreviewPrStateOpen
 	a.PreviewExpiresAt = &t
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -4681,7 +4691,7 @@ func (m *MemStore) StampPreviewDestroyCommentedAt(_ context.Context, appID strin
 	}
 	t := when
 	a.PreviewDestroyCommentedAt = &t
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -5438,7 +5448,7 @@ func (m *MemStore) SetAppNodeID(_ context.Context, appID, nodeID string) error {
 	}
 	a.NodeID = nodeID
 	a.ScalingPolicyRevision++
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return nil
 }
 
@@ -5536,7 +5546,7 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 		a.ScalingPolicyRevision++
 	}
 	a.ReassignedAt = &now
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return nil
 }
 
@@ -5668,7 +5678,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	delete(m.instanceRuntimeConfigReceipts, instanceID)
 	if a, ok := m.apps[ins.AppID]; ok {
 		a.MigratedAt = &now
-		m.apps[ins.AppID] = a
+		m.putAppLocked(ins.AppID, a)
 	}
 	return nil
 }
@@ -6125,7 +6135,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if syncErr != nil {
 		return App{}, syncErr
 	}
-	m.apps[id] = a
+	m.putAppLocked(id, a)
 	if routeCheckAppInputsChanged(before, a) {
 		m.enqueueRoutePolicyChecksLocked(id)
 	}
@@ -6161,7 +6171,7 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 	if to != AppActive {
 		m.clearCurrentAppWakeTransitionLocked(id)
 	}
-	m.apps[id] = a
+	m.putAppLocked(id, a)
 	return true, nil
 }
 
@@ -6191,7 +6201,7 @@ func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug stri
 		}
 	}
 	found.Slug = newSlug
-	m.apps[found.ID] = *found
+	m.putAppLocked(found.ID, *found)
 	return *found, nil
 }
 
@@ -6207,7 +6217,7 @@ func (m *MemStore) SetAppMinInstances(_ context.Context, appID string, min int) 
 		return ErrNotFound
 	}
 	a.MinInstances = min
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return nil
 }
 
@@ -6230,7 +6240,7 @@ func (m *MemStore) SetAppWorkloadClass(_ context.Context, appID string, class Wo
 		a.ScalingPolicyRevision++
 	}
 	a.WorkloadClass = class
-	m.apps[appID] = a
+	m.putAppLocked(appID, a)
 	return a, nil
 }
 
@@ -6273,7 +6283,7 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 		return App{}, err
 	}
 	m.ensureServiceAddressIndexLocked(&a)
-	m.apps[id] = a
+	m.putAppLocked(id, a)
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id && cron.SuspendedReason == CronSuspendedAppDeleted {
@@ -6474,7 +6484,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, d := range m.deployments {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
-			delete(m.deployments, key)
+			m.deleteDeploymentLocked(key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
 		}
@@ -6562,7 +6572,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.dropRuntimeLogArchivesForAppLocked(id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
-	delete(m.apps, id)
+	m.deleteAppLocked(id)
 	return nil
 }
 
@@ -6594,7 +6604,7 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	if a.DeleteGraceUntil == nil {
 		a.DeleteGraceUntil = &deadline
 	}
-	m.apps[id] = a
+	m.putAppLocked(id, a)
 	for _, memory := range sources {
 		touchGitOpsMemoryIntent(memory)
 	}
@@ -14141,7 +14151,7 @@ func (m *MemStore) StampAppScaleOut(_ context.Context, appID string) error {
 	}
 	now := time.Now()
 	app.LastScaleOutAt = &now
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	m.stampLegacyProductionScalingLocked(appID, "out", *app.LastScaleOutAt)
 	return nil
 }
@@ -14157,7 +14167,7 @@ func (m *MemStore) StampAppScaleIn(_ context.Context, appID string) error {
 	}
 	now := time.Now()
 	app.LastScaleInAt = &now
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	m.stampLegacyProductionScalingLocked(appID, "in", *app.LastScaleInAt)
 	return nil
 }
@@ -14178,7 +14188,7 @@ func (m *MemStore) SetLastScaleOutAt(appID string, ts time.Time) error {
 	}
 	tsCopy := ts
 	app.LastScaleOutAt = &tsCopy
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	m.stampLegacyProductionScalingLocked(appID, "out", *app.LastScaleOutAt)
 	return nil
 }
@@ -14195,7 +14205,7 @@ func (m *MemStore) SetLastScaleInAt(appID string, ts time.Time) error {
 	}
 	tsCopy := ts
 	app.LastScaleInAt = &tsCopy
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	m.stampLegacyProductionScalingLocked(appID, "in", *app.LastScaleInAt)
 	return nil
 }
@@ -21547,7 +21557,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for did, d := range m.deployments {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
-			delete(m.deployments, did)
+			m.deleteDeploymentLocked(did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
 		}
@@ -21569,7 +21579,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			m.dropRuntimeLogArchivesForAppLocked(aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
-			delete(m.apps, aid)
+			m.deleteAppLocked(aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)
 			delete(m.routeMonitorConfigs, aid)

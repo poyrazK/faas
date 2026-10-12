@@ -50,19 +50,22 @@ func (m *MemStore) CreateRegionalAppProvision(_ context.Context, p RegionalAppPr
 	if app.ID == "" {
 		app.ID = uuid.NewString()
 	}
+	rollbackFloor := m.regionalFloorRollbackLocked()
 	created, err := m.createAppIfUnderQuotaLocked(app, limits)
 	if err != nil {
 		return RegionalAppProvision{}, false, 0, err
 	}
 	if !m.regionalReleasePersonalApp(created) {
-		delete(m.apps, created.ID)
+		m.deleteAppLocked(created.ID)
+		rollbackFloor()
 		return RegionalAppProvision{}, false, 0, ErrConflict
 	}
 	var outbox int64
 	if created.OrgID != "" || entry.OrgID != uuid.Nil {
 		entry, err = bindOrgActivityToApp(entry, created)
 		if err != nil {
-			delete(m.apps, created.ID)
+			m.deleteAppLocked(created.ID)
+			rollbackFloor()
 			return RegionalAppProvision{}, false, 0, err
 		}
 		outbox = m.enqueueOrgActivityOutboxLocked(entry)

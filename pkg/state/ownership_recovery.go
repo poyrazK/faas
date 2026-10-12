@@ -160,6 +160,6 @@ func (m *MemStore) ReassignOrphanedAppOwner(_ context.Context, appID, fromNodeID
 	}
 	app.NodeID, app.ReassignedAt = toNodeID, &now
 	app.ScalingPolicyRevision++
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	return nil
 }

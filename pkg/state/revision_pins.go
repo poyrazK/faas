@@ -123,7 +123,7 @@ func (m *MemStore) ExpireRevisionPins(_ context.Context) (int64, error) {
 		pruned++
 		if dep, exists := m.deployments[id]; exists && dep.Status == DeployLive && dep.TrafficPercent == 0 {
 			dep.Status = DeploySuperseded
-			m.deployments[id] = dep
+			m.putDeploymentFloorLocked(id, dep)
 			expired++
 		}
 	}

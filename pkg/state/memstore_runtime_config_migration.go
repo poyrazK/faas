@@ -55,6 +55,6 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(_ context.Context, id, 
 	}
 	app := m.apps[instance.AppID]
 	app.MigratedAt = &now
-	m.apps[app.ID] = app
+	m.putAppLocked(app.ID, app)
 	return nil
 }

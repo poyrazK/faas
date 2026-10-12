@@ -18,6 +18,7 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 			d.Status = DeploySuperseded
 		}
 	}
+	m.recordRegionalDeploymentFloorLocked(prev, existed, d, true)
 	m.deployments[id] = d
 	switch {
 	case deploymentServing(d):

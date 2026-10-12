@@ -7203,6 +7203,27 @@
     "kind": "account_identity"
   },
   {
+    "table": "regional_runtime_floor_history_start",
+    "columns": [
+      "singleton",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "regional_runtime_floor_intervals",
+    "columns": [
+      "app_id",
+      "ended_at",
+      "id",
+      "kind",
+      "object_id",
+      "started_at",
+      "state_claims"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "regional_runtime_launch_sources",
     "columns": [
       "app_id",

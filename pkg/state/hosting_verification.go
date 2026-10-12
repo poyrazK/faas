@@ -184,6 +184,6 @@ func (m *MemStore) UpdateDeploymentHostingVerification(ctx context.Context, id s
 	if err != nil {
 		return p, err
 	}
-	m.deployments[id] = d
+	m.putDeploymentFloorLocked(id, d)
 	return p, nil
 }

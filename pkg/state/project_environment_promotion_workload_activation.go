@@ -77,7 +77,7 @@ func (m *MemStore) applyPromotionWorkloadActivationsLocked(changes []promotionWo
 			m.projectEnvironmentWorkloadHeads[key] = change.specID
 		}
 		if change.projectApp {
-			m.apps[change.appID] = change.app
+			m.putAppLocked(change.appID, change.app)
 		}
 	}
 }

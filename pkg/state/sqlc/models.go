@@ -6223,6 +6223,21 @@ type RegionalRuntimeConsent struct {
 	RevokedAt   pgtype.Timestamptz
 }
 
+type RegionalRuntimeFloorHistoryStart struct {
+	Singleton bool
+	StartedAt pgtype.Timestamptz
+}
+
+type RegionalRuntimeFloorInterval struct {
+	ID          int64
+	AppID       pgtype.UUID
+	ObjectID    pgtype.UUID
+	Kind        string
+	StartedAt   pgtype.Timestamptz
+	EndedAt     pgtype.Timestamptz
+	StateClaims []byte
+}
+
 type RegionalRuntimeLaunchSource struct {
 	AppID          pgtype.UUID
 	PermitID       pgtype.UUID

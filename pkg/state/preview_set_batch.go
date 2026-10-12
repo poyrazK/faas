@@ -259,13 +259,15 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 	}
 	original := make(map[string]App)
 	var inserted []string
+	rollbackFloor := m.regionalFloorRollbackLocked()
 	rollback := func(err error) ([]App, error) {
 		for _, id := range inserted {
-			delete(m.apps, id)
+			m.deleteAppLocked(id)
 		}
 		for id, app := range original {
-			m.apps[id] = app
+			m.putAppLocked(id, app)
 		}
+		rollbackFloor()
 		return nil, err
 	}
 	desiredSlugs := make(map[string]bool, len(apps))
@@ -307,7 +309,7 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		if old.DeleteGraceUntil == nil {
 			old.DeleteGraceUntil = &deadline
 		}
-		m.apps[id] = old
+		m.putAppLocked(id, old)
 	}
 	reserved := make([]App, 0, len(apps))
 	for _, desired := range apps {
@@ -336,7 +338,7 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 		row.PreviewPrState = PreviewPrStateOpen
 		row.PreviewExpiresAt = desired.PreviewExpiresAt
-		m.apps[row.ID] = row
+		m.putAppLocked(row.ID, row)
 		reserved = append(reserved, row)
 	}
 	set := PRPreviewSet{InstallationID: head.InstallationID, RepoFullName: head.RepoFullName,

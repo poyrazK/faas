@@ -116,6 +116,6 @@ func (m *MemStore) AdvanceBuildImageStatus(_ context.Context, id string, from, t
 		return ErrInvalidStateTransition
 	}
 	dep.Status = to
-	m.deployments[id] = dep
+	m.putDeploymentFloorLocked(id, dep)
 	return nil
 }

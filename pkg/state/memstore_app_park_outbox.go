@@ -47,7 +47,7 @@ func (m *MemStore) BeginAppParkTransition(_ context.Context, appID string, expec
 	m.appParkTransitionByApp[appID] = id
 	changed := app.Status != AppEvictedCold
 	app.Status = AppEvictedCold
-	m.apps[appID] = app
+	m.putAppLocked(appID, app)
 	return transition.AppParkTransition, changed, nil
 }
 

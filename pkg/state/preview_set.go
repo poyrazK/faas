@@ -318,7 +318,7 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 		}
 		now := time.Now().UTC()
 		app.PreviewPrState, app.PreviewExpiresAt = PreviewPrStateStale, &now
-		m.apps[id] = app
+		m.putAppLocked(id, app)
 	}
 	return nil
 }

@@ -289,6 +289,7 @@ const (
 // Every App field has an explicit stage policy. The coverage test rejects new
 // fields until their ownership and clone behavior have been considered.
 var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
+	"ComputeRegion":             WorkloadFieldIdentity,
 	"ID":                        WorkloadFieldIdentity,
 	"AccountID":                 WorkloadFieldIdentity,
 	"OrgID":                     WorkloadFieldIdentity,

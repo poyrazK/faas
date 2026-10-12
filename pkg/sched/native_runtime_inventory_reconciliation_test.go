@@ -195,8 +195,10 @@ func TestNativeRegionalInventoryPageRetainsHoldsAndAdvancesOnUncertainty(t *test
 				v.err = errors.New("lost reply")
 			}
 			e := newEngine(t, s, v, &fakeNotifier{}, "1.10.0")
-			if err := e.SeedLedger(t.Context()); err != nil {
-				t.Fatal(err)
+			// ADR-792: collected serving ownership closes admission even
+			// when the original physical runtime is still observable.
+			if err := e.SeedLedger(t.Context()); !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
+				t.Fatal("collected serving owner reopened recovery", err)
 			}
 			// Startup may read native ownership; this explicit observation must
 			// perform one new read rather than reuse its earlier sample.
@@ -209,6 +211,9 @@ func TestNativeRegionalInventoryPageRetainsHoldsAndAdvancesOnUncertainty(t *test
 			next, empty, err := e.ObserveRegionalRuntimeInventoryPage(t.Context(), after)
 			if err != nil || next != (state.RegionalRuntimeRetirementCursor{}) || empty.Nodes != 0 {
 				t.Fatal("cursor failed to reset", err)
+			}
+			if err := e.ledger.Admit(Request{Instance: uuid.NewString(), AppID: app.ID, Plan: api.PlanPro, RAMMB: 128, VCPU: 1, MaxConcurrency: 1}); !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
+				t.Fatal("advisory observation cleared the recovery barrier", err)
 			}
 			retained, _ := s.RegionalRuntimeCapacity(t.Context(), app.ID, source.Permit.ID)
 			if !reflect.DeepEqual(before, retained) || e.ledger.ResidentRAM() != resources.RAMMB+api.PerVMOverheadMB {
