@@ -1308,7 +1308,16 @@ func (s *PgStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepName
 			return ErrWorkflowAttemptNotFound
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET status = 'pending', current_step = $2, scheduled_for = $3, updated_at = now() WHERE id = $1`, runID, stepName, wakeAt); err != nil {
+	// A running run belongs to the pass that holds its lease; that pass parks
+	// it at the earliest wake when it finishes. Parking it here, mid-pass,
+	// broke parallel for_each batches (production-us hunt #9, H9-155): a
+	// sibling still in flight had its 200 rejected as stale and was re-run by
+	// lease recovery, and a sibling not yet started could never start, so the
+	// pass spun on the rejected starts.
+	if _, err := tx.Exec(ctx, `UPDATE workflow_runs
+		SET status = CASE WHEN status = 'running' THEN status ELSE 'pending' END,
+		    current_step = $2, scheduled_for = $3, updated_at = now()
+		WHERE id = $1`, runID, stepName, wakeAt); err != nil {
 		return fmt.Errorf("pgstore: persist workflow retry wake: %w", err)
 	}
 	return tx.Commit(ctx)
