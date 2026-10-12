@@ -465,7 +465,7 @@ func TestDeploymentResponse_EchoesMainDependencies(t *testing.T) {
 		{Status: state.DeployLive, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
 		{Status: state.DeployFailed, OverrideMainDependsOn: json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`)},
 	} {
-		response := (&server{}).deploymentResponse(dep, state.App{})
+		response := (&server{}).deploymentResponse(t.Context(), dep, state.App{})
 		if !response.HasOverrides {
 			t.Fatal("HasOverrides = false, want true for persisted main dependencies")
 		}

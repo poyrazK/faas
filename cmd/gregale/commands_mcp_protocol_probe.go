@@ -85,7 +85,7 @@ func validateMCPProtocolResponseHeaders(header http.Header, version string) erro
 
 func (t *mcpInstanceProtocolRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.Body != nil {
-		defer request.Body.Close()
+		defer func() { _ = request.Body.Close() }()
 	}
 	if request.Method != http.MethodPost || request.URL.Path != t.endpoint {
 		return nil, fmt.Errorf("exact-instance MCP probe only accepts POST to the configured endpoint")

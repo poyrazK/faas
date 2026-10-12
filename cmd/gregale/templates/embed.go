@@ -348,14 +348,6 @@ func TarGz(name, dest string) error {
 	return nil
 }
 
-func generatedGoMod(name string) []byte {
-	content := fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)
-	if name == "mcp-go" {
-		content += "\nrequire (\n\tgithub.com/jackc/pgx/v5 v5.11.0\n\tgolang.org/x/sync v0.22.0\n\tgolang.org/x/text v0.41.0\n)\n\nrequire (\n\tgithub.com/jackc/pgpassfile v1.0.0 // indirect\n\tgithub.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect\n\tgithub.com/jackc/puddle/v2 v2.2.2 // indirect\n)\n"
-	}
-	return []byte(content)
-}
-
 func copyFromFS(w io.Writer, root fs.FS, name string) error {
 	f, err := root.Open(name)
 	if err != nil {

@@ -802,7 +802,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 // handleDevSourceDeploy is the developer-only delta transport. Keeping it on

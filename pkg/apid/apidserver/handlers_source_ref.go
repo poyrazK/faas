@@ -356,7 +356,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 func (s *server) verifyPinnedSourceBranch(ctx context.Context, accountID string, installationID int64, repo, branch, commitSHA string) *api.Problem {

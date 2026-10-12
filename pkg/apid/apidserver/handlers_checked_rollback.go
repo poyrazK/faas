@@ -31,7 +31,7 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 			s.log.Warn("checked rollback readiness wakeup", "request_id", operation.ID, "err", err)
 		}
 	}
-	response := s.deploymentResponse(target, app)
+	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = &operation
 	writeJSON(w, http.StatusAccepted, response)
 }

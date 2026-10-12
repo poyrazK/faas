@@ -730,7 +730,7 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 	if err != nil {
 		return nil, errors.New("could not fetch JWKS")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK || response.Request.URL.Scheme != "https" {
 		return nil, errors.New("could not fetch JWKS")
 	}
@@ -791,11 +791,10 @@ func findJWK(keys []jsonWebKey, kid, algorithm string) (crypto.PublicKey, bool) 
 		if errX != nil || errY != nil || len(x) != 32 || len(y) != 32 {
 			return nil, false
 		}
-		publicKey := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
-		if !publicKey.Curve.IsOnCurve(publicKey.X, publicKey.Y) {
-			return nil, false
-		}
-		return publicKey, true
+		encoded := append([]byte{4}, x...)
+		encoded = append(encoded, y...)
+		publicKey, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+		return publicKey, err == nil
 	default:
 		return nil, false
 	}

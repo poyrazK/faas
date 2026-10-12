@@ -149,9 +149,10 @@ func (m *MemStore) ClaimMCPTaskPromotionRecovery(ctx context.Context, nodeID str
 			}
 			if len(hold.recovery.Payload) > 0 {
 				outcome, kind := "inactive", DeployMCPTaskRetryCompleted
-				if d.Status == DeployLive {
+				switch d.Status {
+				case DeployLive:
 					outcome, kind = "recovered", DeployMCPTaskRecovered
-				} else if d.Status == DeployCancelled {
+				case DeployCancelled:
 					outcome, kind = "cancelled", DeployMCPTaskHoldCancelled
 				}
 				if exists && appExists {

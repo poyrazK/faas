@@ -88,7 +88,7 @@ func resolveMCPTaskMetricsSettings(role string) (*mcpTaskMetricsSettings, error)
 	}
 	parsed, err := url.Parse(apiURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, errors.New("Gregale metrics API URL must be HTTPS without credentials, query, or fragment")
+		return nil, errors.New("gregale metrics API URL must be HTTPS without credentials, query, or fragment")
 	}
 	return &mcpTaskMetricsSettings{appSlug: appSlug, token: token, apiURL: parsed.Scheme + "://" + parsed.Host}, nil
 }
@@ -175,9 +175,9 @@ func pushMCPTaskMetric(ctx context.Context, client *http.Client, settings mcpTas
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("Gregale custom metric push failed with HTTP %d", response.StatusCode)
+		return fmt.Errorf("gregale custom metric push failed with HTTP %d", response.StatusCode)
 	}
 	return nil
 }
@@ -201,9 +201,9 @@ func pushMCPTaskCompatibilityReport(ctx context.Context, client *http.Client, se
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("Gregale MCP task compatibility report failed with HTTP %d", response.StatusCode)
+		return fmt.Errorf("gregale MCP task compatibility report failed with HTTP %d", response.StatusCode)
 	}
 	return nil
 }

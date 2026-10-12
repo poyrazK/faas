@@ -81,7 +81,7 @@ func (s *server) getMCPInstanceHealth(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
 		return
 	}
-	probeCtx, cancel := context.WithTimeout(req.Context(), mcpInstanceHealthProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(r.Context(), mcpInstanceHealthProbeTimeout)
 	defer cancel()
 	req = req.WithContext(probeCtx)
 	resp, err := (&http.Client{Timeout: mcpInstanceHealthProbeTimeout}).Do(req)

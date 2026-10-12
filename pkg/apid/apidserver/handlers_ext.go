@@ -2117,7 +2117,7 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 			"prev":          prev,
 		})
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
 }
 
 // updateDeploymentTraffic is the handler for
@@ -2285,7 +2285,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
@@ -2338,7 +2338,7 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), target, app))
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -5790,12 +5790,12 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 
 // --- response helpers ------------------------------------------------------
 
-func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {
+func (s *server) deploymentResponse(parent context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	var workerDrain *api.DeploymentWorkerDrainStatus
 	// Live worker deployments can also drain during scale-in. The audit
 	// summary survives instance deletion and scheduler restarts.
 	if s.store != nil && (d.Status == state.DeployLive || d.Status.IsTerminal()) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 		drain, err := s.store.DeploymentWorkerDrainStatus(ctx, d.ID)
 		cancel()
 		if err != nil {
@@ -5806,7 +5806,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	}
 	var promotionHold *api.DeploymentPromotionHold
 	if s.store != nil && !d.Status.IsTerminal() && d.Status != state.DeployLive {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 		hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
 		cancel()
 		if err != nil {
@@ -6080,7 +6080,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // builderd-owned cache decision. Keeping the lookup here avoids an N+1 query
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
-	resp := s.deploymentResponse(d, app)
+	resp := s.deploymentResponse(ctx, d, app)
 	resp.DurableEntityValidator = s.durable.DeploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
@@ -6327,7 +6327,7 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	}
 	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
 	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(d, appByID[d.AppID]))
+		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, appByID[d.AppID]))
 	}
 	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
 		// NextBefore = CreatedAt of the LAST row (the oldest on this

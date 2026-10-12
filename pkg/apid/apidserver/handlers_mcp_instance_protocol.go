@@ -104,7 +104,7 @@ func (s *server) postMCPInstanceProtocolProbe(w http.ResponseWriter, r *http.Req
 	if token != "" {
 		req.Header.Set("MCP-Probe-Authorization", token)
 	}
-	probeCtx, cancel := context.WithTimeout(req.Context(), mcpInstanceProtocolProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(r.Context(), mcpInstanceProtocolProbeTimeout)
 	defer cancel()
 	req = req.WithContext(probeCtx)
 	resp, err := (&http.Client{Timeout: mcpInstanceProtocolProbeTimeout}).Do(req)

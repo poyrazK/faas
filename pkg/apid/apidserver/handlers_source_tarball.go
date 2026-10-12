@@ -325,7 +325,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 // auditLocalTarballDeploy emits the `deploy.local_tarball` audit row

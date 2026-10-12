@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -418,7 +419,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 	defer poll.Stop()
 	keepAlive := time.NewTicker(taskSubscriptionKeepAlive)
 	defer keepAlive.Stop()
-	refreshTask := func(taskID string) bool {
+	refreshTask := func(ctx context.Context, taskID string) bool {
 		index := -1
 		for candidate, acceptedID := range acceptedIDs {
 			if acceptedID == taskID {
@@ -429,7 +430,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 		if index < 0 || tasks == nil {
 			return true
 		}
-		value, task, err := tasks.get(r.Context(), taskID, identity)
+		value, task, err := tasks.get(ctx, taskID, identity)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				delete(current, taskID)
@@ -489,7 +490,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 				return
 			}
 			for _, taskID := range append([]string(nil), acceptedIDs...) {
-				if !refreshTask(taskID) {
+				if !refreshTask(r.Context(), taskID) {
 					return
 				}
 			}
@@ -515,7 +516,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 			if taskSubscriptionAuthExpired(identity) {
 				return
 			}
-			if !refreshTask(taskID) {
+			if !refreshTask(r.Context(), taskID) {
 				return
 			}
 			if len(current) == 0 && len(listFingerprints) == 0 && !hasGenericResourceSubscriptions {

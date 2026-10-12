@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 -- PostgreSQL channel names use md5(namespace); not a cryptographic security boundary.
 	"encoding/hex"
 	"time"
 
@@ -10,7 +10,7 @@ import (
 )
 
 func taskNotificationChannel(namespace string) string {
-	digest := md5.Sum([]byte(namespace))
+	digest := md5.Sum([]byte(namespace)) // #nosec G401 -- Match PostgreSQL notification channel naming across runtimes.
 	return "gregale_mcp_task_" + hex.EncodeToString(digest[:])
 }
 
@@ -45,7 +45,7 @@ func (runtime *mcpTaskRuntime) taskNotificationLoop(ctx context.Context) {
 		if connection != nil {
 			// LISTEN state is session-scoped. Discard this connection on shutdown
 			// and reconnect so it cannot leak an active channel back into the pool.
-			closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			_ = connection.Conn().Close(closeCtx)
 			cancel()
 			connection.Release()

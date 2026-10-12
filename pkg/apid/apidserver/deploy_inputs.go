@@ -596,7 +596,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		if developerSource {
 			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
 		}
-		response := s.deploymentResponse(d, app)
+		response := s.deploymentResponse(r.Context(), d, app)
 		response.DevPatch = devPatch.preview
 		writeJSON(w, http.StatusAccepted, response)
 		return

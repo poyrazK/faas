@@ -118,7 +118,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
-		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
+		Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
 	})
 }
 

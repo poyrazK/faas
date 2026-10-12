@@ -850,7 +850,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusCreated, s.deploymentResponse(r.Context(), d, app))
 }
 
 // handleCancelUpload is DELETE /v1/uploads/{id}. Transitions open

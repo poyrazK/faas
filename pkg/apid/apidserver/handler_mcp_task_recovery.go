@@ -35,5 +35,5 @@ func (s *server) retryMCPTaskPromotionHold(w http.ResponseWriter, r *http.Reques
 		writeCustomerInternalProblem(w, r, s.log, "read scheduled MCP retry", "The retry was scheduled, but Gregale could not refresh the deployment status.", "Inspect the deployment before retrying.", err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }

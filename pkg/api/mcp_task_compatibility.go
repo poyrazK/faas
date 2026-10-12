@@ -137,7 +137,7 @@ func validMCPTaskCompatibilityDeploymentID(id string) bool {
 			}
 			continue
 		}
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}
@@ -162,7 +162,7 @@ func validMCPTaskCompatibilityHandlerVersion(version string) bool {
 	}
 	for i := 0; i < len(version); i++ {
 		c := version[i]
-		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
 			return false
 		}
 	}

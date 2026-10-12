@@ -209,7 +209,8 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request", http.StatusBadRequest)
 		return
 	}
-	if request.Method == "tools/call" {
+	switch request.Method {
+	case "tools/call":
 		var params struct {
 			Name string `json:"name"`
 		}
@@ -219,7 +220,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 				return
 			}
 		}
-	} else if request.Method == "resources/read" {
+	case "resources/read":
 		var params struct {
 			URI string `json:"uri"`
 		}
@@ -229,7 +230,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 				return
 			}
 		}
-	} else if request.Method == "prompts/get" {
+	case "prompts/get":
 		var params struct {
 			Name string `json:"name"`
 		}
@@ -239,7 +240,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 				return
 			}
 		}
-	} else if request.Method == "completion/complete" {
+	case "completion/complete":
 		var params struct {
 			Ref struct {
 				Type string `json:"type"`

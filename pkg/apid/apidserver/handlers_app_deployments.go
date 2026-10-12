@@ -58,7 +58,7 @@ func (s *server) listAppDeployments(w http.ResponseWriter, r *http.Request, acct
 	}
 	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
 	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(d, app))
+		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, app))
 	}
 	if len(rows) == limit && len(rows) > 0 {
 		resp.NextBefore = rows[len(rows)-1].CreatedAt.UTC().Format(time.RFC3339Nano)
