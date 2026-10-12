@@ -62,7 +62,9 @@ func countAuditRows(ctx context.Context, t *testing.T, h *e2etest.Harness, kind,
 	t.Helper()
 	var n int
 	if err := h.Pool.QueryRow(ctx,
-		`select count(*) from events where kind = $1 and subject = $2::uuid`,
+		// Trusted-signer rows name the owning account as subject and carry
+		// the app in data (hunt #9 H9-53); other kinds still use the app.
+		`select count(*) from events where kind = $1 and (subject = $2::uuid or data->>'app_id' = $2)`,
 		kind, appID).Scan(&n); err != nil {
 		t.Fatalf("count audit rows kind=%q app=%q: %v", kind, appID, err)
 	}
