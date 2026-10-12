@@ -754,14 +754,24 @@
    renderPlaybookDecision(section,p,records);
    if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
    if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
-   p.items.forEach((item,index)=>{
+   const lists=[{outcome_code:'',items:p.items}];
+   for(const guidance of p.playbook.outcome_guidance || []){
+    if(!guidance.follow_up_steps?.length)continue;
+    const saved=p.outcome_follow_ups?.find(f=>f.outcome_code===guidance.outcome_code);
+    const current=p.business_outcome;
+    const canStart=current && ['achieved','different_outcome'].includes(current.status) && current.evidence.reported_outcome_code===guidance.outcome_code;
+    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[]})),not_started:true,can_start:canStart});
+   }
+   for(const list of lists){
+    if(list.outcome_code){section.append(node('h5','Outcome follow-up · '+list.outcome_code));section.append(node('p',list.not_started ? (list.can_start ? 'First review will capture this current reported outcome.' : 'A fresh report of this outcome is required before the first review.') : list.completed_count+'/'+list.items.length+' steps reviewed complete'+(list.checklist_complete?' · Follow-up checklist complete':'')));if(list.observation){const evidence=list.observation.evidence;section.append(node('p','Original outcome report '+evidence.report_id+' · Revision '+evidence.state_revision+' · Captured '+clock(evidence.checked_at)+'. Later application changes do not rewrite this record.'));} }
+    list.items.forEach((item,index)=>{
     if(item.evidence_check){
      const check=item.evidence_check;
      section.append(node('p','Current requirement for '+item.label+': '+check.status.replace(/_/g,' ')+' · '+check.reason.replace(/_/g,' ')+' · Checked '+clock(check.checked_at)));
      if(check.review_suggested)section.append(node('p','Review suggested: this completed item currently lacks satisfied application evidence. Your original review is preserved.'));
      if(check.evidence){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(check.evidence.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Current requirement evidence');link.href=url.href;section.append(link);}
     }
-    const editable=(p.disposition||'active')==='active';const edit=node(editable?'form':'div','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
+    const editable=(p.disposition||'active')==='active' && (!list.not_started || list.can_start);const edit=node(editable?'form':'div','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
     for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
     if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}
     const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
@@ -773,9 +783,10 @@
     edit.addEventListener('submit',event=>{event.preventDefault();if(!edit.reportValidity())return;
      const refs=evidence.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const separator=line.indexOf('/');return separator<0?{operation_id:line}:{operation_id:line.slice(0,separator),milestone_id:line.slice(separator+1)};});
      if(status.value==='completed'&&!refs.length){message.textContent='Completed items require operation or milestone evidence.';return;}
-     void savePlaybookProgress(p.id,{revision:p.revision,item_index:index,status:status.value,note:note.value,evidence:refs},button);
+     void savePlaybookProgress(p.id,{revision:p.revision,outcome_code:list.outcome_code || undefined,item_index:index,status:status.value,note:note.value,evidence:refs},button);
     });section.append(edit);
-   });caseView.append(section);
+   });}
+   caseView.append(section);
   }
  }
  function renderWorkflowCase(result) {

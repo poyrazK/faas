@@ -5,6 +5,7 @@
 import type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
 import type { OperationWorkflowPlaybookApplicability } from './OperationWorkflowPlaybookApplicability.js';
 import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
+import type { OperationWorkflowPlaybookOutcomeFollowUp } from './OperationWorkflowPlaybookOutcomeFollowUp.js';
 import type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflowPlaybookProgressChange.js';
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlaybookReview.js';
@@ -12,6 +13,10 @@ import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlayboo
  * OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgress = {
+  /**
+   * OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists; original checklist counts and business reports remain independent.
+   */
+  outcome_follow_ups?: Array<OperationWorkflowPlaybookOutcomeFollowUp>;
   /**
    * OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned application wait duration; human edits and watch enrollment do not reschedule it.
    */

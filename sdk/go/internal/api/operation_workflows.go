@@ -120,11 +120,12 @@ type OperationWorkflowPlaybookEvidence struct {
 
 // OperationWorkflowPlaybookProgressUpdateRequest replaces one checklist item under a revision fence.
 type OperationWorkflowPlaybookProgressUpdateRequest struct {
-	Revision  int64                               `json:"revision"`
-	ItemIndex int                                 `json:"item_index"`
-	Status    string                              `json:"status"`
-	Note      string                              `json:"note"`
-	Evidence  []OperationWorkflowPlaybookEvidence `json:"evidence"`
+	OutcomeCode string                              `json:"outcome_code,omitempty"`
+	Revision    int64                               `json:"revision"`
+	ItemIndex   int                                 `json:"item_index"`
+	Status      string                              `json:"status"`
+	Note        string                              `json:"note"`
+	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
 	EvidenceCheck *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
@@ -136,21 +137,23 @@ type OperationWorkflowPlaybookProgressItem struct {
 	ReviewedAt    *time.Time                              `json:"reviewed_at,omitempty"`
 }
 type OperationWorkflowPlaybookProgressChange struct {
-	Revision  int64                                 `json:"revision"`
-	ItemIndex int                                   `json:"item_index"`
-	Item      OperationWorkflowPlaybookProgressItem `json:"item"`
-	At        time.Time                             `json:"at"`
-	Actor     string                                `json:"actor"`
+	OutcomeCode string                                `json:"outcome_code,omitempty"`
+	Revision    int64                                 `json:"revision"`
+	ItemIndex   int                                   `json:"item_index"`
+	Item        OperationWorkflowPlaybookProgressItem `json:"item"`
+	At          time.Time                             `json:"at"`
+	Actor       string                                `json:"actor"`
 }
 type OperationWorkflowPlaybookProgress struct {
-	OutcomeDeadlineAt   *time.Time                                `json:"outcome_deadline_at,omitempty"`
-	StartStateRevision  int64                                     `json:"start_state_revision,omitempty"`
-	BusinessOutcome     *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
-	Disposition         string                                    `json:"disposition,omitempty"`
-	LatestReview        *OperationWorkflowPlaybookReview          `json:"latest_review,omitempty"`
-	Reviews             []OperationWorkflowPlaybookReview         `json:"reviews,omitempty"`
-	ReviewsTruncated    bool                                      `json:"reviews_truncated,omitempty"`
-	ReplacesProgressIDs []string                                  `json:"replaces_progress_ids,omitempty"`
+	OutcomeFollowUps    []OperationWorkflowPlaybookOutcomeFollowUp `json:"outcome_follow_ups,omitempty"`
+	OutcomeDeadlineAt   *time.Time                                 `json:"outcome_deadline_at,omitempty"`
+	StartStateRevision  int64                                      `json:"start_state_revision,omitempty"`
+	BusinessOutcome     *OperationWorkflowPlaybookBusinessOutcome  `json:"business_outcome,omitempty"`
+	Disposition         string                                     `json:"disposition,omitempty"`
+	LatestReview        *OperationWorkflowPlaybookReview           `json:"latest_review,omitempty"`
+	Reviews             []OperationWorkflowPlaybookReview          `json:"reviews,omitempty"`
+	ReviewsTruncated    bool                                       `json:"reviews_truncated,omitempty"`
+	ReplacesProgressIDs []string                                   `json:"replaces_progress_ids,omitempty"`
 
 	Applicability        *OperationWorkflowPlaybookApplicability   `json:"applicability,omitempty"`
 	ID                   string                                    `json:"id"`
@@ -337,7 +340,17 @@ type OperationWorkflowPlaybookOutcomeAcceptancePolicy struct {
 
 // Plain-text application guidance conveys meaning and suggested human follow-up, never execution authority.
 type OperationWorkflowPlaybookOutcomeGuidance struct {
-	OutcomeCode       string `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
-	Description       string `json:"description" yaml:"description" toml:"description"`
-	SuggestedFollowUp string `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
+	FollowUpSteps     []string `json:"follow_up_steps,omitempty" yaml:"follow_up_steps,omitempty" toml:"follow_up_steps"`
+	OutcomeCode       string   `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
+	Description       string   `json:"description" yaml:"description" toml:"description"`
+	SuggestedFollowUp string   `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
+}
+
+// Outcome follow-up tracks human work against the immutable reported outcome captured on first review.
+type OperationWorkflowPlaybookOutcomeFollowUp struct {
+	OutcomeCode       string                                   `json:"outcome_code"`
+	Observation       OperationWorkflowPlaybookBusinessOutcome `json:"observation"`
+	Items             []OperationWorkflowPlaybookProgressItem  `json:"items"`
+	CompletedCount    int                                      `json:"completed_count"`
+	ChecklistComplete bool                                     `json:"checklist_complete"`
 }

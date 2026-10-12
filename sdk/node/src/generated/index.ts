@@ -1227,6 +1227,7 @@ export type { OperationWorkflowPlaybookOutcomeAcceptancePolicy } from './models/
 export type { OperationWorkflowPlaybookOutcomeChange } from './models/OperationWorkflowPlaybookOutcomeChange.js';
 export type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './models/OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
 export type { OperationWorkflowPlaybookOutcomeEscalation } from './models/OperationWorkflowPlaybookOutcomeEscalation.js';
+export type { OperationWorkflowPlaybookOutcomeFollowUp } from './models/OperationWorkflowPlaybookOutcomeFollowUp.js';
 export type { OperationWorkflowPlaybookOutcomeGuidance } from './models/OperationWorkflowPlaybookOutcomeGuidance.js';
 export type { OperationWorkflowPlaybookProgress } from './models/OperationWorkflowPlaybookProgress.js';
 export type { OperationWorkflowPlaybookProgressChange } from './models/OperationWorkflowPlaybookProgressChange.js';

@@ -140,7 +140,55 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	if p.Revision != req.Revision || !workflowPlaybookProgressActive(*p) {
 		return *p, ErrConflict
 	}
-	if req.ItemIndex >= len(p.Items) {
+	items := &p.Items
+	followUpIndex := -1
+	if req.OutcomeCode != "" {
+		if api.ValidateOperationWorkflowStateName(req.OutcomeCode) != nil {
+			return *p, ErrInvalidArgument
+		}
+		var steps []string
+		for _, guidance := range p.Playbook.OutcomeGuidance {
+			if guidance.OutcomeCode == req.OutcomeCode {
+				steps = guidance.FollowUpSteps
+				break
+			}
+		}
+		if len(steps) == 0 {
+			return *p, ErrInvalidArgument
+		}
+		for i := range p.OutcomeFollowUps {
+			if p.OutcomeFollowUps[i].OutcomeCode == req.OutcomeCode {
+				followUpIndex = i
+				break
+			}
+		}
+		if followUpIndex < 0 {
+			// Enrollment captures an advisory fresh exact-case observation before the revision-fenced write.
+			opts.AppID = r.App
+			overview, e := readPlaybookEvidenceWatchCase(ctx, store, r.Account, r.Tenant, opts, p.ID, operator)
+			if e != nil {
+				return *p, e
+			}
+			var observed *api.OperationWorkflowPlaybookBusinessOutcome
+			for _, row := range overview.PlaybookProgress {
+				if row.ID == p.ID {
+					observed = row.BusinessOutcome
+					break
+				}
+			}
+			if observed == nil || (observed.Status != "achieved" && observed.Status != "different_outcome") || observed.Evidence.ReportedOutcomeCode != req.OutcomeCode {
+				return *p, ErrConflict
+			}
+			follow := api.OperationWorkflowPlaybookOutcomeFollowUp{OutcomeCode: req.OutcomeCode, Observation: *observed, Items: []api.OperationWorkflowPlaybookProgressItem{}}
+			for _, label := range steps {
+				follow.Items = append(follow.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
+			}
+			p.OutcomeFollowUps = append(p.OutcomeFollowUps, follow)
+			followUpIndex = len(p.OutcomeFollowUps) - 1
+		}
+		items = &p.OutcomeFollowUps[followUpIndex].Items
+	}
+	if req.ItemIndex >= len(*items) {
 		return *p, ErrInvalidArgument
 	}
 	evidence, err := preparePlaybookProgressEvidence(ctx, store, r, req.Evidence)
@@ -151,10 +199,20 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		return *p, ErrInvalidArgument
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	item := api.OperationWorkflowPlaybookProgressItem{Label: p.Items[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
-	p.Items[req.ItemIndex] = item
+	item := api.OperationWorkflowPlaybookProgressItem{Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
+	(*items)[req.ItemIndex] = item
 	p.Revision++
 	p.UpdatedAt = now
+	if followUpIndex >= 0 {
+		follow := &p.OutcomeFollowUps[followUpIndex]
+		follow.CompletedCount = 0
+		for _, step := range follow.Items {
+			if step.Status == "completed" {
+				follow.CompletedCount++
+			}
+		}
+		follow.ChecklistComplete = len(follow.Items) > 0 && follow.CompletedCount == len(follow.Items)
+	}
 	p.CompletedCount = 0
 	for _, i := range p.Items {
 		if i.Status == "completed" {
@@ -162,7 +220,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		}
 	}
 	p.ChecklistComplete = len(p.Items) > 0 && p.CompletedCount == len(p.Items)
-	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{Revision: p.Revision, ItemIndex: req.ItemIndex, Item: item, At: now, Actor: actor})
+	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{OutcomeCode: req.OutcomeCode, Revision: p.Revision, ItemIndex: req.ItemIndex, Item: item, At: now, Actor: actor})
 	if len(p.History) > api.OperationWorkflowPlaybookProgressHistoryMax {
 		p.History = p.History[len(p.History)-api.OperationWorkflowPlaybookProgressHistoryMax:]
 		p.HistoryTruncated = true

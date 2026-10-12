@@ -9,6 +9,7 @@ from ..models.operation_workflow_playbook_progress_update_request_status import 
     OperationWorkflowPlaybookProgressUpdateRequestStatus,
     check_operation_workflow_playbook_progress_update_request_status,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
@@ -39,6 +40,10 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressUpdateRequest.evidence. Replacement evidence references for this item;
     empty allowed only for pending."""
+    outcome_code: str | Unset = UNSET
+    """OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector;
+    item_index addresses that pinned step list. First review captures fresh comparable evidence of this exact
+    outcome."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision
@@ -54,6 +59,8 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        outcome_code = self.outcome_code
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -65,6 +72,8 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
                 "evidence": evidence,
             }
         )
+        if outcome_code is not UNSET:
+            field_dict["outcome_code"] = outcome_code
 
         return field_dict
 
@@ -88,12 +97,15 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
 
             evidence.append(evidence_item)
 
+        outcome_code = d.pop("outcome_code", UNSET)
+
         operation_workflow_playbook_progress_update_request = cls(
             revision=revision,
             item_index=item_index,
             status=status,
             note=note,
             evidence=evidence,
+            outcome_code=outcome_code,
         )
 
         return operation_workflow_playbook_progress_update_request

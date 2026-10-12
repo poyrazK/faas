@@ -81353,12 +81353,46 @@ components:
           type: string
           format: date-time
           description: OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation, retained through corrections or evidence loss; does not prove when the business result occurred.
+    OperationWorkflowPlaybookOutcomeFollowUp:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeFollowUp. Human follow-up for one pinned reported outcome. First review captures an advisory pre-write business observation; later reviews do not rewrite it or assert execution success.
+      required: [outcome_code, observation, items, completed_count, checklist_complete]
+      properties:
+        outcome_code:
+          type: string
+          description: OperationWorkflowPlaybookOutcomeFollowUp.outcome_code. Exact pinned outcome associated with this list.
+        observation:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+        items:
+          type: array
+          maxItems: 16
+          description: OperationWorkflowPlaybookOutcomeFollowUp.items. Pinned ordered steps with scoped evidence references and human review stamps.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookProgressItem'
+        completed_count:
+          type: integer
+          minimum: 0
+          maximum: 16
+          description: OperationWorkflowPlaybookOutcomeFollowUp.completed_count. Reviewed completed steps, independent of original checklist completion.
+        checklist_complete:
+          type: boolean
+          description: OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never proves application state or execution.
     OperationWorkflowPlaybookOutcomeGuidance:
       type: object
       additionalProperties: false
       description: OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
       required: [outcome_code, description]
       properties:
+        follow_up_steps:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique and at most 256 bytes each; tracked separately from original playbook evidence items.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
         outcome_code:
           type: string
           maxLength: 64
@@ -81667,6 +81701,11 @@ components:
       - note
       - evidence
       properties:
+        outcome_code:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+          description: OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector; item_index addresses that pinned step list. First review captures fresh comparable evidence of this exact outcome.
         revision:
           type: integer
           minimum: 1
@@ -81751,6 +81790,9 @@ components:
       - at
       - actor
       properties:
+        outcome_code:
+          type: string
+          description: OperationWorkflowPlaybookProgressChange.outcome_code. Present for outcome follow-up step reviews; item_index is local to that list.
         revision:
           type: integer
           minimum: 2
@@ -81791,6 +81833,12 @@ components:
       - history
       - history_truncated
       properties:
+        outcome_follow_ups:
+          type: array
+          maxItems: 17
+          description: OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists; original checklist counts and business reports remain independent.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeFollowUp'
         outcome_deadline_at:
           type: string
           format: date-time

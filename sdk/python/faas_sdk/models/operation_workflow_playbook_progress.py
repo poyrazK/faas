@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
     from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
     from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+    from ..models.operation_workflow_playbook_outcome_follow_up import OperationWorkflowPlaybookOutcomeFollowUp
     from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
     from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
     from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
@@ -66,6 +67,9 @@ class OperationWorkflowPlaybookProgress:
     history_truncated: bool
     """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
     history."""
+    outcome_follow_ups: list[OperationWorkflowPlaybookOutcomeFollowUp] | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists;
+    original checklist counts and business reports remain independent."""
     outcome_deadline_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned
     application wait duration; human edits and watch enrollment do not reschedule it."""
@@ -130,6 +134,13 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = self.history_truncated
 
+        outcome_follow_ups: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.outcome_follow_ups, Unset):
+            outcome_follow_ups = []
+            for outcome_follow_ups_item_data in self.outcome_follow_ups:
+                outcome_follow_ups_item = outcome_follow_ups_item_data.to_dict()
+                outcome_follow_ups.append(outcome_follow_ups_item)
+
         outcome_deadline_at: str | Unset = UNSET
         if not isinstance(self.outcome_deadline_at, Unset):
             outcome_deadline_at = self.outcome_deadline_at.isoformat()
@@ -188,6 +199,8 @@ class OperationWorkflowPlaybookProgress:
                 "history_truncated": history_truncated,
             }
         )
+        if outcome_follow_ups is not UNSET:
+            field_dict["outcome_follow_ups"] = outcome_follow_ups
         if outcome_deadline_at is not UNSET:
             field_dict["outcome_deadline_at"] = outcome_deadline_at
         if start_state_revision is not UNSET:
@@ -214,6 +227,7 @@ class OperationWorkflowPlaybookProgress:
         from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
         from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
         from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+        from ..models.operation_workflow_playbook_outcome_follow_up import OperationWorkflowPlaybookOutcomeFollowUp
         from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
         from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
         from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
@@ -256,6 +270,17 @@ class OperationWorkflowPlaybookProgress:
             history.append(history_item)
 
         history_truncated = d.pop("history_truncated")
+
+        _outcome_follow_ups = d.pop("outcome_follow_ups", UNSET)
+        outcome_follow_ups: list[OperationWorkflowPlaybookOutcomeFollowUp] | Unset = UNSET
+        if _outcome_follow_ups is not UNSET:
+            outcome_follow_ups = []
+            for outcome_follow_ups_item_data in _outcome_follow_ups:
+                outcome_follow_ups_item = OperationWorkflowPlaybookOutcomeFollowUp.from_dict(
+                    outcome_follow_ups_item_data
+                )
+
+                outcome_follow_ups.append(outcome_follow_ups_item)
 
         _outcome_deadline_at = d.pop("outcome_deadline_at", UNSET)
         outcome_deadline_at: datetime.datetime | Unset
@@ -329,6 +354,7 @@ class OperationWorkflowPlaybookProgress:
             updated_at=updated_at,
             history=history,
             history_truncated=history_truncated,
+            outcome_follow_ups=outcome_follow_ups,
             outcome_deadline_at=outcome_deadline_at,
             start_state_revision=start_state_revision,
             business_outcome=business_outcome,

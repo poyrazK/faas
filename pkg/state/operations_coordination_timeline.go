@@ -142,7 +142,11 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 				for _, e := range change.Item.Evidence {
 					ids = append(ids, e.OperationID)
 				}
-				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/" + fmt.Sprint(change.Revision), PlaybookProgressID: p.ID, At: change.At, Kind: "playbook_item_reviewed", Summary: change.Item.Label, Actor: change.Actor, Status: change.Item.Status, Note: change.Item.Note, ReportingOperationIDs: ids})
+				kind, summary := "playbook_item_reviewed", change.Item.Label
+				if change.OutcomeCode != "" {
+					kind, summary = "playbook_outcome_step_reviewed", change.OutcomeCode+": "+change.Item.Label
+				}
+				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/" + fmt.Sprint(change.Revision), PlaybookProgressID: p.ID, At: change.At, Kind: kind, Summary: summary, Actor: change.Actor, Status: change.Item.Status, Note: change.Item.Note, ReportedOutcomeCode: change.OutcomeCode, ReportingOperationIDs: ids})
 			}
 		}
 		out.Limitations = append(out.Limitations, "Pinned playbook starts and bounded review changes are included independently of inbox retention. Checklist completion is human coordination, not business success.")

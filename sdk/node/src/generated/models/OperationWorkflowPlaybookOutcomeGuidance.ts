@@ -7,6 +7,10 @@
  */
 export type OperationWorkflowPlaybookOutcomeGuidance = {
   /**
+   * OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique and at most 256 bytes each; tracked separately from original playbook evidence items.
+   */
+  follow_up_steps?: Array<string>;
+  /**
    * OperationWorkflowPlaybookOutcomeGuidance.outcome_code. Primary expected outcome or explicit acceptable alternative; unique within the playbook guidance set.
    */
   outcome_code: string;

@@ -64,6 +64,18 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 			return strings.Compare(a.OutcomeCode, b.OutcomeCode)
 		})
 		for j, guidance := range r.OutcomeGuidance {
+			if len(guidance.FollowUpSteps) > OperationWorkflowPlaybookEvidenceMax {
+				return nil, fmt.Errorf("workflow playbook outcome follow-up steps exceed their limit")
+			}
+			r.OutcomeGuidance[j].FollowUpSteps = slices.Clone(guidance.FollowUpSteps)
+			labels := map[string]bool{}
+			for _, label := range guidance.FollowUpSteps {
+				if !text(label, OperationWorkflowPlaybookEvidenceMaxBytes, true) || labels[label] {
+					return nil, fmt.Errorf("workflow playbook outcome follow-up step is invalid or duplicated")
+				}
+				labels[label] = true
+			}
+
 			allowed := guidance.OutcomeCode == r.ExpectedOutcomeCode || (r.OutcomeAcceptance != nil && slices.Contains(r.OutcomeAcceptance.AlternativeOutcomeCodes, guidance.OutcomeCode))
 			if !allowed || (j > 0 && r.OutcomeGuidance[j-1].OutcomeCode == guidance.OutcomeCode) || !text(guidance.Description, OperationWorkflowReadinessFollowUpNoteMaxBytes, true) || !text(guidance.SuggestedFollowUp, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
 				return nil, fmt.Errorf("workflow playbook outcome guidance code or text is invalid or duplicated")
