@@ -498,7 +498,6 @@ var PreviewSlugOK = previewSlugOK
 var ProblemCode = problemCode
 var ProductionQueueBindingHandler = productionQueueBindingHandler
 var ProfileSourceProvenance = profileSourceProvenance
-var ProjectApplyContext = projectApplyContext
 var ProjectAsyncRoutesPlanProblem = projectAsyncRoutesPlanProblem
 var ProjectCronsWithPreserved = projectCronsWithPreserved
 var ProjectDashboardGitHubActivity = projectDashboardGitHubActivity

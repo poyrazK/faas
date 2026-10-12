@@ -207,9 +207,7 @@ func TestObjectStorageLifecycleAndProviderSwitch(t *testing.T) {
 	if r = e.do(t, "DELETE", "/v1/apps/bucket-app", nil, nil); r.Code != 409 {
 		t.Fatal("app orphaned buckets", r.Code)
 	}
-	// The listing shows the bucket empty, so this 409 is the provider's own
-	// refusal (an object written after the check) and the rollback path.
-	a.objects = map[string][]byte{}
+	a.objects = map[string][]byte{} // empty listing: the 409 below is the provider's own refusal
 	a.deleteErr = objectstorage.ErrNotEmpty
 	if r = e.do(t, "DELETE", path+"/"+first.ID, nil, nil); r.Code != 409 {
 		t.Fatal(r.Code, r.Body.String())
