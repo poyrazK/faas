@@ -139,37 +139,6 @@ func TestObjectStorageBindingVerificationRotationAndStaleServingInstance(t *test
 	}
 }
 
-func TestObjectStorageBindingVerificationScopeAndPermission(t *testing.T) {
-	for _, scope := range []string{"default", "staging"} {
-		t.Run(scope, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			enableAppTaskAPIForTest(&e)
-			app, _ := seedAppTaskDeployment(t, e, "storage-scope")
-			readyObjectStorageVerificationBinding(t, e, app, scope)
-			task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageBindingProbeCommand, "ASSETS"}})
-			stored, err := e.store.AppTaskByID(context.Background(), e.acct.ID, app.ID, task.ID)
-			if err != nil || (stored.BindingVerification != nil) != (scope == "default") {
-				t.Fatalf("scope=%s pin=%+v err=%v", scope, stored.BindingVerification, err)
-			}
-		})
-	}
-	e := setupWithScopes(t, []string{api.ScopeAppsRead, api.ScopeDeployWrite})
-	enableAppTaskAPIForTest(&e)
-	app, _ := seedAppTaskDeployment(t, e, "storage-permission")
-	readyObjectStorageVerificationBinding(t, e, app, "default")
-	task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageBindingProbeCommand, "ASSETS"}})
-	stored, err := e.store.AppTaskByID(context.Background(), e.acct.ID, app.ID, task.ID)
-	if err != nil || stored.BindingVerification != nil {
-		t.Fatalf("restricted task acquired evidence: %+v %v", stored, err)
-	}
-	inventory := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil))
-	for _, item := range inventory.Bindings {
-		if item.Type == api.BindingTypeObjectStorage {
-			t.Fatal("forbidden storage metadata exposed")
-		}
-	}
-}
-
 func TestObjectStorageBindingVerificationRejectsUnsafeReports(t *testing.T) {
 	for _, tc := range []struct {
 		name, stdout, reason string

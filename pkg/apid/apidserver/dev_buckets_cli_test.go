@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // The build boundary is intentionally rejected after the real upsert handler.
@@ -24,17 +25,17 @@ func TestDevBucketCLICommandsMem(t *testing.T) {
 	if cli == "" {
 		t.Skip("GREGALE_OBJECT_STORAGE_E2E_CLI required")
 	}
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	setS3Flag(t, e, true)
-	provider := &devCLIObjectProvider{fakeObjectProvider: &fakeObjectProvider{objects: map[string][]byte{}}}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	apidserver.SetS3Flag(t, e, true)
+	provider := &devCLIObjectProvider{FakeObjectProvider: newStorageTestObjectProvider(map[string][]byte{}, nil)}
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, newStorageTestObjectProvider(nil, nil), "external"))
 	created := make(chan api.DevSessionResponse, 2)
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut && r.URL.Path == "/v1/dev/sessions/files-app" {
 			out := httptest.NewRecorder()
-			e.h.ServeHTTP(out, r)
+			(*e.H()).ServeHTTP(out, r)
 			var receipt api.DevSessionResponse
 			if out.Code != 201 && out.Code != 200 || json.Unmarshal(out.Body.Bytes(), &receipt) != nil {
 				t.Errorf("upsert = %d: %s", out.Code, out.Body.String())
@@ -44,7 +45,7 @@ func TestDevBucketCLICommandsMem(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(503, "object_storage_unavailable", "Fixture boundary", "Storage provisioned; VM build intentionally excluded"))
 			return
 		}
-		e.h.ServeHTTP(w, r)
+		(*e.H()).ServeHTTP(w, r)
 	}))
 	defer control.Close()
 	dir := t.TempDir()
@@ -55,7 +56,7 @@ func TestDevBucketCLICommandsMem(t *testing.T) {
 		t.Helper()
 		command := exec.CommandContext(t.Context(), cli, append([]string{"--json"}, args...)...)
 		command.Dir = dir
-		command.Env = append(os.Environ(), "FAAS_API="+control.URL, "FAAS_TOKEN="+e.key, "FAAS_DEVELOPER_ID="+strings.Repeat("a", 32))
+		command.Env = append(os.Environ(), "FAAS_API="+control.URL, "FAAS_TOKEN="+(*e.Key()), "FAAS_DEVELOPER_ID="+strings.Repeat("a", 32))
 		var out, stderr bytes.Buffer
 		command.Stdout, command.Stderr = &out, &stderr
 		err := command.Run()
@@ -100,7 +101,7 @@ func TestDevBucketCLICommandsMem(t *testing.T) {
 	if err != nil || !bytes.Contains(stopped, []byte("stopped")) {
 		t.Fatalf("stop = %s %v", stopped, err)
 	}
-	rows, err := e.store.ListObjectBuckets(t.Context(), e.acct.ID, first.App.ID)
+	rows, err := (*e.Store()).ListObjectBuckets(t.Context(), (*e.Acct()).ID, first.App.ID)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("CLI cleanup = %v %v", rows, err)
 	}
@@ -109,11 +110,11 @@ func TestDevBucketCLICommandsMem(t *testing.T) {
 // HTTP handlers run in separate goroutines from the child-process driver.
 // Use an atomic observer instead of inspecting the provider's mutable slice.
 type devCLIObjectProvider struct {
-	*fakeObjectProvider
+	*apidserver.FakeObjectProvider
 	creates atomic.Int32
 }
 
 func (p *devCLIObjectProvider) CreateBucket(ctx context.Context, bucket string) error {
 	p.creates.Add(1)
-	return p.fakeObjectProvider.CreateBucket(ctx, bucket)
+	return p.FakeObjectProvider.CreateBucket(ctx, bucket)
 }

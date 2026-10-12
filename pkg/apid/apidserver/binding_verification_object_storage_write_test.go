@@ -1,5 +1,5 @@
 // adr: 1027 — write evidence is permission-pinned and requires successful cleanup.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,21 +9,22 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObjectStorageWriteVerificationAdmissionAndEvidence(t *testing.T) {
 	for _, mode := range []string{"write", "read_write"} {
 		t.Run(mode, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			enableAppTaskAPIForTest(&e)
-			app, _ := seedAppTaskDeployment(t, e, "storage-write")
-			binding := readyObjectStorageVerificationBinding(t, e, app, "default", mode)
+			e := apidserver.Setup(t, api.PlanPro)
+			apidserver.EnableAppTaskAPIForTest(&e)
+			app, _ := apidserver.SeedAppTaskDeployment(t, e, "storage-write")
+			binding := apidserver.ReadyObjectStorageVerificationBinding(t, e, app, "default", mode)
 			request := api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", mode}, MaxOutputBytes: 4096}
 			passed := api.ObjectStorageBindingProbeCheck{Status: "passed"}
 			for _, failure := range []string{"", "legacy", "wrong mode", "missing cleanup", "failed cleanup", "download skipped"} {
-				task := createAppTaskForTest(t, e, app.Slug, request)
-				stored, err := e.store.AppTaskByID(t.Context(), e.acct.ID, app.ID, task.ID)
+				task := apidserver.CreateAppTaskForTest(t, e, app.Slug, request)
+				stored, err := (*e.Store()).AppTaskByID(t.Context(), (*e.Acct()).ID, app.ID, task.ID)
 				if err != nil || stored.BindingVerification == nil || stored.BindingVerification.ObjectStorageMode != mode {
 					t.Fatal("permission missing from admission pin")
 				}
@@ -50,8 +51,8 @@ func TestObjectStorageWriteVerificationAdmissionAndEvidence(t *testing.T) {
 					}
 				}
 				body, _ := json.Marshal(report)
-				completeVerificationTask(t, e, beginVerificationTask(t, e, task.ID), string(body))
-				item, inventory := selectedObjectStorageVerification(t, e, app, binding.ID)
+				apidserver.CompleteVerificationTask(t, e, apidserver.BeginVerificationTask(t, e, task.ID), string(body))
+				item, inventory := apidserver.SelectedObjectStorageVerification(t, e, app, binding.ID)
 				if (item.VerificationStatus == "passed") != (failure == "") {
 					t.Fatalf("%s qualified incorrectly: %+v", failure, item.Verification)
 				}
@@ -64,7 +65,7 @@ func TestObjectStorageWriteVerificationAdmissionAndEvidence(t *testing.T) {
 			if mode == "write" {
 				request.Command[2] = "read_write"
 			}
-			response := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", request, nil)
+			response := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", request, nil)
 			if response.Code != 403 {
 				t.Fatalf("permission escalation admitted: %d %s", response.Code, response.Body.String())
 			}
@@ -81,12 +82,12 @@ func (s *lockedStorageProbeStore) GetObjectBucketObjectLock(ctx context.Context,
 }
 
 func TestObjectStorageWriteVerificationRejectsKnownRetention(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	enableAppTaskAPIForTest(&e)
-	app, _ := seedAppTaskDeployment(t, e, "storage-locked")
-	readyObjectStorageVerificationBinding(t, e, app, "default", "read_write")
-	e.s.store = &lockedStorageProbeStore{MemStore: e.store}
-	r := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", "read_write"}}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	app, _ := apidserver.SeedAppTaskDeployment(t, e, "storage-locked")
+	apidserver.ReadyObjectStorageVerificationBinding(t, e, app, "default", "read_write")
+	(*(*e.S()).Store()) = &lockedStorageProbeStore{MemStore: (*e.Store())}
+	r := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", "read_write"}}, nil)
 	if r.Code != 403 {
 		t.Fatalf("write probe admitted into locked bucket: %d %s", r.Code, r.Body.String())
 	}

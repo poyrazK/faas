@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -11,11 +11,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type devBucketsFixture struct {
-	server         *server
+	server         *apidserver.Server
 	store          state.Store
 	account        state.Account
 	do             func(*testing.T, string, string, any, map[string]string) *httptest.ResponseRecorder
@@ -23,19 +24,19 @@ type devBucketsFixture struct {
 }
 
 func TestDevBucketsMem(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	devBucketsSuite(t, devBucketsFixture{e.s, e.store, e.acct, e.do, func(string) { e.store.SetClockForTest(func() time.Time { return time.Now().Add(time.Minute) }) }})
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	devBucketsSuite(t, devBucketsFixture{(*e.S()), (*e.Store()), (*e.Acct()), e.Do, func(string) { (*e.Store()).SetClockForTest(func() time.Time { return time.Now().Add(time.Minute) }) }})
 }
 
 func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 	t.Helper()
-	if err := e.server.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*e.server.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeObjectProvider{objects: map[string][]byte{}}
-	e.server.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	provider := newStorageTestObjectProvider(map[string][]byte{}, nil)
+	e.server.WithObjectStorage(apidserver.ObjectRegistry(t, provider, newStorageTestObjectProvider(nil, nil), "external"))
 	const path = "/v1/dev/sessions/storage-app"
 	request := api.UpsertDevSessionRequest{WorkspaceID: strings.Repeat("a", 32), Buckets: []api.DevBucketRequest{{Name: "assets"}}}
 	decode := func(response *httptest.ResponseRecorder, code int) api.DevSessionResponse {
@@ -59,7 +60,7 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 	bucket := first.Buckets[0]
 	// Refresh and an omitted declaration retain the exact bucket and credentials.
 	second := decode(e.do(t, http.MethodPut, path, request, nil), http.StatusOK)
-	if second.Buckets[0].Bucket.ID != bucket.Bucket.ID || second.Buckets[0].Binding.ID != bucket.Binding.ID || len(provider.created) != 1 {
+	if second.Buckets[0].Bucket.ID != bucket.Bucket.ID || second.Buckets[0].Binding.ID != bucket.Binding.ID || len(*provider.Created()) != 1 {
 		t.Fatal("refresh replaced storage")
 	}
 	omitted := request
@@ -69,7 +70,7 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 		t.Fatal("omission detached bucket")
 	}
 	read := decode(e.do(t, http.MethodGet, path+"?workspace_id="+request.WorkspaceID, nil, nil), http.StatusOK)
-	if !read.ExpiresAt.Equal(unchanged.ExpiresAt) || len(provider.created) != 1 {
+	if !read.ExpiresAt.Equal(unchanged.ExpiresAt) || len(*provider.Created()) != 1 {
 		t.Fatal("inspection renewed or provisioned")
 	}
 	// Same account and project, independent source workspace: separate resources.
@@ -88,19 +89,19 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh := newServer(e.store, testLogger(), "gregale.dev", noopNotifier{})
-	fresh.WithObjectStorage(e.server.objectStorage)
-	if err := fresh.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	fresh := apidserver.NewServer(e.store, apidserver.TestLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	fresh.WithObjectStorage((*e.server.ObjectStorage()))
+	if err := (*fresh.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	normalized, err := api.NormalizeDevBuckets(request.Buckets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prob, err := fresh.object.EnsureDevBuckets(t.Context(), e.account, app, normalized); prob != nil || err != nil {
+	if prob, err := (*fresh.Object()).EnsureDevBuckets(t.Context(), e.account, app, normalized); prob != nil || err != nil {
 		t.Fatalf("restart = %v %v", prob, err)
 	}
-	if len(provider.created) != 2 {
+	if len(*provider.Created()) != 2 {
 		t.Fatal("restart reprovisioned")
 	}
 	// Permission changes and revocation fail closed without replacing rights.
@@ -120,7 +121,7 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 		t.Fatalf("revoked secrets recreated: %d %v", len(rows), err)
 	}
 	// Failed cleanup retains the session and journal, then an ordinary retry finishes.
-	provider.deleteErr = errors.New("provider temporarily offline")
+	*provider.DeleteErr() = errors.New("provider temporarily offline")
 	if response := e.do(t, http.MethodDelete, path+"?workspace_id="+request.WorkspaceID, nil, nil); response.Code < 400 {
 		t.Fatalf("failed cleanup = %d", response.Code)
 	}
@@ -128,14 +129,14 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 	if err != nil || app.Status == state.AppDeleted {
 		t.Fatal("session lost before cleanup")
 	}
-	provider.deleteErr = nil
+	*provider.DeleteErr() = nil
 	e.advanceCleanup(bucket.Bucket.ID)
 	if response := e.do(t, http.MethodDelete, path+"?workspace_id="+request.WorkspaceID, nil, nil); response.Code != http.StatusNoContent {
 		t.Fatalf("cleanup retry = %d: %s", response.Code, response.Body.String())
 	}
 	// Expiry uses the same worker and revokes the remaining workspace credentials.
-	janitor := newPreviewJanitor(e.store, noopNotifier{}, nil, testLogger(), true).withClock(func() time.Time { return time.Now().Add(25 * time.Hour) }).withResourceCleanup(fresh.cleanupDevSessionResources)
-	if err := janitor.sweepOnce(t.Context()); err != nil {
+	janitor := apidserver.NewPreviewJanitor(e.store, apidserver.NoopNotifier{}, nil, apidserver.TestLogger(), true).WithClock(func() time.Time { return time.Now().Add(25 * time.Hour) }).WithResourceCleanup(fresh.CleanupDevSessionResources)
+	if err := janitor.SweepOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err := e.store.(state.ObjectBucketStore).ListObjectBuckets(t.Context(), e.account.ID, other.App.ID)
@@ -148,9 +149,9 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 }
 
 func TestDevBucketsRejectBeforeCreatingSession(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
+	e := apidserver.SetupSecrets(t, api.PlanPro)
 	for _, tc := range []struct {
 		name    string
 		buckets []api.DevBucketRequest
@@ -161,11 +162,11 @@ func TestDevBucketsRejectBeforeCreatingSession(t *testing.T) {
 		{"invalid", []api.DevBucketRequest{{Name: "../assets"}}, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response := e.do(t, http.MethodPut, "/v1/dev/sessions/reject-storage", api.UpsertDevSessionRequest{Buckets: tc.buckets}, nil)
+			response := e.Do(t, http.MethodPut, "/v1/dev/sessions/reject-storage", api.UpsertDevSessionRequest{Buckets: tc.buckets}, nil)
 			if response.Code != tc.code {
 				t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 			}
-			if _, err := e.store.AppBySlug(t.Context(), devSessionSlug(e.acct.ID, "reject-storage", "")); !errors.Is(err, state.ErrNotFound) {
+			if _, err := (*e.Store()).AppBySlug(t.Context(), apidserver.DevSessionSlug((*e.Acct()).ID, "reject-storage", "")); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("created rejected app: %v", err)
 			}
 		})
@@ -173,19 +174,19 @@ func TestDevBucketsRejectBeforeCreatingSession(t *testing.T) {
 }
 
 func TestDevBucketsScopedKeys(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	setS3Flag(t, e, true)
-	provider := &fakeObjectProvider{objects: map[string][]byte{}}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	apidserver.SetS3Flag(t, e, true)
+	provider := newStorageTestObjectProvider(map[string][]byte{}, nil)
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, newStorageTestObjectProvider(nil, nil), "external"))
 	key := func(scopes ...string) map[string]string {
 		t.Helper()
 		plain, hash, err := api.GenerateAPIKey()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "developer scopes", scopes); err != nil {
+		if _, err = (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "developer scopes", scopes); err != nil {
 			t.Fatal(err)
 		}
 		return map[string]string{"Authorization": "Bearer " + plain}
@@ -194,17 +195,17 @@ func TestDevBucketsScopedKeys(t *testing.T) {
 	request := api.UpsertDevSessionRequest{Buckets: []api.DevBucketRequest{{Name: "assets"}}}
 	deployOnly := key(api.ScopeDeployWrite)
 	for _, headers := range []map[string]string{deployOnly, key(api.ScopeStorageManage)} {
-		if response := e.do(t, http.MethodPut, path, request, headers); response.Code != http.StatusForbidden {
+		if response := e.Do(t, http.MethodPut, path, request, headers); response.Code != http.StatusForbidden {
 			t.Fatalf("scope bypass = %d: %s", response.Code, response.Body.String())
 		}
 	}
-	if len(provider.created) != 0 {
+	if len(*provider.Created()) != 0 {
 		t.Fatal("unauthorized provisioning")
 	}
-	if _, err := e.store.AppBySlug(t.Context(), devSessionSlug(e.acct.ID, "scoped-storage", "")); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).AppBySlug(t.Context(), apidserver.DevSessionSlug((*e.Acct()).ID, "scoped-storage", "")); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unauthorized app creation: %v", err)
 	}
-	response := e.do(t, http.MethodPut, path, request, key(api.ScopeDeployWrite, api.ScopeStorageManage))
+	response := e.Do(t, http.MethodPut, path, request, key(api.ScopeDeployWrite, api.ScopeStorageManage))
 	var created api.DevSessionResponse
 	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &created) != nil || len(created.Buckets) != 1 {
 		t.Fatalf("authorized provisioning = %d: %s", response.Code, response.Body.String())
@@ -217,63 +218,63 @@ func TestDevBucketsScopedKeys(t *testing.T) {
 		{http.MethodPut, deployOnly, api.UpsertDevSessionRequest{}},
 		{http.MethodGet, key(api.ScopeAppsRead), nil},
 	} {
-		response := e.do(t, check.method, path, check.body, check.headers)
+		response := e.Do(t, check.method, path, check.body, check.headers)
 		var receipt api.DevSessionResponse
 		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &receipt) != nil || len(receipt.Buckets) != 0 {
 			t.Fatalf("storage metadata disclosure = %d: %s", response.Code, response.Body.String())
 		}
 	}
-	if len(provider.created) != 1 {
+	if len(*provider.Created()) != 1 {
 		t.Fatal("ordinary refresh recreated storage")
 	}
 }
 
 func TestDevBucketsPartialFailureAndSecretCustody(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	setS3Flag(t, e, true)
-	provider := &fakeObjectProvider{objects: map[string][]byte{}, createErr: errors.New("temporary provider failure")}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	apidserver.SetS3Flag(t, e, true)
+	provider := newStorageTestObjectProvider(map[string][]byte{}, errors.New("temporary provider failure"))
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, newStorageTestObjectProvider(nil, nil), "external"))
 	const path = "/v1/dev/sessions/retry-storage"
 	request := api.UpsertDevSessionRequest{Buckets: []api.DevBucketRequest{{Name: "assets"}}}
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 503 {
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 503 {
 		t.Fatalf("provider failure = %d: %s", response.Code, response.Body.String())
 	}
-	app, err := e.store.AppBySlug(t.Context(), devSessionSlug(e.acct.ID, "retry-storage", ""))
+	app, err := (*e.Store()).AppBySlug(t.Context(), apidserver.DevSessionSlug((*e.Acct()).ID, "retry-storage", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	buckets, err := e.store.ListObjectBuckets(t.Context(), e.acct.ID, app.ID)
+	buckets, err := (*e.Store()).ListObjectBuckets(t.Context(), (*e.Acct()).ID, app.ID)
 	if err != nil || len(buckets) != 1 || buckets[0].State != "provisioning" || buckets[0].LastErrorCode != "temporary" {
 		t.Fatalf("reservation = %+v %v", buckets, err)
 	}
-	provider.createErr = nil
-	e.store.SetClockForTest(func() time.Time { return time.Now().Add(time.Minute) })
-	response := e.do(t, http.MethodPut, path, request, nil)
+	*provider.CreateErr() = nil
+	(*e.Store()).SetClockForTest(func() time.Time { return time.Now().Add(time.Minute) })
+	response := e.Do(t, http.MethodPut, path, request, nil)
 	var session api.DevSessionResponse
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &session) != nil || len(session.Buckets) != 1 || session.Buckets[0].Bucket.ID != buckets[0].ID {
 		t.Fatalf("retry = %d: %s", response.Code, response.Body.String())
 	}
 	// The current default cannot relocate a bucket on a later source reload.
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "ceph"))
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 200 {
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, newStorageTestObjectProvider(nil, nil), "ceph"))
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 200 {
 		t.Fatalf("placement retry = %d: %s", response.Code, response.Body.String())
 	}
-	placed, err := e.store.GetObjectBucket(t.Context(), e.acct.ID, app.ID, buckets[0].ID)
+	placed, err := (*e.Store()).GetObjectBucket(t.Context(), (*e.Acct()).ID, app.ID, buckets[0].ID)
 	if err != nil || placed.BackendID != "external" {
 		t.Fatalf("placement changed = %+v %v", placed, err)
 	}
 	key := "GREGALE_S3_ARCHIVE_ENDPOINT"
 	secretPath := "/v1/apps/" + app.Slug + "/secrets/" + key
-	if response := e.do(t, http.MethodPut, secretPath, api.PutAppSecretRequest{Value: "customer-owned"}, nil); response.Code != 200 {
+	if response := e.Do(t, http.MethodPut, secretPath, api.PutAppSecretRequest{Value: "customer-owned"}, nil); response.Code != 200 {
 		t.Fatalf("secret = %d: %s", response.Code, response.Body.String())
 	}
 	request.Buckets = []api.DevBucketRequest{{Name: "archive"}}
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 409 {
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 409 {
 		t.Fatalf("secret collision = %d: %s", response.Code, response.Body.String())
 	}
-	rows, err := e.store.ListAppSecretsInScope(t.Context(), e.acct.ID, app.ID, api.DefaultEnvScope)
+	rows, err := (*e.Store()).ListAppSecretsInScope(t.Context(), (*e.Acct()).ID, app.ID, api.DefaultEnvScope)
 	if err != nil || len(rows) != 7 {
 		t.Fatalf("collision changed secret rows: %d %v", len(rows), err)
 	}
@@ -282,20 +283,20 @@ func TestDevBucketsPartialFailureAndSecretCustody(t *testing.T) {
 			t.Fatal("customer secret adopted by binding")
 		}
 	}
-	if response := e.do(t, http.MethodDelete, secretPath, nil, nil); response.Code != 204 {
+	if response := e.Do(t, http.MethodDelete, secretPath, nil, nil); response.Code != 204 {
 		t.Fatalf("explicit repair = %d", response.Code)
 	}
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 200 {
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 200 {
 		t.Fatalf("repaired retry = %d: %s", response.Code, response.Body.String())
 	}
 	// Explicit placement drift conflicts rather than relocating existing data.
 	request.Buckets = []api.DevBucketRequest{{Name: "assets", Region: "eu-west-1"}}
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 409 {
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 409 {
 		t.Fatalf("region drift = %d", response.Code)
 	}
 	// Preserve the operational failure class: validation does not bypass disablement.
-	setS3Flag(t, e, false)
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != 503 {
+	apidserver.SetS3Flag(t, e, false)
+	if response := e.Do(t, http.MethodPut, path, request, nil); response.Code != 503 {
 		t.Fatalf("disablement = %d", response.Code)
 	}
 
@@ -303,17 +304,17 @@ func TestDevBucketsPartialFailureAndSecretCustody(t *testing.T) {
 
 // adr: 1036
 func TestDevBucketComputeTriggersMem(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	devBucketComputeTriggersSuite(t, devBucketsFixture{server: e.s, store: e.store, account: e.acct, do: e.do})
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	devBucketComputeTriggersSuite(t, devBucketsFixture{server: (*e.S()), store: (*e.Store()), account: (*e.Acct()), do: e.Do})
 }
 func devBucketComputeTriggersSuite(t *testing.T, e devBucketsFixture) {
 	t.Helper()
-	if err := e.server.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*e.server.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	e.server.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{objects: map[string][]byte{}}, &fakeObjectProvider{}, "external"))
+	e.server.WithObjectStorage(apidserver.ObjectRegistry(t, newStorageTestObjectProvider(map[string][]byte{}, nil), newStorageTestObjectProvider(nil, nil), "external"))
 	triggers := []api.ObjectStorageComputeTrigger{{ID: "images", Prefix: "uploads/"}}
 	request := api.UpsertDevSessionRequest{WorkspaceID: strings.Repeat("c", 32), Buckets: []api.DevBucketRequest{{Name: "assets", Triggers: &triggers}}}
 	do := func(r api.UpsertDevSessionRequest) api.DevSessionResponse {
@@ -359,4 +360,11 @@ func devBucketComputeTriggersSuite(t *testing.T, e devBucketsFixture) {
 	if err != nil || len(cleared.Rules) != 0 || cleared.Revision != p.Revision+1 {
 		t.Fatal("explicit clear", cleared, err)
 	}
+}
+
+func newStorageTestObjectProvider(objects map[string][]byte, createErr error) *apidserver.FakeObjectProvider {
+	provider := &apidserver.FakeObjectProvider{}
+	*provider.Objects() = objects
+	*provider.CreateErr() = createErr
+	return provider
 }

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,15 +6,16 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1036
 func TestObjectComputeTriggerAPIMem(t *testing.T) {
-	_, restore := withTestIdentities(t)
+	_, restore := apidserver.WithTestIdentities(t)
 	defer restore()
-	e := setupSecrets(t, api.PlanPro)
-	objectComputeTriggerAPISuite(t, devBucketsFixture{server: e.s, store: e.store, account: e.acct, do: e.do})
+	e := apidserver.SetupSecrets(t, api.PlanPro)
+	objectComputeTriggerAPISuite(t, devBucketsFixture{server: (*e.S()), store: (*e.Store()), account: (*e.Acct()), do: e.Do})
 }
 func objectComputeTriggerAPISuite(t *testing.T, e devBucketsFixture) {
 	t.Helper()
@@ -26,10 +27,10 @@ func objectComputeTriggerAPISuite(t *testing.T, e devBucketsFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.server.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*e.server.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	e.server.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{objects: map[string][]byte{}}, &fakeObjectProvider{}, "external"))
+	e.server.WithObjectStorage(apidserver.ObjectRegistry(t, newStorageTestObjectProvider(map[string][]byte{}, nil), newStorageTestObjectProvider(nil, nil), "external"))
 	created := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/buckets", map[string]any{"name": "assets"}, nil)
 	if created.Code != 201 {
 		t.Fatal(created.Code, created.Body.String())
@@ -91,7 +92,7 @@ func objectComputeTriggerAPISuite(t *testing.T, e devBucketsFixture) {
 	if response = e.do(t, http.MethodPut, path, request, nil); response.Code != 409 {
 		t.Fatal("stale", response.Code, response.Body.String())
 	}
-	if err := e.server.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err := (*e.server.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	revision = policy.Revision
