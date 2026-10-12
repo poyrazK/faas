@@ -153,8 +153,28 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   const replayEnv = {ALICE_JWT:await jwt('alice'),BOB_JWT:await jwt('bob'),GREGALE_DATA_API_REFRESH_TOKEN:token}
   const events = []
   // Adapt only the fixture transport; the hosted entrypoint accepts HTTPS origins.
-  const fetcher = (target,init) => fetch(fresh + new URL(target).pathname + new URL(target).search,init)
-  assert.equal((await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})).failed,0)
+  const fetcher = async (target,init) => {
+    const url = new URL(target), local = fresh + url.pathname + url.search
+    // The replacement engine's one-connection pool can briefly report 503
+    // while its readiness probe settles. Warm only the read-only schema probe;
+    // application requests and authorization denials stay single-attempt.
+    if (url.pathname !== '/__gregale/schema' || (init.method && init.method !== 'GET')) return fetch(local,init)
+    let response
+    await eventually(async () => {
+      response = await fetch(local,init)
+      if (response.status !== 503) return true
+      await response.body?.cancel()
+      return false
+    })
+    return response
+  }
+  try {
+    assert.equal((await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})).failed,0)
+  } catch (error) {
+    // Emit only the hosted entrypoint's redacted assertion results.
+    error.message += ': ' + JSON.stringify(events.filter(event => event.event === 'replay_result' && !event.passed))
+    throw error
+  }
   scenarios.scenarios[0].requests[1].expect.json=[{id:1}]
   await writeFile(collection,JSON.stringify(scenarios))
   await assert.rejects(runHostedReplay(options,replayEnv,{fetcher,emit:()=>{}}))
