@@ -784,6 +784,13 @@ type AppLogDrainHealth struct {
 	DeliveryLatencySamples    int64
 }
 
+type AppMcpTaskCompatibility struct {
+	AppID      pgtype.UUID
+	Handlers   []byte
+	Truncated  bool
+	ObservedAt pgtype.Timestamptz
+}
+
 type AppOpenapiDoc struct {
 	AppID          pgtype.UUID
 	AccountID      pgtype.UUID
@@ -2050,6 +2057,30 @@ type DeploymentLog struct {
 	Stream       string
 	Line         string
 	WrittenAt    pgtype.Timestamptz
+}
+
+type DeploymentMcpTaskHold struct {
+	DeploymentID          pgtype.UUID
+	Detail                string
+	ObservedAt            pgtype.Timestamptz
+	FirstHeldAt           pgtype.Timestamptz
+	RecoveryChannel       string
+	RecoveryPayload       []byte
+	OwnerNode             string
+	Attempts              int32
+	NextAttemptAt         pgtype.Timestamptz
+	LeaseUntil            pgtype.Timestamptz
+	ClaimGeneration       int64
+	WakeRequested         bool
+	LastRecoveryOutcome   string
+	LastRecoveryAt        pgtype.Timestamptz
+	LastRecoveryErrorCode string
+}
+
+type DeploymentMcpTaskMigrationOverride struct {
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UsedAt       pgtype.Timestamptz
 }
 
 type DeploymentOpenapiDoc struct {
