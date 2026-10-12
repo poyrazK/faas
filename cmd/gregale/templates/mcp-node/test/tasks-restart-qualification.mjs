@@ -187,6 +187,7 @@ async function runQualification(receipt) {
     });
     pool.on('error', () => {});
     store = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000 });
+    await store.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'qualification_input', version: '1' }] });
     await store.initialize();
     await pool.query(`
       CREATE TABLE gregale_mcp_qualification_runs (
