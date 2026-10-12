@@ -144,7 +144,7 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, budget, app_id, period_start, threshold_percent, limit_value, used_value, crossed_at
+		SELECT id, budget, app_id, COALESCE(end_user, ''), period_start, threshold_percent, limit_value, used_value, crossed_at
 		  FROM outbound_ai_budget_alerts
 		 WHERE account_id = $1 AND integration_id = $2
 		 ORDER BY crossed_at DESC, threshold_percent DESC, id
@@ -158,7 +158,7 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		var id, appID pgtype.UUID
 		var periodStart time.Time
 		alert := OutboundAIBudgetAlert{IntegrationID: integrationID}
-		if err := rows.Scan(&id, &alert.Budget, &appID, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used, &alert.CrossedAt); err != nil {
+		if err := rows.Scan(&id, &alert.Budget, &appID, &alert.EndUser, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used, &alert.CrossedAt); err != nil {
 			return nil, mapErr(err)
 		}
 		alert.ID, alert.PeriodStart, alert.CrossedAt = pgUUIDString(id), periodStart.UTC(), alert.CrossedAt.UTC()
@@ -179,7 +179,7 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 	rows, err := s.pool.Query(ctx, `
 		SELECT log.id, log.created_at, log.caller, log.route_id, log.model, log.status, log.outcome,
 		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
-		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts
+		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, '')
 		  FROM outbound_ai_request_log log
 		 WHERE log.integration_id = $1 AND ($2::timestamptz IS NULL OR log.created_at < $2)
 		 ORDER BY log.created_at DESC, log.id DESC
@@ -197,7 +197,7 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		var entry OutboundAIRequestLogEntry
 		if err := rows.Scan(&id, &entry.CreatedAt, &entry.Caller, &routeID, &entry.Model, &status, &entry.Outcome,
 			&entry.InputTokens, &entry.CachedInputTokens, &entry.CacheWriteTokens, &entry.OutputTokens,
-			&entry.CostMillicents, &duration, &ttfb, &attempts); err != nil {
+			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser); err != nil {
 			return nil, mapErr(err)
 		}
 		entry.ID, entry.CreatedAt = pgUUIDString(id), entry.CreatedAt.UTC()

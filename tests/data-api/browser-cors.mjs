@@ -37,7 +37,13 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     const deadline = Date.now() + 30000
     while (Date.now() < deadline) {
       if (spawnError || child.exitCode !== null || child.signalCode !== null) break
-      try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break } catch {}
+      try {
+        // Chromium can create the file before writing its contents. Wait for
+        // a terminated port line rather than accepting an empty/partial read.
+        const contents = await readFile(join(profile, 'DevToolsActivePort'), 'utf8')
+        const match = /^([1-9]\d{0,4})\r?\n/.exec(contents)
+        if (match && Number(match[1]) <= 65535) { port = match[1]; break }
+      } catch {}
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     assert.equal(spawnError, undefined, 'chromium_failed_to_start')

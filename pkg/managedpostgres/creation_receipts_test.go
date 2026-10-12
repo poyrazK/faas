@@ -90,7 +90,10 @@ func TestRestoreCreationJournalSurvivesCancellationAndVerificationFailure(t *tes
 			if cancelled {
 				p.cancel = cancel
 			}
-			_, err = s.Restore(ctx, RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "target", PointInTime: time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)})
+			// The real clock must pass the point, which cannot precede the source.
+			point := source.CreatedAt.UTC().Truncate(time.Microsecond).Add(time.Microsecond)
+			time.Sleep(2 * time.Millisecond)
+			_, err = s.Restore(ctx, RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "target", PointInTime: point})
 			if !errors.Is(err, ErrConflict) {
 				t.Fatalf("restore: %v", err)
 			}
@@ -220,7 +223,7 @@ func TestCustomerRestoreRevalidatesLineageBeforeReadiness(t *testing.T) {
 				t.Fatal(err)
 			}
 			p.provisionStatus = ProviderStatusPending
-			target, err := s.Restore(t.Context(), RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "target", PointInTime: time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)})
+			target, err := s.Restore(t.Context(), RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "target", PointInTime: source.CreatedAt})
 			if err != nil || target.State != StateProvisioning {
 				t.Fatalf("pending restore: %+v %v", target, err)
 			}

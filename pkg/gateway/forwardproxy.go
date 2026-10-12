@@ -34,6 +34,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ import (
 	evts "github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -78,6 +80,23 @@ func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
+}
+
+// guestDeadlineHeader tells the guest how long the request may still run:
+// the request budget left at dispatch (ADR-1150). The function runner bounds
+// the invocation by it. Customer-supplied x-faas-* headers are dropped before
+// this is appended, so the guest only ever sees the platform's value. A
+// request without a budget (synthetic invocations) carries none.
+func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
+	b, ok := reqbudget.FromContext(ctx)
+	if !ok {
+		return nil, false
+	}
+	remaining := b.Remaining(time.Time{})
+	if remaining <= 0 {
+		return nil, false
+	}
+	return &vmmdpb.Header{Name: api.DeadlineHeader, Value: strconv.FormatInt(remaining.Milliseconds(), 10)}, true
 }
 
 // withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
@@ -437,6 +456,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// the guest sees the request's Host.
 	if r.Host != "" {
 		init.Headers = append(init.Headers, &vmmdpb.Header{Name: "Host", Value: r.Host})
+	}
+	if deadline, ok := guestDeadlineHeader(r.Context()); ok {
+		init.Headers = append(init.Headers, deadline)
 	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},

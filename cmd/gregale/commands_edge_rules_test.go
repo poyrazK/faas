@@ -838,12 +838,12 @@ func TestBuildEdgeRuleAction_Budget_RejectsNonPositive(t *testing.T) {
 	}
 }
 
-// A budget rule may not widen past the platform ceiling — otherwise a
-// customer could register their way out of api.RequestBudgetMax.
+// A budget rule may not widen past the platform ceiling (ADR-1150); the
+// plan's own ceiling clamps it again at request time.
 func TestBuildEdgeRuleAction_Budget_RejectsOverCeiling(t *testing.T) {
-	over := int(api.RequestBudgetMax.Milliseconds()) + 1
+	over := int(api.RequestBudgetPlanMax.Milliseconds()) + 1
 	if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: over}); err == nil {
-		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetMax)
+		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetPlanMax)
 	}
 }
 

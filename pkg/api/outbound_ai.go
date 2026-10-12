@@ -81,6 +81,19 @@ type OutboundAIPriceListResponse struct {
 	Entries       []OutboundAIPriceEntry `json:"entries"`
 }
 
+// OutboundAIPriceCatalogResponse is the built-in price catalog of one
+// provider (ADR-994): list prices converted from USD at USDPerEUR and
+// rounded up. It prices the models an integration's own list does not name;
+// a "*" entry in that list turns the catalog off for the integration.
+type OutboundAIPriceCatalogResponse struct {
+	AIProvider string                 `json:"ai_provider"`
+	Source     string                 `json:"source"`
+	Generated  string                 `json:"generated"`
+	USDPerEUR  string                 `json:"usd_per_eur"`
+	FXSource   string                 `json:"fx_source"`
+	Entries    []OutboundAIPriceEntry `json:"entries"`
+}
+
 // PutOutboundBindingAIBudgetRequest sets or clears an app's daily AI token
 // limit on one integration binding.
 type PutOutboundBindingAIBudgetRequest struct {
@@ -144,11 +157,36 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 
 // Route formats (ADR-991). A native route sends the caller's request to
 // targets of one provider. An openai route accepts OpenAI chat completions
-// and translates them for Anthropic and Gemini targets.
+// and embeddings and translates them for each target's provider (ADR-995).
 const (
 	OutboundAIRouteFormatNative = "native"
 	OutboundAIRouteFormatOpenAI = "openai"
 )
+
+// OutboundVertexAnthropicVersion is the anthropic_version a translated
+// Claude request on Vertex AI carries (ADR-995).
+const OutboundVertexAnthropicVersion = "vertex-2023-10-16"
+
+var outboundVertexBasePattern = regexp.MustCompile(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
+
+// OutboundVertexBasePath derives "/{version}/projects/{project}/locations/{location}"
+// from a Vertex integration's allowed path prefixes. Translated routes need
+// exactly one such base; prefixes naming none or several are refused.
+func OutboundVertexBasePath(prefixes []string) (string, bool) {
+	base := ""
+	for _, prefix := range prefixes {
+		match := outboundVertexBasePattern.FindStringSubmatch(prefix)
+		if match == nil {
+			continue
+		}
+		found := "/" + match[1] + "/projects/" + match[2] + "/locations/" + match[3]
+		if base != "" && base != found {
+			return "", false
+		}
+		base = found
+	}
+	return base, base != ""
+}
 
 // ValidOutboundAIRouteFormat accepts the empty value (native) and both formats.
 func ValidOutboundAIRouteFormat(format string) bool {
@@ -165,7 +203,8 @@ func OutboundAIRouteFormatTargetProvider(format, provider string) (allowed, need
 	switch provider {
 	case OutboundAIProviderOpenAI:
 		return true, false
-	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini:
+	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini,
+		OutboundAIProviderVertex, OutboundAIProviderBedrock:
 		return true, true
 	}
 	return false, false
@@ -268,7 +307,15 @@ const (
 	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
 	OutboundAIBudgetDailyCost      = "daily_cost"
 	OutboundAIBudgetMonthlyCost    = "monthly_cost"
+	// Per-end-user UTC-day budgets (ADR-995); their alerts name EndUser.
+	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
+	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
 )
+
+// OutboundAIBudgetIsPerUser reports whether a budget is one end user's.
+func OutboundAIBudgetIsPerUser(budget string) bool {
+	return budget == OutboundAIBudgetUserDailyTokens || budget == OutboundAIBudgetUserDailyCost
+}
 
 // OutboundAIBudgetAlert records the first settlement that reached a
 // threshold of one budget in one period. Limit and Used are tokens for
@@ -278,6 +325,7 @@ type OutboundAIBudgetAlert struct {
 	IntegrationID    string    `json:"integration_id"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -297,6 +345,7 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	IntegrationName  string    `json:"integration_name"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -322,7 +371,80 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64     `json:"duration_ms"`
 	TimeToFirstByteMS *int64    `json:"ttfb_ms"`
 	Attempts          int       `json:"attempts"`
+	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
+	EndUser *string `json:"end_user"`
 }
+
+// Per-end-user attribution and key affinity headers (ADR-994). An app sets
+// them on calls through the gateway; they never reach the provider.
+const (
+	OutboundAIUserHeader    = "X-Gregale-AI-User"
+	OutboundAISessionHeader = "X-Gregale-AI-Session"
+	// OutboundAIUserOverflow aggregates end users beyond the per-day cap.
+	// No header value can name it.
+	OutboundAIUserOverflow = "~other"
+)
+
+// ValidOutboundAIUserID accepts 1 to 64 letters, digits and . _ : @ + = / |
+// -, enough for opaque IDs, UUIDs, hashes and e-mail-like keys. The same
+// rule bounds the session header.
+func ValidOutboundAIUserID(id string) bool {
+	if id == "" || len(id) > OutboundAIUserIDMaxBytes {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("._:@+=/|-", c) >= 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidOutboundAIUserLimits accepts optional per-end-user daily token and
+// cost limits; either requires an AI provider (ADR-994).
+func ValidOutboundAIUserLimits(provider string, tokens, cost *int64) bool {
+	if tokens != nil && (provider == "" || *tokens < 1 || *tokens > MaxOutboundAITokensPerDay) {
+		return false
+	}
+	return cost == nil || (provider != "" && *cost >= 1 && *cost <= MaxOutboundAICostMillicents)
+}
+
+// OutboundAIUserUsageItem is one end user's UTC-day usage on an
+// integration. Tokens are input plus output, the amount the per-user token
+// limit counts.
+type OutboundAIUserUsageItem struct {
+	EndUser        string `json:"end_user"`
+	Requests       int64  `json:"requests"`
+	ErrorRequests  int64  `json:"error_requests"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	Tokens         int64  `json:"tokens"`
+	CostMillicents int64  `json:"cost_millicents"`
+}
+
+// OutboundAIUserUsageResponse lists one UTC day's end users by cost, then
+// tokens (ADR-994). TrackedUsers counts the day's distinct end users,
+// including the "~other" overflow row.
+type OutboundAIUserUsageResponse struct {
+	UsageDate                    string                    `json:"usage_date"`
+	UserDailyTokenLimit          *int64                    `json:"user_daily_token_limit"`
+	UserDailyCostLimitMillicents *int64                    `json:"user_daily_cost_limit_millicents"`
+	TrackedUsers                 int64                     `json:"tracked_users"`
+	Items                        []OutboundAIUserUsageItem `json:"items"`
+}
+
+// OutboundAIUserUsageExportRow is one NDJSON line of a per-end-user usage
+// export (ADR-995); the CSV export has the same columns in this order.
+type OutboundAIUserUsageExportRow struct {
+	UsageDate string `json:"usage_date"`
+	OutboundAIUserUsageItem
+}
+
+// OutboundAIUserUsageExportColumns names the CSV export's header row.
+var OutboundAIUserUsageExportColumns = []string{"usage_date", "end_user", "requests", "error_requests",
+	"input_tokens", "output_tokens", "tokens", "cost_millicents"}
 
 // OutboundAIRequestLogList is one newest-first page. NextBefore, when set,
 // is the created_at cursor for the next page.

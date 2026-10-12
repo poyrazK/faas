@@ -256,6 +256,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
 	}
+	aiEndUser, aiAffinity, ok := aiCallerKeys(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_user_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_user_invalid",
+			"X-Gregale-AI-User and X-Gregale-AI-Session must each be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
+		return
+	}
 	var managedAuthorization string
 	var poolKeys []ManagedKey
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
@@ -317,6 +324,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AIReservedCostMillicents:       reserve.cost,
 		BindingRequestsPerMinute:       copyInt64Pointer(guard.RequestsPerMinute),
 		BindingTokensPerMinute:         copyInt64Pointer(guard.TokensPerMinute),
+		AIEndUser:                      aiEndUser,
+		UserDailyAITokenLimit:          copyInt64Pointer(integration.AIUserDailyTokenLimit),
+		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -368,7 +378,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
-				poolKeys = h.keyPools.order(integration.ID, keys, time.Now())
+				poolKeys = h.keyPools.order(integration.ID, keys, time.Now(), aiAffinity)
 				managedAuthorization = poolKeys[0].Value
 			}
 		} else {
@@ -565,6 +575,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		defer h.settleAIUsage(ctx, integration, appID, aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
+			endUser: aiEndUser,
 		}, aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if workflowIdentity != nil {

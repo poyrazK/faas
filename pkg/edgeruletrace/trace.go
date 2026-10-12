@@ -1912,7 +1912,7 @@ func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.H
 		}
 	}
 	policy.ConfiguredMS = configuredMS
-	platformMaxMS := api.RequestBudgetMax.Milliseconds()
+	platformMaxMS := api.RequestBudgetPlanMax.Milliseconds()
 	if rule != nil && (candidateMS <= 0 || candidateMS > platformMaxMS) {
 		candidateMS, source = platformMaxMS, "ceiling_clamp"
 		if policy.OverrideStatus == "applied" {
