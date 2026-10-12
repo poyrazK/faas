@@ -73,6 +73,9 @@ type JailerVMM struct {
 	// and warms it ahead of the next wake (ADR-225). nil disables both the
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
+	// freePageReporting attaches a free-page-reporting balloon to every cold
+	// boot (ADR-985).
+	freePageReporting bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -991,6 +994,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}()
 	_ = v.registerRing(l.Instance)
 
+	cfg = v.withBalloon(cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)

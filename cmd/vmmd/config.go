@@ -52,6 +52,10 @@ type Config struct {
 	// DisableRestorePrefetch turns off the ADR-225 restore working-set
 	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
 	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
+	// DisableFreePageReporting stops attaching the ADR-985 balloon that
+	// returns guest-freed pages to the host. It is on by default on
+	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
+	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -695,6 +699,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
 		}
 		c.DisableRestorePrefetch = !enabled
+	}
+	if v := os.Getenv("FAAS_FREE_PAGE_REPORTING"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
+		}
+		c.DisableFreePageReporting = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a

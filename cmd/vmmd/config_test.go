@@ -963,3 +963,40 @@ func TestLoadConfig_RestorePrefetchSwitch(t *testing.T) {
 		t.Fatalf("invalid FAAS_RESTORE_PREFETCH error = %v, want named validation error", err)
 	}
 }
+
+// adr: 985 — free page reporting is on by default; TOML can disable it and
+// FAAS_FREE_PAGE_REPORTING overrides TOML in either direction.
+func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableFreePageReporting {
+		t.Fatal("free page reporting must default to enabled")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("disable_free_page_reporting = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env      string
+		disabled bool
+	}{{"", true}, {"1", false}, {"true", false}, {"0", true}, {"false", true}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_FREE_PAGE_REPORTING", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DisableFreePageReporting != tc.disabled {
+				t.Fatalf("DisableFreePageReporting = %v, want %v", cfg.DisableFreePageReporting, tc.disabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_FREE_PAGE_REPORTING", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_FREE_PAGE_REPORTING") {
+		t.Fatalf("invalid FAAS_FREE_PAGE_REPORTING error = %v, want named validation error", err)
+	}
+}
