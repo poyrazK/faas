@@ -4,9 +4,25 @@
 /* eslint-disable */
 import type { EventRecoveryPreflightItem } from './EventRecoveryPreflightItem.js';
 /**
- * Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job.
+ * Read-only eligibility and capacity for pending recovery items or saved native retry outcomes. Timing fields always describe the parent job; observations do not reserve capacity.
  */
 export type EventRecoveryPreflight = {
+  /**
+   * Present only for the saved native retry view.
+   */
+  review_mode?: 'workflow_retry';
+  /**
+   * Native recovery application scope.
+   */
+  app_id?: string;
+  /**
+   * Native recovery workflow scope.
+   */
+  workflow_name?: string;
+  /**
+   * Number of saved parent items reviewed in retry mode. Pending count remains zero; status counters partition this count and sample includes every item.
+   */
+  reviewed_count?: number;
   /**
    * This opted-in active job protects pending receipts until admission or this existing job expiry. Omitted after expiry or terminal state; does not protect execution history or extend delivery deadlines.
    */
@@ -26,7 +42,7 @@ export type EventRecoveryPreflight = {
   minimum_drain_crosses_receipt_retention?: boolean;
   job_id: string;
   observed_at: string;
-  state: 'running' | 'paused' | 'completed' | 'cancelled';
+  state: 'running' | 'paused' | 'completed' | 'cancelled' | 'expired';
   /**
    * Running or paused and not expired at the observation time.
    */

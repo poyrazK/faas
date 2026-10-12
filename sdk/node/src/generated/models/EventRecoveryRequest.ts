@@ -2,23 +2,27 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventWorkflowRecoveryPlan } from './EventWorkflowRecoveryPlan.js';
+import type { WorkflowRunRecoveryPlan } from './WorkflowRunRecoveryPlan.js';
 /**
- * Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
+ * Select routing failures (default) or the latest replayable retained execution per application event consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Native workflow mode requires explicit workflow_runs and never selects event recipients. Creation freezes its own selection; preview is advisory.
  */
 export type EventRecoveryRequest = {
+  workflow_runs?: WorkflowRunRecoveryPlan;
+  workflow_routing?: EventWorkflowRecoveryPlan;
   /**
-   * Select only saved failed/dead-lettered queued items from this retained terminal execution recovery in the same account/app. Requires execution mode. Does not follow newer replays.
+   * Select saved failed/dead-lettered execution items or saved failed native workflow items from a retained terminal recovery in the same account/app. Native workflow retries require explicit parent_position and the saved resume count for every target, and the same workflow name. Changed runs are rejected at creation or skipped at admission. Does not follow newer replays.
    */
   parent_job_id?: string;
   /**
-   * Required on child creation; optional on preview. Account-scoped durable idempotency while the child job is retained. Repeating the normalized selection returns its existing child; different selection/app with the same UUID conflicts. Only allowed with parent_job_id. Operator reason is excluded from comparison and the original audit reason wins.
+   * Required for workflow_runs, workflow_routing and on child creation; optional on child preview. Account-scoped durable idempotency while the job is retained. Repeating the normalized selection returns its existing job; different selection/app with the same UUID conflicts. Only allowed with parent_job_id, workflow_runs or workflow_routing. Operator reason is excluded from comparison and the original audit reason wins.
    */
   request_id?: string;
   /**
    * Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
    */
   reason?: string;
-  mode?: 'routing' | 'execution';
+  mode?: 'routing' | 'execution' | 'workflow';
   /**
    * Execution mode only; omitted selects both replayable outcomes.
    */

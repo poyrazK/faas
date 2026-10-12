@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
@@ -21,6 +22,9 @@ type memEventRecoveryItem struct {
 	SnapshotPosition int
 }
 type memEventRecoveryJob struct {
+	ActionReceipts                map[string][]byte
+	NextExecutionAttentionAt      time.Time
+	WorkflowResults               map[int64]memWorkflowRecoveryResult
 	NotificationRetryReceipts     map[string][]byte
 	NotificationReceipts          map[string]recoveryNotificationReceipt
 	NotificationDeliveryIDs       map[string]map[string]string
@@ -47,6 +51,12 @@ func (m *MemStore) eventRecoveryAppLocked(accountID, appID string) bool {
 	return ok && sameMemUUID(app.AccountID, accountID) && app.Status != AppDeleted
 }
 func (m *MemStore) eventRecoveryCandidatesLocked(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest, now time.Time) ([]memEventRecoveryItem, error) {
+	if req.WorkflowRuns != nil {
+		return m.workflowRunRecoveryCandidatesLocked(accountID, appID, req)
+	}
+	if req.WorkflowRouting != nil {
+		return m.workflowRecoveryCandidatesLocked(ctx, accountID, appID, req)
+	}
 	if req.ParentJobID != "" {
 		return m.eventRecoveryRetryCandidatesLocked(ctx, accountID, appID, req, now)
 	}
@@ -141,6 +151,11 @@ func (m *MemStore) PreviewEventRecovery(ctx context.Context, accountID, appID st
 	return out, nil
 }
 func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createEventRecoveryLocked(ctx, accountID, appID, req)
+}
+func (m *MemStore) createEventRecoveryLocked(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
 	if req.ParentJobID != "" && req.RequestID == "" {
 		return api.EventRecoveryJob{}, fmt.Errorf("%w: request_id is required for a child recovery", ErrEventRecoveryQuery)
 	}
@@ -152,8 +167,7 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 		return api.EventRecoveryJob{}, err
 	}
 	req.Reason = ""
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	req = cloneWorkflowRecoverySelection(req)
 	now := time.Now().UTC()
 	if err := ctx.Err(); err != nil {
 		return api.EventRecoveryJob{}, err
@@ -164,7 +178,7 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 	if req.RequestID != "" {
 		for _, existing := range m.eventRecoveryJobs {
 			if sameMemUUID(existing.AccountID, accountID) && existing.Job.Selection.RequestID == req.RequestID {
-				if !sameMemUUID(existing.Job.AppID, appID) || existing.Job.Selection != req {
+				if !sameMemUUID(existing.Job.AppID, appID) || !reflect.DeepEqual(existing.Job.Selection, req) {
 					return api.EventRecoveryJob{}, ErrEventRecoveryRequestConflict
 				}
 				return m.eventRecoveryObservedResponseLocked(existing, now), nil
@@ -172,7 +186,11 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 		}
 	}
 	if req.ParentJobID != "" {
-		if _, err := m.eventRecoveryRetryParentLocked(accountID, appID, req.ParentJobID); err != nil {
+		if req.WorkflowRuns != nil {
+			if _, err := m.workflowRecoveryRetryParentLocked(accountID, appID, req); err != nil {
+				return api.EventRecoveryJob{}, err
+			}
+		} else if _, err := m.eventRecoveryRetryParentLocked(accountID, appID, req.ParentJobID); err != nil {
 			return api.EventRecoveryJob{}, err
 		}
 	}
@@ -206,6 +224,7 @@ func (m *MemStore) CreateEventRecovery(ctx context.Context, accountID, appID str
 }
 func memEventRecoveryResponse(job *memEventRecoveryJob) api.EventRecoveryJob {
 	out := job.Job
+	out.Selection = cloneWorkflowRecoverySelection(out.Selection)
 	out.SelectedCount = int64(len(job.Items))
 	out.PendingCount, out.QueuedCount, out.SkippedCount, out.CancelledCount = 0, 0, 0, 0
 	for _, item := range job.Items {
@@ -357,7 +376,29 @@ func (m *MemStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) 
 		if item.State != "pending" {
 			continue
 		}
-		if job.Job.Selection.Mode == "execution" {
+		if job.Job.Selection.WorkflowRuns != nil {
+			state, reason, err := m.processWorkflowRunRecoveryLocked(job, item)
+			if err != nil {
+				return false, err
+			}
+			if state == "pending" {
+				if job.WaitReason != "capacity" || job.CapacityWaitStartedAt == nil {
+					t := now
+					job.CapacityWaitStartedAt = &t
+				}
+				t := now
+				job.CapacityWaitObservedAt = &t
+				job.CapacityScope = reason
+				reason = ""
+			}
+			item.State, item.Reason = state, reason
+		} else if job.Job.Selection.WorkflowRouting != nil {
+			state, reason, err := m.processWorkflowRecoveryLocked(job, item, now)
+			if err != nil {
+				return false, err
+			}
+			item.State, item.Reason = state, reason
+		} else if job.Job.Selection.Mode == "execution" {
 			state, reason, err := m.processEventExecutionRecoveryLocked(ctx, job, item, now)
 			if err != nil {
 				return false, err

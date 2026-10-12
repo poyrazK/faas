@@ -1,0 +1,15 @@
+# ADR-1015: Queued retry suppression and blocked notifications
+
+## Decision
+
+Operators may suppress one current-version pending automatic retry through its app, retained review and stable action identifier. Require deploy write and MFA, the observed policy version and a reason. Serialize suppression against automatic application using the policy row followed by the intent row, or the shared memory mutex. Persist immutable reason, trusted actor and timestamp on the intent. Identical reason retries return that receipt while the policy version remains current; different reasons, stale versions and already-applied actions conflict. Suppression applies to automatic intent only: manual recovery remains available. It neither cancels nor finalizes a committed child, clears failure streaks nor refunds charges. Audit retention follows the retained review/action.
+
+Capture `automation.recovery_queue_blocked` once per automatic action when fresh inspection confirms missing or superseded evidence prevents automatic progress. Pending actions must have an evidence wait recorded by the execution worker and still lack usable evidence. Applied actions must have no saved final result and inspect as unknown. Normal admission waits, running retries, budgets, quotas, cooldowns, transient inspection errors, dismissed pending reviews and paused/disabled policies do not produce this event. An unresolved child retains its execution slot; notification capture does not finalize it or authorize another child.
+
+A bounded scheduler poll runs after automatic execution and before other recovery notifications. Postgres locks policy then intent, preserving execution/suppression lock order. The memory store defers the candidate before releasing its mutex for inspection, then rechecks policy version, control timestamp, scope, intent identity and eligibility. Capture receipt and outbox insertion are atomic. Freeze enabled matching app receivers at capture, and record no receivers to prevent later historical replay. A deterministic event ID derived from the action survives restarts and lets receivers deduplicate at-least-once deliveries. The existing signed webhook dispatcher and ledger deliver historical captures even after a block resolves or the intent is suppressed.
+
+Expose suppression and blocked notification receipts through retained review actions, queue entries and SDKs. `queued` describes outbox admission, not successful delivery. The notification links to the queue and review status so operators can inspect current state. Migration rollback refuses to discard retained suppression, capture or delivery evidence.
+
+## Consequences
+
+A pending retry with unavailable evidence can be intentionally removed from the automatic queue, with an audit trail. An applied retry with unavailable evidence cannot be suppressed: its child may still run. Releasing that serial slot requires a separate reconciliation design and explicit authority. One historical alert per action avoids unchanged-state notification noise; later episodes for the same action do not emit another block event.

@@ -6,6 +6,7 @@ import type { AppEventPublicationVerification } from '../models/AppEventPublicat
 import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
+import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -64,8 +65,26 @@ import type { ReplayEventFanoutFailureRequest } from '../models/ReplayEventFanou
 import type { ReplayEventFanoutFailureResponse } from '../models/ReplayEventFanoutFailureResponse.js';
 import type { ReplayRetryableEventFanoutFailuresRequest } from '../models/ReplayRetryableEventFanoutFailuresRequest.js';
 import type { ReplayRetryableEventFanoutFailuresResponse } from '../models/ReplayRetryableEventFanoutFailuresResponse.js';
+import type { SetWorkflowRecoveryPolicyRequest } from '../models/SetWorkflowRecoveryPolicyRequest.js';
+import type { SuppressWorkflowRecoveryAutomaticActionRequest } from '../models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
 import type { WorkflowEventReplayBackfillRequest } from '../models/WorkflowEventReplayBackfillRequest.js';
 import type { WorkflowEventReplayPreviewResponse } from '../models/WorkflowEventReplayPreviewResponse.js';
+import type { WorkflowRecoveryActionReceipt } from '../models/WorkflowRecoveryActionReceipt.js';
+import type { WorkflowRecoveryAutomaticAction } from '../models/WorkflowRecoveryAutomaticAction.js';
+import type { WorkflowRecoveryAutomaticQueue } from '../models/WorkflowRecoveryAutomaticQueue.js';
+import type { WorkflowRecoveryCancellationRequest } from '../models/WorkflowRecoveryCancellationRequest.js';
+import type { WorkflowRecoveryCancellationResponse } from '../models/WorkflowRecoveryCancellationResponse.js';
+import type { WorkflowRecoveryHistory } from '../models/WorkflowRecoveryHistory.js';
+import type { WorkflowRecoveryPolicyChangePreview } from '../models/WorkflowRecoveryPolicyChangePreview.js';
+import type { WorkflowRecoveryPolicyEvaluation } from '../models/WorkflowRecoveryPolicyEvaluation.js';
+import type { WorkflowRecoveryPolicyEvaluationRequest } from '../models/WorkflowRecoveryPolicyEvaluationRequest.js';
+import type { WorkflowRecoveryPolicyHealth } from '../models/WorkflowRecoveryPolicyHealth.js';
+import type { WorkflowRecoveryPolicyResponse } from '../models/WorkflowRecoveryPolicyResponse.js';
+import type { WorkflowRecoveryPolicyReview } from '../models/WorkflowRecoveryPolicyReview.js';
+import type { WorkflowRecoveryPolicyReviews } from '../models/WorkflowRecoveryPolicyReviews.js';
+import type { WorkflowRecoveryReport } from '../models/WorkflowRecoveryReport.js';
+import type { WorkflowRecoveryReviewDecisionRequest } from '../models/WorkflowRecoveryReviewDecisionRequest.js';
+import type { WorkflowRecoveryReviewStatus } from '../models/WorkflowRecoveryReviewStatus.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -2027,7 +2046,7 @@ export class EventsService {
     /**
      * Recovery mode; legacy omitted modes are routing.
      */
-    mode?: 'routing' | 'execution',
+    mode?: 'routing' | 'execution' | 'workflow',
     /**
      * Matches the frozen selection filter or any captured item subscription.
      */
@@ -2291,18 +2310,719 @@ export class EventsService {
     });
   }
   /**
+   * Inspect the recovery policy
+   * Returns the current app policy and scheduler evaluation status. An unconfigured app has a disabled version-zero policy.
+   * @returns WorkflowRecoveryPolicyResponse Result of getWorkflowRecoveryPolicy.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryPolicy({
+    slug,
+  }: {
+    /**
+     * App slug for getWorkflowRecoveryPolicy.
+     */
+    slug: string,
+  }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Configure a recovery policy
+   * Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures for explicit workflows and failure statuses. Requires deploy write permission and MFA; cancellation remains manual.
+   * @returns WorkflowRecoveryPolicyResponse Result of setWorkflowRecoveryPolicy.
+   * @throws ApiError
+   */
+  public static setWorkflowRecoveryPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug for setWorkflowRecoveryPolicy.
+     */
+    slug: string,
+    /**
+     * Recovery policy settings and explicit automatic retry limits with the last observed version.
+     */
+    requestBody: SetWorkflowRecoveryPolicyRequest,
+  }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/recovery-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Evaluate proposed recovery settings against retained historical candidates
+   * Read-only consistent snapshot comparing current and proposed settings against up to 100 oldest retained reviews and 500 decisions in a maximum 30-day window. Requires the observed current policy version. Individual historical failure status is not captured; historical policy filters establish a possible status set and ambiguous narrower filters remain unknown. Preparation budgets, cooldown and deduplication are replayed conditionally from empty window-start state; unknown candidates are not charged. Actual recorded applications establish lower-bound execution pressure, never admission availability or counterfactual retry results. Application warmup uses the longer policy cooldown or one hour, with up to 10000 records and explicit truncation. Never reads current run state as historical proof or writes policy, reviews, jobs, audit events or notifications.
+   * @returns WorkflowRecoveryPolicyEvaluation Evidence-limited conditional comparison with explicit coverage notes.
+   * @throws ApiError
+   */
+  public static evaluateWorkflowRecoveryPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App whose retained review evidence is used for policy comparison.
+     */
+    slug: string,
+    requestBody: WorkflowRecoveryPolicyEvaluationRequest,
+  }): CancelablePromise<WorkflowRecoveryPolicyEvaluation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/evaluate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Current recovery policy version differs from expected_version.`,
+      },
+    });
+  }
+  /**
+   * Preview a recovery policy replacement
+   * Read-only impact of replacing the observed policy version. Every replacement suppresses old pending automatic intents and preserves unresolved applied children and spent charges. Inspects up to five newest matching recovery jobs and returns up to 25 candidate decisions. Retained preparation targets continue to prevent duplicate plans. Requires read access and MFA. No plans, controls, retries or notifications are written. Advisory evidence can change before a separately authorized version-fenced update.
+   * @returns WorkflowRecoveryPolicyChangePreview Result of previewWorkflowRecoveryPolicyChange.
+   * @throws ApiError
+   */
+  public static previewWorkflowRecoveryPolicyChange({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug for previewWorkflowRecoveryPolicyChange.
+     */
+    slug: string,
+    /**
+     * Proposed policy using the last observed configuration version; version zero means no existing policy.
+     */
+    requestBody: SetWorkflowRecoveryPolicyRequest,
+  }): CancelablePromise<WorkflowRecoveryPolicyChangePreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/change-preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        504: `Policy change preview inspection timed out.`,
+      },
+    });
+  }
+  /**
+   * Pause or resume automatic recovery
+   * Controls enabled automatic recovery without replacing its policy or discarding prepared retries. Requires deploy write and MFA. The observed version, update timestamp and pause timestamp fence concurrent controls and failure pauses. Resume clears the consecutive failure streak; committed children continue while paused.
+   * @returns WorkflowRecoveryPolicyResponse Result of controlWorkflowRecoveryPolicy.
+   * @throws ApiError
+   */
+  public static controlWorkflowRecoveryPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug for controlWorkflowRecoveryPolicy.
+     */
+    slug: string,
+    /**
+     * Observed recovery control state, operation and operator reason.
+     */
+    requestBody: ControlWorkflowRecoveryPolicyRequest,
+  }): CancelablePromise<WorkflowRecoveryPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/control',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect retained recovery automation history
+   * Read-only timeline of retained review decisions, controls, retry events, durable policy changes, worker reason transitions and health incident events, alongside latest observations. Durable events are captured prospectively with their state mutations, retained for 30 days and capped at 10000 per app. Results are ordered newest first with stable identifier tie breaks. Cursors fix the time window and durable event sequence ceiling; later appends are excluded. Retention can remove events, and latest observations can change across pages. Workflow, run and policy filters omit records without those associations. No execution inputs or outputs are returned.
+   * @returns WorkflowRecoveryHistory Retained history page.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryHistory({
+    slug,
+    workflow,
+    runId,
+    policyVersion,
+    createdAfter,
+    createdBefore,
+    after,
+    limit = 25,
+  }: {
+    /**
+     * App slug.
+     */
+    slug: string,
+    /**
+     * Workflow name filter.
+     */
+    workflow?: string,
+    /**
+     * Workflow run filter.
+     */
+    runId?: string,
+    /**
+     * Policy version filter; zero includes all versions.
+     */
+    policyVersion?: number,
+    /**
+     * Inclusive start; defaults to seven days before the end.
+     */
+    createdAfter?: string,
+    /**
+     * Inclusive end; defaults to the first page observation time. Maximum window is 30 days.
+     */
+    createdBefore?: string,
+    /**
+     * Opaque next_after cursor; preserve the original filters.
+     */
+    after?: string,
+    /**
+     * Page size; zero uses the default.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowRecoveryHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'workflow': workflow,
+        'run_id': runId,
+        'policy_version': policyVersion,
+        'created_after': createdAfter,
+        'created_before': createdBefore,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Report observed recovery automation effectiveness
+   * Read-only consistent snapshot summarizing at most 10000 newest retained history entries. Deduplicates durable and retained retry records by action. Attempts and results are selected independently by event time; missing results do not prove children are running. Durations measure application to result recording including worker polling delay. Groups use workflow and policy version. Blockers count distinct actions per observed reason. Recording is prospective, without backfill, and durable history retains 30 days / 10000 events per app. Coverage notes and truncation always accompany counts; no success percentage or causal effectiveness claim is inferred.
+   * @returns WorkflowRecoveryReport Observed effectiveness report.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryReport({
+    slug,
+    workflow,
+    policyVersion,
+    createdAfter,
+    createdBefore,
+  }: {
+    /**
+     * App whose observed recovery behavior is summarized.
+     */
+    slug: string,
+    /**
+     * Restrict report evidence to this workflow name.
+     */
+    workflow?: string,
+    /**
+     * Restrict report evidence to this policy version; zero includes every version.
+     */
+    policyVersion?: number,
+    /**
+     * Inclusive report start; omitted values use seven days before the report end.
+     */
+    createdAfter?: string,
+    /**
+     * Inclusive end; defaults to the snapshot observation time. Maximum window is 30 days.
+     */
+    createdBefore?: string,
+  }): CancelablePromise<WorkflowRecoveryReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/report',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'workflow': workflow,
+        'policy_version': policyVersion,
+        'created_after': createdAfter,
+        'created_before': createdBefore,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect recovery automation health
+   * Read-only app-scoped recovery policy health from a consistent bounded queue snapshot. Expected cooldown and exhausted budgets are blocked rather than stalled. Stalled means worker evaluation is overdue, not that a running child exceeded its execution deadline. This is advisory and never releases slots or authorizes execution.
+   * @returns WorkflowRecoveryPolicyHealth Observed recovery automation health.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryPolicyHealth({
+    slug,
+    stallAfterSeconds = 300,
+  }: {
+    /**
+     * App slug for recovery policy health.
+     */
+    slug: string,
+    /**
+     * Worker evaluation age threshold; request-local and not persisted.
+     */
+    stallAfterSeconds?: number,
+  }): CancelablePromise<WorkflowRecoveryPolicyHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/health',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'stall_after_seconds': stallAfterSeconds,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect queued automatic retries
+   * Returns a consistent app-scoped snapshot of current pending intents, unresolved applied children across policy versions, and execution charges across all versions. Includes at most 100 entries in review order. Reasons reflect the last worker evaluation and are informational; unknown evidence never grants execution authority.
+   * @returns WorkflowRecoveryAutomaticQueue Result of getWorkflowRecoveryAutomaticQueue.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryAutomaticQueue({
+    slug,
+  }: {
+    /**
+     * App slug for getWorkflowRecoveryAutomaticQueue.
+     */
+    slug: string,
+  }): CancelablePromise<WorkflowRecoveryAutomaticQueue> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/queue',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List retained recovery policy decisions
+   * Lists immutable evaluations and prepared response plans in identifier order. Evidence is retained with the parent recovery job.
+   * @returns WorkflowRecoveryPolicyReviews Result of listWorkflowRecoveryPolicyReviews.
+   * @throws ApiError
+   */
+  public static listWorkflowRecoveryPolicyReviews({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * App slug for listWorkflowRecoveryPolicyReviews.
+     */
+    slug: string,
+    /**
+     * Exclusive review identifier cursor from the previous policy review page.
+     */
+    after?: string,
+    /**
+     * Maximum retained policy reviews returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowRecoveryPolicyReviews> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect one retained policy review
+   * Reads a frozen policy version and its target decisions. A prepared plan can be exported and explicitly applied using generation-fenced controls.
+   * @returns WorkflowRecoveryPolicyReview Result of getWorkflowRecoveryPolicyReview.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryPolicyReview({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * App slug for getWorkflowRecoveryPolicyReview.
+     */
+    slug: string,
+    /**
+     * Retained recovery policy review to inspect.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowRecoveryPolicyReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Approve or dismiss a policy plan
+   * Records one immutable actor-attributed decision. An identical retry returns the original decision; a different decision or reason conflicts. Approval never applies actions and can be recorded for stale plans. Only reviews with prepared plans can be decided.
+   * @returns WorkflowRecoveryPolicyReview Review operation result.
+   * @throws ApiError
+   */
+  public static decideWorkflowRecoveryPolicyReview({
+    slug,
+    reviewId,
+    requestBody,
+  }: {
+    /**
+     * App owning the policy review.
+     */
+    slug: string,
+    /**
+     * Retained policy review identifier.
+     */
+    reviewId: string,
+    requestBody: WorkflowRecoveryReviewDecisionRequest,
+  }): CancelablePromise<WorkflowRecoveryPolicyReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Suppress one pending automatic retry
+   * Suppresses a retained pending intent under its observed policy version. Records a trusted operator and reason. Requires deploy write and MFA. Applied children cannot be suppressed; no child is cancelled and no charge is refunded. Identical reason retries return the retained audit receipt while the policy version remains current. Manual recovery remains available.
+   * @returns WorkflowRecoveryAutomaticAction Retained result of suppressWorkflowRecoveryAutomaticAction.
+   * @throws ApiError
+   */
+  public static suppressWorkflowRecoveryAutomaticAction({
+    slug,
+    reviewId,
+    actionId,
+    requestBody,
+  }: {
+    /**
+     * App slug for suppressWorkflowRecoveryAutomaticAction.
+     */
+    slug: string,
+    /**
+     * Retained review containing the automatic retry to suppress.
+     */
+    reviewId: string,
+    /**
+     * Stable pending automatic action identifier for suppression.
+     */
+    actionId: string,
+    /**
+     * Observed automatic policy version and operator suppression reason.
+     */
+    requestBody: SuppressWorkflowRecoveryAutomaticActionRequest,
+  }): CancelablePromise<WorkflowRecoveryAutomaticAction> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect live policy plan freshness
+   * Checks retained action receipts before live generation eligibility. Reports ready, stale, unknown, applied, partially_applied or no_plan. Applied means a cancellation succeeded or a retry child was created; execution outcomes require the response-status command. Advisory checks never mutate or refresh plans.
+   * @returns WorkflowRecoveryReviewStatus Current advisory freshness and durable application evidence.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryReviewStatus({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * App whose prepared response plan freshness is inspected.
+     */
+    slug: string,
+    /**
+     * Policy review containing the saved targets to inspect.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowRecoveryReviewStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read a retained workflow recovery action receipt
+   * Reads an immutable cancellation decision in the authenticated account. Missing or expired action receipts return 404. This operation never submits cancellation.
+   * @returns WorkflowRecoveryActionReceipt Retained cancellation action and its original outcome.
+   * @throws ApiError
+   */
+  public static getWorkflowRecoveryActionReceipt({
+    jobId,
+    requestId,
+  }: {
+    /**
+     * Owned recovery job whose cancellation receipt is being reconciled.
+     */
+    jobId: string,
+    /**
+     * Stable cancellation action identifier from the saved response plan.
+     */
+    requestId: string,
+  }): CancelablePromise<WorkflowRecoveryActionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}',
+      path: {
+        'jobID': jobId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Find a retained recovery job by its stable request identifier
+   * Looks up the original recovery job in this app and account after an interrupted creation request. Missing or expired jobs return 404. This operation never creates work.
+   * @returns EventRecoveryJob Original retained recovery job and its current progress.
+   * @throws ApiError
+   */
+  public static getEventRecoveryByRequest({
+    slug,
+    requestId,
+  }: {
+    /**
+     * App containing the original recovery creation request.
+     */
+    slug: string,
+    /**
+     * Original recovery creation request identifier to locate in this app.
+     */
+    requestId: string,
+  }): CancelablePromise<EventRecoveryJob> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-recoveries/by-request/{requestID}',
+      path: {
+        'slug': slug,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Preview cancellation of an admitted workflow generation
+   * Cancellation preview for native workflow recovery only. Rechecks the frozen item and generation under the run lock. Changed or unproven generations are refused. Cancellation is cooperative and cannot undo external side effects. Successful cancellation and its actor and reason are recorded atomically in recovery history.
+   * @returns WorkflowRecoveryCancellationResponse Cancellation preview outcome. Noneligible outcomes do not change execution or history.
+   * @throws ApiError
+   */
+  public static previewWorkflowRecoveryCancellation({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Owned retained recovery job ID for workflow-cancellation-preview.
+     */
+    jobId: string,
+    /**
+     * Reviewed item and generation with the operator reason for workflow-cancellation-preview.
+     */
+    requestBody: WorkflowRecoveryCancellationRequest,
+  }): CancelablePromise<WorkflowRecoveryCancellationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-recoveries/{jobID}/workflow-cancellation-preview',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Cancel one reviewed admitted workflow generation
+   * Cancellation commit for native workflow recovery only. Rechecks the frozen item and generation under the run lock. Changed or unproven generations are refused. Cancellation is cooperative and cannot undo external side effects. Successful cancellation and its actor and reason are recorded atomically in recovery history.
+   * @returns WorkflowRecoveryCancellationResponse Cancellation commit outcome. Noneligible outcomes do not change execution or history.
+   * @throws ApiError
+   */
+  public static cancelWorkflowRecoveryExecution({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Owned retained recovery job ID for workflow-cancel.
+     */
+    jobId: string,
+    /**
+     * Reviewed item and generation with the operator reason for workflow-cancel.
+     */
+    requestBody: WorkflowRecoveryCancellationRequest,
+  }): CancelablePromise<WorkflowRecoveryCancellationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-recoveries/{jobID}/workflow-cancel',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
    * Assess a frozen recovery selection without admitting work.
-   * Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. No query parameters are accepted.
+   * Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. With retry=true, review every saved item of a terminal native workflow recovery using one consistent snapshot. Only saved failures matching the retained run generation can be retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not a prospective child.
    * @returns EventRecoveryPreflight Current eligibility observations and optimistic timing estimate.
    * @throws ApiError
    */
   public static getEventRecoveryPreflight({
     jobId,
+    retry,
   }: {
     /**
      * Durable recovery job identifier for this operation: assess a frozen recovery selection without admitting work.
      */
     jobId: string,
+    /**
+     * Review saved native workflow outcomes for an explicit child retry instead of pending parent admissions. Only true is accepted; omit for ordinary preflight.
+     */
+    retry?: boolean,
   }): CancelablePromise<EventRecoveryPreflight> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -2310,11 +3030,15 @@ export class EventsService {
       path: {
         'jobID': jobId,
       },
+      query: {
+        'retry': retry,
+      },
       errors: {
         400: `Invalid job ID or query parameters.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `Retry view requires a terminal native workflow recovery parent.`,
         504: `Recovery preflight timed out.`,
       },
     });

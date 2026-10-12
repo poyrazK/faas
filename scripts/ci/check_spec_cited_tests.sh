@@ -129,7 +129,7 @@ for path in "${owned_tests[@]}"; do
 		missing+=("$path")
 		continue
 	}
-	if ! grep -Eq '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3})([[:space:]]|$)' <<< "$content"; then
+	if ! grep -Eq '^[[:space:]]*//[[:space:]]*(spec:[[:space:]]*§[0-9]+([.][0-9]+)*|adr:[[:space:]]*[0-9]{3,})([[:space:]]|$)' <<< "$content"; then
 		missing+=("$path")
 	fi
 done
