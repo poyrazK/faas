@@ -12,10 +12,18 @@ lost replies, daemon restart after confirmed cleanup and delayed producers.
 Receipts remain after terminal instance retention. Unsupported hosts and
 unfinished crash cleanup with unknown helper ownership remain unconfirmed.
 
-The local scheduler run used a Go overlay that excluded historical scheduler
-tests to stay within the Mac's compiler memory limit. It compiled production
-scheduler code and both new test files. Full repository CI remains the complete
-test-corpus gate. These fixture observations are not physical KVM evidence.
+The initial local scheduler run used a Go overlay to bound compiler memory.
+Subsequent runs compiled and passed the complete scheduler corpus without an
+overlay using per-package `-c=1 -dwarf=false` flags and a 6 GiB Go memory limit.
+The full managedpostgres, fcvm and vmmdgrpc suites also passed locally. These
+fixture observations are not physical KVM evidence.
+
+The first GitHub CI run found a missing gateway test-client RPC, a hand-typed
+migration version and an unregistered drain table in the environment clone
+inventory. The corrections add an explicit unsupported-RPC response, use the
+migration generator and classify drain receipts as operational records that
+cannot be copied into a cloned environment. CI on the corrected commit is the
+complete repository gate.
 
 Migration replay and full up/down walk pass against isolated PostgreSQL 16.
 SQLC generation, protobuf versions, ADR uniqueness and documentation SQL checks

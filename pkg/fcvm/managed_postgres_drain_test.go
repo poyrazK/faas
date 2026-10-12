@@ -3,7 +3,6 @@
 package fcvm
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -90,10 +89,11 @@ func TestManagedPostgresDrainFailedCleanupRetainsNativeOwnership(t *testing.T) {
 }
 
 func TestManagedPostgresDrainJoinsDelayedProducer(t *testing.T) {
+	ctx := t.Context()
 	m, v, _ := nativeManagerFixture(t)
 	f := postgresDrainFrame()
 	m.WithManagedPostgresDrainNodeID(f.NodeID)
-	bootCtx, flight, err := m.beginInstanceBoot(t.Context(), f.InstanceID)
+	bootCtx, flight, err := m.beginInstanceBoot(ctx, f.InstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +103,10 @@ func TestManagedPostgresDrainJoinsDelayedProducer(t *testing.T) {
 		// The stop must join even a producer that publishes after cancellation.
 		lease := leaseForSlot(f.InstanceID, 0)
 		lease.Plan = api.PlanHobby
-		producer <- v.prepareNativeLease(context.Background(), lease)
+		producer <- v.prepareNativeLease(ctx, lease)
 		m.finishInstanceFlight(f.InstanceID, flight)
 	}()
-	p, err := m.RetireManagedPostgresDrain(t.Context(), f)
+	p, err := m.RetireManagedPostgresDrain(ctx, f)
 	if err != nil || !p.ValidFor(f) {
 		t.Fatalf("delayed producer escaped: %+v %v", p, err)
 	}

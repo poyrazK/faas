@@ -1,4 +1,4 @@
--- filename: 20261012133500000_managed_postgres_cutover_drains.sql
+-- filename: 20261012162009328_managed_postgres_cutover_drains.sql
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS managed_postgres_cutover_drains (

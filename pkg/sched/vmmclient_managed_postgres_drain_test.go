@@ -16,7 +16,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -139,7 +138,7 @@ func postgresDrainRPCConnection(t *testing.T, server vmmdpb.VmmdServer) *grpc.Cl
 	lis := bufconn.Listen(1024 * 1024)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
-	conn, err := grpc.NewClient("passthrough://postgres-drain", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }))
+	conn, err := wire.DialContext(t.Context(), "unix:///postgres-drain", nil, grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }))
 	if err != nil {
 		t.Fatal(err)
 	}

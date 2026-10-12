@@ -4831,6 +4831,27 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_cutover_drains",
+    "columns": [
+      "app_id",
+      "created_at",
+      "cutover_id",
+      "deployment_id",
+      "fenced_at",
+      "id",
+      "instance_id",
+      "kernel_boot_id",
+      "native_generation",
+      "node_id",
+      "owner_node_id",
+      "owner_revision",
+      "retired_at",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_cutovers",
     "columns": [
       "account_id",
