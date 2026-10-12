@@ -893,6 +893,13 @@ type OpsMetrics struct {
 	// operator can distinguish regressions from unavailable evidence without
 	// putting deployment IDs or customer-controlled strings in Prometheus.
 	canaryProgressionCircuitBreakerTotal *prometheus.CounterVec
+	// rollbackOutcomesTotal and rollbackRecoverySeconds (ADR-1160) record
+	// what each plain rollback actually did: trigger ∈ {manual, auto_5xx,
+	// alert}, outcome ∈ {complete, failed}. The histogram measures request
+	// to serving for completed rollbacks, the API-hosting scorecard's
+	// rollback recovery bar.
+	rollbackOutcomesTotal   *prometheus.CounterVec
+	rollbackRecoverySeconds *prometheus.HistogramVec
 	// canaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
 	// hardening, migration 00517) counts every row the
 	// canary_progression tick walks whose canary_step_started_at is
@@ -3180,13 +3187,29 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	canaryProgressionCircuitBreakerTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_circuit_breaker_total",
-		Help: "Count of canary circuit-breaker aborts and boundary holds, labelled by closed event reason.",
+		Help: "Count of canary circuit-breaker aborts, boundary holds, and bounded low-traffic advances, labelled by closed event reason.",
 	}, []string{"event"})
 	for _, event := range []string{
-		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
 		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+		"advance_low_traffic",
 	} {
 		canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	}
+	rollbackOutcomesTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_rollback_outcomes_total",
+		Help: "Plain rollback outcomes verified by apid (ADR-1160), labelled by trigger ∈ {manual, auto_5xx, alert} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
+	}, []string{"trigger", "outcome"})
+	rollbackRecoverySeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_rollback_recovery_seconds",
+		Help:    "Seconds from a plain rollback request to its target serving (ADR-1160), labelled by trigger ∈ {manual, auto_5xx, alert}. The API-hosting scorecard bar is p95 <= 60 s.",
+		Buckets: []float64{1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 300, 600},
+	}, []string{"trigger"})
+	for _, trigger := range rollbackOutcomeTriggers {
+		for _, outcome := range []string{"complete", "failed"} {
+			rollbackOutcomesTotal.WithLabelValues(trigger, outcome)
+		}
+		rollbackRecoverySeconds.WithLabelValues(trigger)
 	}
 	// SAFE-RELEASES code-review hardening (migration 00517):
 	// tripwire counter for the canary_progression tick seeing a
@@ -3893,6 +3916,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal,
 		canaryProgressionCircuitBreakerTotal,
+		rollbackOutcomesTotal,
+		rollbackRecoverySeconds,
 		canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal,
@@ -5238,115 +5263,117 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// before the first sampler tick.
 	throttleSecondsTotal.WithLabelValues(topAppOtherAccountLabel, topAppOtherLabel)
 	return &OpsMetrics{
-		eventDelivery:                              eventDelivery,
-		registry:                                   reg,
-		metricPrefix:                               prefix,
-		ops:                                        ops,
-		dur:                                        dur,
-		watchdogKills:                              watchdogKills,
-		warmSnapshotErrors:                         warmSnapshotErrors,
-		initSnapshotAttempts:                       initSnapshotAttempts,
-		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
-		snapshotPublication:                        snapshotPublication,
-		warmPoolSize:                               warmPoolSize,
-		warmPoolResumeTotal:                        warmPoolResumeTotal,
-		warmupErrors:                               warmupErrors,
-		writeRedirectTotal:                         writeRedirectTotal,
-		writeRedirectLatency:                       writeRedirectLatency,
-		livenessRestarts:                           livenessRestarts,
-		workloadOOMKills:                           workloadOOMKills,
-		serviceReplicaStatus:                       serviceReplicaStatus,
-		serviceRolloutHandoffPhaseDuration:         serviceRolloutHandoffPhaseDuration,
-		daemonRestartCount:                         daemonRestartCount,
-		daemonBuildInfo:                            daemonBuildInfo,
-		daemonUptimeSeconds:                        daemonUptimeSeconds,
-		daemonReady:                                daemonReady,
-		daemonReadyReason:                          daemonReadyReason,
-		faasDeployVersion:                          faasDeployVersion,
-		bridgeFramingTotal:                         bridgeFramingTotal,
-		guestInitDuration:                          guestInitDuration,
-		wakeRPCDuration:                            wakeRPCDuration,
-		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
-		gatewayInflightRequests:                    gatewayInflightRequests,
-		egressCircuitState:                         egressCircuitState,
-		wakeSnapshotTier:                           wakeSnapshotTier,
-		wakeColdReason:                             wakeColdReason,
-		executionActive:                            executionActive,
-		executionTotal:                             executionTotal,
-		executionPhaseDuration:                     executionPhaseDuration,
-		executionFailures:                          executionFailures,
-		executionOutputBytes:                       executionOutputBytes,
-		executionSweeps:                            executionSweeps,
-		executionQueueDepth:                        executionQueueDepth,
-		executionQueueOldestWait:                   executionQueueOldestWait,
-		executionWorkers:                           executionWorkers,
-		exclusiveOperationAdmissions:               exclusiveOperationAdmissions,
-		exclusiveOperationDispatches:               exclusiveOperationDispatches,
-		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
-		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
-		wakeFailure:                                wakeFailure,
-		wakeLatency:                                wakeLatency,
-		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
-		appLabels:                                  newAppLabelSet(maxAppLabelValues),
-		queueLabels:                                newAppLabelSet(maxAppLabelValues),
-		guestTailSeconds:                           guestTailSeconds,
-		guestTailFailedTotal:                       guestTailFailedTotal,
-		planGateRescuedByExclude:                   planGateRescuedByExclude,
-		tailCapReached:                             tailCapReached,
-		evictedPriority:                            evictedPriority,
-		evictionFiredTotal:                         evictionFiredTotal,
-		eventsWriteFail:                            eventsWriteFail,
-		auditWriteFail:                             auditWriteFail,
-		auditWriteDur:                              auditWriteDur,
-		accountOrgMismatch:                         accountOrgMismatch,
-		requestFailures:                            requestFailures,
-		requestTotal:                               requestTotal,
-		cveCheckTotal:                              cveCheckTotal,
-		cvesOpenTotal:                              cvesOpenTotal,
-		appErrorsRecorded:                          appErrorsRecorded,
-		issueEventsRecorded:                        issueEventsRecorded,
-		appErrorsFingerprintCacheHits:              appErrorsFingerprintCacheHits,
-		appErrorsDedupeMerges:                      appErrorsDedupeMerges,
-		appErrorsFlushDuration:                     appErrorsFlushDuration,
-		requestTelemetryRecorded:                   requestTelemetryRecorded,
-		gatewaydPublicOtelSpansIngested:            gatewaydPublicOtelSpansIngested,
-		gatewaydPublicOtelSpansTruncated:           gatewaydPublicOtelSpansTruncated,
-		gatewaydPublicOtelAuthFailures:             gatewaydPublicOtelAuthFailures,
-		spansWriteOutcomes:                         spansWriteOutcomes,
-		appErrorsPurges:                            appErrorsPurges,
-		debugRegressionOldestPassSeconds:           debugRegressionOldestPassSeconds,
-		debugRegressionSkippedFlagDisabled:         debugRegressionSkippedFlagDisabled,
-		debugRegressionDetected:                    debugRegressionDetected,
-		previewJanitorOutcomes:                     previewJanitorOutcomes,
-		dataUpstreamRTT:                            dataUpstreamRTT,
-		dataUpstreamProbes:                         dataUpstreamProbes,
-		dataUpstreamProbeDuration:                  dataUpstreamProbeDuration,
-		dataUpstreamClassifierFailures:             dataUpstreamClassifierFailures,
-		accountLabels:                              newAccountLabelSet(maxAccountLabelValues),
-		failedLoginTotal:                           failedLoginTotal,
-		failedLoginDropped:                         failedLoginDropped,
-		failedLoginAuditWriteFailures:              failedLoginAuditWriteFailures,
-		auditEventsDeletedTotal:                    auditEventsDeletedTotal,
-		auditEventsRetentionLagSeconds:             auditEventsRetentionLagSeconds,
-		domainDoctorOldestObservationSeconds:       domainDoctorOldestObservationSeconds,
-		domainDoctorCyclesTotal:                    domainDoctorCyclesTotal,
-		domainDoctorBatchSize:                      domainDoctorBatchSize,
-		domainDoctorSkippedFlagDisabled:            domainDoctorSkippedFlagDisabled,
-		certIssuanceFailedTotal:                    certIssuanceFailedTotal,
-		auditEventsVolumeTotal:                     auditEventsVolumeTotal,
-		deploymentAuditGCRowsDeletedTotal:          deploymentAuditGCRowsDeletedTotal,
-		alertEvalSkippedDegradedTotal:              alertEvalSkippedDegradedTotal,
-		alertEvalFiredTotal:                        alertEvalFiredTotal,
-		canaryProgressionAdvancedTotal:             canaryProgressionAdvancedTotal,
-		canaryProgressionErrorsTotal:               canaryProgressionErrorsTotal,
-		canaryProgressionCircuitBreakerTotal:       canaryProgressionCircuitBreakerTotal,
-		canaryProgressionZeroTimestampTotal:        canaryProgressionZeroTimestampTotal,
-		canaryProgressionHealthGateBlockedTotal:    canaryProgressionHealthGateBlockedTotal,
-		safedeployOrchestratorStartedTotal:         safedeployOrchestratorStartedTotal,
-		safedeployOrchestratorCompletedTotal:       safedeployOrchestratorCompletedTotal,
-		safedeployOrchestratorAbortedTotal:         safedeployOrchestratorAbortedTotal,
-		safedeployOrchestratorStuckDetectedTotal:   safedeployOrchestratorStuckDetectedTotal,
-		safedeployOrchestratorAuditEmitFailedTotal: safedeployOrchestratorAuditEmitFailedTotal,
+		eventDelivery:                                    eventDelivery,
+		registry:                                         reg,
+		metricPrefix:                                     prefix,
+		ops:                                              ops,
+		dur:                                              dur,
+		watchdogKills:                                    watchdogKills,
+		warmSnapshotErrors:                               warmSnapshotErrors,
+		initSnapshotAttempts:                             initSnapshotAttempts,
+		initSnapshotCaptureDuration:                      initSnapshotCaptureDuration,
+		snapshotPublication:                              snapshotPublication,
+		warmPoolSize:                                     warmPoolSize,
+		warmPoolResumeTotal:                              warmPoolResumeTotal,
+		warmupErrors:                                     warmupErrors,
+		writeRedirectTotal:                               writeRedirectTotal,
+		writeRedirectLatency:                             writeRedirectLatency,
+		livenessRestarts:                                 livenessRestarts,
+		workloadOOMKills:                                 workloadOOMKills,
+		serviceReplicaStatus:                             serviceReplicaStatus,
+		serviceRolloutHandoffPhaseDuration:               serviceRolloutHandoffPhaseDuration,
+		daemonRestartCount:                               daemonRestartCount,
+		daemonBuildInfo:                                  daemonBuildInfo,
+		daemonUptimeSeconds:                              daemonUptimeSeconds,
+		daemonReady:                                      daemonReady,
+		daemonReadyReason:                                daemonReadyReason,
+		faasDeployVersion:                                faasDeployVersion,
+		bridgeFramingTotal:                               bridgeFramingTotal,
+		guestInitDuration:                                guestInitDuration,
+		wakeRPCDuration:                                  wakeRPCDuration,
+		gatewayDrainWaitSeconds:                          gatewayDrainWaitSeconds,
+		gatewayInflightRequests:                          gatewayInflightRequests,
+		egressCircuitState:                               egressCircuitState,
+		wakeSnapshotTier:                                 wakeSnapshotTier,
+		wakeColdReason:                                   wakeColdReason,
+		executionActive:                                  executionActive,
+		executionTotal:                                   executionTotal,
+		executionPhaseDuration:                           executionPhaseDuration,
+		executionFailures:                                executionFailures,
+		executionOutputBytes:                             executionOutputBytes,
+		executionSweeps:                                  executionSweeps,
+		executionQueueDepth:                              executionQueueDepth,
+		executionQueueOldestWait:                         executionQueueOldestWait,
+		executionWorkers:                                 executionWorkers,
+		exclusiveOperationAdmissions:                     exclusiveOperationAdmissions,
+		exclusiveOperationDispatches:                     exclusiveOperationDispatches,
+		exclusiveOperationRenewals:                       exclusiveOperationRenewals,
+		exclusiveOperationDueRows:                        exclusiveOperationDueRows,
+		wakeFailure:                                      wakeFailure,
+		wakeLatency:                                      wakeLatency,
+		boxLabels:                                        newBoxLabelSet(maxBoxLabelValues),
+		appLabels:                                        newAppLabelSet(maxAppLabelValues),
+		queueLabels:                                      newAppLabelSet(maxAppLabelValues),
+		guestTailSeconds:                                 guestTailSeconds,
+		guestTailFailedTotal:                             guestTailFailedTotal,
+		planGateRescuedByExclude:                         planGateRescuedByExclude,
+		tailCapReached:                                   tailCapReached,
+		evictedPriority:                                  evictedPriority,
+		evictionFiredTotal:                               evictionFiredTotal,
+		eventsWriteFail:                                  eventsWriteFail,
+		auditWriteFail:                                   auditWriteFail,
+		auditWriteDur:                                    auditWriteDur,
+		accountOrgMismatch:                               accountOrgMismatch,
+		requestFailures:                                  requestFailures,
+		requestTotal:                                     requestTotal,
+		cveCheckTotal:                                    cveCheckTotal,
+		cvesOpenTotal:                                    cvesOpenTotal,
+		appErrorsRecorded:                                appErrorsRecorded,
+		issueEventsRecorded:                              issueEventsRecorded,
+		appErrorsFingerprintCacheHits:                    appErrorsFingerprintCacheHits,
+		appErrorsDedupeMerges:                            appErrorsDedupeMerges,
+		appErrorsFlushDuration:                           appErrorsFlushDuration,
+		requestTelemetryRecorded:                         requestTelemetryRecorded,
+		gatewaydPublicOtelSpansIngested:                  gatewaydPublicOtelSpansIngested,
+		gatewaydPublicOtelSpansTruncated:                 gatewaydPublicOtelSpansTruncated,
+		gatewaydPublicOtelAuthFailures:                   gatewaydPublicOtelAuthFailures,
+		spansWriteOutcomes:                               spansWriteOutcomes,
+		appErrorsPurges:                                  appErrorsPurges,
+		debugRegressionOldestPassSeconds:                 debugRegressionOldestPassSeconds,
+		debugRegressionSkippedFlagDisabled:               debugRegressionSkippedFlagDisabled,
+		debugRegressionDetected:                          debugRegressionDetected,
+		previewJanitorOutcomes:                           previewJanitorOutcomes,
+		dataUpstreamRTT:                                  dataUpstreamRTT,
+		dataUpstreamProbes:                               dataUpstreamProbes,
+		dataUpstreamProbeDuration:                        dataUpstreamProbeDuration,
+		dataUpstreamClassifierFailures:                   dataUpstreamClassifierFailures,
+		accountLabels:                                    newAccountLabelSet(maxAccountLabelValues),
+		failedLoginTotal:                                 failedLoginTotal,
+		failedLoginDropped:                               failedLoginDropped,
+		failedLoginAuditWriteFailures:                    failedLoginAuditWriteFailures,
+		auditEventsDeletedTotal:                          auditEventsDeletedTotal,
+		auditEventsRetentionLagSeconds:                   auditEventsRetentionLagSeconds,
+		domainDoctorOldestObservationSeconds:             domainDoctorOldestObservationSeconds,
+		domainDoctorCyclesTotal:                          domainDoctorCyclesTotal,
+		domainDoctorBatchSize:                            domainDoctorBatchSize,
+		domainDoctorSkippedFlagDisabled:                  domainDoctorSkippedFlagDisabled,
+		certIssuanceFailedTotal:                          certIssuanceFailedTotal,
+		auditEventsVolumeTotal:                           auditEventsVolumeTotal,
+		deploymentAuditGCRowsDeletedTotal:                deploymentAuditGCRowsDeletedTotal,
+		alertEvalSkippedDegradedTotal:                    alertEvalSkippedDegradedTotal,
+		alertEvalFiredTotal:                              alertEvalFiredTotal,
+		canaryProgressionAdvancedTotal:                   canaryProgressionAdvancedTotal,
+		canaryProgressionErrorsTotal:                     canaryProgressionErrorsTotal,
+		canaryProgressionCircuitBreakerTotal:             canaryProgressionCircuitBreakerTotal,
+		rollbackOutcomesTotal:                            rollbackOutcomesTotal,
+		rollbackRecoverySeconds:                          rollbackRecoverySeconds,
+		canaryProgressionZeroTimestampTotal:              canaryProgressionZeroTimestampTotal,
+		canaryProgressionHealthGateBlockedTotal:          canaryProgressionHealthGateBlockedTotal,
+		safedeployOrchestratorStartedTotal:               safedeployOrchestratorStartedTotal,
+		safedeployOrchestratorCompletedTotal:             safedeployOrchestratorCompletedTotal,
+		safedeployOrchestratorAbortedTotal:               safedeployOrchestratorAbortedTotal,
+		safedeployOrchestratorStuckDetectedTotal:         safedeployOrchestratorStuckDetectedTotal,
+		safedeployOrchestratorAuditEmitFailedTotal:       safedeployOrchestratorAuditEmitFailedTotal,
 		safedeployOrchestratorStuckCheckMissingTimestamp: safedeployOrchestratorStuckCheckMissingTimestamp,
 		safedeployOrchestratorAutoAbortedTotal:           safedeployOrchestratorAutoAbortedTotal,
 		safedeployOrchestratorAutoAbortFailedTotal:       safedeployOrchestratorAutoAbortFailedTotal,
@@ -8528,6 +8555,41 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 }
 
 // CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
+// rollbackOutcomeTriggers is the closed trigger vocabulary for the ADR-1160
+// rollback outcome metrics.
+var rollbackOutcomeTriggers = []string{"manual", "auto_5xx", "alert"}
+
+func knownRollbackTrigger(trigger string) bool {
+	for _, t := range rollbackOutcomeTriggers {
+		if t == trigger {
+			return true
+		}
+	}
+	return false
+}
+
+// RollbackOutcome records one verified plain rollback outcome (ADR-1160).
+// recovery is observed only for a complete outcome. Unknown triggers or
+// outcomes are dropped so labels stay a closed set.
+func (m *OpsMetrics) RollbackOutcome(trigger, outcome string, recovery time.Duration) {
+	if m == nil || !knownRollbackTrigger(trigger) || (outcome != "complete" && outcome != "failed") {
+		return
+	}
+	m.rollbackOutcomesTotal.WithLabelValues(trigger, outcome).Inc()
+	if outcome == "complete" {
+		m.rollbackRecoverySeconds.WithLabelValues(trigger).Observe(recovery.Seconds())
+	}
+}
+
+// RollbackOutcomesCounter returns the outcome counter for one closed label
+// pair, or nil for an unknown pair.
+func (m *OpsMetrics) RollbackOutcomesCounter(trigger, outcome string) prometheus.Counter {
+	if m == nil || !knownRollbackTrigger(trigger) || (outcome != "complete" && outcome != "failed") {
+		return nil
+	}
+	return m.rollbackOutcomesTotal.WithLabelValues(trigger, outcome)
+}
+
 // one breaker abort or boundary hold. Unknown events are ignored so metric
 // labels can never be influenced by an error string or deployment metadata.
 func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) prometheus.Counter {
@@ -8535,8 +8597,9 @@ func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) promethe
 		return nil
 	}
 	switch event {
-	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
-		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed":
+	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+		"advance_low_traffic":
 		return m.canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
 	default:
 		return nil

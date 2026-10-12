@@ -220,6 +220,10 @@ type MemStore struct {
 	// environmentWorkloadQueueServingAcks can arrive before the controller has
 	// created the serving receipt; keyed per graph/binding to mirror Postgres.
 	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1160).
+	rollbackPrepared map[string]time.Time
+	// rollbackRecords mirrors deployment_rollbacks (ADR-1160).
+	rollbackRecords map[string]RollbackRecord
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -8721,6 +8725,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	// A prepared rollback is consumed by its promotion (ADR-1160).
+	defer func() {
+		if err == nil {
+			delete(m.rollbackPrepared, id)
+		}
+	}()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -9730,6 +9740,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
 	m.putDeploymentLocked(targetDeploymentID, target)
+	if m.rollbackPrepared == nil {
+		m.rollbackPrepared = map[string]time.Time{}
+	}
+	m.rollbackPrepared[targetDeploymentID] = now
 	return target, nil
 }
 

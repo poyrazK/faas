@@ -129,6 +129,41 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="hold_insufficient_samples"}`
   increases. Send enough requests to both revisions; after the next stage
   boundary, confirm progression resumes.
+- **Bounded low-traffic hold (ADR-1160):** repeat the low-traffic check without
+  sending requests. Once the stage duration plus `CanaryLowTrafficMaxHold`
+  (5 minutes) has passed with zero candidate 5xx and a readable zero OOM
+  signal, confirm the stage advances and
+  `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
+  increases. Send a single candidate 5xx in a fresh rollout and confirm it
+  keeps holding instead.
+- **Smoke verifier prerequisite (ADR-1160):** confirm imaged has
+  `FAAS_API_HOSTING_SMOKE_URL` before relying on the default. Without it every
+  canary deployment, including a defaulted one, fails with
+  `public hosting smoke verifier is required but not configured`; on such a
+  host set `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid.
+- **Crash loop (ADR-1160):** deploy a candidate whose liveness endpoint fails
+  after startup, on an app with almost no traffic. Confirm the rollout aborts
+  after two liveness restarts without waiting for request samples, the exact
+  predecessor returns to 100%, and
+  `canary_progression_circuit_breaker_total{event="abort_crash_loop"}`
+  increases. With the `liveness_restarts_total` family missing, confirm the
+  stage holds with `hold_signal_unavailable` instead.
+- **Rollback outcome (ADR-1160, `FaasRollbackNotRestored`,
+  `FaasRollbackRecoverySlow`):** after a plain rollback, read the receipt with
+  `gregale rollback status <app> --operation <id>`. `complete` carries
+  `recovery_ms`; `failed` carries `code` and `error` and means the release
+  the rollback meant to replace is still serving. For a failed automatic 5xx
+  rollback, confirm which release serves, then roll back explicitly with
+  `--to <revision>` or deploy a fix; `rollback_target_not_activated` with a
+  smoke error code points at the target's post-readiness smoke, and
+  `rollback_timeout` at a restore or cold boot that never finished.
+- **Default policy fallback (ADR-1160):** with meterd stopped and its lease
+  expired, deploy a flag-free release of a live app. Confirm the deploy
+  succeeds with an immediate cutover and `rollback_on_5xx=true`, and apid
+  logs `default release policy: canary worker unavailable`. To disable the
+  default fleet-wide, set `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid
+  and restart it; explicit `--safe` and `--canary-preset` deploys are
+  unaffected.
 - **Bad candidate:** deploy a revision that returns controlled 5xx responses
   on a test route. Once the candidate has enough samples, confirm it is
   aborted, its exact predecessor returns to 100%, and the audit reason names

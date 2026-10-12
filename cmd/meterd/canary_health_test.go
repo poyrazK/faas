@@ -136,7 +136,7 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 	})
 
 	t.Run("coverage permits exact deployment OOM query", func(t *testing.T) {
-		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 30, 6, 80, 1}}
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 0, 0, 1, 30, 6, 80, 1}}
 		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
 		if err != nil {
 			t.Fatalf("CircuitBreakerObservation: %v", err)
@@ -148,14 +148,43 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 			got.Stable.DependencyCalls != 80 || got.Stable.DependencyErrors != 1 {
 			t.Fatalf("dependency observation = available:%v candidate:%+v stable:%+v", got.DependencySignalAvailable, got.Candidate, got.Stable)
 		}
-		if len(prom.queries) != 7 || !strings.Contains(prom.queries[1], candidateID) ||
-			!strings.Contains(prom.queries[4], candidateID) || !strings.Contains(prom.queries[6], stableID) {
-			t.Fatalf("queries = %q, want OOM coverage/candidate plus dependency coverage and candidate/stable counters", prom.queries)
+		if !got.LivenessSignalAvailable || got.CandidateLivenessRestarts != 0 || got.StableLivenessRestarts != 0 {
+			t.Fatalf("liveness observation = available:%v candidate:%g stable:%g, want available/zero", got.LivenessSignalAvailable, got.CandidateLivenessRestarts, got.StableLivenessRestarts)
+		}
+		if len(prom.queries) != 10 || !strings.Contains(prom.queries[1], candidateID) ||
+			!strings.Contains(prom.queries[3], candidateID) || !strings.Contains(prom.queries[4], stableID) ||
+			!strings.Contains(prom.queries[7], candidateID) || !strings.Contains(prom.queries[9], stableID) {
+			t.Fatalf("queries = %q, want OOM, liveness, and dependency coverage plus per-deployment counters", prom.queries)
+		}
+	})
+
+	t.Run("missing liveness metric family is unavailable", func(t *testing.T) {
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 0}}
+		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
+		if err != nil {
+			t.Fatalf("CircuitBreakerObservation: %v", err)
+		}
+		if !got.OOMSignalAvailable || got.LivenessSignalAvailable {
+			t.Fatalf("signal availability = OOM:%v liveness:%v, want OOM available and liveness unavailable", got.OOMSignalAvailable, got.LivenessSignalAvailable)
+		}
+		if len(prom.queries) != 3 || !strings.Contains(prom.queries[2], "liveness_restarts_total") {
+			t.Fatalf("queries = %q, want no per-deployment liveness queries when family is missing", prom.queries)
+		}
+	})
+
+	t.Run("liveness restarts are read for candidate and predecessor", func(t *testing.T) {
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 3, 1, 0}}
+		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
+		if err != nil {
+			t.Fatalf("CircuitBreakerObservation: %v", err)
+		}
+		if !got.LivenessSignalAvailable || got.CandidateLivenessRestarts != 3 || got.StableLivenessRestarts != 1 {
+			t.Fatalf("liveness observation = available:%v candidate:%g stable:%g, want 3 and 1", got.LivenessSignalAvailable, got.CandidateLivenessRestarts, got.StableLivenessRestarts)
 		}
 	})
 
 	t.Run("missing dependency metric family is unavailable", func(t *testing.T) {
-		prom := &canaryHealthPromQL{values: []float64{1, 0, 0}}
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 0, 0, 0}}
 		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
 		if err != nil {
 			t.Fatalf("CircuitBreakerObservation: %v", err)
@@ -163,8 +192,8 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 		if !got.OOMSignalAvailable || got.DependencySignalAvailable {
 			t.Fatalf("signal availability = OOM:%v dependency:%v, want OOM available and dependency unavailable", got.OOMSignalAvailable, got.DependencySignalAvailable)
 		}
-		if len(prom.queries) != 3 {
-			t.Fatalf("queries = %q, want no per-deployment queries when family is missing", prom.queries)
+		if len(prom.queries) != 6 {
+			t.Fatalf("queries = %q, want no per-deployment dependency queries when family is missing", prom.queries)
 		}
 	})
 

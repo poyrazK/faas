@@ -65,6 +65,8 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
+	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	flag.Parse()
 	if *addr == "" {
 		port := os.Getenv("PORT")
@@ -158,6 +160,25 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	// /livez is a separate liveness endpoint so a release can pass its
+	// startup /healthz gate and still fail its liveness probe afterwards.
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		if *failLivez {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	// A bad release that still passes the platform's post-readiness smoke
+	// (which probes / and the health path) and fails real API traffic.
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		if *failAPI {
+			http.Error(w, "fixture bad release", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write(body)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)

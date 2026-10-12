@@ -3,6 +3,7 @@ package canary
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -28,6 +29,10 @@ const (
 	// Managed service dependencies are less frequent than inbound requests, so
 	// require a smaller but still useful denominator before comparing rates.
 	CircuitBreakerMinDependencyCalls int64 = 10
+	// CircuitBreakerMinCrashLoopRestarts is how many liveness-driven restarts
+	// of the candidate mark a crash loop (ADR-1160). Restarts need no request
+	// sample, so a crash-looping release is caught even with no traffic.
+	CircuitBreakerMinCrashLoopRestarts float64 = 2
 
 	circuitBreakerErrorRateFloorPct      = 5.0
 	circuitBreakerErrorRateDeltaPct      = 5.0
@@ -44,6 +49,10 @@ const (
 	circuitBreakerDependencyErrorFloorPct  = 20.0
 	circuitBreakerDependencyErrorDeltaPct  = 10.0
 	circuitBreakerDependencyErrorFactor    = 3.0
+	// A candidate must restart more than this multiple of its predecessor's
+	// restarts in the same window, so a predecessor that already flaps does
+	// not make every release look like a regression.
+	circuitBreakerCrashLoopFactor = 2.0
 )
 
 type CircuitBreakerAction string
@@ -72,12 +81,18 @@ type HealthWindow struct {
 // CircuitBreakerObservation compares the candidate with its currently
 // serving predecessor and carries the independent per-deployment OOM signal.
 type CircuitBreakerObservation struct {
-	Candidate                 HealthWindow
-	Stable                    HealthWindow
-	StableDeploymentID        string
-	HasStable                 bool
-	OOMKills                  float64
-	OOMSignalAvailable        bool
+	Candidate          HealthWindow
+	Stable             HealthWindow
+	StableDeploymentID string
+	HasStable          bool
+	OOMKills           float64
+	OOMSignalAvailable bool
+	// Liveness-driven destroy+cold-boot cycles in the rollout window
+	// (ADR-1160). LivenessSignalAvailable is false when the metric family is
+	// not exported, which holds rather than reading as zero restarts.
+	CandidateLivenessRestarts float64
+	StableLivenessRestarts    float64
+	LivenessSignalAvailable   bool
 	CPURequestSignalAvailable bool
 	DependencySignalAvailable bool
 }
@@ -104,6 +119,15 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 	}
 	if !o.OOMSignalAvailable {
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "workload OOM signal unavailable"}
+	}
+	if !o.LivenessSignalAvailable {
+		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: "liveness restart signal unavailable"}
+	}
+	if o.CandidateLivenessRestarts >= CircuitBreakerMinCrashLoopRestarts &&
+		o.CandidateLivenessRestarts > o.StableLivenessRestarts*circuitBreakerCrashLoopFactor {
+		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+			"crash loop (candidate %.0f liveness restarts, stable %.0f)",
+			o.CandidateLivenessRestarts, o.StableLivenessRestarts)}
 	}
 	if decision, ok := decisiveSmallSample5xx(o); ok {
 		return decision
@@ -189,6 +213,24 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 		}
 	}
 	return CircuitBreakerDecision{Action: CircuitBreakerAdvance}
+}
+
+// LowTrafficAdvanceAllowed reports whether an inconclusive hold is only a
+// sample-size hold with no negative evidence (ADR-1160). A scale-to-zero app
+// may never send twenty requests to a 1% candidate, so an unbounded hold
+// would strand it there. Any candidate 5xx, OOM kill, liveness restart, or
+// unreadable OOM or liveness signal keeps the hold; regressions with enough
+// samples abort before this.
+func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservation) bool {
+	if d.Action != CircuitBreakerHold {
+		return false
+	}
+	if !strings.HasPrefix(d.Reason, "insufficient request samples") &&
+		!strings.HasPrefix(d.Reason, "insufficient CPU/request samples") {
+		return false
+	}
+	return o.Candidate.ServerErrors == 0 && o.OOMSignalAvailable && o.OOMKills == 0 &&
+		o.LivenessSignalAvailable && o.CandidateLivenessRestarts == 0
 }
 
 // cpuLoadComparable reports whether the candidate carried enough of the
