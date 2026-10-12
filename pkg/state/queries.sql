@@ -16765,6 +16765,8 @@ SELECT lock_clone_environment_cleanup_scope_borrowers();
 
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
+    'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = sqlc.arg(deployment_id)::uuid),
     'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = sqlc.arg(deployment_id)::uuid),

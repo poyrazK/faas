@@ -59096,6 +59096,8 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 
 const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
+    'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = $1::uuid),
+    'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = $1::uuid),
     'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = $1::uuid),
     'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = $1::uuid),
     'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = $1::uuid),
