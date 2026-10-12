@@ -354,3 +354,12 @@ export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/mo
 export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
 
 export type { BindingCheckReport } from './generated/models/BindingCheckReport.js';
+
+export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDefinition, type DurableEntityRegistry } from './durable-entity-runtime.js';
+
+export { summarizeDurableEntity, observeDurableEntity, type DurableEntityObservation, type DurableEntityFinding } from './durable-entity-visibility.js';
+
+export { defineDurableEntityClientContract, durableEntityClient, type DurableEntityClientContract } from './durable-entity-client.js';
+
+export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';
+export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';

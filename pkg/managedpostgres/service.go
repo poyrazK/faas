@@ -152,8 +152,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if !s.provisioningEnabled() {
 		return Database{}, ErrUnavailable
 	}
-	if request.AccountID == "" || !ValidName(request.Name) {
+	if request.AccountID == "" {
 		return Database{}, ErrInvalid
+	}
+	if !ValidName(request.Name) {
+		return Database{}, errInvalidName
 	}
 	if err := request.Spec.Validate(); err != nil {
 		return Database{}, err
@@ -177,17 +180,20 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
 	}
-	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, err
-		}
-	}
+	// Resolve placement before admission: a region with no backend or an
+	// unsupported major is a request error, and must not surface as an
+	// account-wide usage rejection (production-us hunt #9, H9-P101).
 	backend, err := s.registry.Default(request.Spec.Region)
 	if err != nil {
 		return Database{}, err
 	}
 	if err := backend.Capabilities.Supports(request.Spec); err != nil {
 		return Database{}, err
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, request.AccountID); err != nil {
+			return Database{}, err
+		}
 	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
@@ -283,6 +289,12 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, false, ErrInvalid
+	}
+	// No database has history from before it existed. The provider rejects
+	// such a point only after the target is reserved, leaving a failed row
+	// on the account's database quota (production-us hunt #9).
+	if request.PointInTime.Before(source.CreatedAt) {
 		return Database{}, false, ErrInvalid
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
