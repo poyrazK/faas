@@ -5935,7 +5935,12 @@ const (
 
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
-	MaxPreparedNetworkCacheSize            = 16
+	MaxPreparedNetworkCacheSize = 16
+	// DefaultPreparedNetworkCacheSize is vmmd's cache size when neither
+	// vmmd.toml nor FAAS_PREPARED_NETWORKS sets one (ADR-149, amended
+	// 2026-10-12). It matches the vmmd_service role default, which nodes
+	// joined through node_join never received.
+	DefaultPreparedNetworkCacheSize        = 4
 	PreparedNetworkCacheTTLSeconds         = 60
 	PreparedNetworkOperationTimeoutSeconds = 2
 	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill

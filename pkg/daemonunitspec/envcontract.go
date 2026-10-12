@@ -442,7 +442,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_POLAR_WEBHOOK_SECRET", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PREFLIGHT_GITHUB_TOKEN", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid)"},
-	{Name: "FAAS_PREPARED_NETWORKS", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "unused-network cache size (0–16); ansible vmmd_prepared_networks (default 4) renders 99-faas-prepared-networks.conf, code default 0; ADR-149; \"shared\" covers pkg/e2etest forwarding it to a harness-booted vmmd"},
+	{Name: "FAAS_PREPARED_NETWORKS", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "unused-network cache size (0–16); ansible vmmd_prepared_networks (default 4) renders 99-faas-prepared-networks.conf; code default 4 (0 under native_process_recovery); ADR-149; \"shared\" covers pkg/e2etest forwarding it to a harness-booted vmmd"},
 	{Name: "FAAS_PRESSURE_MIGRATION_POLICY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PRESSURE_REASSESSMENT_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PRESSURE_THRESHOLD_PER_MIN", Owners: []string{"schedd"}, Source: EnvSourceDefault},
