@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        review_response:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponse'
+          description: OperationWorkflowReadinessNotification.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
         business_impact:
           $ref: '#/components/schemas/OperationWorkflowReadinessImpactEvent'
           description: OperationWorkflowReadinessNotification.business_impact. Sampled critical/overdue review transitions or source-confirmed clearance of tracked obligations; never an application business outcome assertion.
@@ -79434,6 +79437,9 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        review_response:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseRequest'
+          description: OperationWorkflowReadinessCoordinationRequest.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
         completion:
           $ref: '#/components/schemas/OperationWorkflowReadinessCompletionRequest'
         revision:
@@ -80452,6 +80458,9 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        review_response:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponse'
+          description: OperationWorkflowReadinessFollowUp.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
         business_impact:
           $ref: '#/components/schemas/OperationWorkflowReadinessImpactEvent'
           description: OperationWorkflowReadinessFollowUp.business_impact. Aggregate alert context and its acknowledgment target; no individual subject or transition is inferred.
@@ -80544,6 +80553,188 @@ components:
       - created_at
       - coordination
       - overdue
+    OperationWorkflowReviewResponseRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
+      required: [owner, plan, status]
+      properties:
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowReviewResponseRequest.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
+        plan:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseRequest.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks and tabs are allowed.
+        status:
+          type: string
+          enum: [active, resolved]
+          description: OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped check of linked source reviews.
+        check_in_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseRequest.check_in_at. Required future check-in for active responses; absent when resolved. Replaces inbox attention time without changing the original alert response deadline.
+        reviews:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/OperationWorkflowReviewResponseLinkRequest' }
+          description: OperationWorkflowReviewResponseRequest.reviews. Required nonempty link set on first creation. Omit on later edits to preserve it; supplied sets must exactly match existing links. Links cannot be dropped to manufacture resolution.
+    OperationWorkflowReviewResponseLinkRequest:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponseLinkRequest. Reference to a retained dependency review delivery in the same application and environment.
+      required: [subscription_id, sequence]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseLinkRequest.subscription_id. Source review subscription identity.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: OperationWorkflowReviewResponseLinkRequest.sequence. Source review notification sequence.
+    OperationWorkflowReviewResponseLink:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponseLink. Immutable source identity captured from an authorized matching review delivery; preserved after inbox retention loss.
+      required: [subscription_id, sequence, notification_id, progress_id, outcome_code, item_index, dependency_review_revision, subject, workflow, instance_id]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseLink.subscription_id. Retained review subscription identity.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseLink.sequence. Original delivery sequence.
+        notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseLink.notification_id. Original delivery identity, captured by the server.
+        progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseLink.progress_id. Pinned source playbook progress identity.
+        outcome_code:
+          type: string
+          description: OperationWorkflowReviewResponseLink.outcome_code. Pinned follow-up outcome list.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowReviewResponseLink.item_index. Pinned local step index.
+        dependency_review_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseLink.dependency_review_revision. Original review obligation revision.
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseLink.platform_tenant_id. Account-only exact source customer identity; customer responses omit this field.
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+          description: OperationWorkflowReviewResponseLink.subject. Scoped case subject captured from source delivery.
+        workflow:
+          type: string
+          description: OperationWorkflowReviewResponseLink.workflow. Protected workflow identity matching the parent risk alert.
+        instance_id:
+          type: string
+          description: OperationWorkflowReviewResponseLink.instance_id. Scoped source workflow instance.
+    OperationWorkflowReviewResponse:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
+      required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
+      properties:
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowReviewResponse.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
+        plan:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponse.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks and tabs are allowed.
+        status:
+          type: string
+          enum: [active, resolved]
+          description: OperationWorkflowReviewResponse.status. Active ownership or human resolution after a fresh scoped check of linked source reviews.
+        check_in_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponse.check_in_at. Required future check-in for active responses; absent when resolved. Replaces inbox attention time without changing the original alert response deadline.
+        reviews:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/OperationWorkflowReviewResponseLink' }
+          description: OperationWorkflowReviewResponse.reviews. Fixed captured review links.
+        created_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponse.created_at. Server creation time.
+        created_by:
+          type: string
+          description: OperationWorkflowReviewResponse.created_by. Authenticated initial owner-record actor.
+        updated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponse.updated_at. Server latest response update time.
+        updated_by:
+          type: string
+          description: OperationWorkflowReviewResponse.updated_by. Authenticated latest response actor.
+        resolution_checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponse.resolution_checked_at. Advisory pre-write source check time for a human resolved disposition. Missing or unresolved progress rejects resolution; later regressions do not rewrite historical closure.
+        history:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/OperationWorkflowReviewResponseChange' }
+          description: OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history.
+        history_truncated:
+          type: boolean
+          description: OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned.
+    OperationWorkflowReviewResponseChange:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
+      required: [owner, plan, status, at, actor]
+      properties:
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
+        plan:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseChange.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks and tabs are allowed.
+        status:
+          type: string
+          enum: [active, resolved]
+          description: OperationWorkflowReviewResponseChange.status. Active ownership or human resolution after a fresh scoped check of linked source reviews.
+        check_in_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseChange.check_in_at. Required future check-in for active responses; absent when resolved. Replaces inbox attention time without changing the original alert response deadline.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseChange.at. Server change time.
+        actor:
+          type: string
+          description: OperationWorkflowReviewResponseChange.actor. Authenticated response editor.
     OperationWorkflowReadinessImpactWatchRequest:
       type: object
       additionalProperties: false

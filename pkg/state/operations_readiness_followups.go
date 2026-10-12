@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -36,6 +37,12 @@ func updateReadinessNotification(ctx context.Context, store readinessSubscriptio
 	if err != nil {
 		return out, err
 	}
+	if req.ReviewResponse != nil {
+		prepared.PreparedReviewResponse, err = prepareReviewResponse(ctx, store, account, tenant, app, scope, id, sequence, req, operator)
+		if err != nil {
+			return out, err
+		}
+	}
 	return store.updateReadinessNotification(ctx, account, tenant, app, scope, uuid.MustParse(id).String(), sequence, actor, prepared, operator)
 }
 func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, actor string, req readinessCoordinationUpdate) (api.OperationWorkflowReadinessNotification, error) {
@@ -52,7 +59,33 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if req.Completion != nil && (req.PreparedCompletion == nil || n.Coordination == nil || n.Coordination.FollowUpAt == nil) {
 		return n, ErrConflict
 	}
+	if n.ReviewResponse != nil && n.ReviewResponse.Status == "active" && req.ReviewResponse == nil && (req.Completion != nil || req.Owner != n.ReviewResponse.Owner || n.ReviewResponse.CheckInAt == nil || req.FollowUpAt == nil || !req.FollowUpAt.Equal(*n.ReviewResponse.CheckInAt)) {
+		return n, ErrConflict
+	}
+	if req.ReviewResponse != nil && req.PreparedReviewResponse == nil {
+		return n, ErrConflict
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	if req.PreparedReviewResponse != nil {
+		response := *req.PreparedReviewResponse
+		response.CreatedAt, response.CreatedBy = now, actor
+		if n.ReviewResponse != nil {
+			response.CreatedAt = n.ReviewResponse.CreatedAt
+			response.CreatedBy = n.ReviewResponse.CreatedBy
+			response.History = slices.Clone(n.ReviewResponse.History)
+			response.HistoryTruncated = n.ReviewResponse.HistoryTruncated
+		}
+		response.UpdatedAt, response.UpdatedBy = now, actor
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		if len(response.History) > 16 {
+			response.History = response.History[len(response.History)-16:]
+			response.HistoryTruncated = true
+		}
+		n.ReviewResponse = &response
+		req.Owner = response.Owner
+		req.Status = "acknowledged"
+		req.FollowUpAt = response.CheckInAt
+	}
 	c := &api.OperationWorkflowReadinessCoordination{Revision: revision + 1, Status: req.Status, Owner: req.Owner, Note: req.Note, FollowUpAt: req.FollowUpAt, UpdatedAt: now, UpdatedBy: actor}
 	if n.Coordination != nil {
 		c.Completion = n.Coordination.Completion

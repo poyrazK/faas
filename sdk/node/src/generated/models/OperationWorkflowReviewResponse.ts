@@ -1,0 +1,60 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
+import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
+/**
+ * OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
+ */
+export type OperationWorkflowReviewResponse = {
+  /**
+   * OperationWorkflowReviewResponse.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
+   */
+  owner: string;
+  /**
+   * OperationWorkflowReviewResponse.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks and tabs are allowed.
+   */
+  plan: string;
+  /**
+   * OperationWorkflowReviewResponse.status. Active ownership or human resolution after a fresh scoped check of linked source reviews.
+   */
+  status: 'active' | 'resolved';
+  /**
+   * OperationWorkflowReviewResponse.check_in_at. Required future check-in for active responses; absent when resolved. Replaces inbox attention time without changing the original alert response deadline.
+   */
+  check_in_at?: string;
+  /**
+   * OperationWorkflowReviewResponse.reviews. Fixed captured review links.
+   */
+  reviews: Array<OperationWorkflowReviewResponseLink>;
+  /**
+   * OperationWorkflowReviewResponse.created_at. Server creation time.
+   */
+  created_at: string;
+  /**
+   * OperationWorkflowReviewResponse.created_by. Authenticated initial owner-record actor.
+   */
+  created_by: string;
+  /**
+   * OperationWorkflowReviewResponse.updated_at. Server latest response update time.
+   */
+  updated_at: string;
+  /**
+   * OperationWorkflowReviewResponse.updated_by. Authenticated latest response actor.
+   */
+  updated_by: string;
+  /**
+   * OperationWorkflowReviewResponse.resolution_checked_at. Advisory pre-write source check time for a human resolved disposition. Missing or unresolved progress rejects resolution; later regressions do not rewrite historical closure.
+   */
+  resolution_checked_at?: string;
+  /**
+   * OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history.
+   */
+  history: Array<OperationWorkflowReviewResponseChange>;
+  /**
+   * OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned.
+   */
+  history_truncated: boolean;
+};
+

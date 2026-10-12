@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
     from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+    from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUp")
@@ -51,6 +52,9 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    review_response: OperationWorkflowReviewResponse | Unset = UNSET
+    """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
+    fence, independent of business workflow success."""
     business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
     """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
     reviews in a scoped application environment; advisory confidence only."""
@@ -112,6 +116,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        review_response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_response, Unset):
+            review_response = self.review_response.to_dict()
+
         business_impact: dict[str, Any] | Unset = UNSET
         if not isinstance(self.business_impact, Unset):
             business_impact = self.business_impact.to_dict()
@@ -169,6 +177,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if review_response is not UNSET:
+            field_dict["review_response"] = review_response
         if business_impact is not UNSET:
             field_dict["business_impact"] = business_impact
         if playbook_step is not UNSET:
@@ -207,6 +217,7 @@ class OperationWorkflowReadinessFollowUp:
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
         from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+        from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
 
         d = dict(src_dict)
         subscription_id = UUID(d.pop("subscription_id"))
@@ -226,6 +237,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _review_response = d.pop("review_response", UNSET)
+        review_response: OperationWorkflowReviewResponse | Unset
+        if isinstance(_review_response, Unset):
+            review_response = UNSET
+        else:
+            review_response = OperationWorkflowReviewResponse.from_dict(_review_response)
 
         _business_impact = d.pop("business_impact", UNSET)
         business_impact: OperationWorkflowReadinessImpactEvent | Unset
@@ -303,6 +321,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            review_response=review_response,
             business_impact=business_impact,
             playbook_step=playbook_step,
             playbook_escalation=playbook_escalation,

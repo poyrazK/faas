@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessCompletionRequest } from './OperationWorkflowReadinessCompletionRequest.js';
+import type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
 /**
  * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordinationRequest = {
+  /**
+   * OperationWorkflowReadinessCoordinationRequest.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
+   */
+  review_response?: OperationWorkflowReviewResponseRequest;
   completion?: OperationWorkflowReadinessCompletionRequest;
   /**
    * OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter application evidence.

@@ -9,10 +9,15 @@ import type { OperationWorkflowReadinessCoordination } from './OperationWorkflow
 import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
 import type { OperationWorkflowReadinessImpactEvent } from './OperationWorkflowReadinessImpactEvent.js';
 import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
+import type { OperationWorkflowReviewResponse } from './OperationWorkflowReviewResponse.js';
 /**
  * Compact pending follow-up with original inbox references; no application readiness is inferred.
  */
 export type OperationWorkflowReadinessFollowUp = {
+  /**
+   * OperationWorkflowReadinessFollowUp.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
+   */
+  review_response?: OperationWorkflowReviewResponse;
   /**
    * OperationWorkflowReadinessFollowUp.business_impact. Aggregate alert context and its acknowledgment target; no individual subject or transition is inferred.
    */

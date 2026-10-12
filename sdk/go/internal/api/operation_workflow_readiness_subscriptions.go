@@ -40,6 +40,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	ReviewResponse       *OperationWorkflowReviewResponse                   `json:"review_response,omitempty"`
 	BusinessImpact       *OperationWorkflowReadinessImpactEvent             `json:"business_impact,omitempty"`
 	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery       `json:"dependency_recovery,omitempty"`
 	DependencyRegression *OperationWorkflowPlaybookDependencyRegression     `json:"dependency_regression,omitempty"`
@@ -86,12 +87,13 @@ type OperationWorkflowReadinessCoordination struct {
 	AcknowledgedBy string                                `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
-	Completion *OperationWorkflowReadinessCompletionRequest `json:"completion,omitempty"`
-	Revision   int64                                        `json:"revision"`
-	Status     string                                       `json:"status"`
-	Owner      string                                       `json:"owner"`
-	Note       string                                       `json:"note"`
-	FollowUpAt *time.Time                                   `json:"follow_up_at,omitempty"`
+	ReviewResponse *OperationWorkflowReviewResponseRequest      `json:"review_response,omitempty"`
+	Completion     *OperationWorkflowReadinessCompletionRequest `json:"completion,omitempty"`
+	Revision       int64                                        `json:"revision"`
+	Status         string                                       `json:"status"`
+	Owner          string                                       `json:"owner"`
+	Note           string                                       `json:"note"`
+	FollowUpAt     *time.Time                                   `json:"follow_up_at,omitempty"`
 }
 
 // Handoff summarizes retained application evidence; it never authorizes execution.
@@ -127,6 +129,7 @@ type OperationWorkflowReadinessFollowUpOptions struct {
 	Limit          int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
+	ReviewResponse       *OperationWorkflowReviewResponse             `json:"review_response,omitempty"`
 	BusinessImpact       *OperationWorkflowReadinessImpactEvent       `json:"business_impact,omitempty"`
 	PlaybookStep         *OperationWorkflowPlaybookStepAssignment     `json:"playbook_step,omitempty"`
 	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation  `json:"playbook_escalation,omitempty"`
@@ -472,4 +475,52 @@ type OperationWorkflowReadinessImpactEvent struct {
 	Reasons   []string                                      `json:"reasons"`
 	Previous  *OperationWorkflowReadinessImpactSummary      `json:"previous,omitempty"`
 	Current   *OperationWorkflowReadinessImpactSummary      `json:"current,omitempty"`
+}
+
+// Review response ownership is explicit human follow-through, separate from alert acknowledgment.
+type OperationWorkflowReviewResponseRequest struct {
+	Owner     string                                       `json:"owner"`
+	Plan      string                                       `json:"plan"`
+	Status    string                                       `json:"status"`
+	CheckInAt *time.Time                                   `json:"check_in_at,omitempty"`
+	Reviews   []OperationWorkflowReviewResponseLinkRequest `json:"reviews,omitempty"`
+}
+type OperationWorkflowReviewResponseLinkRequest struct {
+	SubscriptionID string `json:"subscription_id"`
+	Sequence       int64  `json:"sequence"`
+}
+type OperationWorkflowReviewResponseLink struct {
+	SubscriptionID           string           `json:"subscription_id"`
+	Sequence                 int64            `json:"sequence"`
+	NotificationID           string           `json:"notification_id"`
+	ProgressID               string           `json:"progress_id"`
+	OutcomeCode              string           `json:"outcome_code"`
+	ItemIndex                int              `json:"item_index"`
+	DependencyReviewRevision int64            `json:"dependency_review_revision"`
+	PlatformTenantID         string           `json:"platform_tenant_id,omitempty"`
+	Subject                  OperationSubject `json:"subject"`
+	Workflow                 string           `json:"workflow"`
+	InstanceID               string           `json:"instance_id"`
+}
+type OperationWorkflowReviewResponse struct {
+	Owner               string                                  `json:"owner"`
+	Plan                string                                  `json:"plan"`
+	Status              string                                  `json:"status"`
+	CheckInAt           *time.Time                              `json:"check_in_at,omitempty"`
+	Reviews             []OperationWorkflowReviewResponseLink   `json:"reviews"`
+	CreatedAt           time.Time                               `json:"created_at"`
+	CreatedBy           string                                  `json:"created_by"`
+	UpdatedAt           time.Time                               `json:"updated_at"`
+	UpdatedBy           string                                  `json:"updated_by"`
+	ResolutionCheckedAt *time.Time                              `json:"resolution_checked_at,omitempty"`
+	History             []OperationWorkflowReviewResponseChange `json:"history"`
+	HistoryTruncated    bool                                    `json:"history_truncated"`
+}
+type OperationWorkflowReviewResponseChange struct {
+	Owner     string     `json:"owner"`
+	Plan      string     `json:"plan"`
+	Status    string     `json:"status"`
+	CheckInAt *time.Time `json:"check_in_at,omitempty"`
+	At        time.Time  `json:"at"`
+	Actor     string     `json:"actor"`
 }

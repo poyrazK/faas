@@ -350,3 +350,5 @@ export type { OperationWorkflowPlaybookReviewImpact } from './generated/models/O
 export type { OperationWorkflowReadinessImpactSummary, OperationWorkflowReadinessImpactOwner } from './customer-operations.js';
 
 export type { OperationWorkflowReadinessImpactWatchRequest, OperationWorkflowReadinessImpactWatch, OperationWorkflowReadinessImpactEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseRequest, OperationWorkflowReviewResponseLinkRequest, OperationWorkflowReviewResponseLink, OperationWorkflowReviewResponse, OperationWorkflowReviewResponseChange } from './customer-operations.js';

@@ -106,7 +106,7 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 	return out, nil
 }
 func readinessFollowUpProjection(s api.OperationWorkflowReadinessSubscription, tenant string, n api.OperationWorkflowReadinessNotification) api.OperationWorkflowReadinessFollowUp {
-	row := api.OperationWorkflowReadinessFollowUp{BusinessImpact: n.BusinessImpact, PlaybookStep: n.PlaybookStep, PlaybookEscalation: n.PlaybookEscalation, OutcomeEscalation: n.OutcomeEscalation, SubscriptionID: s.ID, SubscriptionName: s.Name, SubscriptionTenantID: s.TenantID, PlatformTenantID: tenant, Scope: s.Scope, NotificationID: n.ID, Sequence: n.Sequence, Kind: n.Kind, CreatedAt: n.CreatedAt, Coordination: *n.Coordination, Reminder: n.Reminder}
+	row := api.OperationWorkflowReadinessFollowUp{ReviewResponse: n.ReviewResponse, BusinessImpact: n.BusinessImpact, PlaybookStep: n.PlaybookStep, PlaybookEscalation: n.PlaybookEscalation, OutcomeEscalation: n.OutcomeEscalation, SubscriptionID: s.ID, SubscriptionName: s.Name, SubscriptionTenantID: s.TenantID, PlatformTenantID: tenant, Scope: s.Scope, NotificationID: n.ID, Sequence: n.Sequence, Kind: n.Kind, CreatedAt: n.CreatedAt, Coordination: *n.Coordination, Reminder: n.Reminder}
 	if b := readinessNotificationBaseline(n); b != nil {
 		row.Workflow = b.Workflow
 		row.InstanceID = b.InstanceID

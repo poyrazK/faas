@@ -19,10 +19,15 @@ import type { OperationWorkflowReadinessImpactEvent } from './OperationWorkflowR
 import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
 import type { OperationWorkflowReadinessVerificationEvent } from './OperationWorkflowReadinessVerificationEvent.js';
 import type { OperationWorkflowReadinessVerificationWatch } from './OperationWorkflowReadinessVerificationWatch.js';
+import type { OperationWorkflowReviewResponse } from './OperationWorkflowReviewResponse.js';
 /**
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  /**
+   * OperationWorkflowReadinessNotification.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
+   */
+  review_response?: OperationWorkflowReviewResponse;
   /**
    * OperationWorkflowReadinessNotification.business_impact. Sampled critical/overdue review transitions or source-confirmed clearance of tracked obligations; never an application business outcome assertion.
    */

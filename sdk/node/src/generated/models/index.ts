@@ -1301,6 +1301,11 @@ export type { OperationWorkflowRetainedMilestoneInvalidationRule } from './Opera
 export type { OperationWorkflowRetainedMilestonePath } from './OperationWorkflowRetainedMilestonePath.js';
 export type { OperationWorkflowRetainedMilestonePathResult } from './OperationWorkflowRetainedMilestonePathResult.js';
 export type { OperationWorkflowRetainedMilestoneRequirement } from './OperationWorkflowRetainedMilestoneRequirement.js';
+export type { OperationWorkflowReviewResponse } from './OperationWorkflowReviewResponse.js';
+export type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
+export type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
+export type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
+export type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
 export type { OperationWorkflowRevisionChange } from './OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
 export type { OperationWorkflowRevisionEvidence } from './OperationWorkflowRevisionEvidence.js';

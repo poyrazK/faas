@@ -371,3 +371,13 @@ type OperationWorkflowReadinessImpactOwner = api.OperationWorkflowReadinessImpac
 type OperationWorkflowReadinessImpactWatchRequest = api.OperationWorkflowReadinessImpactWatchRequest
 type OperationWorkflowReadinessImpactWatch = api.OperationWorkflowReadinessImpactWatch
 type OperationWorkflowReadinessImpactEvent = api.OperationWorkflowReadinessImpactEvent
+
+type OperationWorkflowReviewResponseRequest = api.OperationWorkflowReviewResponseRequest
+
+type OperationWorkflowReviewResponseLinkRequest = api.OperationWorkflowReviewResponseLinkRequest
+
+type OperationWorkflowReviewResponseLink = api.OperationWorkflowReviewResponseLink
+
+type OperationWorkflowReviewResponse = api.OperationWorkflowReviewResponse
+
+type OperationWorkflowReviewResponseChange = api.OperationWorkflowReviewResponseChange

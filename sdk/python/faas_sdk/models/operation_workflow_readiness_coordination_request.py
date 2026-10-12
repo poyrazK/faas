@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+    from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessCoordinationRequest")
@@ -38,9 +39,13 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    review_response: OperationWorkflowReviewResponseRequest | Unset = UNSET
+    """OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-
+    impact alert. Saving acknowledges the alert and assigns queue attention to the response owner."""
     completion: OperationWorkflowReadinessCompletionRequest | Unset = UNSET
-    """An asserted coordination outcome with a required note; resolved requires at least one retained evidence
-    Operation. Closing does not prove business resolution."""
+    """An asserted coordination outcome. Generic completion requires a note and resolved requires retained
+    evidence; playbook business completion captures its own current evidence. Closing does not prove business
+    resolution."""
     follow_up_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not alter
     application evidence."""
@@ -53,6 +58,10 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = self.owner
 
         note = self.note
+
+        review_response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_response, Unset):
+            review_response = self.review_response.to_dict()
 
         completion: dict[str, Any] | Unset = UNSET
         if not isinstance(self.completion, Unset):
@@ -72,6 +81,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if review_response is not UNSET:
+            field_dict["review_response"] = review_response
         if completion is not UNSET:
             field_dict["completion"] = completion
         if follow_up_at is not UNSET:
@@ -82,6 +93,7 @@ class OperationWorkflowReadinessCoordinationRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+        from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
 
         d = dict(src_dict)
         revision = d.pop("revision")
@@ -91,6 +103,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _review_response = d.pop("review_response", UNSET)
+        review_response: OperationWorkflowReviewResponseRequest | Unset
+        if isinstance(_review_response, Unset):
+            review_response = UNSET
+        else:
+            review_response = OperationWorkflowReviewResponseRequest.from_dict(_review_response)
 
         _completion = d.pop("completion", UNSET)
         completion: OperationWorkflowReadinessCompletionRequest | Unset
@@ -111,6 +130,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            review_response=review_response,
             completion=completion,
             follow_up_at=follow_up_at,
         )
