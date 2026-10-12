@@ -30,7 +30,7 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 		return err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
-	if producer == nil || producer.restore == nil || *producer.restore != target || !sameNativePhysicalLease(lease, producer.NativeLease) ||
+	if producer == nil || producer.restore == nil || !sameNativeQualificationRestoreClaim(target, *producer.restore) || !sameNativePhysicalLease(lease, producer.NativeLease) ||
 		producer.NativeGeneration == "" || r.generation(lease.Instance) != producer.NativeGeneration {
 		return fmt.Errorf("native qualification restore: target process differs from the original attempt: %w", state.ErrConflict)
 	}
