@@ -187,11 +187,48 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  fresh:                        %t\n", result.Fresh)
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
 	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
-	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d\n", result.ComputeUnitSeconds)
+	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d (%s)\n", result.ComputeUnitSeconds, formatComputeUnitHours(result.ComputeUnitSeconds))
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
-	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d\n", result.HistoryByteSeconds)
-	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d\n", result.EgressBytes)
+	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
+	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
+	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	return 0
+}
+
+// postgresBillingMonthSeconds matches the 31-day month apid uses to turn the
+// plan storage entitlement into a byte-second ceiling, so that ceiling reads
+// as a whole number of GiB-months.
+const postgresBillingMonthSeconds = 31 * 24 * 60 * 60
+
+// formatGiBMonths renders a byte-second meter readably; raw byte-seconds
+// on the canary ran to nineteen digits. Small readings step down to
+// GiB-hours or MiB-hours so a fresh database does not print 0.00.
+func formatGiBMonths(byteSeconds int64) string {
+	gibSeconds := float64(byteSeconds) / float64(int64(1)<<30)
+	switch {
+	case byteSeconds == 0 || gibSeconds/postgresBillingMonthSeconds >= 0.01:
+		return fmt.Sprintf("%.2f GiB-months", gibSeconds/postgresBillingMonthSeconds)
+	case gibSeconds/3600 >= 0.01:
+		return fmt.Sprintf("%.2f GiB-hours", gibSeconds/3600)
+	default:
+		return fmt.Sprintf("%.2f MiB-hours", gibSeconds*1024/3600)
+	}
+}
+
+func formatComputeUnitHours(seconds int64) string {
+	return fmt.Sprintf("%.2f CU-hours", float64(seconds)/3600)
+}
+
+func formatIECBytes(value int64) string {
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	if value < 1024 {
+		return fmt.Sprintf("%d B", value)
+	}
+	size, unit := float64(value)/1024, 0
+	for size >= 1024 && unit < len(units)-1 {
+		size, unit = size/1024, unit+1
+	}
+	return fmt.Sprintf("%.1f %s", size, units[unit])
 }
 
 func formatPostgresObservedAt(observedAt *time.Time) string {
