@@ -10,6 +10,10 @@ import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './Operat
  * Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write evidence check. Retained with the original notification.
  */
 export type OperationWorkflowReadinessCompletion = {
+  /**
+   * OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention.
+   */
+  playbook_review_after_seconds?: number;
   playbook_outcome?: OperationWorkflowPlaybookCompletionOutcome;
   escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy;
   /**

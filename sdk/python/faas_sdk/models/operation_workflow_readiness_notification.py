@@ -14,6 +14,10 @@ from ..models.operation_workflow_readiness_notification_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
+    from ..models.operation_workflow_playbook_completion_review_event import (
+        OperationWorkflowPlaybookCompletionReviewEvent,
+    )
     from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
     from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
     from ..models.operation_workflow_readiness_business_outcome_event import (
@@ -51,6 +55,12 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    playbook_review: OperationWorkflowPlaybookCompletionReview | Unset = UNSET
+    """OperationWorkflowPlaybookCompletionReview. Bounded retained post-completion monitoring; updates never reopen
+    or rewrite the original closure."""
+    playbook_review_event: OperationWorkflowPlaybookCompletionReviewEvent | Unset = UNSET
+    """OperationWorkflowPlaybookCompletionReviewEvent. Durable result change linked to the original closed
+    escalation; conveys no application execution authority."""
     playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
     current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
@@ -98,6 +108,14 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        playbook_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_review, Unset):
+            playbook_review = self.playbook_review.to_dict()
+
+        playbook_review_event: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_review_event, Unset):
+            playbook_review_event = self.playbook_review_event.to_dict()
 
         playbook_escalation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_escalation, Unset):
@@ -154,6 +172,10 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if playbook_review is not UNSET:
+            field_dict["playbook_review"] = playbook_review
+        if playbook_review_event is not UNSET:
+            field_dict["playbook_review_event"] = playbook_review_event
         if playbook_escalation is not UNSET:
             field_dict["playbook_escalation"] = playbook_escalation
         if playbook_evidence is not UNSET:
@@ -181,6 +203,10 @@ class OperationWorkflowReadinessNotification:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
+        from ..models.operation_workflow_playbook_completion_review_event import (
+            OperationWorkflowPlaybookCompletionReviewEvent,
+        )
         from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
         from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
         from ..models.operation_workflow_readiness_business_outcome_event import (
@@ -209,6 +235,20 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _playbook_review = d.pop("playbook_review", UNSET)
+        playbook_review: OperationWorkflowPlaybookCompletionReview | Unset
+        if isinstance(_playbook_review, Unset):
+            playbook_review = UNSET
+        else:
+            playbook_review = OperationWorkflowPlaybookCompletionReview.from_dict(_playbook_review)
+
+        _playbook_review_event = d.pop("playbook_review_event", UNSET)
+        playbook_review_event: OperationWorkflowPlaybookCompletionReviewEvent | Unset
+        if isinstance(_playbook_review_event, Unset):
+            playbook_review_event = UNSET
+        else:
+            playbook_review_event = OperationWorkflowPlaybookCompletionReviewEvent.from_dict(_playbook_review_event)
 
         _playbook_escalation = d.pop("playbook_escalation", UNSET)
         playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset
@@ -293,6 +333,8 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            playbook_review=playbook_review,
+            playbook_review_event=playbook_review_event,
             playbook_escalation=playbook_escalation,
             playbook_evidence=playbook_evidence,
             escalation_response=escalation_response,

@@ -57068,6 +57068,68 @@ components:
         after:
           type: [string, number, boolean, object, "null"]
 
+
+    OperationWorkflowPlaybookCompletionReview:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookCompletionReview. Bounded retained post-completion monitoring; updates never reopen or rewrite the original closure.
+      required: [id, revision, owner, status, expires_at, state_revision, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookCompletionReview.id. Exact durable review identity.
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookCompletionReview.revision. Worker observation fence.
+        owner:
+          type: string
+          description: OperationWorkflowPlaybookCompletionReview.owner. Coordination owner frozen at completion.
+        status:
+          type: string
+          enum: [active, expired, stopped]
+          description: OperationWorkflowPlaybookCompletionReview.status. Monitoring lifetime; expired reviews no longer publish.
+        expires_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookCompletionReview.expires_at. Original bounded window end from actual completion.
+        state_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowPlaybookCompletionReview.state_revision. Highest comparable retained application revision.
+        current:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+    OperationWorkflowPlaybookCompletionReviewEvent:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookCompletionReviewEvent. Durable result change linked to the original closed escalation; conveys no application execution authority.
+      required: [review_id, source_notification_id, source_sequence, resolution, previous, current]
+      properties:
+        review_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookCompletionReviewEvent.review_id. Exact review identity.
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookCompletionReviewEvent.source_notification_id. Original closed escalation notification.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookCompletionReviewEvent.source_sequence. Linkable original inbox sequence.
+        resolution:
+          type: string
+          enum: [expected_outcome_achieved, alternative_accepted, follow_up_canceled]
+          description: OperationWorkflowPlaybookCompletionReviewEvent.resolution. Original human disposition, unchanged by later evidence.
+        previous:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+        current:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+
 # ─── Billing history (issue #259) ──────────────────────────────────────
 
     Invoice:
@@ -79181,6 +79243,10 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        playbook_review:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookCompletionReview'
+        playbook_review_event:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookCompletionReviewEvent'
         playbook_escalation:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeEscalation'
           description: OperationWorkflowReadinessNotification.playbook_escalation. Live evidence of an assigned playbook deadline follow-up, separate from human coordination and immutable delivery evidence.
@@ -79399,6 +79465,12 @@ components:
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        playbook_review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention.
         playbook_resolution:
           type: string
           enum: [expected_outcome_achieved, alternative_accepted, follow_up_canceled]
@@ -79454,6 +79526,12 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        playbook_review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention.
         playbook_outcome:
           $ref: '#/components/schemas/OperationWorkflowPlaybookCompletionOutcome'
         escalation_policy:

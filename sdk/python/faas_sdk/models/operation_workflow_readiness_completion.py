@@ -50,6 +50,9 @@ class OperationWorkflowReadinessCompletion:
     evidence: OperationWorkflowReadinessCompletionEvidence
     """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
     after this observation. Explicit boundaries never imply readiness."""
+    playbook_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-
+    aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
     playbook_outcome: OperationWorkflowPlaybookCompletionOutcome | Unset = UNSET
     """OperationWorkflowPlaybookCompletionOutcome. Immutable human disposition and exact scoped advisory
     application evidence observed before completion; neither establishes causation nor authorizes execution."""
@@ -93,6 +96,8 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = self.evidence.to_dict()
 
+        playbook_review_after_seconds = self.playbook_review_after_seconds
+
         playbook_outcome: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_outcome, Unset):
             playbook_outcome = self.playbook_outcome.to_dict()
@@ -127,6 +132,8 @@ class OperationWorkflowReadinessCompletion:
                 "evidence": evidence,
             }
         )
+        if playbook_review_after_seconds is not UNSET:
+            field_dict["playbook_review_after_seconds"] = playbook_review_after_seconds
         if playbook_outcome is not UNSET:
             field_dict["playbook_outcome"] = playbook_outcome
         if escalation_policy is not UNSET:
@@ -173,6 +180,8 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = OperationWorkflowReadinessCompletionEvidence.from_dict(d.pop("evidence"))
 
+        playbook_review_after_seconds = d.pop("playbook_review_after_seconds", UNSET)
+
         _playbook_outcome = d.pop("playbook_outcome", UNSET)
         playbook_outcome: OperationWorkflowPlaybookCompletionOutcome | Unset
         if isinstance(_playbook_outcome, Unset):
@@ -214,6 +223,7 @@ class OperationWorkflowReadinessCompletion:
             completed_at=completed_at,
             completed_by=completed_by,
             evidence=evidence,
+            playbook_review_after_seconds=playbook_review_after_seconds,
             playbook_outcome=playbook_outcome,
             escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,

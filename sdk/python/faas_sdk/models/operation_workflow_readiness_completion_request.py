@@ -42,6 +42,9 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    playbook_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after
+    business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
     playbook_resolution: OperationWorkflowReadinessCompletionRequestPlaybookResolution | Unset = UNSET
     """OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned
     playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires
@@ -76,6 +79,8 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        playbook_review_after_seconds = self.playbook_review_after_seconds
+
         playbook_resolution: str | Unset = UNSET
         if not isinstance(self.playbook_resolution, Unset):
             playbook_resolution = self.playbook_resolution
@@ -103,6 +108,8 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if playbook_review_after_seconds is not UNSET:
+            field_dict["playbook_review_after_seconds"] = playbook_review_after_seconds
         if playbook_resolution is not UNSET:
             field_dict["playbook_resolution"] = playbook_resolution
         if escalation_policy is not UNSET:
@@ -135,6 +142,8 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = UUID(evidence_operation_ids_item_data)
 
             evidence_operation_ids.append(evidence_operation_ids_item)
+
+        playbook_review_after_seconds = d.pop("playbook_review_after_seconds", UNSET)
 
         _playbook_resolution = d.pop("playbook_resolution", UNSET)
         playbook_resolution: OperationWorkflowReadinessCompletionRequestPlaybookResolution | Unset
@@ -169,6 +178,7 @@ class OperationWorkflowReadinessCompletionRequest:
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            playbook_review_after_seconds=playbook_review_after_seconds,
             playbook_resolution=playbook_resolution,
             escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,

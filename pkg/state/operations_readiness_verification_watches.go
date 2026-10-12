@@ -9,17 +9,18 @@ import (
 )
 
 type readinessWatchUpdate struct {
-	Playbook        *playbookEvidenceWatchUpdate
-	ResponseWatchID string
-	OutcomeWatch    *api.OperationWorkflowReadinessBusinessOutcomeWatch
-	OutcomeEvents   []api.OperationWorkflowReadinessBusinessOutcomeEvent
-	SourceID        string
-	Sequence        int64
-	WatchID         string
-	Revision        int64
-	Watch           api.OperationWorkflowReadinessVerificationWatch
-	Events          []api.OperationWorkflowReadinessVerificationEvent
-	Kinds           []string
+	CompletionReview *api.OperationWorkflowPlaybookCompletionReview
+	Playbook         *playbookEvidenceWatchUpdate
+	ResponseWatchID  string
+	OutcomeWatch     *api.OperationWorkflowReadinessBusinessOutcomeWatch
+	OutcomeEvents    []api.OperationWorkflowReadinessBusinessOutcomeEvent
+	SourceID         string
+	Sequence         int64
+	WatchID          string
+	Revision         int64
+	Watch            api.OperationWorkflowReadinessVerificationWatch
+	Events           []api.OperationWorkflowReadinessVerificationEvent
+	Kinds            []string
 }
 
 // Rotate through retained source notifications independently of readiness discovery filters.
@@ -140,6 +141,9 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
 func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.CompletionReview != nil {
+		return applyPlaybookCompletionReview(r, n, u)
+	}
 	if u.ResponseWatchID != "" {
 		return applyReadinessEscalationResponse(r, n, u)
 	}

@@ -1213,6 +1213,8 @@ export type { OperationWorkflowPlaybook } from './models/OperationWorkflowPlaybo
 export type { OperationWorkflowPlaybookApplicability } from './models/OperationWorkflowPlaybookApplicability.js';
 export type { OperationWorkflowPlaybookBusinessOutcome } from './models/OperationWorkflowPlaybookBusinessOutcome.js';
 export type { OperationWorkflowPlaybookCompletionOutcome } from './models/OperationWorkflowPlaybookCompletionOutcome.js';
+export type { OperationWorkflowPlaybookCompletionReview } from './models/OperationWorkflowPlaybookCompletionReview.js';
+export type { OperationWorkflowPlaybookCompletionReviewEvent } from './models/OperationWorkflowPlaybookCompletionReviewEvent.js';
 export type { OperationWorkflowPlaybookEvidence } from './models/OperationWorkflowPlaybookEvidence.js';
 export type { OperationWorkflowPlaybookEvidenceChange } from './models/OperationWorkflowPlaybookEvidenceChange.js';
 export type { OperationWorkflowPlaybookEvidenceCheck } from './models/OperationWorkflowPlaybookEvidenceCheck.js';

@@ -38,6 +38,8 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	PlaybookReview       *OperationWorkflowPlaybookCompletionReview         `json:"playbook_review,omitempty"`
+	PlaybookReviewEvent  *OperationWorkflowPlaybookCompletionReviewEvent    `json:"playbook_review_event,omitempty"`
 	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation        `json:"playbook_escalation,omitempty"`
 	PlaybookEvidence     *OperationWorkflowPlaybookEvidenceEvent            `json:"playbook_evidence,omitempty"`
 	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent `json:"escalation_response,omitempty"`
@@ -156,30 +158,32 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
-	PlaybookResolution   string                                             `json:"playbook_resolution,omitempty"`
-	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
-	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
-	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
-	ExpectedOutcomeCode  string                                             `json:"expected_outcome_code,omitempty"`
-	WatchVerification    bool                                               `json:"watch_verification,omitempty"`
-	Outcome              string                                             `json:"outcome"`
-	Note                 string                                             `json:"note"`
-	EvidenceOperationIDs []string                                           `json:"evidence_operation_ids"`
+	PlaybookReviewAfterSeconds int64                                              `json:"playbook_review_after_seconds,omitempty"`
+	PlaybookResolution         string                                             `json:"playbook_resolution,omitempty"`
+	EscalationPolicy           *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
+	WatchOutcome               bool                                               `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt          *time.Time                                         `json:"outcome_deadline_at,omitempty"`
+	ExpectedOutcomeCode        string                                             `json:"expected_outcome_code,omitempty"`
+	WatchVerification          bool                                               `json:"watch_verification,omitempty"`
+	Outcome                    string                                             `json:"outcome"`
+	Note                       string                                             `json:"note"`
+	EvidenceOperationIDs       []string                                           `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
-	PlaybookOutcome      *OperationWorkflowPlaybookCompletionOutcome        `json:"playbook_outcome,omitempty"`
-	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
-	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
-	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
-	ExpectedOutcomeCode  string                                             `json:"expected_outcome_code,omitempty"`
-	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcome         `json:"business_outcome,omitempty"`
-	WatchVerification    bool                                               `json:"watch_verification,omitempty"`
-	Outcome              string                                             `json:"outcome"`
-	Note                 string                                             `json:"note"`
-	EvidenceOperationIDs []string                                           `json:"evidence_operation_ids"`
-	CompletedAt          time.Time                                          `json:"completed_at"`
-	CompletedBy          string                                             `json:"completed_by"`
-	Evidence             OperationWorkflowReadinessCompletionEvidence       `json:"evidence"`
+	PlaybookReviewAfterSeconds int64                                              `json:"playbook_review_after_seconds,omitempty"`
+	PlaybookOutcome            *OperationWorkflowPlaybookCompletionOutcome        `json:"playbook_outcome,omitempty"`
+	EscalationPolicy           *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
+	WatchOutcome               bool                                               `json:"watch_outcome,omitempty"`
+	OutcomeDeadlineAt          *time.Time                                         `json:"outcome_deadline_at,omitempty"`
+	ExpectedOutcomeCode        string                                             `json:"expected_outcome_code,omitempty"`
+	BusinessOutcome            *OperationWorkflowReadinessBusinessOutcome         `json:"business_outcome,omitempty"`
+	WatchVerification          bool                                               `json:"watch_verification,omitempty"`
+	Outcome                    string                                             `json:"outcome"`
+	Note                       string                                             `json:"note"`
+	EvidenceOperationIDs       []string                                           `json:"evidence_operation_ids"`
+	CompletedAt                time.Time                                          `json:"completed_at"`
+	CompletedBy                string                                             `json:"completed_by"`
+	Evidence                   OperationWorkflowReadinessCompletionEvidence       `json:"evidence"`
 }
 
 // Evidence records the advisory pre-write observation, not execution authority.

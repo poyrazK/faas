@@ -13,6 +13,7 @@ import (
 
 type readinessCoordinationUpdate struct {
 	api.OperationWorkflowReadinessCoordinationRequest
+	PreparedReview       *api.OperationWorkflowPlaybookCompletionReview
 	PreparedCompletion   *api.OperationWorkflowReadinessCompletion
 	PreparedWatch        *api.OperationWorkflowReadinessVerificationWatch
 	PreparedOutcomeWatch *api.OperationWorkflowReadinessBusinessOutcomeWatch
@@ -25,6 +26,9 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	}
 	r := req.Completion
 	businessCompletion := r.PlaybookResolution != ""
+	if r.PlaybookReviewAfterSeconds < 0 || r.PlaybookReviewAfterSeconds > api.OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (r.PlaybookReviewAfterSeconds > 0 && !businessCompletion) {
+		return out, ErrInvalidArgument
+	}
 	if businessCompletion {
 		expectedOutcome := map[string]string{"expected_outcome_achieved": "resolved", "alternative_accepted": "resolved", "follow_up_canceled": "no_longer_applicable"}[r.PlaybookResolution]
 		if expectedOutcome == "" || r.Outcome != expectedOutcome || r.WatchOutcome || r.WatchVerification || r.ExpectedOutcomeCode != "" || r.OutcomeDeadlineAt != nil || r.EscalationPolicy != nil {
@@ -117,6 +121,15 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 		out.PreparedCompletion.PlaybookOutcome, err = readPlaybookCompletionOutcome(ctx, store, account, tenant, app, scope, check.Notification, r.PlaybookResolution, operator)
 		if err != nil {
 			return out, err
+		}
+		out.PreparedCompletion.PlaybookReviewAfterSeconds = r.PlaybookReviewAfterSeconds
+		if r.PlaybookReviewAfterSeconds > 0 {
+			current := out.PreparedCompletion.PlaybookOutcome.Observation
+			revision := check.Notification.PlaybookEscalation.Current.Evidence.StateRevision
+			if current.Evidence.ContractVersion == check.Notification.PlaybookEvidence.ContractVersion && current.Evidence.StateRevision > revision {
+				revision = current.Evidence.StateRevision
+			}
+			out.PreparedReview = &api.OperationWorkflowPlaybookCompletionReview{ID: uuid.NewString(), Revision: 1, Owner: req.Owner, Status: "active", StateRevision: revision, Current: current}
 		}
 	}
 	if r.ExpectedOutcomeCode != "" {

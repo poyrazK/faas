@@ -60,6 +60,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if req.PreparedCompletion != nil {
 		completion := *req.PreparedCompletion
 		completion.CompletedAt, completion.CompletedBy = now, actor
+		if req.PreparedReview != nil {
+			review := *req.PreparedReview
+			review.ExpiresAt = now.Add(time.Duration(completion.PlaybookReviewAfterSeconds) * time.Second)
+			n.PlaybookReview = &review
+		}
 		c.Completion = &completion
 		c.FollowUpAt = nil
 		if req.PreparedOutcomeWatch != nil {

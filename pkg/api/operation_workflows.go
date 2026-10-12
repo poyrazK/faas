@@ -337,3 +337,22 @@ type OperationWorkflowPlaybookCompletionOutcome struct {
 	Explanation string                                   `json:"explanation"`
 	Observation OperationWorkflowPlaybookBusinessOutcome `json:"observation"`
 }
+
+// Review windows monitor retained completion evidence without reopening human coordination.
+type OperationWorkflowPlaybookCompletionReview struct {
+	ID            string                                   `json:"id"`
+	Revision      int64                                    `json:"revision"`
+	Owner         string                                   `json:"owner"`
+	Status        string                                   `json:"status"`
+	ExpiresAt     time.Time                                `json:"expires_at"`
+	StateRevision int64                                    `json:"state_revision"`
+	Current       OperationWorkflowPlaybookBusinessOutcome `json:"current"`
+}
+type OperationWorkflowPlaybookCompletionReviewEvent struct {
+	ReviewID             string                                   `json:"review_id"`
+	SourceNotificationID string                                   `json:"source_notification_id"`
+	SourceSequence       int64                                    `json:"source_sequence"`
+	Resolution           string                                   `json:"resolution"`
+	Previous             OperationWorkflowPlaybookBusinessOutcome `json:"previous"`
+	Current              OperationWorkflowPlaybookBusinessOutcome `json:"current"`
+}

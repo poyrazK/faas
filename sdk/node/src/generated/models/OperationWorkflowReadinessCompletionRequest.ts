@@ -8,6 +8,10 @@ import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './Operat
  */
 export type OperationWorkflowReadinessCompletionRequest = {
   /**
+   * OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention.
+   */
+  playbook_review_after_seconds?: number;
+  /**
    * OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires no_longer_applicable. Uses the frozen expectation, permits empty note and evidence IDs, and excludes extra outcome or verification watches.
    */
   playbook_resolution?: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled';
