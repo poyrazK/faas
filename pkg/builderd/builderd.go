@@ -1159,8 +1159,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// for the coarse-grained exit-code-only case (no code
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
-		if out.FailureCode != "" {
-			b.markFailedEx(ctx, build, fc, out.FailureCode, out.FailurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		if failureCode == "" && fc == state.FailureUserError {
+			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
+		}
+		if failureCode != "" {
+			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		} else {
 			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		}
