@@ -3736,7 +3736,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return inv, 0, invocationDoError(req.Context(), err)
+		return inv, 0, invocationDoError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
