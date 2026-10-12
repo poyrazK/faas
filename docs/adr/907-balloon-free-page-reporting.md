@@ -117,3 +117,7 @@ guest 6.18.
 - `TestMetalRestoreTimingBench`, 1 GiB guest, 2 rounds × 10 restores,
   interleaved: wall p50/p90 196/215 ms without the balloon and 200/225 ms
   with it, within noise.
+- The whole `pkg/fcvm` metal package with the balloon: 1,061 passed and 34
+  failed. No test failed that passes without the balloon in ADR-983's
+  baseline run (1,057 passed, 35 failed, all caused by the node's leftovers
+  and missing fixtures), and the run left no new leaks.
