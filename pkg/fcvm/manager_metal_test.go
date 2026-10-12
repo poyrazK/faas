@@ -144,6 +144,8 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 // FAAS_TEST_PRODUCTION_DEFAULTS=1 configures the VMM as vmmd does by default:
 // free page reporting (ADR-907), per-account pmem bases (ADR-908), restore
 // prefetch at concurrency 3 (ADR-225) and prepared networks (ADR-149).
+// FAAS_TEST_PRODUCTION_DEFAULTS_EXCEPT drops some of them (a comma list of
+// fpr, pmem, prefetch, prepared) to attribute their effect.
 func TestMetalParkWakeCycle(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 
@@ -162,9 +164,14 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	v := newMetalVMM(t, 30*time.Second).WithStorage(store)
 	account := ""
 	productionDefaults := os.Getenv("FAAS_TEST_PRODUCTION_DEFAULTS") == "1"
+	except := map[string]bool{}
+	for _, name := range strings.Split(os.Getenv("FAAS_TEST_PRODUCTION_DEFAULTS_EXCEPT"), ",") {
+		except[strings.TrimSpace(name)] = true
+	}
 	if productionDefaults {
-		v = v.WithFreePageReporting(FreePageReportingSupported(fcVersion)).WithRestorePrefetch(true).WithRestoreConcurrency(3)
-		if PmemBaseSupported(fcVersion) {
+		v = v.WithFreePageReporting(!except["fpr"] && FreePageReportingSupported(fcVersion)).
+			WithRestorePrefetch(!except["prefetch"]).WithRestoreConcurrency(3)
+		if !except["pmem"] && PmemBaseSupported(fcVersion) {
 			v = v.WithPmemBase(PmemBaseDirAuto)
 		}
 		account = "acct-cycle"
@@ -173,7 +180,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx := context.Background()
-	if productionDefaults {
+	if productionDefaults && !except["prepared"] {
 		if err := m.EnablePreparedNetworks(ctx, 4); err != nil {
 			t.Logf("prepared networks unavailable on this host: %v", err)
 		} else {
