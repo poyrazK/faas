@@ -298,7 +298,7 @@
     {
       "version": 20261003160458628,
       "filename": "20261003160458628_application_standard_runtime_default_base.sql",
-      "sha256": "42308a4b82c70d8ed58c85bcc33950630dc1d0e9e97d248da98c2fed4cbf9f87",
+      "sha256": "5c7d5bed7ab1c57f5e30e22329c9dd36900db8062f68a5332f564d8312a37cf9",
       "postcondition": "ddl-only"
     },
     {
