@@ -162,6 +162,14 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   const events = []
   // Adapt only the fixture transport; the hosted entrypoint accepts HTTPS origins.
   const fetcher = (target,init) => fetch(fresh + new URL(target).pathname + new URL(target).search,init)
+  // Engine /ready can briefly regress while its single connection is released
+  // after the first post-restart request. Establish the serving prerequisite
+  // before exercising hosted authentication and RLS; never retry those checks.
+  await eventually(async () => {
+    const response = await request(fresh,'/__gregale/schema',token)
+    const contract = await response.json()
+    return response.status === 200 && contract.ready === true && contract.fingerprint === freshConfig.fingerprint && contract.refresh_verified === true
+  })
   let replayResult
   try {
     replayResult = await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})
