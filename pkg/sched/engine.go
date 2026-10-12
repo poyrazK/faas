@@ -8549,6 +8549,25 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		// A completed wake may still be running; leave its capacity intact.
 		return nil
 	}
+	// Qualification reservations have an attempt-bound native owner. Their
+	// capture/restore may legitimately outlive the ordinary cold-boot sweep,
+	// and only the attempt's retirement (or its recovery after lease expiry)
+	// can release physical resources and capacity. A generic Destroy here
+	// cancels the restore before its backing images have finished staging.
+	if executions, ok := e.store.(state.EnvironmentQualificationExecutionStore); ok {
+		status, err := executions.EnvironmentQualificationExecution(ctx, instanceID)
+		switch {
+		case err == nil:
+			if status.Execution.InstanceID != instanceID {
+				return state.ErrConflict
+			}
+			return nil
+		case errors.Is(err, state.ErrNotFound):
+			// An ordinary instance still belongs to the regular watchdog.
+		case err != nil:
+			return fmt.Errorf("sched: KillStuck: inspect qualification execution %s: %w", instanceID, err)
+		}
+	}
 
 	terminal := terminalStateForReason(reason)
 
