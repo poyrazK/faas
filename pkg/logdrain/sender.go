@@ -34,8 +34,11 @@ const (
 	defaultQueueSize      = 256
 	defaultRequestTimeout = 5 * time.Second
 	defaultMaxAttempts    = 3
-	maxURLBytes           = 2048
-	maxAuthHeaderBytes    = 4096
+	// maxRetryBackoff caps the exponential backoff a RetryWindow sender
+	// waits between attempts of one record.
+	maxRetryBackoff    = 30 * time.Second
+	maxURLBytes        = 2048
+	maxAuthHeaderBytes = 4096
 )
 
 // Record is one runtime log line. Timestamps are retained as time.Time so
@@ -73,10 +76,16 @@ type Config struct {
 	QueueSize      int
 	RequestTimeout time.Duration
 	MaxAttempts    int
-	HTTPClient     *http.Client
-	OnDropped      func(Record)
-	OnDelivered    func(Record)
-	OnFailed       func(Record, error)
+	// RetryWindow, for a durable sender, keeps retrying retryable failures
+	// (transport errors, 408, 429, 5xx) with exponential backoff past
+	// MaxAttempts until the record has been pending this long. A log
+	// endpoint that is briefly unavailable (a collector redeploy) then loses
+	// nothing; zero keeps the MaxAttempts-only budget.
+	RetryWindow time.Duration
+	HTTPClient  *http.Client
+	OnDropped   func(Record)
+	OnDelivered func(Record)
+	OnFailed    func(Record, error)
 	// OnQueueDepth is called after queue mutations and once at construction.
 	// The capacity is fixed for the sender lifetime, while depth is the
 	// current number of records waiting for delivery.
@@ -312,14 +321,13 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 	record := item.Record
 	attempts := item.Attempts
 	var lastErr error
-	for attempts < s.cfg.MaxAttempts {
+	for attempts < s.cfg.MaxAttempts || s.withinRetryWindow(item) {
 		attempts++
 		if attempts > 1 {
 			if s.cfg.OnRetry != nil {
 				s.cfg.OnRetry(record, attempts)
 			}
-			backoff := time.Duration(attempts-1) * 100 * time.Millisecond
-			timer := time.NewTimer(backoff)
+			timer := time.NewTimer(s.durableBackoff(attempts))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -379,6 +387,28 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) error {
 	}
 	s.observeDurableQueue()
 	return nil
+}
+
+// withinRetryWindow reports whether a durable record that just failed with a
+// retryable error is still young enough to retry beyond MaxAttempts.
+// production-us hunt #9 (H9-109): three attempts 100 ms and 200 ms apart
+// dead-lettered every record an endpoint failed to accept for ~0.3 s.
+func (s *Sender) withinRetryWindow(item QueueItem) bool {
+	return s.cfg.RetryWindow > 0 && !item.EnqueuedAt.IsZero() && time.Since(item.EnqueuedAt) < s.cfg.RetryWindow
+}
+
+// durableBackoff is the wait before attempt (two-based): linear 100 ms steps
+// for the bounded budget, or doubling from 100 ms up to maxRetryBackoff when a
+// RetryWindow keeps the record retrying.
+func (s *Sender) durableBackoff(attempt int) time.Duration {
+	if s.cfg.RetryWindow <= 0 {
+		return time.Duration(attempt-1) * 100 * time.Millisecond
+	}
+	backoff := 100 * time.Millisecond
+	for i := 2; i < attempt && backoff < maxRetryBackoff; i++ {
+		backoff *= 2
+	}
+	return min(backoff, maxRetryBackoff)
 }
 
 func (s *Sender) deliver(ctx context.Context, item queuedRecord) {

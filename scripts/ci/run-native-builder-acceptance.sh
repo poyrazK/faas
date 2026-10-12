@@ -39,9 +39,9 @@ marker_sha="$(tr -d '\n' < "${repo_root}/.faas-acceptance-source-sha")"
 [[ "${marker_sha}" == "${FAAS_ACCEPTANCE_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_ACCEPTANCE_SOURCE_SHA}"
 
-kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.134}"
+kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.18.54}"
 runtime_base="${FAAS_TEST_BASE_ROOTFS:-/srv/fc/base/runner-base-debian-parent-amd64.ext4}"
-fc_version="${FAAS_TEST_FC_VERSION:-1.7.0}"
+fc_version="${FAAS_TEST_FC_VERSION:-1.17.0}"
 run_id="${FAAS_ACCEPTANCE_RUN_ID:-manual}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "run ID contains unsupported characters"
 transfer_root="${FAAS_ACCEPTANCE_TRANSFER_ROOT:-}"

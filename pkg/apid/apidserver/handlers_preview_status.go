@@ -65,7 +65,7 @@ func (s *server) previewDeployment(ctx context.Context, app state.App) (*api.Dep
 	if err != nil {
 		return nil, err
 	}
-	response := s.deploymentResponse(deployment, app)
+	response := s.deploymentResponse(ctx, deployment, app)
 	return &response, nil
 }
 

@@ -64,9 +64,10 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := setup(t, api.PlanPro)
 			app, err := e.store.CreateApp(t.Context(), state.App{
-				AccountID: e.acct.ID,
-				Slug:      "running-debug-" + tc.name,
-				Status:    state.AppActive,
+				AccountID:    e.acct.ID,
+				Slug:         "running-debug-" + tc.name,
+				Status:       state.AppActive,
+				IdleTimeoutS: 120,
 			})
 			if err != nil {
 				t.Fatalf("CreateApp: %v", err)
@@ -98,6 +99,12 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 			}
 			if len(got.Current) != 0 || got.CurrentObservedAt != "" {
 				t.Fatalf("current = %+v observed_at=%q, want empty after %s", got.Current, got.CurrentObservedAt, tc.state)
+			}
+			// production-us hunt #9: with no live instance the explanation
+			// reported the plan default (Pro 300 s) instead of the app's own
+			// idle timeout.
+			if got.Config.IdleTimeoutSeconds != 120 {
+				t.Fatalf("config idle timeout = %d, want the app's configured 120", got.Config.IdleTimeoutSeconds)
 			}
 		})
 	}

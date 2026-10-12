@@ -902,3 +902,44 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 `cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
+
+### Validated RPC form
+
+The browser example also includes a note-and-tags form backed by the approved
+`create_note_with_tags_once` function. Apply migrations and RPC permissions,
+refresh the serving schema and install a current paired SDK bundle before using
+it. No additional database migration is needed for this form.
+
+Enter the session information above, then a body and optional comma-separated
+tags. The application-owned parser trims content, rejects a blank body or empty
+tag names and supplies an empty tag list by default. Inline field messages appear
+before token lookup or transport. `client/src/note-form.ts` connects this parser
+to `validatedRpc()`, and preserves the typed `id,body,priority,version` result.
+Constraint, authentication and permission failures use curated messages; raw
+SQL details and parser exceptions are never rendered. Text is rendered with
+`textContent`, including saved note content.
+
+Requests use `dataRequest()` with a five-second deadline and automatic retries
+disabled. If a save cannot be confirmed, the controller retains a frozen request
+key and payload in memory and blocks new submissions. The API URL, subject and
+note fields stay locked; supply a current token for the **same signed-in user**
+and choose **Resolve pending save**. This explicitly calls the idempotent function
+with the original key and payload. It returns the saved receipt, or completes the
+save if the first transaction did not commit. It is not a read-only status check.
+The subject input does not override JWT ownership or verify a renewed token's
+identity; production session management must enforce the same-user requirement.
+
+Resolve pending saves promptly within the owner's receipt-retention window.
+After receipt deletion, replay can create another note. The example does not
+persist tokens or pending requests, and closing or reloading the page loses the
+recovery state. A production app should retain operation state under its own
+identity and privacy policy and enforce its agreed retention window before replay.
+The token input is cleared immediately and the in-memory token is cleared after
+each action; paste a fresh application token for each save or recovery action.
+
+Starter client tests cover field feedback, request/result types, safe messages,
+concurrent-action suppression, deadlines and immutable recovery payloads. The
+PostgreSQL/PostgREST acceptance suite tests committed-response loss and retained
+receipts. Required Chromium acceptance exercises the actual form, checks invalid
+input sends no request, verifies token clearing and locked fields, and confirms
+explicit recovery produces one saved note.

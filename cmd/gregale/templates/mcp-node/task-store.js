@@ -7,6 +7,7 @@ import { MCP_TASK_SCHEMA_VERSION, checkMcpTaskSchema, assertMcpTaskSchemaTrust }
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
+const WORKER_HANDLERS_TABLE = 'gregale_mcp_task_worker_handlers';
 const WORKER_TABLE = 'gregale_mcp_task_workers';
 const FAIRNESS_TABLE = 'gregale_mcp_task_fairness';
 const FAIRNESS_SEQUENCE = 'gregale_mcp_task_claim_order_seq';
@@ -16,6 +17,21 @@ const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
 const SUPPORTED_INPUT_METHODS = new Set(['elicitation/create:form', 'elicitation/create:url', 'sampling/createMessage', 'roots/list']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const CREATE_WORKER_HANDLERS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS ${WORKER_HANDLERS_TABLE} (
+    namespace text NOT NULL,
+    worker_id uuid NOT NULL,
+    tool_name text NOT NULL,
+    handler_version text NOT NULL,
+    deployment_id text NOT NULL DEFAULT '',
+    heartbeat_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (namespace, worker_id, tool_name, handler_version)
+  );
+  CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_live_idx
+    ON ${WORKER_HANDLERS_TABLE} (namespace, tool_name, handler_version, heartbeat_at DESC);
+  CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx
+    ON ${WORKER_HANDLERS_TABLE} (namespace, heartbeat_at)`;
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS ${TABLE} (
@@ -411,6 +427,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         const version = recorded.rows[0]?.version ?? 0;
         await assertMcpTaskSchemaTrust(client);
         if (!Number.isSafeInteger(version) || version < 0 || version > MCP_TASK_SCHEMA_VERSION) throw new Error('Unsupported MCP Task schema version; migrations cannot downgrade it');
+        await client.query(CREATE_WORKER_HANDLERS_SCHEMA);
+        await client.query(`ALTER TABLE ${WORKER_HANDLERS_TABLE} ADD COLUMN IF NOT EXISTS deployment_id text NOT NULL DEFAULT ''`);
         if (version < 1) {
           await client.query(CREATE_SCHEMA);
           await client.query(`CREATE TABLE IF NOT EXISTS ${WORKER_TABLE} (
@@ -479,7 +497,22 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         return { schemaVersion: MCP_TASK_SCHEMA_VERSION, changed: version < MCP_TASK_SCHEMA_VERSION, namespacePrepared: true };
       });
     },
-    async workerHeartbeat(workerID, handlers) {
+    async heartbeatWorkerCapabilities(workerID, handlers, deploymentID = '') {
+      if (!Array.isArray(handlers) || handlers.length === 0) return;
+      const names = handlers.map(handler => handler.name);
+      const versions = handlers.map(handler => handler.version);
+      await pool.query(`
+        INSERT INTO ${WORKER_HANDLERS_TABLE}(namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at)
+        SELECT $1,$2::uuid,handler.tool_name,handler.handler_version,$5,clock_timestamp()
+          FROM unnest($3::text[],$4::text[]) AS handler(tool_name,handler_version)
+        ON CONFLICT (namespace,worker_id,tool_name,handler_version)
+        DO UPDATE SET deployment_id=EXCLUDED.deployment_id,heartbeat_at=EXCLUDED.heartbeat_at
+      `, [namespace, workerID, names, versions, deploymentID]);
+    },
+    async removeWorkerCapabilities(workerID) {
+      await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid`, [namespace, workerID]);
+    },
+    async workerHeartbeat(workerID, handlers, deploymentID = '') {
       if (!UUID_PATTERN.test(workerID) || !Array.isArray(handlers) || handlers.some(handler => !handler || typeof handler.name !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(handler.name) || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version))) throw new Error('Invalid MCP worker registration');
       const registry = JSON.stringify(handlers);
       if (Buffer.byteLength(registry) > MAX_ARGUMENT_BYTES) throw new Error('MCP worker registry is too large');
@@ -487,14 +520,22 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')
         ON CONFLICT (namespace, worker_id) DO UPDATE SET handlers = EXCLUDED.handlers,
           heartbeat_at = EXCLUDED.heartbeat_at, expires_at = EXCLUDED.expires_at`, [namespace, workerID, registry]);
+      await pool.query(`INSERT INTO ${WORKER_HANDLERS_TABLE}(namespace,worker_id,tool_name,handler_version,deployment_id,heartbeat_at)
+        SELECT $1,$2::uuid,handler.name,handler.version,$4,clock_timestamp()
+        FROM jsonb_to_recordset($3::jsonb) AS handler(name text,version text)
+        ON CONFLICT(namespace,worker_id,tool_name,handler_version) DO UPDATE
+        SET deployment_id=EXCLUDED.deployment_id,heartbeat_at=EXCLUDED.heartbeat_at`,
+        [namespace,workerID,JSON.stringify(handlers),deploymentID]);
     },
     async workerDraining(workerID) {
+      await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid`,[namespace,workerID]);
       if (!UUID_PATTERN.test(workerID)) throw new Error('Invalid MCP worker registration');
       await pool.query(`UPDATE ${WORKER_TABLE} SET draining = true,
         heartbeat_at = clock_timestamp(), expires_at = clock_timestamp() + interval '90 seconds'
         WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
     async workerStopped(workerID) {
+      await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid`,[namespace,workerID]);
       if (!UUID_PATTERN.test(workerID)) throw new Error('Invalid MCP worker registration');
       await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
@@ -780,6 +821,15 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       const task = result.rows?.[0];
       return task && !task.busy ? rowTask(task, payloadKey, namespace, true) : null;
     },
+    async releaseMany(tasks) {
+      if (!tasks.length) return;
+      await pool.query({ text: `UPDATE ${TABLE} AS task
+        SET status=CASE WHEN task.cancel_requested_at IS NULL THEN 'queued' ELSE 'cancelled' END,
+            resume_pending=task.cancel_requested_at IS NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        FROM unnest($2::uuid[], $3::uuid[]) AS owner(task_id,lease_token)
+        WHERE task.namespace=$1 AND task.task_id=owner.task_id AND task.lease_token=owner.lease_token AND task.status='running'`,
+        values: [namespace, tasks.map(task => task.task_id), tasks.map(task => task.lease_token)], query_timeout: 5000 });
+    },
     async heartbeat(taskID, leaseToken, leaseMs) {
       const result = await withTransaction(pool, async client => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:execution:${namespace}`]);
@@ -879,7 +929,7 @@ function validateRunningLimits(total, owner) {
 }
 
 // Read-only observers never initialize schema, decrypt payloads, or claim work.
-export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner }) {
+export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner, compatibility = false }) {
   validateRunningLimits(maxRunning, maxRunningPerOwner);
   async function queueMetrics() {
     const result = await pool.query(`
@@ -911,7 +961,198 @@ export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defau
     if (!row) throw new Error('Could not read MCP task queue metrics');
     const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks), failedTasks: Number(row.failed_tasks), retryWaitingTasks: Number(row.retry_waiting_tasks), activeWorkers: Number(row.active_workers), drainingWorkers: Number(row.draining_workers), unsupportedHandlerTasks: Number(row.unsupported_handler_tasks) };
     if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks', 'activeWorkers', 'drainingWorkers', 'unsupportedHandlerTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
+    metrics.withoutCompatibleWorkerTasks=metrics.unsupportedHandlerTasks;
+    if (compatibility) {
+      const report = await createDeploymentCompatibilityObserver({pool,namespace,verifyReadOnly:true}).queueMetrics();
+      metrics.withoutCompatibleWorkerTasks=report.withoutCompatibleWorkerTasks;
+      metrics.handlerCompatibility=report.handlerCompatibility;
+      metrics.compatibilityTruncated=report.compatibilityTruncated;
+    }
     return metrics;
+  }
+  return { queueMetrics };
+}
+
+function createDeploymentCompatibilityObserver({ pool, namespace, verifyReadOnly }) {
+  async function assertReadOnly() {
+    const result = await pool.query(`
+      SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
+                      pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
+             COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
+             pg_catalog.has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_schemas,
+             COALESCE((
+               SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
+                 FROM pg_catalog.pg_class AS c
+                 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE c.oid = pg_catalog.to_regclass($1)::oid
+             ), false) AS can_create_in_task_schema
+    `, [TABLE]);
+    const row = result.rows?.[0];
+    if (!row || row.table_exists !== true || [
+      row.can_insert,
+      row.can_update,
+      row.can_delete,
+      row.can_truncate,
+      row.can_reference,
+      row.can_create_trigger,
+      row.can_create_schemas,
+      row.can_create_in_task_schema,
+    ].some(Boolean)) {
+      throw new Error('MCP task observer requires read-only PostgreSQL access');
+    }
+    for (const capabilityTable of [WORKER_HANDLERS_TABLE, WORKER_TABLE]) {
+      const capabilityResult = await pool.query(`
+        SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL AS table_exists,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'INSERT'), false) AS can_insert,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'UPDATE'), false) AS can_update,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'DELETE'), false) AS can_delete,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRUNCATE'), false) AS can_truncate,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES') OR
+                        pg_catalog.has_any_column_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'REFERENCES'), false) AS can_reference,
+               COALESCE(pg_catalog.has_table_privilege(current_user, pg_catalog.to_regclass($1)::oid, 'TRIGGER'), false) AS can_create_trigger,
+               COALESCE((SELECT pg_catalog.has_schema_privilege(current_user, n.nspname, 'CREATE')
+                           FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid=c.relnamespace
+                          WHERE c.oid=pg_catalog.to_regclass($1)::oid), false) AS can_create_in_task_schema
+      `, [capabilityTable]);
+      const capabilityRow = capabilityResult.rows?.[0];
+      if (!capabilityRow || capabilityRow.table_exists !== true || [
+        capabilityRow.can_insert, capabilityRow.can_update, capabilityRow.can_delete,
+        capabilityRow.can_truncate, capabilityRow.can_reference, capabilityRow.can_create_trigger,
+        capabilityRow.can_create_in_task_schema,
+      ].some(Boolean)) {
+        throw new Error('MCP task observer requires read-only PostgreSQL access');
+      }
+    }
+  }
+
+  async function queueMetrics() {
+    if (verifyReadOnly) await assertReadOnly();
+    const result = await pool.query(`
+      SELECT LEAST(COUNT(*), 1000000000000::bigint)::text AS outstanding_tasks,
+             LEAST(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))), 0), 1000000000000)::text AS oldest_age_seconds,
+             (SELECT LEAST(COUNT(*), 1000000000000::bigint)::text
+                FROM ${TABLE} AS queued
+               WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
+                 AND (queued.status='queued' OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
+                 AND (queued.attempt_count<3 OR (queued.status='queued' AND queued.resume_pending AND queued.attempt_count=3))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM ${WORKER_HANDLERS_TABLE} AS handler
+                    WHERE handler.namespace=queued.namespace AND handler.tool_name=queued.tool_name
+                      AND handler.handler_version=queued.handler_version
+                      AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds'
+                 )) AS without_compatible_worker_tasks
+        FROM ${TABLE}
+       WHERE namespace = $1
+         AND expires_at > clock_timestamp()
+         AND status IN ('queued', 'running')
+    `, [namespace]);
+    const row = result.rows?.[0];
+    if (!row) throw new Error('Could not read MCP task queue metrics');
+    const outstandingTasks = Number(row.outstanding_tasks);
+    const oldestAgeSeconds = Number(row.oldest_age_seconds);
+    const withoutCompatibleWorkerTasks = Number(row.without_compatible_worker_tasks);
+    if (!Number.isSafeInteger(outstandingTasks) || outstandingTasks < 0 || !Number.isFinite(oldestAgeSeconds) || oldestAgeSeconds < 0 ||
+        !Number.isSafeInteger(withoutCompatibleWorkerTasks) || withoutCompatibleWorkerTasks < 0) {
+      throw new Error('MCP task queue metrics returned invalid values');
+    }
+    let handlerCompatibility = [];
+    let compatibilityTruncated = false;
+    if (verifyReadOnly) {
+      let compatibilityResult;
+      try {
+        compatibilityResult = await pool.query(`
+        WITH pending AS (
+          SELECT queued.namespace, queued.tool_name, queued.handler_version
+            FROM ${TABLE} AS queued
+           WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
+             AND queued.status IN ('queued','running','input_required')
+        ), waiting AS (
+          SELECT tool_name, handler_version, COUNT(*)::bigint AS waiting_tasks
+            FROM pending
+           GROUP BY tool_name, handler_version
+        ), limited_waiting AS (
+          SELECT *, COUNT(*) OVER () AS queue_pair_count
+            FROM waiting
+           ORDER BY waiting_tasks DESC, tool_name, handler_version
+           LIMIT 257
+        ), by_deployment AS (
+          SELECT waiting.tool_name, waiting.handler_version, waiting.waiting_tasks, waiting.queue_pair_count,
+                 handler.deployment_id, COUNT(DISTINCT handler.worker_id)::bigint AS workers
+            FROM limited_waiting AS waiting
+            LEFT JOIN ${WORKER_HANDLERS_TABLE} AS handler
+              ON handler.namespace=$1 AND handler.tool_name=waiting.tool_name
+             AND handler.handler_version=waiting.handler_version
+             AND handler.heartbeat_at>clock_timestamp()-interval '45 seconds'
+           GROUP BY waiting.tool_name, waiting.handler_version, waiting.waiting_tasks,
+                    waiting.queue_pair_count, handler.deployment_id
+        ), ranked AS (
+          SELECT *,
+                 SUM(workers) OVER (PARTITION BY tool_name,handler_version) AS all_workers,
+                 COUNT(*) OVER (PARTITION BY tool_name,handler_version) AS deployment_count,
+                 ROW_NUMBER() OVER (PARTITION BY tool_name,handler_version ORDER BY workers DESC,deployment_id) AS deployment_rank
+            FROM by_deployment
+        )
+        SELECT tool_name,handler_version,
+               LEAST(waiting_tasks,1000000000000::bigint)::text AS waiting_tasks,
+               LEAST(all_workers,1000000000000::bigint)::text AS live_compatible_workers,
+               COALESCE(deployment_id,'') AS deployment_id,
+               LEAST(workers,1000000000000::bigint)::text AS deployment_workers,
+               deployment_count, queue_pair_count
+          FROM ranked
+         WHERE deployment_rank<=64
+         ORDER BY waiting_tasks DESC,tool_name,handler_version,deployment_rank
+      `, [namespace]);
+      } catch (error) {
+        if (error?.code !== '42703') throw error;
+        // The read-only observer cannot migrate an old worker table. Keep
+        // queue metrics available and publish a fail-closed compatibility
+        // snapshot until a worker adds deployment identity.
+        compatibilityTruncated = true;
+        return { outstandingTasks, oldestAgeSeconds, withoutCompatibleWorkerTasks, handlerCompatibility, compatibilityTruncated };
+      }
+      const rows = compatibilityResult.rows ?? [];
+      const byHandler = new Map();
+      let deploymentEntries = 0;
+      for (const row of rows) {
+        const key = JSON.stringify([row.tool_name, row.handler_version]);
+        let item = byHandler.get(key);
+        if (!item) {
+          item = {
+            tool_name: row.tool_name,
+            handler_version: row.handler_version,
+            waiting_tasks: Number(row.waiting_tasks),
+            live_compatible_workers: Number(row.live_compatible_workers),
+            unknown_deployment_workers: Number(row.live_compatible_workers),
+            deployments: [],
+          };
+          byHandler.set(key, item);
+        }
+        if (Number(row.queue_pair_count) > 256 || Number(row.deployment_count) > 64) compatibilityTruncated = true;
+        const workers = Number(row.deployment_workers);
+        if (row.deployment_id && workers > 0 && deploymentEntries < 768) {
+          item.deployments.push({ deployment_id: row.deployment_id, workers });
+          item.unknown_deployment_workers -= workers;
+          deploymentEntries += 1;
+        } else if (row.deployment_id && workers > 0) {
+          compatibilityTruncated = true;
+        }
+      }
+      handlerCompatibility = [...byHandler.values()];
+      if (handlerCompatibility.length > 256) {
+        compatibilityTruncated = true;
+        handlerCompatibility = handlerCompatibility.slice(0, 256);
+      }
+    }
+    return { outstandingTasks, oldestAgeSeconds, withoutCompatibleWorkerTasks, handlerCompatibility, compatibilityTruncated };
   }
   return { queueMetrics };
 }

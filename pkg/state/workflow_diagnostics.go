@@ -119,7 +119,42 @@ func buildWorkflowRunDiagnostics(run WorkflowRun, steps map[string]WorkflowStep,
 		}
 	}
 	result.Resume.Eligible = len(result.Resume.Blockers) == 0
+	addWorkflowStepRetryPreview(&result, run, steps, target)
 	return result
+}
+
+// Reuse the mutation's captured-graph validator. Only one failed step can be
+// retried, so evaluate it once rather than walking the graph for every step.
+func addWorkflowStepRetryPreview(result *api.WorkflowRunDiagnosticsResponse, run WorkflowRun, steps map[string]WorkflowStep, target workflowRecoveryTarget) {
+	if !target.plan.WorkflowsAllowed() || target.activeRuns >= target.plan.WorkflowMaxConcurrentRuns() || run.CancelledAt != nil {
+		return
+	}
+	views := make([]*WorkflowStep, 0, len(steps))
+	failed := ""
+	for _, step := range steps {
+		copy := step
+		views = append(views, &copy)
+		if step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead {
+			if failed != "" {
+				return
+			}
+			failed = step.StepName
+		}
+	}
+	if failed == "" {
+		return
+	}
+	reopen, err := workflowRetryPlan(&run, failed, views)
+	if err != nil {
+		return
+	}
+	sort.Strings(reopen)
+	for i := range result.Steps {
+		if result.Steps[i].StepName == failed {
+			result.Steps[i].RetryEligible = true
+			result.Steps[i].RetryReopenedSteps = reopen
+		}
+	}
 }
 
 func workflowDiagnosticTime(at *time.Time) *string {

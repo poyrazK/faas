@@ -172,6 +172,12 @@ type Config struct {
 	// already drain at their own cadences.
 	ReaperAggressiveParkCap int `toml:"reaper_aggressive_park_cap"`
 
+	// MeasuredAdmission (ADR-909) admits RAM by each node's measured
+	// memory instead of Σ(ram_mb + 8). Reservations may then overcommit up
+	// to api.MeasuredAdmissionMaxOvercommitPercent of the ceiling. Default
+	// off; a node without a fresh measurement keeps the reservation check.
+	MeasuredAdmission bool `toml:"measured_admission"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).

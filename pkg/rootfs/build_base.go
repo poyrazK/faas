@@ -923,7 +923,7 @@ func (b *Builder) runBaseMkfs(ctx context.Context, staging, outImage string, siz
 	var lastErr error
 	for attempt := 0; attempt < baseMkfsMaxAttempts; attempt++ {
 		lastSize = sizeMB
-		if err := b.run.Run(ctx, MkfsCommand(staging, outImage, sizeMB)); err == nil {
+		if err := b.run.Run(ctx, BaseMkfsCommand(staging, outImage, sizeMB)); err == nil {
 			return nil
 		} else {
 			lastErr = err

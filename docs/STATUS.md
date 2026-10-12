@@ -503,8 +503,32 @@ The sampling/quota shapes are in `cmd/meterd` and
 + 8 MB per running second is in `pkg/meter`. Functions:
 `guest/runners/{node22,node24,python312,python313,go124}` (handler
 contract per spec §4.9; `go124` apps deploy with a static binary
-emitted by Railpack's go plan, functions reuse the per-request
-subprocess model. `node24` and `python313` are the Tier 1 runtime
+emitted by Railpack's go plan; Go functions that speak the
+persistent protocol — the `function-go` template and
+`sdk/go/function.Serve` — are started before readiness and reused while
+the instance runs, and restarted on every snapshot restore so restored
+instances never share random state (ADR-687); others keep the
+per-request subprocess model). Evidence, measured before
+restart-on-restore, 2026-10-10 on `gregale-internal-test-1`
+(`TestWakePlatformBenchMetal`,
+real go124 runner in the guest, 4 interleaved runs × 15 wakes per
+variant): boot-completed→first-byte p50 93 → 54 ms and gateway
+proxy→first-byte p50 66 → 42 ms. Whole-wake latency on that node is
+dominated by ext4 drive staging (p50 ~400 ms) and did not separate.
+`binary` (ADR-987) runs one static executable built from the
+customer's Dockerfile (Rust, Zig, C, C++, Go) on the `go124` base and
+runner; it adds no base image, and the `function-rust` template is the
+reference. Evidence, 2026-10-11 on `gregale-internal-test-1`
+(`cmd/e2e` `TestBinaryFunctionMetal`, full daemon set, builder microVMs):
+the unchanged `function-rust` template built from its Dockerfile, went
+live with imaged staging the `go124` base, and served `GET /hello` through
+the gateway. A static C handler then answered two snapshot-restore wakes
+with `runtime=binary` and a different start-time random token each time,
+so each restore ran a fresh handler process. The migration's Up, Down and
+replay passed on Postgres 16.
+Functions without an explicit `idle_timeout_s` park after 30 s on every
+plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps keep the plan default.
+`node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
 `/app/handler.py` respectively. See `docs/runtimes/{node24,

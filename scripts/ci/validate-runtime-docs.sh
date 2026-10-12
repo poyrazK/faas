@@ -12,6 +12,7 @@ runtime_docs=(
   docs/runtimes/node24.md
   docs/runtimes/python313.md
   docs/runtimes/go124.md
+  docs/runtimes/binary.md
 )
 
 for doc in "${runtime_docs[@]}"; do

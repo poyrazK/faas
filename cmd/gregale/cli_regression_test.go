@@ -343,3 +343,29 @@ func TestCLIRegressionCommittedUploadKeepsKnownDeploymentID(t *testing.T) {
 		t.Fatalf("lost committed deployment: dep=%+v err=%v", dep, err)
 	}
 }
+
+// production-us hunt #9: a server-side secret-scan 422 printed only "Secret-
+// shaped values found" (no file or line) and advised that the server "may have
+// accepted the submission" with an idempotent retry flag.
+func TestCLIRegressionRejectedSubmissionShowsFindingsAndNoRetryAdvice(t *testing.T) {
+	setupCLIRegression(t)
+	jsonOutput = false
+	key, _ := deployIdempotencyKey("", deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
+	stderr, restore := captureStderr(t)
+	defer restore()
+	rejected := &APIError{Problem: api.Problem{
+		Status: 422, Code: api.CodeSecretScanStrict, Title: "Secret-shaped values found in uploaded source",
+		Detail:         "redact secret values or move them to `gregale secrets set`",
+		SecretFindings: []api.SecretFinding{{File: "server.js", Line: 15, Provider: "high_entropy", Severity: "medium", Snippet: "012345…wxyz"}},
+	}}
+	if code := printDeploySubmissionError("Deploy failed", rejected, "demo", key, "submission", ""); code == 0 {
+		t.Fatal("rejected submission exited 0")
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "server.js:15 [high_entropy]") {
+		t.Errorf("finding location missing:\n%s", out)
+	}
+	if strings.Contains(out, "may have accepted") || strings.Contains(out, "--idempotency-key=") {
+		t.Errorf("rejected submission still advises an idempotent retry:\n%s", out)
+	}
+}

@@ -28,6 +28,8 @@ import (
 //
 //   - cmdCompletion                    — shell scripts/values are text;
 //     interactive installation rejects JSON
+//   - cmdMenu                          — terminal-only action launcher;
+//     rejects JSON and delegates to existing guided commands
 //   - cmdLogin (commands.go)             — interactive paste-code prompt
 //   - cmdLogout (commands.go)            — emits a small status object
 //   - cmdInit / runCmdInit* (commands_init.go) — successful scaffolding
@@ -116,7 +118,7 @@ func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})
 		return
 	}
-	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human})
+	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human, flags: fs})
 }
 
 // invokedCommandPath is the public command path of the current run(), for
@@ -178,6 +180,7 @@ type humanFlagErrorWriter struct {
 	name  string
 	dst   io.Writer
 	wrote bool
+	flags *flag.FlagSet
 }
 
 func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
@@ -193,8 +196,15 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 				path = fields[0]
 			}
 		}
+		diagnostic := normalizeFlagDiagnostic(strings.TrimSpace(text))
+		if suggestion := suggestUnknownFlag(diagnostic, w.flags); suggestion != "" {
+			diagnostic += "\n  Did you mean --" + suggestion + "?"
+		}
+		if guidance := flagValueGuidance(diagnostic, w.flags, path); guidance != "" {
+			diagnostic += "\n  " + guidance
+		}
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
-			normalizeFlagDiagnostic(strings.TrimSpace(text)), path)
+			diagnostic, path)
 		return len(p), err
 	}
 	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {

@@ -153,8 +153,9 @@ release:
   id: pre-1.0-template
   git_sha: 0000000000000000000000000000000000000000
   architecture: x86_64
-  firecracker_version: 1.7.0
-  firecracker_digest: 835bb33a7f4b75e924bc0635385951a55fbd4293964a956a6b4ad35345ce5419
+  firecracker_version: 1.17.0
+  # SHA-256 of firecracker-v1.17.0-x86_64 (matches the release SHA256SUMS).
+  firecracker_digest: 99ad0f5cd0514a88aad0e9ae8cfdb3cc3b4ab9d190e1194602406c786b5de7a5
   kernel_digest: 9ee2204edd2162a6d9762bc6e07df00fdad57b83f9bf54bb8de4c9a200106e34
   # linux/amd64 child digest of builder-base:sha-f13bafeb0acd989806704317b4ec5353e32d20c8.
   # Keep this aligned with the guest-init source shipped by the release; the

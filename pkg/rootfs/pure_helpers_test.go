@@ -231,3 +231,18 @@ func TestMkfsCommand_Shape(t *testing.T) {
 		}
 	}
 }
+
+// adr: 908 — a base gets 4 KiB blocks and an even-MiB size, so it can be a
+// DAX pmem root; app layers keep MkfsCommand's shape.
+func TestBaseMkfsCommand_Shape(t *testing.T) {
+	for size, want := range map[int]string{256: "256M", 257: "258M"} {
+		got := BaseMkfsCommand("/srv/staging", "/srv/base.ext4", size)
+		wantArgv := []string{"mkfs.ext4", "-F", "-b", "4096", "-L", "applayer", "-d", "/srv/staging", "/srv/base.ext4", want}
+		if strings.Join(got, " ") != strings.Join(wantArgv, " ") {
+			t.Errorf("size %d: argv = %v, want %v", size, got, wantArgv)
+		}
+	}
+	if layer := MkfsCommand("/s", "/o", 257); strings.Contains(strings.Join(layer, " "), "-b") || layer[len(layer)-1] != "257M" {
+		t.Errorf("MkfsCommand changed: %v", layer)
+	}
+}

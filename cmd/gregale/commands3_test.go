@@ -699,12 +699,12 @@ func TestCmdSecretsRestartOnParkedAppSucceeds(t *testing.T) {
 	}
 }
 
-func TestCmdSecrets_Unset_RequiresExactlyOneKey(t *testing.T) {
-	if code := cmdSecrets([]string{"unset", "--app", "x"}); code != 1 {
+func TestCmdSecrets_Unset_RequiresKeys(t *testing.T) {
+	if code := cmdSecrets([]string{"unset", "--app", "demo"}); code != 1 {
 		t.Errorf("unset no key = %d, want 1", code)
 	}
-	if code := cmdSecrets([]string{"unset", "--app", "x", "A", "B"}); code != 1 {
-		t.Errorf("unset two keys = %d, want 1", code)
+	if code := cmdSecrets([]string{"unset", "--app", "demo", "A", "B", "--dry-run"}); code != 0 {
+		t.Errorf("unset two keys preview = %d, want 0", code)
 	}
 }
 

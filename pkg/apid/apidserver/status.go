@@ -45,8 +45,11 @@ import (
 type StatusPage = api.StatusPage
 
 const (
+	// A 5xx the customer's app returned is not platform unavailability; only
+	// gateway_platform_errors_total (5xx produced before any guest response
+	// byte) counts against the public figure (production-us hunt #9).
 	statusAPIAvailabilityQuery = `(
-		((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) * 100)
+		((1 - (sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))) * 100)
 		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(

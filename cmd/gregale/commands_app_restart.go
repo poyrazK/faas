@@ -213,8 +213,22 @@ func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusRespo
 	}
 	next := row.ProgressNextStep()
 	if row.Status == "completed" {
-		next = "Check current application health: gregale inspect " + slug
+		next = "Restart processing completed; application health still needs verification."
 	}
 	_, _ = fmt.Fprintf(osStdout, "Restart %s: %s\n  %s\n  attempts: %d\n  next: %s\n", row.WakeID, row.Status, row.ProgressMessage(), row.Attempts, next)
+	if !row.RequestedAt.IsZero() {
+		_, _ = fmt.Fprintf(osStdout, "  Requested: %s\n", row.RequestedAt.UTC().Format(time.RFC3339))
+	}
+	if row.CompletedAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "  Processing finished: %s\n", row.CompletedAt.UTC().Format(time.RFC3339))
+	}
+	command := recoveryCLI() + " app " + recoveryArgument(slug) + " restart status --wake-id " + recoveryArgument(row.WakeID) + " --wait"
+	switch row.Status {
+	case "completed":
+		command = recoveryCLI() + " app " + recoveryArgument(slug) + " health"
+	case "failed":
+		command = recoveryCLI() + " inspect " + recoveryArgument(slug)
+	}
+	_, _ = fmt.Fprintf(osStdout, "  Next command (POSIX shells):\n    %s\n", command)
 	return 0
 }

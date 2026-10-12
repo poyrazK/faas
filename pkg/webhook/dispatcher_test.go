@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1077,4 +1078,62 @@ func contains(b []byte, sub string) bool {
 		}
 	}
 	return false
+}
+
+// production-us hunt #9: the dispatcher sends one request per ledger attempt,
+// so X-Faas-Webhook-Attempt read 1 on every retry and a pending delivery's
+// last_error said "retryable failure after MaxAttempts".
+func TestDispatch_AttemptHeaderFollowsTheLedger(t *testing.T) {
+	var mu sync.Mutex
+	var gotAtt string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAtt = r.Header.Get("X-Faas-Webhook-Attempt")
+		mu.Unlock()
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	m := state.NewMemStore()
+	loader, sealed := identityForSealedBlob(t)
+	appID, acctID := "app-attempt", "acct-attempt"
+	if _, err := m.CreateApp(context.Background(), state.App{ID: appID, AccountID: acctID, Slug: "attempt-app", Status: "ready"}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	w := newTestAppWebhook(t, m, appID, acctID, srv.URL, state.AppWebhookRetryDefault)
+	if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed}); err != nil {
+		t.Fatalf("UpdateAppWebhook (reseal): %v", err)
+	}
+	del, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+		WebhookID: w.ID, AppID: appID, AccountID: acctID, Event: "app.cron.fired",
+		Payload: json.RawMessage(`{}`), Attempt: 2,
+	})
+	if err != nil {
+		t.Fatalf("RecordAppWebhookDelivery: %v", err)
+	}
+	disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	disp.IdentityLoader = loader
+	disp.Sleeper = (&recordingSleeper{}).Sleep
+	disp.HTTPClient = srv.Client()
+	start := time.Now()
+	disp.Now = func() time.Time { return start }
+	disp.cycle(context.Background())
+
+	var got state.AppWebhookDelivery
+	for i := 0; i < 100; i++ {
+		got, _ = m.AppWebhookDeliveryByID(context.Background(), del.ID)
+		if got.Attempt == 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gotAtt != "3" {
+		t.Errorf("X-Faas-Webhook-Attempt = %q, want 3 for the third ledger attempt", gotAtt)
+	}
+	if strings.Contains(got.LastError, "MaxAttempts") || !strings.Contains(got.LastError, "503") {
+		t.Errorf("last_error = %q, want the receiver's 503 without the single-request budget wrapper", got.LastError)
+	}
 }
