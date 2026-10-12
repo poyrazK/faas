@@ -65,6 +65,10 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale profile check."
 		case p.Status == 429:
 			p.Hint = "Wait for Retry-After when provided, then retry."
+		case p.Code == "long_poll_timeout":
+			// The server stopped waiting, not working: a sync invoke past its
+			// wait keeps running, so a retry would run it twice.
+			p.Hint = "The work keeps running on Gregale; follow it with the command in the detail instead of retrying."
 		case p.Status == 501:
 			// Operator-gated features (disposable executions, app tasks)
 			// answer 501; retrying or checking service status cannot help.

@@ -481,9 +481,10 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
         run: |
-          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
+          python3 scripts/ci/managed-postgres-native-verdict_test.py
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
       # -race on every tested package: races are the failures hardest to
