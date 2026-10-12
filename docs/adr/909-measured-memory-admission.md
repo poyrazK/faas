@@ -61,6 +61,27 @@ risk this ADR must bound.
    The financial model gains capacity per node, which is the business
    decision this ADR asks for.
 
+## Hard reclaim: virtio-mem
+
+Free page reporting returns only memory the guest has freed. Firecracker
+1.17's virtio-mem device lets the host take memory back from a guest that
+still holds it. Measured on the n2 node with guest 6.18: a Node VM had
+512 MiB of boot memory plus a 1 GiB hotplug area, onlined as movable
+(`memhp_default_state=online_movable`).
+
+| step | time | VM memory on the host |
+|---|---|---|
+| boot | — | 305 MB |
+| plug 768 MiB (`PATCH /hotplug/memory`) | 66 ms | 316 MB |
+| app allocates 640 MB beyond its boot memory | — | 961 MB |
+| app frees it (no free page reporting) | — | 965 MB |
+| unplug to 0 | 272 ms | 318 MB |
+
+The app kept serving after the unplug. Under this ADR, a VM could boot with
+its measured working set plugged and grow to plan RAM on demand. Unplugging
+then enforces measured charges, and gives eviction a step short of freezing
+or parking.
+
 ## Validation plan
 
 - Property tests: the charge never exceeds plan + 8 MB, Σ(plan + 8) never
