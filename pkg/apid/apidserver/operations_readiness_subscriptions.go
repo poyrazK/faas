@@ -106,7 +106,7 @@ func readinessSubscriptionQuery(r *http.Request, operator bool, app string) (sco
 		if len(v) != 1 || v[0] == "" {
 			return
 		}
-		if k != "scope" && !(operator && k == "tenant_id") && !(!operator && k == "app_id") && !(inbox && (k == "after_sequence" || k == "limit")) {
+		if k != "scope" && (!operator || k != "tenant_id") && (operator || k != "app_id") && (!inbox || (k != "after_sequence" && k != "limit")) {
 			return
 		}
 	}

@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -76,13 +77,13 @@ func workflowPerformanceGroupLabel(group api.OperationWorkflowPerformanceGroup) 
 		return "Total state time"
 	}
 }
-func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App) {
+func (s *server) renderAppWorkflowPerformanceInstances(ctx context.Context, w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App) {
 	store, ok := s.store.(state.OperationWorkflowPerformanceInstanceStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("workflow performance unavailable"))
 		return
 	}
-	r = normalizeWorkflowGapQueueForm(r)
+	r = normalizeWorkflowGapQueueForm(ctx, r)
 	opts, err := operation.OperationWorkflowPerformanceInstanceOptions(r, true, app.ID)
 	if err != nil {
 		operation.WriteOperationError(w, err)
@@ -94,7 +95,7 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 		refresh.Set("tenant_id", opts.TenantID)
 	}
 	data.RefreshURL = data.SummaryURL + "?" + refresh.Encode()
-	result, err := store.ListAccountWorkflowPerformanceInstances(r.Context(), acct.ID, opts)
+	result, err := store.ListAccountWorkflowPerformanceInstances(ctx, acct.ID, opts)
 	if errors.Is(err, state.ErrWorkflowPerformanceCohortChanged) {
 		data.CohortChanged = true
 	} else if err != nil {
@@ -105,12 +106,12 @@ func (s *server) renderAppWorkflowPerformanceInstances(w http.ResponseWriter, r 
 		data.EvaluatedAt = dashboardJobsTime(result.EvaluatedAt)
 		data.Contributors = workflowPerformanceContributorViews(data, opts, result)
 	}
-	count, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	count, err := s.store.CountDeployedApps(ctx, acct.ID)
 	if err != nil {
 		log.Warn("dashboard contributors: count apps", "err", err)
 	}
 	page := dashboard.Page{Title: app.Slug + " workflow contributors", Body: "workflow_performance", Account: dashboardAccountView(acct, count), Data: data}
-	if err = dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+	if err = dashboard.Render(w, log, httpsec.NonceFromContext(ctx), page); err != nil {
 		renderProblem(w, log, err)
 	}
 }
@@ -146,7 +147,7 @@ func workflowConditionFreshnessLabel(status string) string {
 }
 
 // Empty optional HTML form controls are omitted; API parsing stays strict.
-func normalizeWorkflowGapQueueForm(r *http.Request) *http.Request {
+func normalizeWorkflowGapQueueForm(ctx context.Context, r *http.Request) *http.Request {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || q.Get("dimension") != "condition_gap_queue" {
 		return r
@@ -156,7 +157,7 @@ func normalizeWorkflowGapQueueForm(r *http.Request) *http.Request {
 			q.Del(key)
 		}
 	}
-	clone := r.Clone(r.Context())
+	clone := r.Clone(ctx)
 	u := *r.URL
 	clone.URL = &u
 	clone.URL.RawQuery = q.Encode()

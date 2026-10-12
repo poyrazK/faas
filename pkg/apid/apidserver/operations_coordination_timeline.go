@@ -53,7 +53,7 @@ func workflowCoordinationTimelineOptions(r *http.Request, app string, operator b
 		if len(v) != 1 || v[0] == "" {
 			return out, state.ErrInvalidArgument
 		}
-		if k != "scope" && k != "subject_type" && k != "subject_id" && k != "workflow" && k != "instance_id" && k != "offset" && k != "limit" && !(operator && k == "tenant_id") && !(!operator && k == "app_id") {
+		if k != "scope" && k != "subject_type" && k != "subject_id" && k != "workflow" && k != "instance_id" && k != "offset" && k != "limit" && (!operator || k != "tenant_id") && (operator || k != "app_id") {
 			return out, state.ErrInvalidArgument
 		}
 	}

@@ -21,7 +21,7 @@ func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if q.Has("dimension") {
-		s.renderAppWorkflowPerformanceInstances(w, r, log, acct, app)
+		s.renderAppWorkflowPerformanceInstances(r.Context(), w, r, log, acct, app)
 		return
 	}
 	for _, key := range []string{"tenant_id", "workflow", "baseline_token"} {

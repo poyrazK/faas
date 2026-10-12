@@ -936,7 +936,7 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	}
 	report.SelectedPaths = selections
 	if report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
-		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 && !(reason != nil && len(report.EvidenceMilestones) == 1 && report.EvidenceMilestones[0].ID == reason.MilestoneID) {
+		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 && (reason == nil || len(report.EvidenceMilestones) != 1 || report.EvidenceMilestones[0].ID != reason.MilestoneID) {
 			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain only change reason evidence when supplied")
 		}
 		requiredMilestones = nil

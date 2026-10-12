@@ -66,7 +66,7 @@ func projectWorkflowCasePlaybooks(ctx context.Context, store workflowCaseBackend
 	candidates, err = api.CanonicalOperationWorkflowPlaybooks(candidates)
 	if err != nil {
 		out.GuidanceStatus = "definition_unavailable"
-		return source, nil
+		return source, nil //nolint:nilerr // Invalid retained guidance is reported as unavailable without failing the case.
 	}
 	source.Rules = candidates
 	source.DefinitionID = def.ID

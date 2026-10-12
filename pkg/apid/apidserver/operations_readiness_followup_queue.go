@@ -53,7 +53,7 @@ func workflowReadinessFollowUpOptions(r *http.Request, app string, operator bool
 		if len(v) != 1 || v[0] == "" {
 			return out, state.ErrInvalidArgument
 		}
-		if k != "reminder_only" && k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && !(operator && k == "tenant_id") && !(!operator && k == "app_id") {
+		if k != "reminder_only" && k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && (!operator || k != "tenant_id") && (operator || k != "app_id") {
 			return out, state.ErrInvalidArgument
 		}
 	}
