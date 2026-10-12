@@ -429,6 +429,15 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})
 		}
 	}
+	// net/http moves Host out of r.Header into r.Host, so the loop above
+	// never carries it and the stream bridge fell back to the guest's own
+	// address: apps saw "Host: 10.0.0.2:<port>", which breaks Django's
+	// ALLOWED_HOSTS, absolute URL and OAuth redirect generation, and apps
+	// served on several hostnames (production-us hunt #9, H9-98). ADR-028:
+	// the guest sees the request's Host.
+	if r.Host != "" {
+		init.Headers = append(init.Headers, &vmmdpb.Header{Name: "Host", Value: r.Host})
+	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
