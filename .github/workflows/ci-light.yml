@@ -55,7 +55,10 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Vetting apidserver alone under the memory bounds below takes ~13 minutes
+    # when it is selected, and linting apidserver, pkg/state and cmd/gregale
+    # on a cold cache takes several more; 20 minutes cut such PRs off mid-lint.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
