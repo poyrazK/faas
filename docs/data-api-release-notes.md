@@ -158,3 +158,110 @@ role-filtered schema; stale runtimes and missing control state fail closed.
 The owner-installed control schema stays private. See ADR-981 and the
 coordinated hosted schema updates section in `docs/data-api.md` for setup,
 recovery, connection budgeting and the boundary around out-of-band owner DDL.
+
+
+Coordinated refresh now supports a read-only `coordination.setup_check` command
+and `data-api sync --check`, including checks of an owned recovery. The owner
+helper verifies barrier installation, privileges, serving-role restrictions and
+role-filtered inspection without changing control state. `data-api status`
+reports admission state, fingerprints, optional baseline comparison and recovery
+guidance without exposing credentials. Sync rejects unsupported runtimes before
+attempting pause. Existing configurations remain accepted; add `setup_check`
+to enable the additional owner prerequisite check.
+
+
+`data-api replay` runs saved authorization scenarios against the hosted app
+using environment-mapped application JWTs. It checks missing/invalid auth and
+selected identity acceptance, reuses capture/status/JSON assertions, and emits
+redacted reports. Native `coordination.authorization_replay` validates inputs
+before pause and runs required scenarios pinned to the verified candidate before
+resume; failed replay retains the pause and recovery repeats verification.
+Command-based authorization checks remain supported. Saved writes execute on the
+hosted app and are not automatically rolled back or retried. Live staging
+qualification remains pending.
+
+`gregale data-api check` combines schema compatibility and exact committed-type
+freshness in one read-only CI report. Hosted checks inspect once and render from
+that snapshot; `--current FILE` supports offline checks without account or
+database credentials. Unapproved breaking changes and stale, missing or oversized
+types fail without rewriting files. Existing fingerprint-bound approvals apply
+only to compatibility. Node.js 22 or newer runs the embedded shared generator;
+no hosted runtime upgrade or npm installation is required for the check.
+
+`gregale data-api diagnostics` summarizes retained safe request logs, including
+volume, HTTP errors, aborted requests, nearest-rank latency percentiles, fixed
+route categories and gateway failure counts. Request-ID lookup and offline
+NDJSON/envelope analysis require no runtime upgrade. Reports discard arbitrary
+log content, distinguish REST/RPC from internal routes, and flag gaps, read
+failures and bounded/truncated samples with a failing exit. Coverage remains a
+retained/provided sample rather than durable fleet-wide metrics.
+
+## SDK error classification
+
+`classifyDataError()` adds typed application categories and recovery guidance for
+common SQL constraints, authentication/permissions, contract mismatches,
+timeouts/cancellation and service availability. It preserves original errors,
+returns null for successful null errors and does not retry requests. Recovery
+hints do not establish that failed writes rolled back. Strict typing and actual
+client result, exception, deadline and cancellation paths are covered locally.
+
+## Runtime RPC argument validation
+
+`validatedRpc()` accepts untrusted input and an application-owned synchronous
+argument parser before constructing the typed RPC query. Invalid input returns a
+redacted `RPC_ARGUMENT_VALIDATION_FAILED` error without sending a request. Valid
+input retains generated argument/projection types and the original query result;
+request exceptions and retry settings are unchanged. Tests cover transformations,
+defaults, zero-argument RPCs, invalid/async parsers, server failures and deadlines.
+
+## Validated RPC acceptance
+
+The integration runner now includes `tests/data-api/validated-rpc.test.mjs`.
+It compiles and executes a TypeScript client against a contract generated from a
+disposable PostgreSQL database, through the real JWT gateway and PostgREST 14.3.
+Coverage includes scalar and projected relation results, default/nullable
+arguments, parser rejection before token lookup or transport, two-subject RLS,
+SQL privilege failures, unique/foreign-key SQLSTATE classification, authentication
+and contract guards, and an HTTP 503 with retries explicitly disabled.
+A nontransactional sequence independently checks mutation invocation counts even
+when SQL rolls back. A response lost after commit persists one row and is
+reconciled by a read without replay. This is local acceptance, not hosted staging
+qualification.
+
+## Validated RPC starter form
+
+The notes browser starter now demonstrates runtime argument validation and typed
+RPC results using the existing approved idempotent note-creation function.
+It provides inline body/tag feedback and curated SQL/authentication/permission
+messages. Deadlines disable automatic retries; uncertain writes retain an
+immutable key/payload and block new submissions until explicit same-user recovery.
+Recovery is same-key RPC replay within the owner's receipt-retention window,
+not a read-only check. Pending state is in memory and is lost on reload.
+Client, real PostgreSQL/PostgREST and required Chromium tests cover this path,
+including response loss after commit without duplicate creation.
+
+## RPC schema-drift CI acceptance
+
+The integration runner now checks RPC evolution against real restricted-role
+PostgreSQL catalog snapshots and the native `data-api check` command. Fifteen
+scenarios cover required/optional argument additions, removals and renames,
+argument and result type changes, scalar/set-returning changes, default presence,
+approval annotation removal, execution revocation and an unapproved overload.
+Generated nullable arguments compile and run against PostgreSQL. Stale declarations
+fail even for compatible additions and fingerprint-approved breaking changes;
+regenerating declarations alone does not approve a break. Reports and exit codes
+are asserted, and check inputs remain unchanged.
+Default expression changes, including a default changing to NULL, intentionally
+retain the same structural fingerprint. Tests demonstrate their changed SQL
+behavior and the passing structural check; application replay tests remain
+necessary for default values and function bodies.
+
+## Whole RPC response validation
+
+The SDK exports `validateRpcResponse()` and `RpcResponseValidationError` for
+opt-in, synchronous application-owned validation of scalar, JSON and row results.
+Successful outcomes retain response metadata with typed parser output; request
+failures remain original results, and safe validation failures omit rejected data
+and parser exceptions. No requests or retries occur. Strict types, packaged
+consumer coverage and real PostgreSQL/PostgREST acceptance cover this behavior,
+including response-parser rejection after a write commits without replay.

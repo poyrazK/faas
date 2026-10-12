@@ -155,10 +155,11 @@ func cmdDataAPIDev(args []string) int {
 		return printErr("Could not prepare local runtime", err)
 	}
 	for target, source := range map[string]string{
-		"migrate.mjs":            "data-api-starter/migrations/migrate.mjs",
-		"rpc-permissions.mjs":    "data-api-starter/migrations/rpc-permissions.mjs",
-		"rpc-runtime/types.mjs":  "data-api/types.mjs",
-		"rpc-runtime/config.mjs": "data-api/config.mjs",
+		"migrate.mjs":                 "data-api-starter/migrations/migrate.mjs",
+		"rpc-permissions.mjs":         "data-api-starter/migrations/rpc-permissions.mjs",
+		"rpc-runtime/types.mjs":       "data-api/types.mjs",
+		"rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
+		"rpc-runtime/config.mjs":      "data-api/config.mjs",
 	} {
 		content, readErr := templates.FS.ReadFile(source)
 		if readErr != nil {

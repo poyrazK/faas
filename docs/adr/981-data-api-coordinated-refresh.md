@@ -16,3 +16,25 @@ Failure before release keeps the durable pause. `--resume-only` proves ownership
 The control reader and SQL engine split the existing two-connection budget. `/healthz` measures engine availability and advertises `refresh_paused`; a healthy paused engine still rejects ordinary data access.
 
 Owners install and manage the control schema using their migration credentials. Public serving credentials cannot modify it. All runtimes sharing a binding must enable the hook and expose the same schemas before coordinated updates begin. Each distinct exposure should use its own binding role. This feature does not fence arbitrary owner/superuser DDL, SQL connections that bypass PostgREST, or disabled/legacy runtimes. Owners must serialize DDL through the refresh workflow. Structural fingerprints do not cover policy bodies or arbitrary function behavior; application authorization checks remain mandatory. Hosted multi-replica qualification requires a staging environment.
+
+
+The owner helper provides a read-only setup check. Projects can run it before
+sync and use `sync --check` to validate setup without requesting a pause,
+migration or restart. `data-api status` reads the authenticated serving contract
+and durable barrier, distinguishes owned/unowned pauses from active or stale
+serving contracts, and provides recovery guidance. It never changes ownership;
+status from one runtime does not qualify all replicas or attest application
+checks. Existing workflow configurations remain valid, with the additional
+owner check enabled by an explicit `coordination.setup_check` command.
+
+
+Projects may replace the authorization shell command with native hosted scenario
+replay. Identity files contain only JWT environment names. Collection validation
+and distinct-subject checks occur before pause; missing/invalid authentication
+and identity acceptance are checked by the hosted runtime before saved scenario
+requests. Coordinated replay proves the owned pause, pins the candidate contract,
+preserves grants/RLS, and reports only assertion metadata. Failed replay does not
+release traffic; recovery repeats required scenarios without repeating
+migrations. Saved request writes remain application-owned and must be safe to
+repeat. Standalone replay never manages refresh state. These assertions do not
+qualify all policies or all serving replicas.

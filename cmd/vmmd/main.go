@@ -1148,6 +1148,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
 	}
 
+	// §11: restore any per-VM cgroup fence reset outside vmmd.
+	go runCgroupFenceRepair(ctx, log, jailer, cgroupFenceRepairInterval)
+
 	// Orphan sweep — schedule via a context-bound goroutine that
 	// exits cleanly on ctx.Done. Mirrors the schedd watchdog tick
 	// pattern (1s tick + KillStuck), adapted to the configurable

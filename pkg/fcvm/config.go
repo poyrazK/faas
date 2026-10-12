@@ -624,6 +624,19 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
+// vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
+// Builders and an empty plan use the legacy neutral 256 (the kernel accepts
+// [1, 10000]).
+func vmCPUWeight(plan api.Plan, isBuilder bool) int {
+	if isBuilder {
+		return 256
+	}
+	if w := plan.CPUWeight(); w > 0 {
+		return w
+	}
+	return 256
+}
+
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
@@ -660,17 +673,10 @@ func JailerCommand(s JailerSpec) []string {
 		execFile = FirecrackerBin
 	}
 	parentCgroup := ParentCgroupFor(s.Plan)
-	cpuWeight := s.Plan.CPUWeight()
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
-		cpuWeight = 256
 	}
-	if cpuWeight <= 0 {
-		// Empty plan: keep the legacy neutral default. cpu.weight
-		// must always be in [1, 10000] per the kernel; 256 is the
-		// mid of the normalised range.
-		cpuWeight = 256
-	}
+	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

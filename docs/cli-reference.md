@@ -9835,6 +9835,27 @@ Generate types in an owner-authenticated app task
 | `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
+### data-api check
+
+Check compatibility and committed types without rewriting files
+
+`gregale data-api check --baseline <FILE> --types <FILE> [--current <FILE>] [--approval <FILE>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | committed JSON contract baseline | required |
+| `--types <FILE>` | committed TypeScript types to compare | required |
+| `--current <FILE>` | saved current contract for an offline check; omit the app name |  |
+| `--approval <FILE>` | reviewed breaking changes bound to both fingerprints |  |
+| `--timeout <DURATION>` | entire check deadline (default 2m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale --json data-api check notes-data --baseline schema.json --types client/src/database.types.ts
+gregale data-api check --current candidate.json --baseline schema.json --types client/src/database.types.ts
+```
+
 ### data-api diff
 
 Compare the current schema with a saved JSON baseline
@@ -9874,14 +9895,74 @@ Examples:
 gregale data-api refresh notes-data --wait --timeout 5m
 ```
 
+### data-api replay
+
+Verify saved authorization scenarios against the hosted API
+
+`gregale data-api replay --collection <FILE> --identities <FILE> [--scenario <NAME>] [--refresh-token-env <ENV>] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--collection <FILE>` | saved request collection | required |
+| `--identities <FILE>` | JSON map of identities to JWT environment variables | required |
+| `--scenario <NAME>` | select one named scenario |  |
+| `--refresh-token-env <ENV>` | optional private refresh token environment variable |  |
+| `--timeout <DURATION>` | replay deadline (default 5m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale data-api replay notes-data --collection data-api.requests.json --identities data-api.identities.json --scenario notes-rls
+```
+
+### data-api diagnostics
+
+Summarize retained request logs and look up request IDs
+
+`gregale data-api diagnostics [--file <FILE>] [--since <DURATION|RFC3339>] [--deployment <ID>] [--request-id <UUID>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <FILE>` | saved runtime NDJSON or JSON log envelopes; omit the app name |  |
+| `--since <DURATION|RFC3339>` | request time lower bound (for example 15m) |  |
+| `--deployment <ID>` | restrict hosted logs to a deployment |  |
+| `--request-id <UUID>` | look up one gateway-generated request ID |  |
+| `--timeout <DURATION>` | read deadline (default 2m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale --json data-api diagnostics notes-data --since 15m
+gregale data-api diagnostics --file request-logs.ndjson
+```
+
+### data-api status
+
+Inspect serving contracts and durable refresh state
+
+`gregale data-api status [--baseline <FILE>] [--access-token-env <ENV>] [--refresh-token-env <ENV>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | optional JSON snapshot to compare with the serving contract |  |
+| `--access-token-env <ENV>` | application JWT environment variable |  |
+| `--refresh-token-env <ENV>` | optional private refresh token environment variable |  |
+
+Examples:
+
+```sh
+gregale --json data-api status notes-data
+```
+
 ### data-api sync
 
 Run migrations, refresh the API, export types and check the client
 
-`gregale data-api sync [--resume-only] --config <FILE> [--timeout <DURATION>] <name>`
+`gregale data-api sync [--check] [--resume-only] --config <FILE> [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--check` | check coordinated setup without pausing, migrating or restarting |  |
 | `--resume-only` | reverify an owned paused refresh without rerunning migrations |  |
 | `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
 | `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |

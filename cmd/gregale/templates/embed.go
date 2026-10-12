@@ -162,8 +162,9 @@ var generatedTemplateCopies = map[string]map[string]string{
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
 	"data-api-starter": {
-		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
-		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
+		"migrations/rpc-runtime/types.mjs":       "data-api/types.mjs",
+		"migrations/rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
+		"migrations/rpc-runtime/config.mjs":      "data-api/config.mjs",
 	},
 }
 

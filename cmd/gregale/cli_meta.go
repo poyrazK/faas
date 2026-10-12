@@ -3720,6 +3720,13 @@ var cliCommands = []cliCommand{
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
+			{Name: "check", Short: "Check compatibility and committed types without rewriting files", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
+				{Name: "baseline", Value: "FILE", Req: true, Short: "committed JSON contract baseline"},
+				{Name: "types", Value: "FILE", Req: true, Short: "committed TypeScript types to compare"},
+				{Name: "current", Value: "FILE", Short: "saved current contract for an offline check; omit the app name"},
+				{Name: "approval", Value: "FILE", Short: "reviewed breaking changes bound to both fingerprints"},
+				{Name: "timeout", Value: "DURATION", Short: "entire check deadline (default 2m, maximum 1h)"},
+			}, Examples: []string{"gregale --json data-api check notes-data --baseline schema.json --types client/src/database.types.ts", "gregale data-api check --current candidate.json --baseline schema.json --types client/src/database.types.ts"}},
 			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "baseline", Value: "FILE", Req: true, Short: "JSON snapshot exported with types --snapshot"},
 				{Name: "current", Value: "FILE", Short: "compare a saved current contract offline; omit the app name"},
@@ -3733,7 +3740,27 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for fresh-restart completion and Data API readiness"},
 				{Name: "timeout", Value: "DURATION", Short: "complete wait deadline (default 5m, maximum 1h; requires --wait)"},
 			}, Examples: []string{"gregale data-api refresh notes-data --wait --timeout 5m"}},
+			{Name: "replay", Short: "Verify saved authorization scenarios against the hosted API", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "collection", Value: "FILE", Req: true, Short: "saved request collection"},
+				{Name: "identities", Value: "FILE", Req: true, Short: "JSON map of identities to JWT environment variables"},
+				{Name: "scenario", Value: "NAME", Short: "select one named scenario"},
+				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
+				{Name: "timeout", Value: "DURATION", Short: "replay deadline (default 5m, maximum 1h)"},
+			}, Examples: []string{"gregale data-api replay notes-data --collection data-api.requests.json --identities data-api.identities.json --scenario notes-rls"}},
+			{Name: "diagnostics", Short: "Summarize retained request logs and look up request IDs", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
+				{Name: "file", Value: "FILE", Short: "saved runtime NDJSON or JSON log envelopes; omit the app name"},
+				{Name: "since", Value: "DURATION|RFC3339", Short: "request time lower bound (for example 15m)"},
+				{Name: "deployment", Value: "ID", Short: "restrict hosted logs to a deployment"},
+				{Name: "request-id", Value: "UUID", Short: "look up one gateway-generated request ID"},
+				{Name: "timeout", Value: "DURATION", Short: "read deadline (default 2m, maximum 1h)"},
+			}, Examples: []string{"gregale --json data-api diagnostics notes-data --since 15m", "gregale data-api diagnostics --file request-logs.ndjson"}},
+			{Name: "status", Short: "Inspect serving contracts and durable refresh state", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "baseline", Value: "FILE", Short: "optional JSON snapshot to compare with the serving contract"},
+				{Name: "access-token-env", Value: "ENV", Short: "application JWT environment variable"},
+				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
+			}, Examples: []string{"gregale --json data-api status notes-data"}},
 			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "check", Short: "check coordinated setup without pausing, migrating or restarting"},
 				{Name: "resume-only", Short: "reverify an owned paused refresh without rerunning migrations"},
 				{Name: "config", Value: "FILE", Req: true, Short: "JSON workflow with output, migrate and check argument arrays"},
 				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
