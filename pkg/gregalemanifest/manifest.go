@@ -1732,11 +1732,11 @@ type WorkerScaleSpec struct {
 // ToAPI converts WorkerScaleSpec to api.WorkerScaling.
 func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	return &api.WorkerScaling{
-		Min:    s.Min,
-		Max:    s.Max,
-		Metric: s.Metric,
-		Name:   s.Name,
-		Target: s.Target,
+		Min:             s.Min,
+		Max:             s.Max,
+		Metric:          s.Metric,
+		Name:            s.Name,
+		Target:          s.Target,
 		ObserverAppSlug: s.ObserverAppSlug,
 	}
 }

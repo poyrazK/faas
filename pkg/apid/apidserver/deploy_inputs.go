@@ -120,34 +120,34 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath             string
-		sourceBytes            int64
-		dockerfile             bool
-		runtime                string
-		handler                string
-		sourceRoot             string
-		sourceURL              string
-		commitSHA              string
-		scope                  string
-		environment            string
-		kind                   state.DeploymentKind
-		sourceAccepted         bool
-		workflows              []api.WorkflowSpec
-		sidecars               api.Sidecars
-		companionField         string
-		devSource              devSourceMetadata
-		trafficPercent         *int
-		canarySpec             *api.CanaryPresetSpec
-		rollbackOn5xx          *bool
-		disableStartupCPUBoost *bool
+		sourcePath               string
+		sourceBytes              int64
+		dockerfile               bool
+		runtime                  string
+		handler                  string
+		sourceRoot               string
+		sourceURL                string
+		commitSHA                string
+		scope                    string
+		environment              string
+		kind                     state.DeploymentKind
+		sourceAccepted           bool
+		workflows                []api.WorkflowSpec
+		sidecars                 api.Sidecars
+		companionField           string
+		devSource                devSourceMetadata
+		trafficPercent           *int
+		canarySpec               *api.CanaryPresetSpec
+		rollbackOn5xx            *bool
+		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
-		healthcheck            *api.DeploymentHealthcheck
-		overrideEnv            map[string]string
-		overrideEnvSeen        bool
-		noTriggers             bool
-		ann                    annotationForm
-		stagedManifest         sourceRefManifestStaged
-		manifestCommitted      bool
+		healthcheck              *api.DeploymentHealthcheck
+		overrideEnv              map[string]string
+		overrideEnvSeen          bool
+		noTriggers               bool
+		ann                      annotationForm
+		stagedManifest           sourceRefManifestStaged
+		manifestCommitted        bool
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {

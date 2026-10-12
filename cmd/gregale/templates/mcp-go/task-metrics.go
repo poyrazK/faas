@@ -37,11 +37,11 @@ type mcpTaskQueueMetrics struct {
 }
 
 type mcpTaskHandlerCompatibility struct {
-	ToolName                 string                              `json:"tool_name"`
-	HandlerVersion           string                              `json:"handler_version"`
-	WaitingTasks             int64                               `json:"waiting_tasks"`
-	LiveCompatibleWorkers    int64                               `json:"live_compatible_workers"`
-	UnknownDeploymentWorkers int64                               `json:"unknown_deployment_workers,omitempty"`
+	ToolName                 string                            `json:"tool_name"`
+	HandlerVersion           string                            `json:"handler_version"`
+	WaitingTasks             int64                             `json:"waiting_tasks"`
+	LiveCompatibleWorkers    int64                             `json:"live_compatible_workers"`
+	UnknownDeploymentWorkers int64                             `json:"unknown_deployment_workers,omitempty"`
 	Deployments              []mcpTaskHandlerDeploymentWorkers `json:"deployments,omitempty"`
 }
 

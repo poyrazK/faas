@@ -57,7 +57,7 @@ func (s *server) putMCPTaskCompatibilityReport(w http.ResponseWriter, r *http.Re
 			ToolName: handler.ToolName, HandlerVersion: handler.HandlerVersion,
 			WaitingTasks: handler.WaitingTasks, LiveCompatibleWorkers: handler.LiveCompatibleWorkers,
 			UnknownDeploymentWorkers: handler.UnknownDeploymentWorkers,
-			Deployments: make([]state.MCPTaskHandlerDeploymentWorkers, 0, len(handler.Deployments)),
+			Deployments:              make([]state.MCPTaskHandlerDeploymentWorkers, 0, len(handler.Deployments)),
 		}
 		var attributedWorkers int64
 		for _, deployment := range handler.Deployments {
@@ -111,7 +111,7 @@ func (s *server) getMCPTaskCompatibilityReport(w http.ResponseWriter, r *http.Re
 			ToolName: handler.ToolName, HandlerVersion: handler.HandlerVersion,
 			WaitingTasks: handler.WaitingTasks, LiveCompatibleWorkers: handler.LiveCompatibleWorkers,
 			UnknownDeploymentWorkers: handler.UnknownDeploymentWorkers,
-			Deployments: make([]api.MCPTaskHandlerDeploymentWorkers, 0, len(handler.Deployments)),
+			Deployments:              make([]api.MCPTaskHandlerDeploymentWorkers, 0, len(handler.Deployments)),
 		}
 		for _, deployment := range handler.Deployments {
 			item.Deployments = append(item.Deployments, api.MCPTaskHandlerDeploymentWorkers{

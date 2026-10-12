@@ -7,12 +7,13 @@ import (
 )
 
 const (
-	MCPTaskCompatibilityMaxEntries           = 256
-	MCPTaskCompatibilityMaxDeploymentEntries = 768
-	MCPTaskCompatibilityMaxRequestBytes      = 128 << 10
-	MCPTaskCompatibilityFreshnessSeconds     = 45
+	MCPTaskCompatibilityMaxEntries                 = 256
+	MCPTaskCompatibilityMaxDeploymentEntries       = 768
+	MCPTaskCompatibilityMaxRequestBytes            = 128 << 10
+	MCPTaskCompatibilityFreshnessSeconds           = 45
 	MCPTaskCompatibilityCountMax             int64 = 1_000_000_000_000
 )
+
 // MCPTaskHandlerCompatibility is an aggregate count of unexpired, nonterminal
 // tasks for one registered handler version. It deliberately contains no task,
 // owner, or payload data.

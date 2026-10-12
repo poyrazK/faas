@@ -160,12 +160,12 @@ type DeployAnnotations struct {
 	// Rollout options share this transport envelope so local directory,
 	// tarball, developer-source, and source-ref deploys preserve the same
 	// semantics as image JSON deploys. The pointer preserves explicit zero.
-	TrafficPercent         *int
-	Canary                 *CanaryPresetSpec
+	TrafficPercent           *int
+	Canary                   *CanaryPresetSpec
 	MCPTaskMigrationOverride bool
-	RollbackOn5xx          *bool
-	DisableStartupCPUBoost *bool
-	Healthcheck            *DeploymentHealthcheck
+	RollbackOn5xx            *bool
+	DisableStartupCPUBoost   *bool
+	Healthcheck              *DeploymentHealthcheck
 	// OverrideEnv applies non-secret environment values to this deployment
 	// revision only on multipart source/developer-source transports. The
 	// source-ref JSON request has a separate, explicit shape. Use the sealed

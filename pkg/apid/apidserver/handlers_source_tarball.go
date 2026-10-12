@@ -47,20 +47,20 @@ import (
 // on the build row for audit/provenance, but the build pipeline does
 // NOT use them to fetch upstream.
 type sidecarPayload struct {
-	Repo                   string                     `json:"repo,omitempty"`
-	Ref                    string                     `json:"ref,omitempty"`
-	Environment            string                     `json:"environment,omitempty"`
-	Reason                 string                     `json:"reason,omitempty"`
-	Tag                    string                     `json:"tag,omitempty"`
-	DeployedBy             string                     `json:"deployed_by,omitempty"`
-	PRNumber               int                        `json:"pr_number,omitempty"`
-	TrafficPercent         *int                       `json:"traffic_percent,omitempty"`
-	Canary                 *api.CanaryPresetSpec      `json:"canary,omitempty"`
-	RollbackOn5xx          *bool                      `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool                      `json:"disable_startup_cpu_boost,omitempty"`
-	MCPTaskMigrationOverride bool                      `json:"mcp_task_migration_override,omitempty"`
-	Healthcheck            *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
-	NoTriggers             bool                       `json:"no_triggers,omitempty"`
+	Repo                     string                     `json:"repo,omitempty"`
+	Ref                      string                     `json:"ref,omitempty"`
+	Environment              string                     `json:"environment,omitempty"`
+	Reason                   string                     `json:"reason,omitempty"`
+	Tag                      string                     `json:"tag,omitempty"`
+	DeployedBy               string                     `json:"deployed_by,omitempty"`
+	PRNumber                 int                        `json:"pr_number,omitempty"`
+	TrafficPercent           *int                       `json:"traffic_percent,omitempty"`
+	Canary                   *api.CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx            *bool                      `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost   *bool                      `json:"disable_startup_cpu_boost,omitempty"`
+	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
+	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
