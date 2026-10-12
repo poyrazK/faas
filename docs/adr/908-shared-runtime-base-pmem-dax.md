@@ -1,6 +1,6 @@
 # ADR-908: Shared runtime base through virtio-pmem DAX
 
-- Status: Proposed. Needs a security decision before any implementation.
+- Status: Option 2 (per-account sharing) implemented, off by default behind `pmem_base_dir`. Option 1 (node-wide) still needs a security decision and is not implemented.
 - Date: 2026-10-12
 - Related: ADR-633, ADR-956, ADR-983, spec §4.6, §11
 - Would amend: spec §4.4 boot config and §4.6 drive layout
@@ -89,3 +89,54 @@ changes.
 - A pmem base must be a multiple of 2 MiB.
 - Hosts must keep the base file's page cache resident under memory pressure,
   or DAX faults turn into disk reads on every VM.
+
+## Per-account implementation (2026-10-12)
+
+Option 2 is implemented behind vmmd's `pmem_base_dir` (or
+`FAAS_PMEM_BASE_DIR`). It is empty by default, which keeps every base on
+virtio-blk.
+
+- vmmd uses it only on Firecracker 1.16+, and never under native process
+  recovery, whose image journal has no pmem slot.
+- An app VM's base is cloned once per account with `FICLONE` into
+  `<pmem_base_dir>/<account hash>/<base hash>.ext4`, and re-cloned when the
+  base is newer. The directory must share a reflink-capable filesystem with
+  the cached bases.
+- The clone is attached as a read-only pmem root device mounted with `dax`,
+  and drive0 is dropped. Guest-init reads `root=/dev/pmem0` from the kernel
+  command line and finds the app layer and sidecars one letter lower.
+- Inside the jail the clone is `base-pmem.ext4`; virtio-blk bases stay
+  `base.ext4`. A restore stages both names when pmem is on. A pmem snapshot
+  restored by a VMM without pmem cannot open `base-pmem.ext4`, fails to load
+  and cold boots from virtio-blk (ADR-005). It never maps a base shared
+  across accounts.
+- A base qualifies only if its size is a multiple of 2 MiB and it is ext4
+  with 4 KiB blocks: the kernel refuses `dax` on other block sizes, which
+  would leave the guest without a root. Anything else, including a failed
+  clone, boots from virtio-blk with a warning.
+- Builders, networkless execution VMs, jobs and VMs without an account keep
+  virtio-blk.
+
+Qualified on the n2 node (Firecracker 1.17, guest 6.18). The base fixture
+used 4 KiB blocks on reflink XFS, with guest-init from this change.
+`TestMetalPmemAccountBase` passed:
+
+- An app VM cold booted from its account's pmem copy, confirmed by
+  Firecracker's `/vm/config`.
+- It parked and restored from the pmem snapshot.
+- A second account got its own clone.
+- A VMM without `pmem_base_dir` restored the pmem snapshot by cold booting
+  from virtio-blk.
+
+`TestMetalParkWakeCycle` (100 cycles over virtio-blk with the new
+guest-init) passed at p50 266 ms, p95 302 ms.
+
+Not done yet:
+
+- **Base images:** `rootfs.MkfsCommand` sizes images in whole MiB and leaves
+  the block size to mke2fs. Bases must be built with `-b 4096` and an
+  even-MiB size before production nodes can use pmem.
+- **Garbage collection:** clones of bases that are no longer cached are not
+  collected. Each clone shares its extents, so it costs metadata only until
+  the base is deleted.
+- **Metrics:** none yet for pmem boots or for fallbacks to virtio-blk.
