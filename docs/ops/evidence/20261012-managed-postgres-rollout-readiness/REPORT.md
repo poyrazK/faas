@@ -39,6 +39,12 @@ Go 1.26.9 on macOS arm64, with bounded parallelism and the shared Go cache:
 - ADR uniqueness, Go security-rule retention and operator SQL-document gates
   passed. The API-server size baseline was corrected to the exact existing
   main count (155,936); this change adds no API-server production lines.
+- A clean regular clone produced real qualifier, test and Linux amd64 static
+  helper executables with matching `vcs.revision` and `vcs.modified=false`.
+  This caught missing automatic stamping in Git worktrees. The runner now
+  requires stamping, and the operator procedure requires a regular clone and
+  explicitly stamped qualifier/guest init. The tagged native compile and
+  affected artifact-helper lint/race checks passed again after that fix.
 
 ## Limits and outstanding qualification
 
