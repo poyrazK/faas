@@ -1,5 +1,6 @@
 -- +goose Up
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_native_base_deadline(artifact jsonb, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
     LANGUAGE plpgsql
     AS $$
@@ -23,7 +24,9 @@ BEGIN
  RETURN application_standard_native_scan_deadline(s.input_snapshot,s.scanned_at,s.expires_at,now_utc,enforce);
 END;
 $$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_native_base_producer_current(artifact jsonb, now_utc timestamp with time zone) RETURNS void
     LANGUAGE plpgsql
     AS $$
@@ -40,7 +43,9 @@ BEGIN
  END IF;
 END;
 $$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_runtime_base_producer(root_producer jsonb) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
@@ -62,9 +67,11 @@ BEGIN
   'storage_key',p.storage_key,'digest',p.input_snapshot->'artifact'->>'digest','bytes',(p.input_snapshot->'artifact'->>'bytes')::bigint);
 END;
 $$;
+-- +goose StatementEnd
 
 -- +goose Down
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_native_base_deadline(artifact jsonb, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
     LANGUAGE plpgsql
     AS $$
@@ -88,7 +95,9 @@ BEGIN
  RETURN application_standard_native_scan_deadline(s.input_snapshot,s.scanned_at,s.expires_at,now_utc,enforce);
 END;
 $$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_native_base_producer_current(artifact jsonb, now_utc timestamp with time zone) RETURNS void
     LANGUAGE plpgsql
     AS $$
@@ -105,7 +114,9 @@ BEGIN
  END IF;
 END;
 $$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.application_standard_runtime_base_producer(root_producer jsonb) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
@@ -127,3 +138,4 @@ BEGIN
   'storage_key',p.storage_key,'digest',p.input_snapshot->'artifact'->>'digest','bytes',(p.input_snapshot->'artifact'->>'bytes')::bigint);
 END;
 $$;
+-- +goose StatementEnd
