@@ -75,7 +75,7 @@ func (s *server) debugRunningHandler(w http.ResponseWriter, r *http.Request, acc
 	}
 
 	now := time.Now().UTC()
-	response, err := s.readDebugRunning(r.Context(), app, now.Add(-since), now, limit, limits.DefaultIdleTimeoutS(string(app.Type)))
+	response, err := s.readDebugRunning(r.Context(), app, now.Add(-since), now, limit, limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS))
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list running debugger observations"))
 		return

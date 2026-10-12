@@ -8472,6 +8472,17 @@ func (l Limits) DefaultIdleTimeoutS(appType string) int {
 	return l.IdleTimeoutS
 }
 
+// EffectiveIdleTimeoutS resolves an app's idle timeout: the default for its
+// type unless the app configured one, clamped to IdleTimeoutBounds (spec
+// §4.3). The reaper and every surface that explains it share this one rule.
+func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
+	if configured <= 0 {
+		return l.DefaultIdleTimeoutS(appType)
+	}
+	floor, ceiling := l.IdleTimeoutBounds()
+	return min(max(configured, floor), ceiling)
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
