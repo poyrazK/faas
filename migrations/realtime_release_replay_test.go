@@ -85,7 +85,7 @@ func TestRealtimeReleaseReplayPreservesExistingState(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version >= 20261010080000001 && version <= 20261012000000001 {
+		if version >= 20261012102700452 && version <= 20261012102700548 {
 			versions = append(versions, version)
 		}
 	}

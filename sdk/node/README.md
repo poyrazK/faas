@@ -2834,7 +2834,7 @@ Use `POST .../groups/{group}/replay-jobs` with `rate` (1–32), optional `failur
 
 Rate is an upper limit per job; multiple jobs have independent limits. Known outcomes include replayed, stale, missing, not_dead, ordering_blocked, invalid_deadline and deadline_expired. Skips require a new recovery job. Safe processing errors and cumulative counts appear in status; database errors retry without advancing progress. Cancellation does not undo completed replay. Inspect recent jobs before retrying an uncertain creation response. Disabled endpoints suspend execution; group claim pause/circuit/rate settings still govern subsequent processing.
 
-Apply migration `20261011190000001_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
+Apply migration `20261012102700533_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
 
 
 ### Replay-job notifications
@@ -2843,7 +2843,7 @@ Create or update an app webhook with event filters `realtime.replay_job.complete
 
 Completion and cancellation notify once per transition. The processing warning notifies once per job when cumulative recorded processing errors first reach three; the job continues retrying. Known skips are not processing errors. No backfill for past transitions or newly added subscribers. Deduplicate the payload's `event_id` across delivery retries and do not assume delivery order.
 
-`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261011200000001_realtime_replay_job_notifications.sql` is required and currently unapplied.
+`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261012102700536_realtime_replay_job_notifications.sql` is required and currently unapplied.
 
 ### Reviewed dead-letter recovery
 
@@ -2861,7 +2861,7 @@ their cursors and ACK them without calling `onMessage`. Message DTOs expose opti
 Low-level `subscribeRealtimeSSE` yields entries with `checkpoint: true` for expired
 positions. Advance your cursor without treating these entries as application
 messages. The receive-only fallback handles this automatically. Upgrade clients
-and the server/private readers after deploying migration 20261011220000001 before
+and the server/private readers after deploying migration 20261012102700541 before
 enabling TTL publishing. TTL affects delivery selection, not already delivered
 state, retention deletion or consumer-group job processing. TTL publishing covers account-authenticated single and batch retained writes. Runtime checks remain
 deferred.

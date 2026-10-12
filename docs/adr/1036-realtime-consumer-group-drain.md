@@ -32,7 +32,7 @@ not the persistent drain operation. Retention continues during drain.
 
 ## Deployment and validation
 
-Apply `20261011020000001_realtime_consumer_group_drain.sql` after the pause and
+Apply `20261012102700484_realtime_consumer_group_drain.sql` after the pause and
 worker-credential migrations before activation. Allow twelve worker operations.
 Downgrade rejects incompatible drain grants/usage and retains paused state. Go/Node
 builds and static generated Node/Python specification checks are the validation

@@ -48,7 +48,7 @@ UTC timeline, group pruning notice and next page. Timeline errors are separate f
 group/history errors. Generated Node/Python SDKs expose the read API. No handler
 behavior, retries, ordering, claim admission or lease renewal rules change.
 
-Apply migration 20261011150000001 before the new binary. Update all apid replicas
+Apply migration 20261012102700520 before the new binary. Update all apid replicas
 for completion coverage; older binaries still generate update-trigger observations
 but omit completion history. Down removes diagnostic data and pruning counters
 without modifying message delivery state; downgrade code with schema. Runtime

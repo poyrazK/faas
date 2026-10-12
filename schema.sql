@@ -54289,7 +54289,7 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 --
 
 -- Static catalog additions for the pending managed realtime release.
--- Source: migrations/20261010080000001_realtime_commit_receipts.sql
+-- Source: migrations/20261012102700452_realtime_commit_receipts.sql
 CREATE TABLE managed_realtime_commit_receipts (
     source_id uuid NOT NULL REFERENCES commit_sources(id) ON DELETE CASCADE,
     event_id uuid NOT NULL,
@@ -54301,7 +54301,7 @@ CREATE TABLE managed_realtime_commit_receipts (
     PRIMARY KEY (source_id,event_id)
 );
 
--- Source: migrations/20261010090000001_realtime_principal_access.sql
+-- Source: migrations/20261012102700456_realtime_principal_access.sql
 CREATE TABLE managed_realtime_principal_access (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK (octet_length(principal) BETWEEN 1 AND 256),
@@ -54312,7 +54312,7 @@ CREATE TABLE managed_realtime_principal_access (
  PRIMARY KEY(endpoint_id,principal)
 );
 
--- Source: migrations/20261010120000001_realtime_channel_webhooks.sql
+-- Source: migrations/20261012102700459_realtime_channel_webhooks.sql
 CREATE TABLE managed_realtime_channel_webhook_filters (
  webhook_id uuid PRIMARY KEY REFERENCES app_webhooks(id) ON DELETE CASCADE,
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
@@ -54359,7 +54359,7 @@ END $$;
 CREATE TRIGGER managed_realtime_channel_webhook AFTER INSERT ON managed_realtime_channel_messages
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_channel_webhook();
 
--- Source: migrations/20261010130000001_realtime_subscription_tickets.sql
+-- Source: migrations/20261012102700462_realtime_subscription_tickets.sql
 CREATE TABLE managed_realtime_subscription_tickets (
  token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash)=32),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
@@ -54370,7 +54370,7 @@ CREATE TABLE managed_realtime_subscription_tickets (
 );
 CREATE INDEX managed_realtime_subscription_tickets_endpoint_expiry ON managed_realtime_subscription_tickets(endpoint_id,expires_at);
 
--- Source: migrations/20261010140000001_realtime_inspector_observations.sql
+-- Source: migrations/20261012102700465_realtime_inspector_observations.sql
 CREATE TABLE managed_realtime_outbox_observations (
  source_id uuid NOT NULL REFERENCES commit_sources(id) ON DELETE CASCADE,
  event_id uuid NOT NULL,
@@ -54383,7 +54383,7 @@ CREATE TABLE managed_realtime_outbox_observations (
  PRIMARY KEY(source_id,event_id)
 );
 
--- Source: migrations/20261010150000001_realtime_channel_acknowledgements.sql
+-- Source: migrations/20261012102700468_realtime_channel_acknowledgements.sql
 ALTER TABLE managed_realtime_durable_cursors
  ADD COLUMN acknowledged_sequence bigint CHECK (acknowledged_sequence > 0),
  ADD COLUMN acknowledged_at timestamptz,
@@ -54423,7 +54423,7 @@ END $$;
 CREATE TRIGGER realtime_channel_acknowledgement AFTER UPDATE ON managed_realtime_durable_cursors
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_channel_acknowledgement();
 
--- Source: migrations/20261010160000001_realtime_consumer_groups.sql
+-- Source: migrations/20261012102700470_realtime_consumer_groups.sql
 CREATE TABLE managed_realtime_consumer_groups (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
@@ -54454,7 +54454,7 @@ CREATE TABLE managed_realtime_consumer_group_messages (
 -- Each group's outstanding rows are admission bounded; this index orders claims.
 CREATE INDEX realtime_consumer_group_claim ON managed_realtime_consumer_group_messages(group_id,status,sequence);
 
--- Source: migrations/20261010170000001_realtime_worker_credentials.sql
+-- Source: migrations/20261012102700473_realtime_worker_credentials.sql
 CREATE TABLE managed_realtime_worker_credentials (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
@@ -54473,7 +54473,7 @@ CREATE INDEX realtime_worker_credentials_group ON managed_realtime_worker_creden
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN credential_id uuid;
 -- Credential ownership is retained with a lease; no FK can cascade-away work.
 
--- Source: migrations/20261010180000001_realtime_publisher_credentials.sql
+-- Source: migrations/20261012102700476_realtime_publisher_credentials.sql
 CREATE TABLE managed_realtime_publisher_credentials (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
@@ -54508,7 +54508,7 @@ CREATE TABLE managed_realtime_publisher_receipts (
  CHECK (expires_at>published_at)
 );
 
--- Source: migrations/20261010190000001_realtime_consumer_group_dead_letter_webhooks.sql
+-- Source: migrations/20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql
 -- +goose StatementBegin
 DO $$
 DECLARE definition text;
@@ -54549,7 +54549,7 @@ END $$;
 CREATE TRIGGER realtime_consumer_group_dead_letter AFTER UPDATE ON managed_realtime_consumer_group_messages
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_consumer_group_dead_letter();
 
--- Source: migrations/20261011010000001_realtime_consumer_group_pause.sql
+-- Source: migrations/20261012102700481_realtime_consumer_group_pause.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN paused_at timestamptz;
 ALTER TABLE managed_realtime_worker_credentials
  DROP CONSTRAINT managed_realtime_worker_credentials_permissions_check,
@@ -54560,7 +54560,7 @@ ALTER TABLE managed_realtime_worker_credentials
  ADD CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK
  (last_operation IS NULL OR last_operation IN ('status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume'));
 
--- Source: migrations/20261011020000001_realtime_consumer_group_drain.sql
+-- Source: migrations/20261012102700484_realtime_consumer_group_drain.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN draining boolean NOT NULL DEFAULT false,
  ADD CONSTRAINT realtime_consumer_group_drain_paused CHECK (NOT draining OR paused_at IS NOT NULL);
 ALTER TABLE managed_realtime_worker_credentials
@@ -54572,7 +54572,7 @@ ALTER TABLE managed_realtime_worker_credentials
  ADD CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK
  (last_operation IS NULL OR last_operation IN ('status','claim','renew','complete','retry','dead_letters','replay','resync','delete','pause','resume','drain'));
 
--- Source: migrations/20261011030000001_realtime_consumer_group_lag_alerts.sql
+-- Source: migrations/20261012102700487_realtime_consumer_group_lag_alerts.sql
 CREATE TABLE managed_realtime_consumer_group_alerts (
  group_id uuid PRIMARY KEY REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  enabled boolean NOT NULL,
@@ -54603,7 +54603,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
--- Source: migrations/20261011040000001_realtime_consumer_group_ordering.sql
+-- Source: migrations/20261012102700490_realtime_consumer_group_ordering.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN ordering_metadata_key text NOT NULL DEFAULT '' CHECK (octet_length(ordering_metadata_key)<=64 AND ordering_metadata_key ~ '^[a-z0-9_.-]*$'),
  ADD COLUMN dead_letter_policy text NOT NULL DEFAULT 'block' CHECK (dead_letter_policy IN ('block','skip'));
@@ -54613,13 +54613,13 @@ ALTER TABLE managed_realtime_consumer_group_messages
 CREATE INDEX realtime_group_ordering_predecessor ON managed_realtime_consumer_group_messages(group_id,ordering_key,sequence);
 CREATE UNIQUE INDEX realtime_group_ordering_active ON managed_realtime_consumer_group_messages(group_id,ordering_key) WHERE ordered AND status='leased';
 
--- Source: migrations/20261011050000001_realtime_consumer_group_fencing.sql
+-- Source: migrations/20261012102700492_realtime_consumer_group_fencing.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN last_fencing_token bigint NOT NULL DEFAULT 0 CHECK (last_fencing_token>=0);
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN fencing_token bigint CHECK (fencing_token>0);
 CREATE UNIQUE INDEX realtime_group_fencing_unique ON managed_realtime_consumer_group_messages(group_id,fencing_token) WHERE fencing_token IS NOT NULL;
 -- Legacy leases deliberately have no retroactively issued token.
 
--- Source: migrations/20261011060000001_realtime_dead_letter_retention.sql
+-- Source: migrations/20261012102700494_realtime_dead_letter_retention.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN dead_letter_retention_seconds integer NOT NULL DEFAULT 0 CHECK (dead_letter_retention_seconds=0 OR dead_letter_retention_seconds BETWEEN 3600 AND 2592000),
  ADD COLUMN expired_dead_letters bigint NOT NULL DEFAULT 0 CHECK (expired_dead_letters>=0),
@@ -54654,10 +54654,10 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
--- Source: migrations/20261011070000001_realtime_retry_policy.sql
+-- Source: migrations/20261012102700497_realtime_retry_policy.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN retry_policy jsonb NOT NULL DEFAULT '{"enabled":false,"base_delay_seconds":1,"max_delay_seconds":300,"jitter":true,"permanent_failure_codes":[]}'::jsonb CHECK (jsonb_typeof(retry_policy)='object');
 
--- Source: migrations/20261011080000001_realtime_delivery_deadlines.sql
+-- Source: migrations/20261012102700501_realtime_delivery_deadlines.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN deadline_metadata_key text NOT NULL DEFAULT '' CHECK (octet_length(deadline_metadata_key)<=64 AND deadline_metadata_key ~ '^[a-z0-9_.-]*$'),
  ADD COLUMN expired_deliveries bigint NOT NULL DEFAULT 0 CHECK (expired_deliveries>=0),
@@ -54699,21 +54699,21 @@ END $$;
 -- +goose StatementEnd
 CREATE TRIGGER realtime_delivery_expired AFTER UPDATE ON managed_realtime_consumer_group_messages FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_delivery_expired();
 
--- Source: migrations/20261011090000001_realtime_consumer_group_claim_rates.sql
+-- Source: migrations/20261012102700503_realtime_consumer_group_claim_rates.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN claim_rate_per_second integer NOT NULL DEFAULT 0 CHECK (claim_rate_per_second BETWEEN 0 AND 1000),
  ADD COLUMN claim_rate_burst integer NOT NULL DEFAULT 1 CHECK (claim_rate_burst BETWEEN 1 AND 32),
  ADD COLUMN claim_rate_tat timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(claim_rate_tat)),
  ADD COLUMN throttled_claim_requests bigint NOT NULL DEFAULT 0 CHECK (throttled_claim_requests>=0);
 
--- Source: migrations/20261011100000001_realtime_consumer_group_filters.sql
+-- Source: migrations/20261012102700506_realtime_consumer_group_filters.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN message_filter jsonb NOT NULL DEFAULT '{"event_types":[],"metadata":{}}'::jsonb
  CHECK (jsonb_typeof(message_filter)='object' AND message_filter ? 'event_types' AND message_filter ? 'metadata'
  AND jsonb_typeof(message_filter->'event_types')='array' AND jsonb_array_length(message_filter->'event_types')<=32 AND jsonb_typeof(message_filter->'metadata')='object'),
  ADD COLUMN filtered_messages bigint NOT NULL DEFAULT 0 CHECK (filtered_messages>=0);
 
--- Source: migrations/20261011110000001_realtime_worker_heartbeats.sql
+-- Source: migrations/20261012102700509_realtime_worker_heartbeats.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN next_worker_health_check_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(next_worker_health_check_at));
 CREATE TABLE managed_realtime_worker_heartbeats (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -54767,7 +54767,7 @@ END $$;
 -- +goose StatementEnd
 CREATE TRIGGER realtime_worker_health_transition AFTER UPDATE ON managed_realtime_worker_heartbeats FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_worker_health();
 
--- Source: migrations/20261011120000001_realtime_group_latency_metrics.sql
+-- Source: migrations/20261012102700512_realtime_group_latency_metrics.sql
 ALTER TABLE managed_realtime_consumer_group_messages
  ADD COLUMN processing_started_at timestamptz CHECK (processing_started_at IS NULL OR isfinite(processing_started_at)),
  ADD COLUMN first_claim_observed boolean NOT NULL DEFAULT false CHECK (first_claim_observed IN (true,false));
@@ -54826,13 +54826,13 @@ END $$;
 -- +goose StatementEnd
 CREATE TRIGGER realtime_group_measure_transition BEFORE UPDATE ON managed_realtime_consumer_group_messages FOR EACH ROW EXECUTE FUNCTION measure_realtime_group_transition();
 
--- Source: migrations/20261011130000001_realtime_consumer_group_priorities.sql
+-- Source: migrations/20261012102700515_realtime_consumer_group_priorities.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN priority_metadata_key text NOT NULL DEFAULT '' CHECK (priority_metadata_key='' OR (octet_length(priority_metadata_key)<=64 AND priority_metadata_key~'^[a-z0-9_.-]+$')),
  ADD COLUMN priority_turn integer NOT NULL DEFAULT 0 CHECK (priority_turn BETWEEN 0 AND 7);
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN priority integer NOT NULL DEFAULT 0 CHECK (priority BETWEEN 0 AND 9);
 
--- Source: migrations/20261011140000001_realtime_consumer_group_circuit_breakers.sql
+-- Source: migrations/20261012102700517_realtime_consumer_group_circuit_breakers.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN circuit_enabled boolean NOT NULL DEFAULT false CHECK (circuit_enabled IN (true,false)),
  ADD COLUMN circuit_threshold integer NOT NULL DEFAULT 5 CHECK (circuit_threshold BETWEEN 1 AND 100),
@@ -54910,7 +54910,7 @@ END $$;
 -- +goose StatementEnd
 CREATE TRIGGER realtime_circuit_transition AFTER UPDATE ON managed_realtime_consumer_groups FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_circuit_transition();
 
--- Source: migrations/20261011150000001_realtime_delivery_attempt_history.sql
+-- Source: migrations/20261012102700520_realtime_delivery_attempt_history.sql
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN history_pruned_events bigint NOT NULL DEFAULT 0 CHECK (history_pruned_events>=0);
 CREATE TABLE managed_realtime_group_delivery_history (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id>0),
@@ -54967,7 +54967,7 @@ END $$;
 -- +goose StatementEnd
 CREATE TRIGGER realtime_delivery_history_transition AFTER UPDATE ON managed_realtime_consumer_group_messages FOR EACH ROW EXECUTE FUNCTION observe_realtime_delivery_history();
 
--- Source: migrations/20261011160000001_realtime_cooperative_lease_release.sql
+-- Source: migrations/20261012102700522_realtime_cooperative_lease_release.sql
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN release_count bigint NOT NULL DEFAULT 0 CHECK (release_count>=0);
 ALTER TABLE managed_realtime_worker_credentials DROP CONSTRAINT managed_realtime_worker_credentials_permissions_check,DROP CONSTRAINT managed_realtime_worker_credentials_last_operation_check;
 ALTER TABLE managed_realtime_worker_credentials
@@ -55043,7 +55043,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
--- Source: migrations/20261011170000001_realtime_settlement_receipts.sql
+-- Source: migrations/20261012102700527_realtime_settlement_receipts.sql
 CREATE TABLE managed_realtime_group_settlement_receipts (
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK (principal='account' OR principal~'^[0-9a-f-]{36}$'),
@@ -55056,7 +55056,7 @@ CREATE TABLE managed_realtime_group_settlement_receipts (
 );
 CREATE INDEX realtime_settlement_receipts_expiry ON managed_realtime_group_settlement_receipts(group_id,expires_at);
 
--- Source: migrations/20261011180000001_realtime_consumer_group_event_deduplication.sql
+-- Source: migrations/20261012102700530_realtime_consumer_group_event_deduplication.sql
 ALTER TABLE managed_realtime_consumer_groups
  ADD COLUMN deduplication_metadata_key text NOT NULL DEFAULT '' CHECK (octet_length(deduplication_metadata_key)<=64 AND deduplication_metadata_key~'^[a-z0-9_.-]*$'),
  ADD COLUMN deduplication_window_seconds integer NOT NULL DEFAULT 0 CHECK (deduplication_window_seconds=0 OR deduplication_window_seconds BETWEEN 60 AND 86400),
@@ -55070,7 +55070,7 @@ CREATE TABLE managed_realtime_group_event_ids (
 );
 CREATE INDEX realtime_group_event_ids_expiry ON managed_realtime_group_event_ids(group_id,expires_at);
 
--- Source: migrations/20261011190000001_realtime_dead_letter_replay_jobs.sql
+-- Source: migrations/20261012102700533_realtime_dead_letter_replay_jobs.sql
 CREATE TABLE managed_realtime_replay_jobs (
  id uuid PRIMARY KEY,
  group_id uuid NOT NULL REFERENCES managed_realtime_consumer_groups(id) ON DELETE CASCADE,
@@ -55087,7 +55087,7 @@ CREATE TABLE managed_realtime_replay_jobs (
 );
 CREATE INDEX realtime_replay_jobs_due ON managed_realtime_replay_jobs(next_at) WHERE state='running';
 
--- Source: migrations/20261011200000001_realtime_replay_job_notifications.sql
+-- Source: migrations/20261012102700536_realtime_replay_job_notifications.sql
 -- +goose StatementBegin
 DO $$
 DECLARE definition text;
@@ -55144,7 +55144,7 @@ END $$;
 CREATE TRIGGER realtime_replay_job_notification AFTER UPDATE ON managed_realtime_replay_jobs
  FOR EACH ROW EXECUTE FUNCTION enqueue_realtime_replay_job_notification();
 
--- Source: migrations/20261011210000001_realtime_replay_job_dry_runs.sql
+-- Source: migrations/20261012102700538_realtime_replay_job_dry_runs.sql
 ALTER TABLE managed_realtime_replay_jobs
  ADD COLUMN dry_run boolean NOT NULL DEFAULT false,
  ADD COLUMN reviewed_job_id uuid,
@@ -55161,7 +55161,7 @@ DROP TRIGGER realtime_replay_job_notification ON managed_realtime_replay_jobs;
 CREATE TRIGGER realtime_replay_job_notification AFTER UPDATE ON managed_realtime_replay_jobs
  FOR EACH ROW WHEN (NOT NEW.dry_run) EXECUTE FUNCTION enqueue_realtime_replay_job_notification();
 
--- Source: migrations/20261011220000001_realtime_message_ttl.sql
+-- Source: migrations/20261012102700541_realtime_message_ttl.sql
 CREATE TABLE managed_realtime_message_expirations (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL CHECK (octet_length(channel) BETWEEN 1 AND 256),
@@ -55172,13 +55172,13 @@ CREATE TABLE managed_realtime_message_expirations (
  FOREIGN KEY (endpoint_id, channel, sequence) REFERENCES managed_realtime_channel_messages(endpoint_id, channel, sequence) ON DELETE CASCADE
 );
 
--- Source: migrations/20261011230000001_realtime_schedule_message_ttl.sql
+-- Source: migrations/20261012102700544_realtime_schedule_message_ttl.sql
 ALTER TABLE managed_realtime_schedules ADD COLUMN ttl_seconds integer NOT NULL DEFAULT 0 CHECK (ttl_seconds BETWEEN 0 AND 86400);
 
--- Source: migrations/20261011233000001_realtime_publisher_message_ttl.sql
+-- Source: migrations/20261012102700546_realtime_publisher_message_ttl.sql
 ALTER TABLE managed_realtime_publisher_credentials ADD COLUMN max_message_ttl_seconds integer NOT NULL DEFAULT 0 CHECK (max_message_ttl_seconds BETWEEN 0 AND 86400);
 
--- Source: migrations/20261012000000001_realtime_inbox_message_ttl.sql
+-- Source: migrations/20261012102700548_realtime_inbox_message_ttl.sql
 CREATE TABLE managed_realtime_inbox_message_expirations (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL CHECK (channel ~ '^[0-9a-f]{64}$'),

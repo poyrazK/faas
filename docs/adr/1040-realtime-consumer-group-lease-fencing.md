@@ -39,7 +39,7 @@ from public fencing numbers. Fencing alone grants no API access.
 
 ## Deployment and validation
 
-Apply `20261011050000001_realtime_consumer_group_fencing.sql` before activation.
+Apply `20261012102700492_realtime_consumer_group_fencing.sql` before activation.
 Existing leases deliberately have null fencing values; do not invent retroactive
 numbers. Drain/stop legacy workers and upgrade every API replica/client before
 relying on fencing, then establish downstream enforcement and fresh claims.

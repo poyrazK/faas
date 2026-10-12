@@ -30,7 +30,7 @@ Token expiry, rotation and revocation do not alter already accepted message TTL.
 
 ## Rollout and verification
 
-Apply migration 20261011233000001 after retained-message expiry migration and
+Apply migration 20261012102700546 after retained-message expiry migration and
 before updated apid. Deploy checkpoint-capable readers and SDKs before enabling
 TTL publishing. The OpenAPI and Python/Node models expose both message lifetime
 and credential cap. Static Go build, SDK compilation/type checks, schema parsing,

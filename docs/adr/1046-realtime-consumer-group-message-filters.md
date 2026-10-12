@@ -59,7 +59,7 @@ migration-owned table projection.
 
 ## Rollout and verification
 
-Apply migration `20261011100000001_realtime_consumer_group_filters.sql`, and upgrade
+Apply migration `20261012102700506_realtime_consumer_group_filters.sql`, and upgrade
 all server replicas before creating filtered groups. Older replicas do not honor
 selection. Existing groups continue matching everything. Upgrade SDKs to configure
 filters and consume the additive group/batch fields. Rollback removes configuration

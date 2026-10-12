@@ -42,6 +42,6 @@ Node/Python APIs. Do not inherit global account authentication or cookies.
 
 ## Deployment and validation
 
-Apply migration `20261010180000001_realtime_publisher_credentials.sql` before
+Apply migration `20261012102700476_realtime_publisher_credentials.sql` before
 activation. Go and Node builds and static specification checks are the current
 validation scope. Runtime, migration and UI checks remain deferred by request.

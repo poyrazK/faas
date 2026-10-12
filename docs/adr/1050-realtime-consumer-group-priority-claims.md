@@ -40,7 +40,7 @@ Generated Node/Python clients accept the creation field and expose the read rout
 
 Use sqlc for policy, priority freezing, selection, fairness advancement and backlog
 queries. No new background task, webhook or telemetry retention. Migration
-20261011130000001 defaults existing groups/snapshots to disabled/zero. Apply it
+20261012102700515 defaults existing groups/snapshots to disabled/zero. Apply it
 before the server, and upgrade all apid replicas before using priority groups:
 older binaries claim by sequence and do not advance priority fairness. Downgrade
 removes scheduling preference but preserves message/lease state. Resync retains the

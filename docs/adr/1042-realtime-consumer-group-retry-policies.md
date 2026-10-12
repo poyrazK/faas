@@ -47,7 +47,7 @@ fields. Node `consumeRealtimeGroup` and the scoped worker helper share
 Other clients opt in by omitting the settlement delay. Go state settlement uses an
 optional pointer to distinguish omission from zero.
 
-Apply migration `20261011070000001_realtime_retry_policy.sql` before serving the new
+Apply migration `20261012102700497_realtime_retry_policy.sql` before serving the new
 binary. Upgrade all replicas before enabling policies; older replicas do not honor
 them. Rollback removes configuration but preserves already scheduled timestamps.
 Go/Node builds and static contract checks are required; runtime tests, database

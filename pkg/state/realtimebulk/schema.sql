@@ -1,6 +1,6 @@
 -- Compile-time projection of consumer-group messages for bulk recovery queries.
--- Runtime schema is owned by migrations 20261010160000001, 20261011040000001,
--- 20261011060000001, and 20261011080000001. This file never executes against a database.
+-- Runtime schema is owned by migrations 20261012102700470, 20261012102700490,
+-- 20261012102700494, and 20261012102700501. This file never executes against a database.
 CREATE TABLE managed_realtime_consumer_group_messages (
  group_id uuid NOT NULL,
  sequence bigint NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE managed_realtime_consumer_group_messages (
  available_at timestamptz NOT NULL
 );
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN delivery_deadline timestamptz, ADD COLUMN deadline_invalid boolean NOT NULL DEFAULT false;
--- Claim-rate projection; runtime columns are owned by migration 20261011090000001.
+-- Claim-rate projection; runtime columns are owned by migration 20261012102700503.
 CREATE TABLE managed_realtime_consumer_groups (
  id uuid NOT NULL,
  claim_rate_per_second integer NOT NULL,
@@ -24,9 +24,9 @@ CREATE TABLE managed_realtime_consumer_groups (
  claim_rate_tat timestamptz NOT NULL,
  throttled_claim_requests bigint NOT NULL
 );
--- Filter projection; runtime columns are owned by migration 20261011100000001.
+-- Filter projection; runtime columns are owned by migration 20261012102700506.
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN message_filter jsonb NOT NULL, ADD COLUMN assigned_sequence bigint NOT NULL, ADD COLUMN filtered_messages bigint NOT NULL;
--- Worker-health projection; runtime schema is owned by migration 20261011110000001.
+-- Worker-health projection; runtime schema is owned by migration 20261012102700509.
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN endpoint_id uuid NOT NULL,ADD COLUMN channel text NOT NULL,ADD COLUMN name text NOT NULL,ADD COLUMN next_worker_health_check_at timestamptz NOT NULL;
 CREATE TABLE managed_realtime_worker_heartbeats (id uuid NOT NULL,group_id uuid NOT NULL,worker text NOT NULL,principal text NOT NULL,credential_id uuid,ready boolean NOT NULL,status_code text NOT NULL,last_seen_at timestamptz NOT NULL,lost boolean NOT NULL,UNIQUE(group_id,worker,principal));
 CREATE TABLE managed_realtime_worker_credentials (id uuid NOT NULL,group_id uuid NOT NULL,expires_at timestamptz NOT NULL,revoked_at timestamptz,permissions text[] NOT NULL);
@@ -34,7 +34,7 @@ CREATE TABLE managed_realtime_endpoints (id uuid NOT NULL,account_id uuid NOT NU
 CREATE TABLE accounts (id uuid NOT NULL,status text NOT NULL,plan text NOT NULL);
 CREATE TABLE apps (id uuid NOT NULL,status text NOT NULL);
 
--- Metrics projection; runtime migration 20261011120000001.
+-- Metrics projection; runtime migration 20261012102700512.
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN processing_started_at timestamptz,ADD COLUMN first_claim_observed boolean NOT NULL,ADD COLUMN message jsonb NOT NULL;
 CREATE TABLE managed_realtime_group_metrics(group_id uuid NOT NULL,bucket_at timestamptz NOT NULL,first_claims bigint NOT NULL,completed bigint NOT NULL,retries bigint NOT NULL,dead_letters bigint NOT NULL,queue_milliseconds numeric NOT NULL,processing_milliseconds numeric NOT NULL);
 
@@ -42,18 +42,18 @@ CREATE TABLE managed_realtime_group_metrics(group_id uuid NOT NULL,bucket_at tim
 CREATE TABLE managed_realtime_schedules(endpoint_id uuid NOT NULL,channel text NOT NULL,status text NOT NULL,updated_at timestamptz NOT NULL);
 CREATE TABLE managed_realtime_channel_heads(endpoint_id uuid NOT NULL,channel text NOT NULL,oldest_sequence bigint NOT NULL,next_sequence bigint NOT NULL);
 
--- Priority projection; runtime migration 20261011130000001.
+-- Priority projection; runtime migration 20261012102700515.
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN priority_metadata_key text NOT NULL,ADD COLUMN priority_turn integer NOT NULL;
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN priority integer NOT NULL;
 
 -- Existing worker credential fields for fresh batch authorization.
 ALTER TABLE managed_realtime_worker_credentials ADD COLUMN token_hash bytea NOT NULL;
 
--- Circuit projection; runtime migration 20261011140000001.
+-- Circuit projection; runtime migration 20261012102700517.
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN circuit_enabled boolean NOT NULL,ADD COLUMN circuit_threshold integer NOT NULL,ADD COLUMN circuit_cooldown_seconds integer NOT NULL,ADD COLUMN circuit_failures integer NOT NULL,ADD COLUMN circuit_state text NOT NULL,ADD COLUMN circuit_open_until timestamptz,ADD COLUMN circuit_probe_sequence bigint,ADD COLUMN circuit_probe_fencing_token bigint,ADD COLUMN circuit_reason text NOT NULL;
 ALTER TABLE managed_realtime_consumer_group_messages ADD COLUMN fencing_token bigint;
 
--- Delivery history projection; runtime migration 20261011150000001.
+-- Delivery history projection; runtime migration 20261012102700520.
 ALTER TABLE managed_realtime_consumer_groups ADD COLUMN history_pruned_events bigint NOT NULL;
 CREATE TABLE managed_realtime_group_delivery_history(id bigint NOT NULL,group_id uuid NOT NULL,sequence bigint NOT NULL,event text NOT NULL,attempt integer NOT NULL,fencing_token bigint,failure_code text NOT NULL,recorded_at timestamptz NOT NULL);
 

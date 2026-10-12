@@ -69,7 +69,7 @@ expose creation fields, claim deadline, group counter and additive bulk outcomes
 
 ## Rollout and verification
 
-Apply migration `20261011080000001_realtime_delivery_deadlines.sql` after prior
+Apply migration `20261012102700501_realtime_delivery_deadlines.sql` after prior
 realtime migrations. Upgrade all server replicas before creating deadline-enabled
 groups, and upgrade workers before relying on cooperative cancellation. Older
 servers do not enforce deadlines. Rollback removes deadlines, invalid flags and

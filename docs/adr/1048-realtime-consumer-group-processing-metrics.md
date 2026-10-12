@@ -45,7 +45,7 @@ the next observation, but reads exclude them and storage remains bounded. No
 background sampler or additional notification is needed. Deleting a group deletes
 its telemetry. Resync retains recent aggregate history with the same group UUID.
 
-Migration 20261011120000001 adds the aggregate table and per-snapshot timing fields.
+Migration 20261012102700512 adds the aggregate table and per-snapshot timing fields.
 Deploy it before the new server binary. Rolling older binaries do not report
 completion metrics, although the update trigger still observes their transitions;
 upgrade all apid replicas for complete coverage. Down discards telemetry and timing

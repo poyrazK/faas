@@ -64,7 +64,7 @@ current live count. The account inspector shows the field/window, duplicate coun
 and remembered IDs. These are separate from filtered_messages and completions.
 No extra worker grant, webhook or raw-ID inspection endpoint is introduced.
 
-New SQL is SQLC-generated. Apply migration 20261011180000001 before the new binary,
+New SQL is SQLC-generated. Apply migration 20261012102700530 before the new binary,
 and roll out all API replicas before creating enabled groups: older binaries ignore
 the policy and can admit duplicates. Node/Python generated SDKs expose the fields.
 Downgrade drops the remembered IDs/policy/counter; advanced cursors cannot restore

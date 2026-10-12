@@ -56,7 +56,7 @@ next_probe_at and occurred_at; no payload, lease/credential token or hash.
 Configuration-induced closure emits `configured`; identical updates do not emit.
 Existing signed dispatcher retries apply; no subscriber backfill.
 
-Migration 20261011140000001 adds bounded policy/state and transition functions.
+Migration 20261012102700517 adds bounded policy/state and transition functions.
 Deploy it before the new binary; upgrade all apid replicas before enabling any
 breaker. Older binaries ignore admission gating and omit completion observation.
 Down drops policy/state but retains queued webhook vocabulary; downgrade binaries

@@ -59,7 +59,7 @@ rate pacing. Other errors retain their existing handling.
 
 New policy/admission queries use generated sqlc methods and a migration-owned
 group table projection. Apply migration
-`20261011090000001_realtime_consumer_group_claim_rates.sql` and upgrade all replicas
+`20261012102700503_realtime_consumer_group_claim_rates.sql` and upgrade all replicas
 before enabling a policy. Older replicas do not enforce it. Upgrade workers before
 expecting automatic pacing; legacy workers may stop on a single-route 429.
 Rollback removes rate enforcement and counters, leaving active leases and settlement

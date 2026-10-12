@@ -2476,7 +2476,7 @@ become checkpoints, preserving cursor continuity; REST history suppresses their
 payload/metadata. TTL does not delete log rows or roll back previously delivered
 state/reducer effects. Normal retention pruning cascades expiration rows.
 
-Roll out migration 20261011220000001 before updated apid/realtimed readers and SDKs,
+Roll out migration 20261012102700541 before updated apid/realtimed readers and SDKs,
 then enable TTL publishers. Mixed old readers or unfiltered clients may fail to
 honor expiry/checkpoints. Legacy fan-out drops expired queued messages; stream
 expiry is checked when selecting output, so already selected/in-flight data is not
@@ -2498,7 +2498,7 @@ Scheduled realtime messages also accept `ttl_seconds` (0–86400, default 0).
 Each recurring occurrence expires relative to actual publication, so delayed
 execution and failed attempts do not consume its lifetime. The TTL is immutable
 for a schedule ID; rescheduling and retrying preserve it. Apply migration
-`20261011230000001_realtime_schedule_message_ttl.sql` after the retained-message
+`20261012102700544_realtime_schedule_message_ttl.sql` after the retained-message
 TTL migration and before deploying updated scheduler workers.
 
 
@@ -2530,7 +2530,7 @@ change policy. Retried idempotency keys must keep the same TTL and preserve the
 original deadline while the existing receipt is retained. Keys may be accepted
 anew after normal receipt expiry. Token revocation does not retract accepted events.
 
-Apply `20261011233000001_realtime_publisher_message_ttl.sql` after the retained
+Apply `20261012102700546_realtime_publisher_message_ttl.sql` after the retained
 expiry migration and before deploying updated apid. Existing credentials remain
 uncapped and existing messages default to no expiry. Checkpoint-capable readers
 and SDKs must precede opt-in TTL publishers. Runtime checks and migration
@@ -2581,7 +2581,7 @@ and suppresses expired payloads. It does not enumerate principal identities.
 Notification fallback TTL (`notification_ttl_seconds`) remains independent:
 inbox delivery TTL does not cancel fallback/push work. Configure both lifetimes
 when both online delivery and fallback alerts must expire. Apply migration
-`20261012000000001_realtime_inbox_message_ttl.sql` before updated apid; upgrade
+`20261012102700548_realtime_inbox_message_ttl.sql` before updated apid; upgrade
 realtime nodes and SDKs before enabling inbox TTL. Schema application and runtime
 validation remain deferred. Removing TTL data can expose old payloads again.
 

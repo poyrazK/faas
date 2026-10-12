@@ -36,7 +36,7 @@ existing handlers may finish. Default single-claim helpers still receive 204.
 
 ## Deployment and validation
 
-Apply `20261011010000001_realtime_consumer_group_pause.sql` after consumer-group
+Apply `20261012102700481_realtime_consumer_group_pause.sql` after consumer-group
 and worker-credential migrations. Expand allowed worker permissions and usage
 vocabulary to eleven operations. Downgrade refuses incompatible credential records
 rather than silently stripping grants or usage history. Go/Node builds and static

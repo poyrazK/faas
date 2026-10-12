@@ -50,7 +50,7 @@ helpers need no new permission or scheduler option.
 
 ## Deployment and validation
 
-Apply `20261011040000001_realtime_consumer_group_ordering.sql` after group/drain
+Apply `20261012102700490_realtime_consumer_group_ordering.sql` after group/drain
 migrations before activation. Downgrade removes ordering guarantees, so stop
 ordered workers before reverting. Go/Node builds and static specification/generated
 Python checks are the validation scope. Runtime, migration and inspector-rendering

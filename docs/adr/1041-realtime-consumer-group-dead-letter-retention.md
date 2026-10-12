@@ -42,7 +42,7 @@ snapshot capacity, does not count as successful completion, and preserves fencin
 
 ## Rollout and verification
 
-Apply migration `20261011060000001_realtime_dead_letter_retention.sql` before
+Apply migration `20261012102700494_realtime_dead_letter_retention.sql` before
 running the new server. Upgrade all replicas before enabling policies. Migration
 rollback removes policy/timestamp/counter state and cannot restore deleted messages;
 queued expiry webhook vocabulary is retained. OpenAPI and generated Node/Python

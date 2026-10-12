@@ -39,7 +39,7 @@ fencing. Completed/in-flight terminal settlement is never followed by release.
 
 ## Rollout and verification
 
-Apply migration 20261011160000001 after delivery-history migration and before the
+Apply migration 20261012102700522 after delivery-history migration and before the
 new binary. Downgrade refuses retained released history or release credential grants/
 last-operation records until those are removed or expired. Previous trigger definitions
 are restored before removing release_count. Existing ready snapshots retain their

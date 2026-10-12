@@ -70,7 +70,7 @@ persisting keys themselves.
 
 ## Rollout and verification
 
-Apply migration 20261011170000001 before the new binary, after cooperative release.
+Apply migration 20261012102700527 before the new binary, after cooperative release.
 Roll out binaries before enabling SDK retries; older binaries do not provide receipt
 protection. Downgrade refuses live receipts until they expire, then drops the table.
 No receipt inspector, extra webhook or permanent receipt archive in this change.

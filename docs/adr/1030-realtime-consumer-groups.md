@@ -74,6 +74,6 @@ guaranteed. Active worker counts reflect distinct names on unexpired leases,
 not connected processes. An assignment cursor is not a completion checkpoint.
 Unassigned lag may include events lost to retention; status explicitly flags gaps.
 
-Apply 20261010160000001_realtime_consumer_groups.sql before deploying this apid
+Apply 20261012102700470_realtime_consumer_groups.sql before deploying this apid
 version. Runtime tests and migration execution remain deferred at the user's
 request; build/static evidence does not validate PostgreSQL races or UI rendering.

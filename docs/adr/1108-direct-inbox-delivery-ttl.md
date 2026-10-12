@@ -47,7 +47,7 @@ enumerated. Existing no-store/referrer protections and HTML escaping apply.
 
 ## Rollout and verification
 
-Apply migration 20261012000000001 before upgraded apid readers/publishers. Upgrade
+Apply migration 20261012102700548 before upgraded apid readers/publishers. Upgrade
 realtime nodes and checkpoint-capable SDKs before opting publishers into TTL.
 Legacy inbox SDKs do not understand inbox_checkpoint. Existing sends remain
 non-expiring by default. Downgrading/removing TTL data can expose old payloads;

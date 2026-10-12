@@ -69,7 +69,7 @@ can report ready=false with a diagnostic while remaining live.
 
 ## Rollout and verification
 
-Apply migration `20261011110000001_realtime_worker_heartbeats.sql`, upgrade all server
+Apply migration `20261012102700509_realtime_worker_heartbeats.sql`, upgrade all server
 replicas, then issue heartbeat grants/enable reporting. The new grant vocabulary is
 also persisted in credential last-operation history; incompatible grants/history
 intentionally block downgrade until addressed explicitly. Rollback otherwise removes

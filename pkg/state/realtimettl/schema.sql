@@ -1,4 +1,4 @@
--- Compile-time projection; runtime ownership: migration 20261011220000001.
+-- Compile-time projection; runtime ownership: migration 20261012102700541.
 CREATE TABLE managed_realtime_message_expirations (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE public.gregale_commit_binding (singleton boolean NOT NULL,source_id
 
 CREATE TABLE managed_realtime_publisher_credentials (id uuid PRIMARY KEY, max_message_ttl_seconds integer NOT NULL);
 
--- Runtime ownership: inbox TTL migration 20261012000000001.
+-- Runtime ownership: inbox TTL migration 20261012102700548.
 CREATE TABLE managed_realtime_inbox_message_expirations (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL,

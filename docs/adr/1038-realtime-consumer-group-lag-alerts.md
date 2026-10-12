@@ -43,7 +43,7 @@ group; generated Node/Python clients expose configuration/status operations.
 
 ## Deployment and validation
 
-Apply `20261011030000001_realtime_consumer_group_lag_alerts.sql` after group/drain
+Apply `20261012102700487_realtime_consumer_group_lag_alerts.sql` after group/drain
 and webhook-outbox migrations before activation. Scan throughput is bounded: busy
 fleets, lock contention and outages can delay evaluation beyond one interval. Go
 and Node builds and static specification/generated Python checks are the validation

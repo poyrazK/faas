@@ -41,7 +41,7 @@ worker is repaired; no automatic replay loop or unauthenticated webhook action.
 
 ## Deployment and validation
 
-Apply migration `20261010190000001_realtime_consumer_group_dead_letter_webhooks.sql`
+Apply migration `20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql`
 after consumer-group and webhook-outbox migrations, before selecting the new
 webhook event. Downgrade removes the trigger but retains vocabulary for queued
 webhook deliveries. Go/Node builds and static specification checks are the

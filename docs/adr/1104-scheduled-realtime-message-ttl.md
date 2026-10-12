@@ -17,7 +17,7 @@ Legacy fan-out carries the committed deadline. Existing expired-message checkpoi
 advance retained WebSocket and SSE cursors; REST history suppresses expired payloads.
 Expiry does not remove history positions or reverse reducer or consumer-group work.
 
-Apply migration 20261011230000001 after the message-expiration migration and before
+Apply migration 20261012102700544 after the message-expiration migration and before
 updated apid workers. Deploy checkpoint-capable clients before opting into TTL.
 Schedule rescheduling, pausing, retrying and group actions preserve the immutable
 TTL. The request, schedule response, OpenAPI and Python/Node models expose it.

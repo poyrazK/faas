@@ -72,7 +72,7 @@ lease/ACK flow and aborts the handler on renewal failure; clients must still use
 idempotent effects and respect cancellation. Generated Node/Python clients expose
 individual operations. Delivery remains at least once.
 
-Apply 20261010170000001_realtime_worker_credentials.sql before deploying the
+Apply 20261012102700473_realtime_worker_credentials.sql before deploying the
 changed group writer: even account-key claims now write credential ownership.
 No memory-store capability is fabricated. Runtime tests, DB concurrency checks,
 migration execution and UI rendering remain deferred at the user's request.

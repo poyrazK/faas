@@ -2732,7 +2732,7 @@ must commit together. See [ADR-1021](../adr/1021-transactional-realtime-publishi
 and [Gregale Commit setup](../gregale-commit.md) for the existing source registration,
 database binding, credentials and network qualification.
 
-1. Apply `20261010080000001_realtime_commit_receipts.sql` on the control plane.
+1. Apply `20261012102700452_realtime_commit_receipts.sql` on the control plane.
 2. Install `pkg/commit/realtime_schema.sql` explicitly in the customer database,
    alongside the existing Commit schema and source binding. Grant the managed
    relay role SELECT, UPDATE and DELETE on `public.gregale_realtime_outbox`; grant
@@ -2773,7 +2773,7 @@ does not provide CDC or exactly-once client processing.
 
 Managed access controls remove the need to enumerate sockets when a user leaves
 a workspace or logs out across devices. The endpoint must use `oidc_jwt`.
-Apply `20261010090000001_realtime_principal_access.sql`, then enable
+Apply `20261012102700456_realtime_principal_access.sql`, then enable
 `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on every realtimed node **before** enabling
 the flag on apid. Each node needs the existing private history/fleet connection,
 including nodes serving live-only OIDC clients. Keep enforcement enabled while
@@ -2955,7 +2955,7 @@ qualification have not been executed for this preview implementation.
 ### Retained channel-event webhooks
 
 Forward retained channel events to existing signed app webhooks. Apply
-`20261010120000001_realtime_channel_webhooks.sql` before upgrading apid or accepting
+`20261012102700459_realtime_channel_webhooks.sql` before upgrading apid or accepting
 these bindings, and run the existing webhook event-outbox relay and dispatcher.
 No customer database installation is required for this platform feature.
 
@@ -3007,7 +3007,7 @@ migration, runtime acceptance and production activation remain unexecuted.
 
 Your backend can authorize a user and issue a short-lived realtime credential
 without configuring an OIDC provider. Apply
-`20261010130000001_realtime_subscription_tickets.sql` and the preceding principal
+`20261012102700462_realtime_subscription_tickets.sql` and the preceding principal
 access migration. Set `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED=1` on apid and all
 realtimed nodes, with resume preview and the private history RPC configured.
 Keep these gates off until operator acceptance. No migrations or activation were
@@ -3163,7 +3163,7 @@ An expired or ahead-of-head cursor displays a resync notice. “Browse from the 
 retained event” is an explicit inspection action, not a client checkpoint reset.
 
 For transactional publishing, apply
-`20261010140000001_realtime_inspector_observations.sql` before running this version
+`20261012102700465_realtime_inspector_observations.sql` before running this version
 of schedd with transactional preview enabled. The relay copies no payloads or
 credentials: only a sample of event IDs, endpoint/channel, attempt count, blocked
 code, creation time and observation time. Up to 32 unpublished rows per source are
@@ -3222,7 +3222,7 @@ Use distinct subscription names for independent devices. Human read progress
 remains separate; there is no exactly-once side-effect guarantee. SSE and
 subscription-ticket connections do not participate in named durable ACKs.
 
-Apply `20261010150000001_realtime_channel_acknowledgements.sql` before deploying the
+Apply `20261012102700468_realtime_channel_acknowledgements.sql` before deploying the
 updated cursor writer. Migration execution and runtime checks are still deferred.
 
 ### Shared backend-worker consumer groups
@@ -3350,7 +3350,7 @@ Shared group completion is separate from per-principal durable ACKs and human re
 receipts; it does not emit `realtime.channel.acknowledged`. This is not an exactly-once
 queue or an indefinite archive for work that was never claimed.
 
-Apply `20261010160000001_realtime_consumer_groups.sql` before deploying this apid
+Apply `20261012102700470_realtime_consumer_groups.sql` before deploying this apid
 version. Runtime concurrency, database migration and UI checks remain deferred.
 
 ### Scoped consumer-group worker credentials
@@ -3469,7 +3469,7 @@ inactive metadata still consumes the cap. Group deletion removes its credentials
 Cleanup does not delete message snapshots or reassign in-flight work. An endpoint
 at the credential cap returns 429 with its limit and observed count.
 
-Apply `20261010170000001_realtime_worker_credentials.sql` before deploying this
+Apply `20261012102700473_realtime_worker_credentials.sql` before deploying this
 apid version, including for existing account-key group claims. Migration execution,
 runtime concurrency/auth tests and UI checks remain deferred.
 
@@ -3506,7 +3506,7 @@ the authorization lock may complete before revocation. Inspector metadata shows
 accepted/replayed counts and latest use. `durable: true, partial: true` means the
 event committed but live fanout was incomplete; subscribers recover from history.
 
-Migration `20261010180000001_realtime_publisher_credentials.sql`, runtime checks
+Migration `20261012102700476_realtime_publisher_credentials.sql`, runtime checks
 and inspector rendering remain pending. See ADR-1032 for the preview bounds.
 
 ## Consumer-group dead-letter webhooks
@@ -3539,7 +3539,7 @@ Node processing helpers accept `failureCode(error, message)`, defaulting to
 callback stops the helper and leaves the claim to expire. Direct SDK settlement
 requests continue to use the existing `failure_code` field.
 
-Migration `20261010190000001_realtime_consumer_group_dead_letter_webhooks.sql`
+Migration `20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql`
 and runtime/UI verification remain pending. See ADR-1033.
 
 ## Batch claims and concurrent workers
@@ -3598,7 +3598,7 @@ paused status and its timestamp. Node helpers keep polling empty paused response
 and automatically resume claiming; the isolated worker client exposes `pause()`
 and `resume()` for credentials granted those operations.
 
-Apply `20261011010000001_realtime_consumer_group_pause.sql` before activating the
+Apply `20261012102700481_realtime_consumer_group_pause.sql` before activating the
 updated server or issuing pause/resume grants. Downgrade is blocked if credential
 records still contain the new grants or last-operation values. Runtime/migration
 and UI checks remain pending. See ADR-1035.
@@ -3630,7 +3630,7 @@ pause/resume. Timeout, cancellation and errors stop waiting without resuming the
 group; inspect status after uncertain outcomes. Generated Python exposes initiation
 and status APIs for custom deployment tooling.
 
-Apply `20261011020000001_realtime_consumer_group_drain.sql` before activation.
+Apply `20261012102700484_realtime_consumer_group_drain.sql` before activation.
 Downgrade blocks incompatible drain credential records and preserves paused state.
 Runtime/migration and inspector checks remain pending. See ADR-1036.
 
@@ -3702,7 +3702,7 @@ Preview evaluation runs every 15 seconds, at most 64 due groups per pass with a
 next-check times. Busy fleets, contention or outages can delay observations. Group
 deletion removes its policy; already queued deliveries follow existing controls.
 
-Apply `20261011030000001_realtime_consumer_group_lag_alerts.sql` before activation.
+Apply `20261012102700487_realtime_consumer_group_lag_alerts.sql` before activation.
 Runtime, migration and UI checks remain pending. See ADR-1038.
 
 ## Per-entity consumer-group ordering
@@ -3737,7 +3737,7 @@ metadata edits can affect its key; afterward edits do not change the snapshot.
 Missing IDs are serialized in the shared bucket, so publish the configured metadata
 consistently. Pause/drain and lag alerts continue to apply to blocked work.
 
-Apply `20261011040000001_realtime_consumer_group_ordering.sql` before activation.
+Apply `20261012102700490_realtime_consumer_group_ordering.sql` before activation.
 Downgrade removes ordering guarantees; stop ordered workers before reverting.
 Runtime, migration and UI checks remain pending. See ADR-1039.
 
@@ -3769,7 +3769,7 @@ concurrent independent entities. Recreating a group changes its UUID and require
 an explicit downstream ownership transition. Fencing does not prove expiry or
 handler termination and cannot fence an external service that ignores the token.
 
-Apply `20261011050000001_realtime_consumer_group_fencing.sql` before activation.
+Apply `20261012102700492_realtime_consumer_group_fencing.sql` before activation.
 Legacy issued leases have no retroactive number. Drain/stop old workers, upgrade
 all API replicas and clients, then use fresh claims with downstream enforcement.
 Downgrade refuses to remove counters from groups that issued tokens; retaining
@@ -3854,7 +3854,7 @@ channel history is excluded. `next_claim_oldest` is an observation, not a reserv
 Account reads require ownership, read scope and MFA. Worker claim permissions
 already cover priority selection; no extra worker grant is required.
 
-Apply migration `20261011130000001` and upgrade all apid replicas before creating
+Apply migration `20261012102700515` and upgrade all apid replicas before creating
 priority groups. Runtime/migration checks remain pending.
 
 ## Batch settlement
@@ -3947,7 +3947,7 @@ They exclude message data and secrets. Policy changes can emit closure with reas
 `configured`. State/outbox commit atomically; queued delivery can lag the latest
 state. Newly enabled webhook recipients do not receive historical transitions.
 
-Apply migration `20261011140000001` before upgrading the server, then upgrade all
+Apply migration `20261012102700517` before upgrading the server, then upgrade all
 apid replicas before enabling policies. Runtime validation and migration application
 are pending; no deployment has been performed.
 
@@ -3985,7 +3985,7 @@ audit or exactly-once proof. Administrative snapshot removal and failed/stale
 settlements do not appear as successful delivery. Scoped workers do not get history
 access or a new permission.
 
-Apply migration `20261011150000001` before the new server and upgrade all apid
+Apply migration `20261012102700520` before the new server and upgrade all apid
 replicas for completion coverage. Runtime tests, UI rendering, migration application
 and deployment remain deferred.
 
@@ -4007,7 +4007,7 @@ shutdown promise; no automatic retry is attempted. Internal failures and known l
 loss keep lease-expiry recovery. Handlers must await all work and stop cooperatively;
 release cannot undo writes or safely recover detached side effects.
 
-Apply migration `20261011160000001_realtime_cooperative_lease_release.sql` before
+Apply migration `20261012102700522_realtime_cooperative_lease_release.sql` before
 rolling out the binary. Migration execution and runtime validation remain deferred.
 
 ### Settlement receipts and safe retries
@@ -4034,7 +4034,7 @@ and HTTP 408/500/502/503/504 using the same contents/key. Auth, validation, conf
 with `releaseOnShutdown: true`, release retries stay within the five-second request
 budget. Handler side effects still require idempotency or atomic fencing.
 
-Apply `20261011170000001_realtime_settlement_receipts.sql` and roll out all API replicas
+Apply `20261012102700527_realtime_settlement_receipts.sql` and roll out all API replicas
 before enabling SDK retries. Downgrade requires live receipts to expire first.
 Runtime tests and migration execution remain deferred.
 
@@ -4065,7 +4065,7 @@ Assignment still scans at most 128 source events per request. A blocked new ID c
 hold later source events. After expiry, another copy can be assigned again; resync
 preserves remembered hashes until expiry. Group deletion clears them.
 
-Apply `20261011180000001_realtime_consumer_group_event_deduplication.sql` and upgrade
+Apply `20261012102700530_realtime_consumer_group_event_deduplication.sql` and upgrade
 all API replicas before creating enabled groups. Downgrade cannot restore skipped
 source events. Runtime tests, inspector rendering and migration execution remain deferred.
 
@@ -4107,7 +4107,7 @@ Use `POST .../groups/{group}/replay-jobs` with `rate` (1–32), optional `failur
 
 Rate is an upper limit per job; multiple jobs have independent limits. Known outcomes include replayed, stale, missing, not_dead, ordering_blocked, invalid_deadline and deadline_expired. Skips require a new recovery job. Safe processing errors and cumulative counts appear in status; database errors retry without advancing progress. Cancellation does not undo completed replay. Inspect recent jobs before retrying an uncertain creation response. Disabled endpoints suspend execution; group claim pause/circuit/rate settings still govern subsequent processing.
 
-Apply migration `20261011190000001_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
+Apply migration `20261012102700533_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
 
 
 ### Replay-job notifications
@@ -4116,7 +4116,7 @@ Create or update an app webhook with event filters `realtime.replay_job.complete
 
 Completion and cancellation notify once per transition. The processing warning notifies once per job when cumulative recorded processing errors first reach three; the job continues retrying. Known skips are not processing errors. No backfill for past transitions or newly added subscribers. Deduplicate the payload's `event_id` across delivery retries and do not assume delivery order.
 
-`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261011200000001_realtime_replay_job_notifications.sql` is required and currently unapplied.
+`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261012102700536_realtime_replay_job_notifications.sql` is required and currently unapplied.
 
 ### Dry-run replay jobs
 
@@ -4124,7 +4124,7 @@ Completion and cancellation notify once per transition. The processing warning n
 
 Inspect `dry_run`, `eligible`, `skipped` and per-item `checked_at`/status. Results reflect individual observation times and can change. `POST .../replay-jobs/{report}/start` creates a real replay from only the report's eligible identities, preserving its rate and rechecking every item before mutation. The source report gains `started_job_id`; the new replay has `reviewed_job_id`. Repeated start returns the same replay while retained; a pruned replay returns 409 and a pruned report 404. It never silently starts a second recovery from one retained report. Create a new dry run to reassess skipped failures.
 
-Apply migration `20261011210000001_realtime_replay_job_dry_runs.sql` and upgrade all API replicas before enabling the feature. It is currently unapplied. Before downgrade cancel active dry runs; terminal dry-run reports are discarded on downgrade. Real replays continue under existing claim pause/circuit/rate controls.
+Apply migration `20261012102700538_realtime_replay_job_dry_runs.sql` and upgrade all API replicas before enabling the feature. It is currently unapplied. Before downgrade cancel active dry runs; terminal dry-run reports are discarded on downgrade. Real replays continue under existing claim pause/circuit/rate controls.
 
 ### Python worker lifecycle
 
