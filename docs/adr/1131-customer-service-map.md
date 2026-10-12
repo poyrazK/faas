@@ -59,9 +59,29 @@ existing Observe command rather than a new noun), the dashboard page, and
 `docs/service-map.md`. The capability stays `internal` behind
 `FAAS_SERVICE_MAP_ENABLED` until it has been exercised on a live fleet.
 
+## Cold calls and the wake-ahead suggestion
+
+The service proxy additionally counts, per trusted caller/target UUID pair,
+the edge calls that found the target parked and were held while it restored:
+`gateway_service_dependency_edge_wakes_total{caller_app,target_app}`. It is a
+new counter rather than a label on `gateway_service_dependency_edge_calls_total`,
+so the existing series, alert rules and dashboards are unchanged. The map reads
+it with a third bounded PromQL query (same closed-set selectors) and reports
+`cold_calls` and `cold_call_pct` per edge; gateways that predate the counter
+simply report zero.
+
+Each node carries the app's ADR-977 opt-in (`wake_ahead_enabled`), and an edge
+gets `suggest_wake_ahead` when its caller has not opted in, at least
+`ServiceWakeAheadMinWakes` (20) calls in the window were cold, and they are at
+least `ServiceWakeAheadMinColdShare` (half) of the edge's calls — ADR-977's own
+evidence bar, so the map never suggests what wake-ahead would not act on. The
+CLI and dashboard turn it into a one-line `gregale wake-ahead <caller> on`
+hint. A failed opt-in lookup leaves that caller unmarked and unsuggested
+rather than failing the map.
+
 ## Follow-ups
 
 1. Promote to `preview` once the map has been checked against live edges.
-2. Per-edge wake counts (and ADR-977 wake-ahead `used`/`unused`) once the
-   service proxy records per-edge whether a call woke a parked target; today
-   those counters carry no app labels.
+2. Per-edge ADR-977 `used`/`unused`: the wake-ahead outcome counter still
+   carries no app labels, so the map cannot yet show whether an opted-in
+   caller's predictions pay off per edge.

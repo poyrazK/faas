@@ -44,16 +44,18 @@ type edgeKey struct {
 type samples struct {
 	calls   map[edgeKey]float64
 	errors  map[edgeKey]float64
+	wakes   map[edgeKey]float64
 	buckets map[edgeKey]map[string]float64
 }
 
-// fetchSamples runs two bounded PromQL queries. Both constrain the caller and
+// fetchSamples runs three bounded PromQL queries. Both constrain the caller and
 // the target to the account's closed app set before Prometheus evaluates
 // them; returned labels are checked against the same set again.
 func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]state.App, window string) (samples, error) {
 	out := samples{
 		calls:   map[edgeKey]float64{},
 		errors:  map[edgeKey]float64{},
+		wakes:   map[edgeKey]float64{},
 		buckets: map[edgeKey]map[string]float64{},
 	}
 	if len(owned) == 0 {
@@ -99,6 +101,20 @@ func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]s
 		}
 		out.buckets[key][row.Labels["le"]] += row.Value
 	}
+
+	// Gateways that predate the wake counter emit no series; the edges then
+	// report zero cold calls rather than failing the map.
+	rows, err = client.QueryVector(ctx, fmt.Sprintf(
+		`sum by (caller_app, target_app)(increase(gateway_service_dependency_edge_wakes_total{%s}[%s]))`,
+		selector, window))
+	if err != nil {
+		return out, err
+	}
+	for _, row := range rows {
+		if key, ok := ownedKey(row.Labels, owned); ok {
+			out.wakes[key] += row.Value
+		}
+	}
 	return out, nil
 }
 
@@ -123,6 +139,10 @@ func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceM
 		}
 		caller, target := owned[key.caller], owned[key.target]
 		buckets := in.buckets[key]
+		cold := int64(appmetrics.SafeRoundNonNeg(in.wakes[key]) + 0.5)
+		if cold > rounded {
+			cold = rounded // the two counters are scraped independently
+		}
 		edges = append(edges, api.ServiceMapEdge{
 			CallerAppID:   caller.ID,
 			CallerAppSlug: caller.Slug,
@@ -133,6 +153,8 @@ func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceM
 			ErrorRatePct:  appmetrics.SafePercent(percentOf(in.errors[key], calls)),
 			LatencyP50MS:  appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.50, buckets) * 1000),
 			LatencyP95MS:  appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.95, buckets) * 1000),
+			ColdCalls:     cold,
+			ColdCallPct:   appmetrics.SafePercent(percentOf(float64(cold), float64(rounded))),
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {
@@ -160,6 +182,14 @@ func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceM
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].AppSlug < nodes[j].AppSlug })
 	return nodes, edges, truncated
+}
+
+// suggestWakeAhead applies the ADR-977 evidence bar to one edge: enough cold
+// calls to have taught wake-ahead the edge, and most of the edge's calls cold.
+func suggestWakeAhead(edge api.ServiceMapEdge, callerOptedIn bool) bool {
+	return !callerOptedIn &&
+		edge.ColdCalls >= api.ServiceWakeAheadMinWakes &&
+		float64(edge.ColdCalls) >= api.ServiceWakeAheadMinColdShare*float64(edge.Calls)
 }
 
 func percentOf(numerator, denominator float64) float64 {

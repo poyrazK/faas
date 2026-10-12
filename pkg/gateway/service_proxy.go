@@ -497,6 +497,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
 	var dependencyHealthCaller ServiceCaller
+	// dependencyWoke records that the call found its target parked and held
+	// while it was restored (ADR-196), for the per-edge wake counter that the
+	// service map's cold-call share reads (ADR-1131).
+	dependencyWoke := false
 	var dependencyHealthTarget ServiceTarget
 	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
@@ -544,6 +548,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					p.now().Sub(dependencyStarted),
 					traceIDFromContext(dependencyCtx),
 				)
+				if dependencyWoke {
+					p.metrics.IncServiceDependencyEdgeWake(dependencyHealthCaller.AppID, dependencyHealthTarget.AppID)
+				}
 				if dependencyHealthCaller.DeploymentID != "" {
 					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
 				}
@@ -870,6 +877,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// unauthorized requests from release health.
 	dependencyCallEligible = true
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
+	dependencyWoke = woken
 	if !served {
 		return
 	}

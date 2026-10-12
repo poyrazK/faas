@@ -239,6 +239,10 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 		_, _ = fmt.Fprintf(w, "%s → %s\n", e.CallerAppSlug, e.TargetAppSlug)
 		_, _ = fmt.Fprintf(w, "  Calls:      %d (errors %d, %.2f%%)\n", e.Calls, e.Errors, e.ErrorRatePct)
 		_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+		_, _ = fmt.Fprintf(w, "  Woke:       %d calls (%.0f%%) found the target parked\n", e.ColdCalls, e.ColdCallPct)
+		if e.SuggestWakeAhead {
+			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
+		}
 	}
 	if m.Truncated {
 		_, _ = fmt.Fprintf(w, "\n(showing the %d busiest edges; quieter edges were omitted)\n", len(m.Edges))

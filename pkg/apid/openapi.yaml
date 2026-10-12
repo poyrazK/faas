@@ -36441,8 +36441,8 @@ paths:
                 as_of: "2026-10-08T13:00:00Z"
                 truncated: false
                 nodes:
-                  - { app_id: "0f8fad5b-d9cb-469f-a165-70867728950e", app_slug: "billing" }
-                  - { app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", app_slug: "public-api" }
+                  - { app_id: "0f8fad5b-d9cb-469f-a165-70867728950e", app_slug: "billing", wake_ahead_enabled: false }
+                  - { app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", app_slug: "public-api", wake_ahead_enabled: false }
                 edges:
                   - caller_app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
                     caller_app_slug: "public-api"
@@ -36453,6 +36453,9 @@ paths:
                     error_rate_pct: 0.4
                     latency_p50_ms: 11.2
                     latency_p95_ms: 38.0
+                    cold_calls: 9030
+                    cold_call_pct: 75.0
+                    suggest_wake_ahead: true
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
@@ -55195,10 +55198,13 @@ components:
     ServiceMapNode:
       description: One app that appears on at least one service map edge.
       type: object
-      required: [app_id, app_slug]
+      required: [app_id, app_slug, wake_ahead_enabled]
       properties:
         app_id: { type: string }
         app_slug: { type: string }
+        wake_ahead_enabled:
+          type: boolean
+          description: "The app's opt-in to restore the services it calls while it wakes (ADR-977)."
 
     ServiceMapEdge:
       description: |
@@ -55207,7 +55213,7 @@ components:
         are excluded. Latency covers successful calls, including routing,
         wake, and forwarding time.
       type: object
-      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms]
+      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms, cold_calls, cold_call_pct, suggest_wake_ahead]
       properties:
         caller_app_id: { type: string }
         caller_app_slug: { type: string }
@@ -55218,6 +55224,19 @@ components:
         error_rate_pct: { type: number }
         latency_p50_ms: { type: number }
         latency_p95_ms: { type: number }
+        cold_calls:
+          type: integer
+          format: int64
+          description: Calls that found the target parked and waited for it to restore (ADR-196).
+        cold_call_pct:
+          type: number
+          description: "`cold_calls` as a percentage of `calls`."
+        suggest_wake_ahead:
+          type: boolean
+          description: |
+            The caller has not opted into wake-ahead (ADR-977) and its calls
+            mostly wake the target: at least 20 cold calls in the window,
+            making up at least half of the edge's calls.
 
     ServiceReliabilityPolicy:
       description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."

@@ -262,6 +262,7 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		Edges: []api.ServiceMapEdge{{
 			CallerAppSlug: "public-api", TargetAppSlug: "billing",
 			Calls: 12040, Errors: 48, ErrorRatePct: 0.4, LatencyP50MS: 11.2, LatencyP95MS: 38,
+			ColdCalls: 9030, ColdCallPct: 75, SuggestWakeAhead: true,
 		}},
 	})
 	stdout := captureMetricsStdout(t)
@@ -278,6 +279,8 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		"public-api → billing",
 		"Calls:      12040 (errors 48, 0.40%)",
 		"p50=11.2ms p95=38.0ms",
+		"Woke:       9030 calls (75%) found the target parked",
+		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
 		"showing the 1 busiest edges",
 	} {
 		if !strings.Contains(out, want) {

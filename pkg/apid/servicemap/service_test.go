@@ -33,9 +33,18 @@ const (
 )
 
 type fakeHost struct {
-	apps    []state.App
-	appsErr error
-	prom    *promql.Client
+	apps      []state.App
+	appsErr   error
+	prom      *promql.Client
+	wakeAhead map[string]bool
+	wakeErr   map[string]bool
+}
+
+func (h *fakeHost) WakeAheadEnabled(_ context.Context, appID string) (bool, error) {
+	if h.wakeErr[appID] {
+		return false, errors.New("store down")
+	}
+	return h.wakeAhead[appID], nil
 }
 
 func (h *fakeHost) Apps(context.Context, string) ([]state.App, error) { return h.apps, h.appsErr }
@@ -193,6 +202,12 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.05"},"value":[1,"96"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"+Inf"},"value":[1,"96"]}]}}`,
 				gw(publicAPIID), gw(paymentsID))
+		case strings.Contains(query, "gateway_service_dependency_edge_wakes_total"):
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"60"]},`+
+				`{"metric":{"caller_app":"%[2]s","target_app":"%[3]s"},"value":[1,"2"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s"},"value":[1,"50"]}]}}`,
+				gw(publicAPIID), gw(paymentsID), gw(ledgerID), gw(foreignID))
 		default:
 			t.Errorf("unexpected query: %s", query)
 			return `{"status":"success","data":{"resultType":"vector","result":[]}}`
@@ -204,8 +219,8 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	if out.Source != appmetrics.SourcePrometheus || out.Range != "1h" || out.Truncated {
 		t.Fatalf("envelope = source %q range %q truncated %v", out.Source, out.Range, out.Truncated)
 	}
-	if got := queries.Load(); got != 2 {
-		t.Fatalf("Prometheus queries = %d, want 2", got)
+	if got := queries.Load(); got != 3 {
+		t.Fatalf("Prometheus queries = %d, want 3", got)
 	}
 	if len(out.Edges) != 2 {
 		t.Fatalf("edges = %+v, want public-api→payments and payments→ledger only", out.Edges)
@@ -222,6 +237,14 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	}
 	if second := out.Edges[1]; second.CallerAppSlug != "payments" || second.TargetAppSlug != "ledger" || second.Calls != 10 {
 		t.Fatalf("second edge = %+v", second)
+	}
+	// 60 of 100 calls woke payments and public-api has not opted in: suggest.
+	if top.ColdCalls != 60 || math.Abs(top.ColdCallPct-60) > 1e-9 || !top.SuggestWakeAhead {
+		t.Fatalf("top edge cold = %d (%v%%) suggest=%v, want 60, 60%%, true", top.ColdCalls, top.ColdCallPct, top.SuggestWakeAhead)
+	}
+	// 2 cold calls are below the evidence bar even at 20%.
+	if second := out.Edges[1]; second.ColdCalls != 2 || second.SuggestWakeAhead {
+		t.Fatalf("second edge cold = %d suggest=%v, want 2 and no suggestion", second.ColdCalls, second.SuggestWakeAhead)
 	}
 	slugs := make([]string, 0, len(out.Nodes))
 	for _, node := range out.Nodes {
@@ -293,6 +316,11 @@ func TestDashboardStates(t *testing.T) {
 func TestDashboardRendersEdgesAndKeepsValidRange(t *testing.T) {
 	var gotRange string
 	prom, _ := promFixture(t, func(query string) string {
+		if strings.Contains(query, "gateway_service_dependency_edge_wakes_total") {
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"60"]}]}}`,
+				CanonicalAppID(publicAPIID), CanonicalAppID(paymentsID))
+		}
 		if !strings.Contains(query, "gateway_service_dependency_edge_calls_total") {
 			return `{"status":"success","data":{"resultType":"vector","result":[]}}`
 		}
@@ -307,7 +335,7 @@ func TestDashboardRendersEdgesAndKeepsValidRange(t *testing.T) {
 	if gotRange != "24h" {
 		t.Fatalf("query range = %q, want 24h", gotRange)
 	}
-	for _, want := range []string{"public-api", "payments", `class="num bad"`, "10.00%"} {
+	for _, want := range []string{"public-api", "payments", `class="num bad"`, "10.00%", "60 (60%)", "<code>gregale wake-ahead public-api on</code>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page missing %q:\n%s", want, body)
 		}

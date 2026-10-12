@@ -26,6 +26,16 @@ func (h serviceMapHost) PromQL() *promql.Client { return h.s.promqlClient }
 
 func (h serviceMapHost) Logger() *slog.Logger { return h.s.log }
 
+// WakeAheadEnabled reads the ADR-977 opt-in; a store without wake-ahead
+// support reports every app as not opted in.
+func (h serviceMapHost) WakeAheadEnabled(ctx context.Context, appID string) (bool, error) {
+	store, ok := h.s.store.(state.ServiceWakeAheadStore)
+	if !ok {
+		return false, nil
+	}
+	return store.ServiceWakeAheadEnabled(ctx, appID)
+}
+
 // renderServiceMapDashboard serves GET /dashboard/service-map.
 func (s *server) renderServiceMapDashboard(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())

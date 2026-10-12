@@ -27,6 +27,15 @@ class ServiceMapEdge:
     error_rate_pct: float
     latency_p50_ms: float
     latency_p95_ms: float
+    cold_calls: int
+    """Calls that found the target parked and waited for it to restore (ADR-196)."""
+    cold_call_pct: float
+    """`cold_calls` as a percentage of `calls`."""
+    suggest_wake_ahead: bool
+    """The caller has not opted into wake-ahead (ADR-977) and its calls
+    mostly wake the target: at least 20 cold calls in the window,
+    making up at least half of the edge's calls.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +57,12 @@ class ServiceMapEdge:
 
         latency_p95_ms = self.latency_p95_ms
 
+        cold_calls = self.cold_calls
+
+        cold_call_pct = self.cold_call_pct
+
+        suggest_wake_ahead = self.suggest_wake_ahead
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,6 +76,9 @@ class ServiceMapEdge:
                 "error_rate_pct": error_rate_pct,
                 "latency_p50_ms": latency_p50_ms,
                 "latency_p95_ms": latency_p95_ms,
+                "cold_calls": cold_calls,
+                "cold_call_pct": cold_call_pct,
+                "suggest_wake_ahead": suggest_wake_ahead,
             }
         )
 
@@ -87,6 +105,12 @@ class ServiceMapEdge:
 
         latency_p95_ms = d.pop("latency_p95_ms")
 
+        cold_calls = d.pop("cold_calls")
+
+        cold_call_pct = d.pop("cold_call_pct")
+
+        suggest_wake_ahead = d.pop("suggest_wake_ahead")
+
         service_map_edge = cls(
             caller_app_id=caller_app_id,
             caller_app_slug=caller_app_slug,
@@ -97,6 +121,9 @@ class ServiceMapEdge:
             error_rate_pct=error_rate_pct,
             latency_p50_ms=latency_p50_ms,
             latency_p95_ms=latency_p95_ms,
+            cold_calls=cold_calls,
+            cold_call_pct=cold_call_pct,
+            suggest_wake_ahead=suggest_wake_ahead,
         )
 
         service_map_edge.additional_properties = d

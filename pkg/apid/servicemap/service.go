@@ -29,6 +29,8 @@ type Host interface {
 	// PromQL is nil when apid runs without a Prometheus URL.
 	PromQL() *promql.Client
 	Logger() *slog.Logger
+	// WakeAheadEnabled reports an app's ADR-977 opt-in.
+	WakeAheadEnabled(ctx context.Context, appID string) (bool, error)
 }
 
 // Service serves the map. Enabled is the FAAS_SERVICE_MAP_ENABLED operator
@@ -88,8 +90,35 @@ func (s *Service) For(ctx context.Context, acct state.Account, rng string) (api.
 		return resp, nil
 	}
 	resp.Nodes, resp.Edges, resp.Truncated = build(samples, owned, api.ServiceMapMaxEdges)
+	s.markWakeAhead(ctx, resp.Nodes, resp.Edges)
 	resp.Source = appmetrics.SourcePrometheus
 	return resp, nil
+}
+
+// markWakeAhead fills each node's opt-in and each edge's suggestion. A failed
+// lookup leaves that app unmarked and unsuggested rather than failing the map.
+func (s *Service) markWakeAhead(ctx context.Context, nodes []api.ServiceMapNode, edges []api.ServiceMapEdge) {
+	known := make(map[string]bool, len(nodes))
+	for i := range nodes {
+		enabled, err := s.Host.WakeAheadEnabled(ctx, nodes[i].AppID)
+		if err != nil {
+			if log := s.Host.Logger(); log != nil {
+				log.Warn("apid: service-map wake-ahead lookup failed", "app_id", nodes[i].AppID, "err", err)
+			}
+			continue
+		}
+		nodes[i].WakeAheadEnabled = enabled
+		known[nodes[i].AppID] = true
+	}
+	optedIn := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		optedIn[node.AppID] = node.WakeAheadEnabled
+	}
+	for i := range edges {
+		if known[edges[i].CallerAppID] {
+			edges[i].SuggestWakeAhead = suggestWakeAhead(edges[i], optedIn[edges[i].CallerAppID])
+		}
+	}
 }
 
 // DashboardData is the /dashboard/service-map view model. An invalid ?range=

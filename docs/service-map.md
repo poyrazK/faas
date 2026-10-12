@@ -23,6 +23,8 @@ Source:     prometheus
 public-api → payments
   Calls:      12040 (errors 48, 0.40%)
   Latency:    p50=11.2ms p95=38.0ms
+  Woke:       9030 calls (75%) found the target parked
+  Tip:        run `gregale wake-ahead public-api on` to restore payments while public-api wakes
 ```
 
 The same map is on the dashboard at **Service map** (`/dashboard/service-map`)
@@ -43,6 +45,21 @@ curl -H "Authorization: Bearer $GREGALE_TOKEN" \
 | Errors | Calls that ended in a 5xx after Gregale's retries. Calls refused because the caller was not allowed to reach the target are not counted. |
 | Error rate | Errors divided by calls. The dashboard highlights edges at 5% or more. |
 | p50 / p95 | Latency of successful calls, measured by Gregale from the caller's request to the target's response. It includes routing and, when the target was parked, the time to wake it. |
+| Woke target | Calls that found the target parked (scaled to zero) and waited for it to restore, and their share of all calls on the edge. |
+
+## Cold calls and wake-ahead
+
+A call to a parked service waits while Gregale restores it. When most calls on
+an edge do, the caller pays that restore again and again. Wake-ahead
+(`gregale wake-ahead <app> on`) lets Gregale start restoring the services an
+app calls while the app itself wakes, along the edges it has measured.
+
+The map marks an edge with a wake-ahead tip when the caller has not turned
+wake-ahead on yet, at least 20 calls in the window woke the target, and those
+calls are at least half of the edge's traffic — the same evidence wake-ahead
+itself needs before it acts. The API sets `suggest_wake_ahead: true` on such
+edges and `wake_ahead_enabled` on each app. Wake-ahead restores bill like any
+wake (plan RAM per running second until the idle timeout parks the service).
 
 Only calls between apps in your account appear. Traffic from the internet and
 calls your app makes to outside services are not edges on the map; use

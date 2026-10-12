@@ -39,6 +39,9 @@ type ServiceMapResponse struct {
 type ServiceMapNode struct {
 	AppID   string `json:"app_id"`
 	AppSlug string `json:"app_slug"`
+	// WakeAheadEnabled is the app's ADR-977 opt-in to restore the services it
+	// calls while it wakes.
+	WakeAheadEnabled bool `json:"wake_ahead_enabled"`
 }
 
 // ServiceMapEdge is the unsampled call record for one caller → target pair.
@@ -55,4 +58,13 @@ type ServiceMapEdge struct {
 	ErrorRatePct  float64 `json:"error_rate_pct"`
 	LatencyP50MS  float64 `json:"latency_p50_ms"`
 	LatencyP95MS  float64 `json:"latency_p95_ms"`
+	// ColdCalls are the calls that found the target parked and waited for it
+	// to restore (ADR-196); ColdCallPct is their share of Calls.
+	ColdCalls   int64   `json:"cold_calls"`
+	ColdCallPct float64 `json:"cold_call_pct"`
+	// SuggestWakeAhead marks an edge where the caller has not opted into
+	// wake-ahead (ADR-977) and its calls mostly wake the target: at least
+	// ServiceWakeAheadMinWakes cold calls in the window, making up at least
+	// ServiceWakeAheadMinColdShare of the edge's calls.
+	SuggestWakeAhead bool `json:"suggest_wake_ahead"`
 }

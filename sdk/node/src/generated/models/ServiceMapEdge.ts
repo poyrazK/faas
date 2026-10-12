@@ -19,5 +19,20 @@ export type ServiceMapEdge = {
   error_rate_pct: number;
   latency_p50_ms: number;
   latency_p95_ms: number;
+  /**
+   * Calls that found the target parked and waited for it to restore (ADR-196).
+   */
+  cold_calls: number;
+  /**
+   * `cold_calls` as a percentage of `calls`.
+   */
+  cold_call_pct: number;
+  /**
+   * The caller has not opted into wake-ahead (ADR-977) and its calls
+   * mostly wake the target: at least 20 cold calls in the window,
+   * making up at least half of the edge's calls.
+   *
+   */
+  suggest_wake_ahead: boolean;
 };
 
