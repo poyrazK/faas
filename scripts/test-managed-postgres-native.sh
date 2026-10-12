@@ -43,6 +43,17 @@ for probe_service in faas-vmmd faas-builderd faas-imaged faas-gatewayd-internal;
 done
 probe_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$probe_root"
+probe_revision=$(git rev-parse HEAD)
+if [ -n "$(git status --porcelain)" ]; then
+  echo 'Guest qualification requires a clean source checkout.' >&2
+  exit 1
+fi
+for probe_output in "${GREGALE_POSTGRES_NATIVE_REPORT_PATH:-}" "${GREGALE_POSTGRES_NATIVE_RESULTS_PATH:-}"; do
+  if [ -n "$probe_output" ] && { [ -e "$probe_output" ] || [ -L "$probe_output" ]; }; then
+    echo 'Refusing to replace existing guest qualification evidence.' >&2
+    exit 1
+  fi
+done
 make leakcheck
 # RFC 2544 address, owned only during this isolated test. Guest egress policy
 # uses the ordinary Pro app port declaration. No host denylist is relaxed.
@@ -53,17 +64,25 @@ if [ -n "$(ip -4 address show to "$probe_ip/32")" ]; then
   exit 1
 fi
 probe_results=$(mktemp "${TMPDIR:-/tmp}/gregale-postgres-native.XXXXXX")
+probe_report=${GREGALE_POSTGRES_NATIVE_REPORT_PATH:-$probe_results.report.json}
+probe_input=${GREGALE_POSTGRES_NATIVE_RESULTS_PATH:-$probe_results}
+probe_log_saved=0
 probe_address_owned=0
 probe_cleanup() {
   if [ "$probe_address_owned" = 1 ]; then
     ip address del "$probe_ip/32" dev lo || return 1
     probe_address_owned=0
   fi
-  if [ -n "${GREGALE_POSTGRES_NATIVE_RESULTS_PATH:-}" ]; then
-    cp "$probe_results" "$GREGALE_POSTGRES_NATIVE_RESULTS_PATH" || return 1
-    rm -f "$probe_results"
-  else
-    echo "Private guest test log: $probe_results"
+  if [ "$probe_log_saved" = 0 ]; then
+    if [ -n "${GREGALE_POSTGRES_NATIVE_RESULTS_PATH:-}" ]; then
+      # A newly created private file, never an existing file/symlink whose
+      # permissions or content belong to an earlier run.
+      (set -C; cat "$probe_results" > "$GREGALE_POSTGRES_NATIVE_RESULTS_PATH") || return 1
+      rm -f "$probe_results"
+    else
+      echo "Private guest test log: $probe_results"
+    fi
+    probe_log_saved=1
   fi
 }
 probe_on_exit() {
@@ -83,10 +102,20 @@ probe_status=0
   -run '^TestManagedPostgresNativeMetal$' > "$probe_results" || probe_status=$?
 # Check leak cleanup on failure too. Preserve failure even when the verdict or
 # teardown also fails; successful teardown never turns a failed phase green.
+probe_cleanup || probe_status=1
 make leakcheck || probe_status=1
-python3 scripts/ci/managed-postgres-native-verdict.py "$probe_results" || probe_status=1
+if [ "$(git rev-parse HEAD)" != "$probe_revision" ] || [ -n "$(git status --porcelain)" ]; then
+  echo 'Source checkout changed during guest acceptance.' >&2
+  probe_status=1
+fi
+if [ "$probe_status" = 0 ]; then
+  python3 scripts/ci/managed-postgres-native-verdict.py "$probe_input" \
+    --report "$probe_report" --host-class "$GREGALE_POSTGRES_NATIVE_HOST_CLASS" \
+    --source-clean --leakcheck-before --leakcheck-after || probe_status=1
+fi
 if [ "$probe_status" != 0 ]; then
   echo 'PostgreSQL guest acceptance failed; retain the private JSON log for diagnosis.' >&2
   exit "$probe_status"
 fi
 echo "PostgreSQL guest acceptance passed ($GREGALE_POSTGRES_NATIVE_HOST_CLASS)."
+echo "Non-secret guest qualification report: $probe_report"

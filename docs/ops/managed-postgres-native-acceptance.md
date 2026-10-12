@@ -114,6 +114,7 @@ export FAAS_GUEST_INIT='<static Linux amd64 guest/init binary built from this ch
 export FAAS_PUBLIC_IFACE='<host outward interface>'
 export GREGALE_POSTGRES_NATIVE_HOST_CLASS=native
 export GREGALE_POSTGRES_NATIVE_RESULTS_PATH=/private-test-directory/results.jsonl
+export GREGALE_POSTGRES_NATIVE_REPORT_PATH=/private-test-directory/guest-report.json
 make test-managed-postgres-native
 ```
 
@@ -135,3 +136,53 @@ resolver receipt is fabricated and the host and guest IP denylists are unchanged
 It refuses an existing address, removes its own address on
 exit, and checks guest resource leaks before and after the test. It never modifies
 the production PostgreSQL server's configuration or billing plan.
+
+## Combined rollout verification
+
+The runner requires a clean checkout and matching clean Linux amd64 VCS metadata
+on its Go daemons and guest init. Reused harness binaries from another revision
+are rejected. It fingerprints the actual execution bundle and the two published
+runtime bases, verifies unchanged artifacts after workload shutdown, and emits
+a version-1 guest report only after all test, SQL and host cleanup succeeds.
+The report expires after 24 hours. Its default path is alongside the private
+JSON log; explicit result/report paths must not already exist.
+
+Approve the expected qualification-bundle manifest independently. Its format is
+`version: 1`, `source_revision: <40 lowercase hex characters>` and `artifacts`,
+a map of named SHA-256 values. The complete key list lives in
+`pkg/managedpostgres/guestqualification/contract.json`. It includes test-tagged
+daemons, guest init, kernel, builder base, host executables, the test executable,
+`probe_base` and `node22_base`. The base hashes must describe the actual
+published runtime releases, not unbound compatibility paths. These test binary
+hashes are not production daemon hashes; approve their source revision and
+qualification build together with the intended release.
+
+Use the existing verifier without any provider/SQL/VM calls:
+
+```sh
+FAAS_ENVIRONMENT=staging \
+FAAS_MANAGED_POSTGRES_CONFIG=/private-test-directory/provider-config.json \
+managed-postgres-qualify --verify --rollout \
+  --approval /private-test-directory/provider-v8.json \
+  --guest-report /private-test-directory/guest-report.json \
+  --runtime-manifest /private-test-directory/approved-bundle.json
+```
+
+The combined result separates `provider_lifecycle` and `guest` readiness. Both
+must pass, including the same PostgreSQL major, runtime identity and unexpired
+evidence. Fresh provider v8 output must contain clean executable-source
+provenance matching the bundle revision; older unstamped provider reports stay
+diagnostic even when their configuration fingerprint matches. Build the
+qualifier and native bundle from the same clean checkout with Go VCS stamping
+enabled. A nested diagnostic report never supplies native readiness. Digests
+detect inconsistent evidence; operator custody and a trusted test host remain
+necessary because these documents are not signed remote attestation.
+
+Before a staging canary, configure the provider approval plus
+`FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`,
+`FAAS_MANAGED_POSTGRES_GUEST_QUALIFICATION_PATH` and
+`FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` on apid. Providing either guest
+path opts in even with a false boolean. Missing/malformed inputs, wrong bundles
+and expired reports keep the staging gate closed; legacy environment approval
+cannot bypass it. Restart after replacing files. This policy does not open
+production admission. See [ADR-992](../adr/992-managed-postgres-combined-rollout-readiness.md).
