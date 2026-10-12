@@ -33,7 +33,7 @@ NODES = {
     'GCP n2-standard-4 (~€130/mo, 8.6 GB, 32 vCPU slots)': dict(cost=130.0, ceiling=8593, vcpu=32, vms=10000),
 }
 # Measured wake latency to first byte by the tier the request found.
-LAT = {'warm': 0.0, 'frozen': 8.0, 'parked': 340.0, 'cold': 3000.0}
+LAT = {'warm': 0.0, 'paused': 2.0, 'frozen': 8.0, 'parked': 340.0, 'cold': 3000.0}
 FROZEN_OWN_FRAC = float(os.environ.get('FROZEN_OWN_FRAC', '0.15'))  # frozen VM's own RAM vs running (measured ~5% for restored VMs)
 MEASURED_FLOOR, HEADROOM = 64, 1.25
 
@@ -46,6 +46,11 @@ POLICIES = {
     'freeze 2 s -> frozen 10 min, unbilled': dict(kind='freeze', thr=2, ttl=600, billed=False),
     'freeze 10 s -> frozen 1 h, unbilled': dict(kind='freeze', thr=10, ttl=3600, billed=False),
     'freeze 0.5 s -> frozen 1 h, unbilled': dict(kind='freeze', thr=0.5, ttl=3600, billed=False),
+    # ADR-957: a quiet pause stays RUNNING (billed, RAM held) but books no
+    # vCPU; qp=0 models dropping idle VMs' vCPU bookings without pausing.
+    'idle running VMs hold no vCPU, no pause, park at idle timeout': dict(kind='quiet', qp=0, freeze=False, ttl=0),
+    'quiet pause 2 s (billed), park at idle timeout': dict(kind='quiet', qp=2, freeze=False, ttl=0),
+    'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-957)': dict(kind='quiet', qp=2, freeze=True, ttl=3600),
 }
 COLD_AFTER = 7 * 86400
 
@@ -94,16 +99,38 @@ def run_policy(pol, starts, ends, nreq, plan):
     n = len(starts)
     run_flags = np.zeros(NB, dtype=bool)
     frozen_flags = np.zeros(NB, dtype=bool)
-    out = {'wakes': {'warm': 0, 'frozen': 0, 'parked': 0, 'cold': 0}, 'billed_s': 0.0, 'frozen_s': 0.0, 'requests': nreq}
+    paused_flags = np.zeros(NB, dtype=bool)
+    out = {'wakes': {'warm': 0, 'paused': 0, 'frozen': 0, 'parked': 0, 'cold': 0}, 'billed_s': 0.0, 'frozen_s': 0.0, 'requests': nreq}
     if n == 0:
-        return out, run_flags, frozen_flags
+        return out, run_flags, frozen_flags, paused_flags
     busy = float((ends - starts).sum())
     # gap after each busy interval (last one runs to the end of the window)
     gaps = np.empty(n)
     gaps[:-1] = starts[1:] - ends[:-1]
     gaps[-1] = SEC - ends[-1]
     lead = starts[0]  # the first request's wake comes from an unknown past: count it as parked
-    if pol['kind'] == 'today':
+    if pol['kind'] == 'quiet':
+        # Billed and RAM-resident through the idle timeout as today; vCPU
+        # only for the first qp seconds; then frozen (unbilled) or parked.
+        idle = PLANS[plan]['idle']
+        qp = pol['qp']
+        active_tail = np.minimum(gaps, qp)
+        idle_tail = np.minimum(gaps, idle)
+        frz = np.clip(gaps - idle, 0, pol['ttl']) if pol['freeze'] else np.zeros(n)
+        out['frozen_s'] = float(frz.sum())
+        out['billed_s'] = busy + float(idle_tail.sum())
+        mark(run_flags, starts, ends + active_tail)
+        mark(paused_flags, ends + active_tail, ends + idle_tail)
+        mark(frozen_flags, ends + idle_tail, ends + idle_tail + frz)
+        wg = gaps[:-1]
+        ttl = pol['ttl'] if pol['freeze'] else 0
+        if qp > 0:  # with qp=0 nothing is paused: those requests find a running VM
+            out['wakes']['paused'] = int(((wg > qp) & (wg <= idle)).sum())
+        out['wakes']['frozen'] = int(((wg > idle) & (wg <= idle + ttl)).sum())
+        out['wakes']['parked'] = int(((wg > idle + ttl) & (wg <= COLD_AFTER)).sum()) + (1 if lead < COLD_AFTER else 0)
+        out['wakes']['cold'] = int((wg > COLD_AFTER).sum()) + (0 if lead < COLD_AFTER else 1)
+        out['wakes']['warm'] = nreq - sum(v for k, v in out['wakes'].items() if k != 'warm')
+    elif pol['kind'] == 'today':
         idle = PLANS[plan]['idle']
         tail = np.minimum(gaps, idle)
         out['billed_s'] = busy + float(tail.sum())
@@ -129,7 +156,8 @@ def run_policy(pol, starts, ends, nreq, plan):
         out['wakes']['cold'] = int(cold_hit.sum()) + (0 if lead < COLD_AFTER else 1)
         out['wakes']['warm'] = nreq - out['wakes']['frozen'] - out['wakes']['parked'] - out['wakes']['cold']
     frozen_flags &= ~run_flags
-    return out, run_flags, frozen_flags
+    paused_flags &= ~run_flags
+    return out, run_flags, frozen_flags, paused_flags
 
 
 def charges(pol, plan, real_mb):
@@ -142,28 +170,31 @@ def charges(pol, plan, real_mb):
     return run, frozen, res
 
 
-def capacity(run_f, frz_f, charge_run, charge_frz, res, vcpu, node, rnd, admission):
+def capacity(run_f, frz_f, pz_f, charge_run, charge_frz, res, vcpu, node, rnd, admission):
     """Apps per node: largest N whose random draws fit the node at every
     bucket after warm-up (RAM ceiling, 2x reservation cap under measured
-    admission, vCPU slots, resident VM slots). Median of 5 draws."""
+    admission, vCPU slots, resident VM slots). Quiet-paused instances (pz_f)
+    hold RAM and reservations like running ones but no vCPU. Median of 5
+    draws."""
     napps = run_f.shape[0]
     runf = run_f.astype(np.float32)
     frzf = frz_f.astype(np.float32)
+    pzf = pz_f.astype(np.float32)
 
     def why(idx):
         """None when idx fits the node, else the first limit it breaks."""
-        r, f = runf[idx], frzf[idx]
+        r, f, z = runf[idx], frzf[idx], pzf[idx]
         q = 99.9
-        ram = charge_run[idx] @ r + charge_frz[idx] @ f
+        ram = charge_run[idx] @ (r + z) + charge_frz[idx] @ f
         if np.percentile(ram, q) > node['ceiling']:
             return 'ram'
-        resv = res[idx] @ r
+        resv = res[idx] @ (r + z)
         cap = node['ceiling'] * (2 if admission == 'measured' else 1)
         if np.percentile(resv, q) > cap:
             return 'reservations'
         if np.percentile(vcpu[idx] @ r, q) > node['vcpu']:
             return 'vcpu_slots'
-        if np.percentile(r.sum(0) + f.sum(0), q) > node['vms']:
+        if np.percentile(r.sum(0) + f.sum(0) + z.sum(0), q) > node['vms']:
             return 'vm_slots'
         return None
 
@@ -195,19 +226,20 @@ def main():
     for name, pol in POLICIES.items():
         run_f = np.zeros((napps, NB), dtype=bool)
         frz_f = np.zeros((napps, NB), dtype=bool)
+        pz_f = np.zeros((napps, NB), dtype=bool)
         cr = np.zeros(napps, dtype=np.float32)
         cf = np.zeros(napps, dtype=np.float32)
         res = np.zeros(napps, dtype=np.float32)
         vcpu = np.zeros(napps, dtype=np.float32)
-        wakes = {'warm': 0, 'frozen': 0, 'parked': 0, 'cold': 0}
+        wakes = {'warm': 0, 'paused': 0, 'frozen': 0, 'parked': 0, 'cold': 0}
         billed_gbh = np.zeros(napps)
         frozen_s = 0.0
         for i in range(napps):
             starts, ends, nreq = intervals[i]
             plan = plans[i]
             real = min(PLANS[plan]['ram'], max(32.0, mem[i]))
-            o, rf, ff = run_policy(pol, starts, ends, nreq, plan)
-            run_f[i], frz_f[i] = rf, ff
+            o, rf, ff, zf = run_policy(pol, starts, ends, nreq, plan)
+            run_f[i], frz_f[i], pz_f[i] = rf, ff, zf
             cr[i], cf[i], res[i] = charges(pol, plan, real)
             vcpu[i] = PLANS[plan]['vcpu']
             for k in wakes:
@@ -225,7 +257,7 @@ def main():
         mean_wake_lat = sum(LAT[k] * v for k, v in wakes.items() if k != 'warm') / max(wake_events, 1)
         nodes = {}
         for nname, node in NODES.items():
-            apps_per_node, bound = capacity(run_f, frz_f, cr, cf, res, vcpu, node, np.random.default_rng(5),
+            apps_per_node, bound = capacity(run_f, frz_f, pz_f, cr, cf, res, vcpu, node, np.random.default_rng(5),
                                             pol.get('admission', 'measured'))
             nodes[nname] = {'apps_per_node': apps_per_node, 'binding': bound,
                             'infra_eur_per_app_month': round(node['cost'] / max(apps_per_node, 1), 3)}

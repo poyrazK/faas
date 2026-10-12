@@ -42,7 +42,7 @@ today's billing (§4.7 untouched, no revenue change), fits 2.85× the apps,
 and turns almost every wake into a resume or a thaw. At 716 apps per EX44,
 E's p99.9 instant has 166 active vCPU (budget 160), 424 booked vCPU for
 running and quiet-paused VMs (2.65× the budget), 210 resident VMs and about
-305 frozen ones.
+305 frozen ones (`occupancy.py` in the same directory).
 
 ## Decision (proposed)
 
