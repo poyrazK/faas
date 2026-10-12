@@ -4437,6 +4437,10 @@ const (
 	// measurement may be before admission falls back to reservations.
 	MeasuredAdmissionMaxOvercommitPercent = 200
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
+	// MeasuredEvictionTargetPercent: under measured admission, when a node's
+	// measured memory exceeds its admission ceiling, schedd evicts until it
+	// is back under this share of the ceiling (ADR-909 proposal 3).
+	MeasuredEvictionTargetPercent = 90
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
