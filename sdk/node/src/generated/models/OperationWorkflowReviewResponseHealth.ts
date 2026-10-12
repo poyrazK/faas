@@ -8,6 +8,10 @@ import type { OperationWorkflowReviewResponseSourceHealth } from './OperationWor
  */
 export type OperationWorkflowReviewResponseHealth = {
   /**
+   * OperationWorkflowReviewResponseHealth.fingerprint. Stable digest of source revisions and current observed condition; polling timestamps and recovery history are excluded.
+   */
+  fingerprint?: string;
+  /**
    * OperationWorkflowReviewResponseHealth.status. Unavailable takes precedence over blocked, pending review and clear.
    */
   status: 'clear' | 'blocked' | 'review_required' | 'unavailable';

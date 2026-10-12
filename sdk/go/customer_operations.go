@@ -388,3 +388,6 @@ type OperationWorkflowReviewResponseBlockageEvent = api.OperationWorkflowReviewR
 
 type OperationWorkflowReviewResponseHealth = api.OperationWorkflowReviewResponseHealth
 type OperationWorkflowReviewResponseSourceHealth = api.OperationWorkflowReviewResponseSourceHealth
+
+type OperationWorkflowReviewResponseDecisionRequest = api.OperationWorkflowReviewResponseDecisionRequest
+type OperationWorkflowReviewResponseDecision = api.OperationWorkflowReviewResponseDecision

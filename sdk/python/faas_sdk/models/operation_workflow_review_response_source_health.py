@@ -36,6 +36,12 @@ class OperationWorkflowReviewResponseSourceHealth:
     explanation: str
     """OperationWorkflowReviewResponseSourceHealth.explanation. Availability explanation without backend error
     details."""
+    progress_revision: int | Unset = UNSET
+    """OperationWorkflowReviewResponseSourceHealth.progress_revision. Retained linked progress revision; absent if
+    progress could not be read."""
+    state_revision: int | Unset = UNSET
+    """OperationWorkflowReviewResponseSourceHealth.state_revision. Retained application state revision sampled with
+    this case; absent if unavailable."""
     last_successful_check_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseSourceHealth.last_successful_check_at. Most recent available source
     observation, retained through later read failures."""
@@ -53,6 +59,10 @@ class OperationWorkflowReviewResponseSourceHealth:
 
         explanation = self.explanation
 
+        progress_revision = self.progress_revision
+
+        state_revision = self.state_revision
+
         last_successful_check_at: str | Unset = UNSET
         if not isinstance(self.last_successful_check_at, Unset):
             last_successful_check_at = self.last_successful_check_at.isoformat()
@@ -69,6 +79,10 @@ class OperationWorkflowReviewResponseSourceHealth:
                 "explanation": explanation,
             }
         )
+        if progress_revision is not UNSET:
+            field_dict["progress_revision"] = progress_revision
+        if state_revision is not UNSET:
+            field_dict["state_revision"] = state_revision
         if last_successful_check_at is not UNSET:
             field_dict["last_successful_check_at"] = last_successful_check_at
 
@@ -89,6 +103,10 @@ class OperationWorkflowReviewResponseSourceHealth:
 
         explanation = d.pop("explanation")
 
+        progress_revision = d.pop("progress_revision", UNSET)
+
+        state_revision = d.pop("state_revision", UNSET)
+
         _last_successful_check_at = d.pop("last_successful_check_at", UNSET)
         last_successful_check_at: datetime.datetime | Unset
         if isinstance(_last_successful_check_at, Unset):
@@ -103,6 +121,8 @@ class OperationWorkflowReviewResponseSourceHealth:
             review_required=review_required,
             blockers=blockers,
             explanation=explanation,
+            progress_revision=progress_revision,
+            state_revision=state_revision,
             last_successful_check_at=last_successful_check_at,
         )
 

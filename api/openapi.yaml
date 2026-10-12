@@ -80630,12 +80630,60 @@ components:
         response:
           $ref: '#/components/schemas/OperationWorkflowReviewResponse'
           description: OperationWorkflowReviewResponseCheckInEvent.response. Immutable response snapshot with its plan, links and bounded change history. This is informational context, not a new editable response.
+    OperationWorkflowReviewResponseDecisionRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit advisory continue, revise or pause decision on an existing active response. Saving re-observes scoped sources and checks the reviewed health digest again under the notification lock.
+      properties:
+        kind:
+          type: string
+          enum: [continue, revise, pause]
+          description: OperationWorkflowReviewResponseDecisionRequest.kind. Human intent; pause keeps check-ins active and does not stop application execution.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseDecisionRequest.reason. Nonblank UTF-8 explanation up to 1024 bytes; line breaks and tabs allowed.
+        health_fingerprint:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: OperationWorkflowReviewResponseDecisionRequest.health_fingerprint. Digest from the sampled health the operator reviewed; absent, legacy or changed observations conflict.
+      required: [kind, reason, health_fingerprint]
+    OperationWorkflowReviewResponseDecision:
+      type: object
+      additionalProperties: false
+      description: Immutable human decision with accountable actor and the reviewed health snapshot. Application execution remains application-owned.
+      properties:
+        kind:
+          type: string
+          enum: [continue, revise, pause]
+          description: OperationWorkflowReviewResponseDecision.kind. Recorded human intent.
+        reason:
+          type: string
+          description: OperationWorkflowReviewResponseDecision.reason. Operator explanation.
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseDecision.owner. Responsible team at decision time.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecision.at. Server decision time.
+        actor:
+          type: string
+          description: OperationWorkflowReviewResponseDecision.actor. Authenticated operator who saved the decision.
+        health:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
+          description: OperationWorkflowReviewResponseDecision.health. Immutable reviewed snapshot including original freshness timestamps.
+      required: [kind, reason, owner, at, actor, health]
     OperationWorkflowReviewResponseRequest:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        decision:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionRequest'
+          description: OperationWorkflowReviewResponseRequest.decision. Explicit human decision with reviewed condition and accountable reason.
         fallback_owner:
           type: string
           maxLength: 256
@@ -80734,6 +80782,10 @@ components:
       additionalProperties: false
       description: Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not business completion. Sampling stops on response resolution.
       properties:
+        fingerprint:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: OperationWorkflowReviewResponseHealth.fingerprint. Stable digest of source revisions and current observed condition; polling timestamps and recovery history are excluded.
         status:
           type: string
           enum: [clear, blocked, review_required, unavailable]
@@ -80769,6 +80821,16 @@ components:
       additionalProperties: false
       description: A scoped source observation for one fixed linked review; unavailable observations never establish review resolution.
       properties:
+        progress_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowReviewResponseSourceHealth.progress_revision. Retained linked progress revision; absent if progress could not be read.
+        state_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowReviewResponseSourceHealth.state_revision. Retained application state revision sampled with this case; absent if unavailable.
         review_index:
           type: integer
           minimum: 0
@@ -80803,6 +80865,9 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        decision:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecision'
+          description: OperationWorkflowReviewResponse.decision. Explicit human decision with reviewed condition and accountable reason.
         health:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
           description: OperationWorkflowReviewResponse.health. Latest sampled plan condition with source freshness; preserved as historical context after resolution.
@@ -80876,6 +80941,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        decision:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseDecision'
+          description: OperationWorkflowReviewResponseChange.decision. Explicit human decision with reviewed condition and accountable reason.
         fallback_owner:
           type: string
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.

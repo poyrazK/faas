@@ -97,6 +97,9 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 				}
 				cache[key] = overview
 			}
+			if overview.Instance != nil && overview.Instance.State != nil {
+				source.StateRevision = overview.Instance.State.Revision
+			}
 			prefix := fmt.Sprintf("Linked review %d: ", i+1)
 			found := false
 			for _, p := range overview.PlaybookProgress {
@@ -104,6 +107,7 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 					continue
 				}
 				found = true
+				source.ProgressRevision = p.Revision
 				if !workflowPlaybookProgressActive(p) {
 					source.Status = "unavailable"
 					source.Explanation = "Source progress retired or replaced."
@@ -333,6 +337,7 @@ func withReviewResponseHealth(n api.OperationWorkflowReadinessNotification, obse
 			health.Status = "unavailable"
 		}
 	}
+	health.Fingerprint = reviewResponseHealthFingerprint(health)
 	response := *n.ReviewResponse
 	response.Health = &health
 	n.ReviewResponse = &response
@@ -346,4 +351,18 @@ func reviewResponseBlockerIdentity(blocker string) string {
 		return blocker[:strings.LastIndex(blocker, ": ")]
 	}
 	return blocker
+}
+
+// Exclude polling timestamps and historical recovery display from the decision fence.
+func reviewResponseHealthFingerprint(health api.OperationWorkflowReviewResponseHealth) string {
+	sources := slices.Clone(health.Sources)
+	for i := range sources {
+		sources[i].CheckedAt = time.Time{}
+		sources[i].LastSuccessfulCheckAt = nil
+	}
+	return readinessDigest(struct {
+		Status   string
+		Blockers []string
+		Sources  []api.OperationWorkflowReviewResponseSourceHealth
+	}{health.Status, health.RemainingBlockers, sources})
 }

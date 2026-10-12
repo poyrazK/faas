@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowReviewResponseSourceHealth = {
   /**
+   * OperationWorkflowReviewResponseSourceHealth.progress_revision. Retained linked progress revision; absent if progress could not be read.
+   */
+  progress_revision?: number;
+  /**
+   * OperationWorkflowReviewResponseSourceHealth.state_revision. Retained application state revision sampled with this case; absent if unavailable.
+   */
+  state_revision?: number;
+  /**
    * OperationWorkflowReviewResponseSourceHealth.review_index. Zero-based index into the response's fixed reviews array.
    */
   review_index: number;

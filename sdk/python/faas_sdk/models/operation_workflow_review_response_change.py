@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -15,6 +15,10 @@ from ..models.operation_workflow_review_response_change_status import (
     check_operation_workflow_review_response_change_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
 
@@ -36,6 +40,9 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    decision: OperationWorkflowReviewResponseDecision | Unset = UNSET
+    """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
+    remains application-owned."""
     fallback_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change."""
     reason: OperationWorkflowReviewResponseChangeReason | Unset = UNSET
@@ -55,6 +62,10 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision, Unset):
+            decision = self.decision.to_dict()
 
         fallback_owner = self.fallback_owner
 
@@ -77,6 +88,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if decision is not UNSET:
+            field_dict["decision"] = decision
         if fallback_owner is not UNSET:
             field_dict["fallback_owner"] = fallback_owner
         if reason is not UNSET:
@@ -88,6 +101,8 @@ class OperationWorkflowReviewResponseChange:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+
         d = dict(src_dict)
         owner = d.pop("owner")
 
@@ -98,6 +113,13 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _decision = d.pop("decision", UNSET)
+        decision: OperationWorkflowReviewResponseDecision | Unset
+        if isinstance(_decision, Unset):
+            decision = UNSET
+        else:
+            decision = OperationWorkflowReviewResponseDecision.from_dict(_decision)
 
         fallback_owner = d.pop("fallback_owner", UNSET)
 
@@ -121,6 +143,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            decision=decision,
             fallback_owner=fallback_owner,
             reason=reason,
             check_in_at=check_in_at,

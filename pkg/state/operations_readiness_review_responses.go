@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,6 +129,38 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 		}
 		return 0
 	})
+	if input.Decision != nil {
+		decision := input.Decision
+		if (decision.Kind != "continue" && decision.Kind != "revise" && decision.Kind != "pause") || strings.TrimSpace(decision.Reason) == "" || len(decision.Reason) > 1024 || !utf8.ValidString(decision.Reason) || strings.IndexFunc(decision.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 || len(decision.HealthFingerprint) != 64 || input.Status != "active" {
+			return nil, ErrInvalidArgument
+		}
+		if alert.ReviewResponse == nil || alert.ReviewResponse.Status != "active" || alert.ReviewResponse.Health == nil || alert.ReviewResponse.Health.Fingerprint == "" || alert.ReviewResponse.Health.Fingerprint != decision.HealthFingerprint {
+			return nil, ErrConflict
+		}
+		// Re-read the scoped sources, then fence the stored sampled condition again at publication.
+		record := readinessSubscriptionRecord{Account: account, Tenant: tenant, Operator: operator, Subscription: page.Subscription, ReviewBlockages: map[string][]string{alert.ID: slices.Clone(alert.ReviewResponse.Health.RemainingBlockers)}}
+		updates, _ := evaluateReviewResponseBlockages(ctx, store, &record, []api.OperationWorkflowReadinessNotification{alert})
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if len(updates) != 1 {
+			return nil, ErrConflict
+		}
+		checked, _, accepted := applyReviewResponseBlockage(&record, alert, updates[0])
+		if !accepted || checked.ReviewResponse.Health.Fingerprint != decision.HealthFingerprint {
+			return nil, ErrConflict
+		}
+		// Snapshot the condition the operator reviewed, including its original freshness timestamps.
+		encoded, err := json.Marshal(alert.ReviewResponse.Health)
+		if err != nil {
+			return nil, err
+		}
+		snapshot := api.OperationWorkflowReviewResponseHealth{}
+		if err = json.Unmarshal(encoded, &snapshot); err != nil {
+			return nil, err
+		}
+		response.Decision = &api.OperationWorkflowReviewResponseDecision{Kind: decision.Kind, Reason: decision.Reason, Owner: response.Owner, Health: snapshot}
+	}
 	if input.Status == "resolved" {
 		cache := map[string][]api.OperationWorkflowPlaybookProgress{}
 		for _, link := range response.Reviews {

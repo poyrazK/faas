@@ -40,6 +40,9 @@ class OperationWorkflowReviewResponseHealth:
     excluding blockers subsequently observed again."""
     sources: list[OperationWorkflowReviewResponseSourceHealth]
     """OperationWorkflowReviewResponseHealth.sources. Condition and freshness for each fixed linked review."""
+    fingerprint: str | Unset = UNSET
+    """OperationWorkflowReviewResponseHealth.fingerprint. Stable digest of source revisions and current observed
+    condition; polling timestamps and recovery history are excluded."""
     last_complete_check_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseHealth.last_complete_check_at. Latest sample whose scoped reads all
     completed, including observations of missing or retired progress."""
@@ -60,6 +63,8 @@ class OperationWorkflowReviewResponseHealth:
             sources_item = sources_item_data.to_dict()
             sources.append(sources_item)
 
+        fingerprint = self.fingerprint
+
         last_complete_check_at: str | Unset = UNSET
         if not isinstance(self.last_complete_check_at, Unset):
             last_complete_check_at = self.last_complete_check_at.isoformat()
@@ -79,6 +84,8 @@ class OperationWorkflowReviewResponseHealth:
                 "sources": sources,
             }
         )
+        if fingerprint is not UNSET:
+            field_dict["fingerprint"] = fingerprint
         if last_complete_check_at is not UNSET:
             field_dict["last_complete_check_at"] = last_complete_check_at
         if recovered_at is not UNSET:
@@ -108,6 +115,8 @@ class OperationWorkflowReviewResponseHealth:
 
             sources.append(sources_item)
 
+        fingerprint = d.pop("fingerprint", UNSET)
+
         _last_complete_check_at = d.pop("last_complete_check_at", UNSET)
         last_complete_check_at: datetime.datetime | Unset
         if isinstance(_last_complete_check_at, Unset):
@@ -128,6 +137,7 @@ class OperationWorkflowReviewResponseHealth:
             remaining_blockers=remaining_blockers,
             recovered_blockers=recovered_blockers,
             sources=sources,
+            fingerprint=fingerprint,
             last_complete_check_at=last_complete_check_at,
             recovered_at=recovered_at,
         )

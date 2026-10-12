@@ -62,6 +62,12 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if n.ReviewResponse != nil && n.ReviewResponse.Status == "active" && req.ReviewResponse == nil && (req.Completion != nil || req.Owner != n.ReviewResponse.Owner || n.ReviewResponse.CheckInAt == nil || req.FollowUpAt == nil || !req.FollowUpAt.Equal(*n.ReviewResponse.CheckInAt)) {
 		return n, ErrConflict
 	}
+	if req.PreparedReviewResponse != nil && req.ReviewResponse == nil {
+		return n, ErrConflict
+	}
+	if req.ReviewResponse != nil && req.ReviewResponse.Decision != nil && (req.PreparedReviewResponse == nil || req.PreparedReviewResponse.Decision == nil || n.ReviewResponse == nil || n.ReviewResponse.Status != "active") {
+		return n, ErrConflict
+	}
 	if req.ReviewResponse != nil && req.PreparedReviewResponse == nil {
 		return n, ErrConflict
 	}
@@ -70,6 +76,12 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		response := *req.PreparedReviewResponse
 		response.CreatedAt, response.CreatedBy = now, actor
 		if n.ReviewResponse != nil {
+			if req.ReviewResponse.Decision != nil && (n.ReviewResponse.Health == nil || n.ReviewResponse.Health.Fingerprint != req.ReviewResponse.Decision.HealthFingerprint) {
+				return n, ErrConflict
+			}
+			if req.ReviewResponse.Decision == nil {
+				response.Decision = n.ReviewResponse.Decision
+			}
 			response.Health = n.ReviewResponse.Health
 			response.CreatedAt = n.ReviewResponse.CreatedAt
 			response.CreatedBy = n.ReviewResponse.CreatedBy
@@ -83,8 +95,18 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			response.CheckInOwnerChanged = n.ReviewResponse.CheckInOwnerChanged || n.ReviewResponse.Owner != response.Owner
 			response.CheckInNotifiedAt = n.ReviewResponse.CheckInNotifiedAt
 		}
+		if req.ReviewResponse.Decision != nil {
+			decision := *response.Decision
+			decision.At = now
+			decision.Actor = actor
+			response.Decision = &decision
+		}
 		response.UpdatedAt, response.UpdatedBy = now, actor
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		var decisionForHistory *api.OperationWorkflowReviewResponseDecision
+		if req.ReviewResponse.Decision != nil {
+			decisionForHistory = response.Decision
+		}
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{Decision: decisionForHistory, Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true

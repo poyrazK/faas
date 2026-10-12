@@ -3,12 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
+import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
 import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 /**
  * OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
  */
 export type OperationWorkflowReviewResponse = {
+  /**
+   * OperationWorkflowReviewResponse.decision. Explicit human decision with reviewed condition and accountable reason.
+   */
+  decision?: OperationWorkflowReviewResponseDecision;
   /**
    * OperationWorkflowReviewResponse.health. Latest sampled plan condition with source freshness; preserved as historical context after resolution.
    */

@@ -13,6 +13,9 @@ from ..models.operation_workflow_review_response_request_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_decision_request import (
+        OperationWorkflowReviewResponseDecisionRequest,
+    )
     from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
 
@@ -35,6 +38,9 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    decision: OperationWorkflowReviewResponseDecisionRequest | Unset = UNSET
+    """Explicit advisory continue, revise or pause decision on an existing active response. Saving re-observes
+    scoped sources and checks the reviewed health digest again under the notification lock."""
     fallback_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to
     preserve existing policy, or send empty to clear it. Explicit ownership changes protect the current check-in
@@ -53,6 +59,10 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision, Unset):
+            decision = self.decision.to_dict()
 
         fallback_owner = self.fallback_owner
 
@@ -76,6 +86,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if decision is not UNSET:
+            field_dict["decision"] = decision
         if fallback_owner is not UNSET:
             field_dict["fallback_owner"] = fallback_owner
         if check_in_at is not UNSET:
@@ -87,6 +99,9 @@ class OperationWorkflowReviewResponseRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_decision_request import (
+            OperationWorkflowReviewResponseDecisionRequest,
+        )
         from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
         d = dict(src_dict)
@@ -95,6 +110,13 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _decision = d.pop("decision", UNSET)
+        decision: OperationWorkflowReviewResponseDecisionRequest | Unset
+        if isinstance(_decision, Unset):
+            decision = UNSET
+        else:
+            decision = OperationWorkflowReviewResponseDecisionRequest.from_dict(_decision)
 
         fallback_owner = d.pop("fallback_owner", UNSET)
 
@@ -118,6 +140,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            decision=decision,
             fallback_owner=fallback_owner,
             check_in_at=check_in_at,
             reviews=reviews,

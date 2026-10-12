@@ -2,10 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
 /**
  * OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
  */
 export type OperationWorkflowReviewResponseChange = {
+  /**
+   * OperationWorkflowReviewResponseChange.decision. Explicit human decision with reviewed condition and accountable reason.
+   */
+  decision?: OperationWorkflowReviewResponseDecision;
   /**
    * OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
    */
