@@ -1075,6 +1075,9 @@ func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accoun
 			if !work.RecipientClaims || own == nil {
 				return ErrInvalidArgument
 			}
+			if own.State == "enqueued" {
+				return ErrNotFound
+			}
 			if own.Generation != *generation {
 				return ErrEventReplayGenerationChanged
 			}

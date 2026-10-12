@@ -67,6 +67,9 @@ func (s *PgStore) replayRecipientWithGuards(ctx context.Context, account, app, s
 		if lockErr != nil {
 			return lockErr
 		}
+		if recipient.State == "enqueued" {
+			return ErrNotFound
+		}
 		if recipient.Generation != *generation {
 			return ErrEventReplayGenerationChanged
 		}
