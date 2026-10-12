@@ -511,6 +511,10 @@ service Vmmd {
   // paused VM and returns it to RUNNING; the snapshot stays
   // where it was (the dying vmmd's drive1 + mem are intact).
   rpc CancelLiveMigration(CancelLiveMigrationRequest) returns (CancelLiveMigrationResponse);
+  // Internal, fenced retirement of one PostgreSQL cutover incarnation.
+  // Generic Destroy and process inventory cannot acknowledge this contract.
+  rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
+
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -2551,4 +2555,29 @@ message RestoreEnvironmentQualificationRequest {
 message RestoreEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   WakeResponse wake = 2;
+}
+
+message ManagedPostgresDrainFrame {
+  string id = 1;
+  string cutover_id = 2;
+  string app_id = 3;
+  string deployment_id = 4;
+  string instance_id = 5;
+  string node_id = 6;
+  string wake_id = 7;
+  string owner_node_id = 8;
+  int64 owner_revision = 9;
+  google.protobuf.Timestamp fenced_at = 10;
+}
+message ManagedPostgresDrainProof {
+  string drain_id = 1;
+  string native_generation = 2;
+  string kernel_boot_id = 3;
+  bool processes_exited = 4;
+  bool resources_removed = 5;
+}
+message RetireManagedPostgresDrainRequest { ManagedPostgresDrainFrame frame = 1; }
+message RetireManagedPostgresDrainResponse {
+  ManagedPostgresDrainFrame frame = 1;
+  ManagedPostgresDrainProof proof = 2;
 }

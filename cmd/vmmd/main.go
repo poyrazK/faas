@@ -992,6 +992,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	mgr.WithManagedPostgresDrainNodeID(nodeID)
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
 	recoverResources := deps.recoverResources
@@ -1558,6 +1559,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
+		if authority, ok := store.(state.ManagedPostgresDrainAuthority); ok {
+			impl.WithManagedPostgresDrainAuthority(authority)
+		}
 	}
 	impl.Register(gsrv)
 	defer func() {

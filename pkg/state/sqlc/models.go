@@ -4230,6 +4230,24 @@ type ManagedPostgresCutoverCredential struct {
 	VerifiedAt                 pgtype.Timestamptz
 }
 
+type ManagedPostgresCutoverDrain struct {
+	ID               pgtype.UUID
+	CutoverID        pgtype.UUID
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	InstanceID       pgtype.UUID
+	NodeID           pgtype.UUID
+	WakeID           pgtype.UUID
+	OwnerNodeID      pgtype.UUID
+	OwnerRevision    int64
+	FencedAt         pgtype.Timestamptz
+	State            string
+	NativeGeneration pgtype.UUID
+	KernelBootID     pgtype.UUID
+	RetiredAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
 type ManagedPostgresDatabase struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID

@@ -24,6 +24,10 @@ import (
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// Bounded recovery of explicitly requested PostgreSQL cutover retirements.
+const ManagedPostgresCutoverDrainBatchMax = 32
+const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
