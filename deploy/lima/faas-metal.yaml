@@ -178,8 +178,8 @@ provision:
       ln -sf /usr/local/go/bin/go /usr/local/bin/go
       ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-      # aarch64 Firecracker + jailer (repo pins v1.7.0; dev VM, unpinned checksum).
-      FC_VER=v1.7.0
+      # aarch64 Firecracker + jailer (repo pins v1.17.0; dev VM, unpinned checksum).
+      FC_VER=v1.17.0
       mkdir -p /usr/local/bin /srv/fc/base /srv/fc/jail
       if [ ! -x "/usr/local/bin/firecracker-${FC_VER}" ]; then
         curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-aarch64.tgz" -o /tmp/fc.tgz
@@ -191,10 +191,11 @@ provision:
       ln -sf "/usr/local/bin/firecracker-${FC_VER}" /usr/local/bin/firecracker
       ln -sf "/usr/local/bin/jailer-${FC_VER}" /usr/local/bin/jailer
 
-      # aarch64 guest kernel (6.1.x per spec §4.4) from the Firecracker CI bucket.
-      KERNEL=/srv/fc/base/vmlinux-6.1.128
+      # aarch64 guest kernel from the Firecracker CI bucket. The public bucket
+      # stops at the v1.15 CI kernels; x86_64 production builds 6.18 itself.
+      KERNEL=/srv/fc/base/vmlinux-6.1.155
       if [ ! -f "$KERNEL" ]; then
-        curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/aarch64/vmlinux-6.1.128" -o "$KERNEL"
+        curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/aarch64/vmlinux-6.1.155" -o "$KERNEL"
       fi
 
       firecracker --version | head -1
