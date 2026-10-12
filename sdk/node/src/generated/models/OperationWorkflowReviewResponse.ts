@@ -3,11 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
+import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 /**
  * OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
  */
 export type OperationWorkflowReviewResponse = {
+  /**
+   * OperationWorkflowReviewResponse.health. Latest sampled plan condition with source freshness; preserved as historical context after resolution.
+   */
+  health?: OperationWorkflowReviewResponseHealth;
   /**
    * OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins.
    */

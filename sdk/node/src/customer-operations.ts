@@ -892,3 +892,6 @@ export type OperationWorkflowReviewResponseChange = import('./generated/models/O
 export type OperationWorkflowReviewResponseCheckInEvent = import('./generated/models/OperationWorkflowReviewResponseCheckInEvent.js').OperationWorkflowReviewResponseCheckInEvent;
 
 export type OperationWorkflowReviewResponseBlockageEvent = import('./generated/models/OperationWorkflowReviewResponseBlockageEvent.js').OperationWorkflowReviewResponseBlockageEvent;
+
+export type OperationWorkflowReviewResponseHealth = import('./generated/models/OperationWorkflowReviewResponseHealth.js').OperationWorkflowReviewResponseHealth;
+export type OperationWorkflowReviewResponseSourceHealth = import('./generated/models/OperationWorkflowReviewResponseSourceHealth.js').OperationWorkflowReviewResponseSourceHealth;

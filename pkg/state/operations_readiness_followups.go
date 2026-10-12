@@ -70,6 +70,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		response := *req.PreparedReviewResponse
 		response.CreatedAt, response.CreatedBy = now, actor
 		if n.ReviewResponse != nil {
+			response.Health = n.ReviewResponse.Health
 			response.CreatedAt = n.ReviewResponse.CreatedAt
 			response.CreatedBy = n.ReviewResponse.CreatedBy
 			response.History = slices.Clone(n.ReviewResponse.History)

@@ -506,6 +506,7 @@ type OperationWorkflowReviewResponseLink struct {
 	InstanceID               string           `json:"instance_id"`
 }
 type OperationWorkflowReviewResponse struct {
+	Health              *OperationWorkflowReviewResponseHealth  `json:"health,omitempty"`
 	FallbackOwner       string                                  `json:"fallback_owner,omitempty"`
 	CheckInInitialOwner string                                  `json:"check_in_initial_owner,omitempty"`
 	CheckInOwnerChanged bool                                    `json:"check_in_owner_changed,omitempty"`
@@ -553,4 +554,24 @@ type OperationWorkflowReviewResponseBlockageEvent struct {
 	CheckedAt            time.Time `json:"checked_at"`
 	AddedBlockers        []string  `json:"added_blockers"`
 	ClearedBlockers      []string  `json:"cleared_blockers,omitempty"`
+}
+
+// Health is a sampled advisory view; clear observations do not establish business success.
+type OperationWorkflowReviewResponseHealth struct {
+	Status              string                                        `json:"status"`
+	CheckedAt           time.Time                                     `json:"checked_at"`
+	LastCompleteCheckAt *time.Time                                    `json:"last_complete_check_at,omitempty"`
+	RemainingBlockers   []string                                      `json:"remaining_blockers"`
+	RecoveredBlockers   []string                                      `json:"recovered_blockers"`
+	RecoveredAt         *time.Time                                    `json:"recovered_at,omitempty"`
+	Sources             []OperationWorkflowReviewResponseSourceHealth `json:"sources"`
+}
+type OperationWorkflowReviewResponseSourceHealth struct {
+	ReviewIndex           int        `json:"review_index"`
+	Status                string     `json:"status"`
+	CheckedAt             time.Time  `json:"checked_at"`
+	LastSuccessfulCheckAt *time.Time `json:"last_successful_check_at,omitempty"`
+	ReviewRequired        bool       `json:"review_required"`
+	Blockers              []string   `json:"blockers"`
+	Explanation           string     `json:"explanation"`
 }

@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_change import OperationWorkflowReviewResponseChange
+    from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
     from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
 
@@ -50,6 +51,9 @@ class OperationWorkflowReviewResponse:
     """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
     """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
+    health: OperationWorkflowReviewResponseHealth | Unset = UNSET
+    """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
+    business completion. Sampling stops on response resolution."""
     fallback_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins."""
     check_in_initial_owner: str | Unset = UNSET
@@ -96,6 +100,10 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = self.history_truncated
 
+        health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.health, Unset):
+            health = self.health.to_dict()
+
         fallback_owner = self.fallback_owner
 
         check_in_initial_owner = self.check_in_initial_owner
@@ -130,6 +138,8 @@ class OperationWorkflowReviewResponse:
                 "history_truncated": history_truncated,
             }
         )
+        if health is not UNSET:
+            field_dict["health"] = health
         if fallback_owner is not UNSET:
             field_dict["fallback_owner"] = fallback_owner
         if check_in_initial_owner is not UNSET:
@@ -148,6 +158,7 @@ class OperationWorkflowReviewResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_review_response_change import OperationWorkflowReviewResponseChange
+        from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
         from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
         d = dict(src_dict)
@@ -180,6 +191,13 @@ class OperationWorkflowReviewResponse:
             history.append(history_item)
 
         history_truncated = d.pop("history_truncated")
+
+        _health = d.pop("health", UNSET)
+        health: OperationWorkflowReviewResponseHealth | Unset
+        if isinstance(_health, Unset):
+            health = UNSET
+        else:
+            health = OperationWorkflowReviewResponseHealth.from_dict(_health)
 
         fallback_owner = d.pop("fallback_owner", UNSET)
 
@@ -219,6 +237,7 @@ class OperationWorkflowReviewResponse:
             updated_by=updated_by,
             history=history,
             history_truncated=history_truncated,
+            health=health,
             fallback_owner=fallback_owner,
             check_in_initial_owner=check_in_initial_owner,
             check_in_owner_changed=check_in_owner_changed,

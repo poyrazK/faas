@@ -63,8 +63,8 @@ class OperationWorkflowReadinessNotification:
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
     review_blockage: OperationWorkflowReviewResponseBlockageEvent | Unset = UNSET
-    """Sampled newly added prerequisites, declared checklist evidence issues or unavailable progress for a linked
-    response plan. No business result is inferred."""
+    """Sampled blocker changes and positively verified recoveries for a linked response plan. Recovery does not
+    resolve the response or establish a business result."""
     review_check_in: OperationWorkflowReviewResponseCheckInEvent | Unset = UNSET
     """OperationWorkflowReviewResponseCheckInEvent. Frozen response plan, linked reviews and routing at one missed
     check-in, separate from business outcome and alert acknowledgment."""

@@ -80729,12 +80729,83 @@ components:
         instance_id:
           type: string
           description: OperationWorkflowReviewResponseLink.instance_id. Scoped source workflow instance.
+    OperationWorkflowReviewResponseHealth:
+      type: object
+      additionalProperties: false
+      description: Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not business completion. Sampling stops on response resolution.
+      properties:
+        status:
+          type: string
+          enum: [clear, blocked, review_required, unavailable]
+          description: OperationWorkflowReviewResponseHealth.status. Unavailable takes precedence over blocked, pending review and clear.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHealth.checked_at. Latest attempted sampling time; consult individual sources for freshness.
+        last_complete_check_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHealth.last_complete_check_at. Latest sample whose scoped reads all completed, including observations of missing or retired progress.
+        remaining_blockers:
+          type: array
+          items: {type: string}
+          description: OperationWorkflowReviewResponseHealth.remaining_blockers. Observed blockers plus unverified disappearances retained until positive clearance.
+        recovered_blockers:
+          type: array
+          items: {type: string}
+          description: OperationWorkflowReviewResponseHealth.recovered_blockers. Most recent positively verified recoveries, excluding blockers subsequently observed again.
+        recovered_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHealth.recovered_at. Time of the latest positive recovery sample.
+        sources:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationWorkflowReviewResponseSourceHealth'}
+          description: OperationWorkflowReviewResponseHealth.sources. Condition and freshness for each fixed linked review.
+      required: [status, checked_at, remaining_blockers, recovered_blockers, sources]
+    OperationWorkflowReviewResponseSourceHealth:
+      type: object
+      additionalProperties: false
+      description: A scoped source observation for one fixed linked review; unavailable observations never establish review resolution.
+      properties:
+        review_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowReviewResponseSourceHealth.review_index. Zero-based index into the response's fixed reviews array.
+        status:
+          type: string
+          enum: [observed, unavailable]
+          description: OperationWorkflowReviewResponseSourceHealth.status. Whether the linked progress, step and declared evidence could be observed without availability or staleness issues.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseSourceHealth.checked_at. Latest attempt to observe this source.
+        last_successful_check_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseSourceHealth.last_successful_check_at. Most recent available source observation, retained through later read failures.
+        review_required:
+          type: boolean
+          description: OperationWorkflowReviewResponseSourceHealth.review_required. Current validity review obligation when the step is observable; unavailable sources cannot prove it cleared.
+        blockers:
+          type: array
+          items: {type: string}
+          description: OperationWorkflowReviewResponseSourceHealth.blockers. Blockers observed in this attempt; consult summary remaining blockers for unverified prior observations.
+        explanation:
+          type: string
+          description: OperationWorkflowReviewResponseSourceHealth.explanation. Availability explanation without backend error details.
+      required: [review_index, status, checked_at, review_required, blockers, explanation]
     OperationWorkflowReviewResponse:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        health:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
+          description: OperationWorkflowReviewResponse.health. Latest sampled plan condition with source freshness; preserved as historical context after resolution.
         fallback_owner:
           type: string
           maxLength: 256

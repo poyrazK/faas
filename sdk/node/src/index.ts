@@ -356,3 +356,5 @@ export type { OperationWorkflowReviewResponseRequest, OperationWorkflowReviewRes
 export type { OperationWorkflowReviewResponseCheckInEvent } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseBlockageEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHealth, OperationWorkflowReviewResponseSourceHealth } from './customer-operations.js';

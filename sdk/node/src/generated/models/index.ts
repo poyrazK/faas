@@ -1305,9 +1305,11 @@ export type { OperationWorkflowReviewResponse } from './OperationWorkflowReviewR
 export type { OperationWorkflowReviewResponseBlockageEvent } from './OperationWorkflowReviewResponseBlockageEvent.js';
 export type { OperationWorkflowReviewResponseChange } from './OperationWorkflowReviewResponseChange.js';
 export type { OperationWorkflowReviewResponseCheckInEvent } from './OperationWorkflowReviewResponseCheckInEvent.js';
+export type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 export type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
 export type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
+export type { OperationWorkflowReviewResponseSourceHealth } from './OperationWorkflowReviewResponseSourceHealth.js';
 export type { OperationWorkflowRevisionChange } from './OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
 export type { OperationWorkflowRevisionEvidence } from './OperationWorkflowRevisionEvidence.js';

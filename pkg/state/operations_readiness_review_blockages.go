@@ -12,6 +12,8 @@ import (
 )
 
 type reviewResponseBlockageUpdate struct {
+	Health                *api.OperationWorkflowReviewResponseHealth
+	Failed                bool
 	ResponseUpdatedAt     time.Time
 	Blockers              []string
 	VerifiedClearPrefixes []string
@@ -63,8 +65,11 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 		blockers := []string{}
 		clearPrefixes := []string{}
 		failed := false
+		health := &api.OperationWorkflowReviewResponseHealth{Sources: []api.OperationWorkflowReviewResponseSourceHealth{}, RemainingBlockers: []string{}, RecoveredBlockers: []string{}}
 		cache := map[string]api.OperationWorkflowCase{}
 		for i, link := range n.ReviewResponse.Reviews {
+			source := api.OperationWorkflowReviewResponseSourceHealth{ReviewIndex: i, Status: "observed", Blockers: []string{}}
+			start := len(blockers)
 			tenant := r.Tenant
 			if r.Operator {
 				tenant = link.PlatformTenantID
@@ -84,7 +89,11 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 						firstErr = err
 					}
 					failed = true
-					break
+					source.Status = "unavailable"
+					source.Explanation = "Source could not be read; previous observations are retained."
+					source.CheckedAt = time.Now().UTC().Truncate(time.Microsecond)
+					health.Sources = append(health.Sources, source)
+					continue
 				}
 				cache[key] = overview
 			}
@@ -96,10 +105,14 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 				}
 				found = true
 				if !workflowPlaybookProgressActive(p) {
+					source.Status = "unavailable"
+					source.Explanation = "Source progress retired or replaced."
 					blockers = append(blockers, prefix+"source progress retired or replaced")
 					continue
 				}
 				if p.Revision < link.DependencyReviewRevision {
+					source.Status = "unavailable"
+					source.Explanation = "Retained source revision precedes the linked review."
 					blockers = append(blockers, prefix+"source revision unavailable")
 					continue
 				}
@@ -109,6 +122,7 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 						continue
 					}
 					stepFound = true
+					source.ReviewRequired = follow.Items[link.ItemIndex].DependencyReviewRevision > 0
 					clearPrefixes = append(clearPrefixes, prefix+"waiting for prerequisite ", prefix+"source progress unavailable", prefix+"source revision unavailable", prefix+"linked review step unavailable")
 					ready := playbookStepReadiness(p, follow.OutcomeCode, follow.Items, link.ItemIndex)
 					for _, label := range reviewResponsePrerequisiteBlockers(p, follow.OutcomeCode, follow.Items, link.ItemIndex, ready.WaitingFor) {
@@ -116,6 +130,8 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 					}
 				}
 				if !stepFound {
+					source.Status = "unavailable"
+					source.Explanation = "Linked review step unavailable."
 					blockers = append(blockers, prefix+"linked review step unavailable")
 				}
 				// Only declared live requirements are observed; human attachments are not revalidated.
@@ -124,20 +140,33 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 						clearPrefixes = append(clearPrefixes, prefix+"checklist evidence "+item.Label+": ")
 					}
 					if item.EvidenceCheck != nil && item.EvidenceCheck.Status != "satisfied" {
+						if item.EvidenceCheck.Status == "unavailable" || item.EvidenceCheck.Status == "stale" {
+							source.Status = "unavailable"
+							source.Explanation = "Declared checklist evidence is unavailable or stale."
+						}
 						blockers = append(blockers, prefix+"checklist evidence "+item.Label+": "+item.EvidenceCheck.Status+" ("+item.EvidenceCheck.Reason+")")
 					}
 				}
 			}
 			if !found {
+				source.Status = "unavailable"
+				source.Explanation = "Source progress unavailable."
 				blockers = append(blockers, prefix+"source progress unavailable")
 			}
-		}
-		if failed {
-			continue
+			source.CheckedAt = time.Now().UTC().Truncate(time.Microsecond)
+			source.Blockers = slices.Clone(blockers[start:])
+			if source.Blockers == nil {
+				source.Blockers = []string{}
+			}
+			if source.Status == "observed" {
+				checked := source.CheckedAt
+				source.LastSuccessfulCheckAt = &checked
+			}
+			health.Sources = append(health.Sources, source)
 		}
 		slices.Sort(blockers)
 		blockers = slices.Compact(blockers)
-		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ReviewBlockage: &reviewResponseBlockageUpdate{ResponseUpdatedAt: n.ReviewResponse.UpdatedAt, Blockers: blockers, VerifiedClearPrefixes: clearPrefixes, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}})
+		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ReviewBlockage: &reviewResponseBlockageUpdate{Health: health, Failed: failed, ResponseUpdatedAt: n.ReviewResponse.UpdatedAt, Blockers: blockers, VerifiedClearPrefixes: clearPrefixes, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}})
 	}
 	return updates, firstErr
 }
@@ -147,6 +176,10 @@ func applyReviewResponseBlockage(r *readinessSubscriptionRecord, n api.Operation
 	observation := u.ReviewBlockage
 	if n.ID != u.SourceID || n.Kind != "business_impact_changed" || n.BusinessImpact == nil || n.ReviewResponse == nil || n.ReviewResponse.Status != "active" || !n.ReviewResponse.UpdatedAt.Equal(observation.ResponseUpdatedAt) {
 		return n, nil, false
+	}
+	if observation.Failed {
+		n = withReviewResponseHealth(n, observation, r.ReviewBlockages[n.ID], nil)
+		return n, nil, true
 	}
 	if r.ReviewBlockages == nil {
 		r.ReviewBlockages = map[string][]string{}
@@ -185,6 +218,7 @@ func applyReviewResponseBlockage(r *readinessSubscriptionRecord, n api.Operation
 	}
 	slices.Sort(r.ReviewBlockages[n.ID])
 	slices.Sort(cleared)
+	n = withReviewResponseHealth(n, observation, r.ReviewBlockages[n.ID], cleared)
 	notices := []api.OperationWorkflowReadinessNotification{}
 	publish := func(kind, explanation string, added, cleared []string) {
 		notice := readinessSubscriptionNotify(r, kind, explanation, nil)
@@ -239,4 +273,77 @@ func reviewResponsePrerequisiteBlockers(p api.OperationWorkflowPlaybookProgress,
 	}
 	slices.Sort(blockers)
 	return slices.Compact(blockers)
+}
+
+// Health updates preserve the human response revision and never satisfy a review obligation.
+func withReviewResponseHealth(n api.OperationWorkflowReadinessNotification, observation *reviewResponseBlockageUpdate, remaining, recovered []string) api.OperationWorkflowReadinessNotification {
+	health := *observation.Health
+	health.CheckedAt = observation.CheckedAt
+	health.RemainingBlockers = append([]string{}, remaining...)
+	if observation.Failed {
+		health.RemainingBlockers = append(health.RemainingBlockers, observation.Blockers...)
+		slices.Sort(health.RemainingBlockers)
+		health.RemainingBlockers = slices.Compact(health.RemainingBlockers)
+	} else {
+		checked := observation.CheckedAt
+		health.LastCompleteCheckAt = &checked
+	}
+	health.RecoveredBlockers = []string{}
+	if old := n.ReviewResponse.Health; old != nil {
+		if observation.Failed {
+			health.LastCompleteCheckAt = old.LastCompleteCheckAt
+			health.RemainingBlockers = append(health.RemainingBlockers, old.RemainingBlockers...)
+			slices.Sort(health.RemainingBlockers)
+			health.RemainingBlockers = slices.Compact(health.RemainingBlockers)
+		}
+		health.RecoveredAt = old.RecoveredAt
+		for _, blocker := range old.RecoveredBlockers {
+			if !slices.ContainsFunc(health.RemainingBlockers, func(current string) bool {
+				return reviewResponseBlockerIdentity(current) == reviewResponseBlockerIdentity(blocker)
+			}) {
+				health.RecoveredBlockers = append(health.RecoveredBlockers, blocker)
+			}
+		}
+		for i := range health.Sources {
+			if health.Sources[i].LastSuccessfulCheckAt != nil {
+				continue
+			}
+			for _, previous := range old.Sources {
+				if previous.ReviewIndex == health.Sources[i].ReviewIndex {
+					health.Sources[i].LastSuccessfulCheckAt = previous.LastSuccessfulCheckAt
+					break
+				}
+			}
+		}
+	}
+	if len(recovered) > 0 {
+		checked := observation.CheckedAt
+		health.RecoveredAt = &checked
+		health.RecoveredBlockers = slices.Clone(recovered)
+	}
+	health.Status = "clear"
+	if len(health.RemainingBlockers) > 0 {
+		health.Status = "blocked"
+	}
+	for _, source := range health.Sources {
+		if source.ReviewRequired && health.Status == "clear" {
+			health.Status = "review_required"
+		}
+		if source.Status == "unavailable" {
+			health.Status = "unavailable"
+		}
+	}
+	response := *n.ReviewResponse
+	response.Health = &health
+	n.ReviewResponse = &response
+	return n
+}
+
+// Evidence remains the same blocker when its failure status or reason changes.
+func reviewResponseBlockerIdentity(blocker string) string {
+	prefixEnd := strings.Index(blocker, ": ")
+	if prefixEnd >= 0 && strings.HasPrefix(blocker[prefixEnd+2:], "checklist evidence ") {
+		return blocker[:strings.LastIndex(blocker, ": ")]
+	}
+	return blocker
 }

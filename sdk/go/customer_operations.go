@@ -385,3 +385,6 @@ type OperationWorkflowReviewResponseChange = api.OperationWorkflowReviewResponse
 type OperationWorkflowReviewResponseCheckInEvent = api.OperationWorkflowReviewResponseCheckInEvent
 
 type OperationWorkflowReviewResponseBlockageEvent = api.OperationWorkflowReviewResponseBlockageEvent
+
+type OperationWorkflowReviewResponseHealth = api.OperationWorkflowReviewResponseHealth
+type OperationWorkflowReviewResponseSourceHealth = api.OperationWorkflowReviewResponseSourceHealth

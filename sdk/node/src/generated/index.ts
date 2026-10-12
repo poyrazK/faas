@@ -1311,9 +1311,11 @@ export type { OperationWorkflowReviewResponse } from './models/OperationWorkflow
 export type { OperationWorkflowReviewResponseBlockageEvent } from './models/OperationWorkflowReviewResponseBlockageEvent.js';
 export type { OperationWorkflowReviewResponseChange } from './models/OperationWorkflowReviewResponseChange.js';
 export type { OperationWorkflowReviewResponseCheckInEvent } from './models/OperationWorkflowReviewResponseCheckInEvent.js';
+export type { OperationWorkflowReviewResponseHealth } from './models/OperationWorkflowReviewResponseHealth.js';
 export type { OperationWorkflowReviewResponseLink } from './models/OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './models/OperationWorkflowReviewResponseLinkRequest.js';
 export type { OperationWorkflowReviewResponseRequest } from './models/OperationWorkflowReviewResponseRequest.js';
+export type { OperationWorkflowReviewResponseSourceHealth } from './models/OperationWorkflowReviewResponseSourceHealth.js';
 export type { OperationWorkflowRevisionChange } from './models/OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './models/OperationWorkflowRevisionComparison.js';
 export type { OperationWorkflowRevisionEvidence } from './models/OperationWorkflowRevisionEvidence.js';
