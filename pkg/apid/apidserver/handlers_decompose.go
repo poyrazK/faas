@@ -31,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -84,6 +85,14 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// projectApplyContext runs a project apply outside apid's request budget
+// (ADR-093 amendment): one request carries the upload, re-scan, reconcile and
+// every build enqueue, and a client that disconnects mid-reconcile must not
+// strand committed apps without their builds.
+func projectApplyContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(parent)), api.ProjectApplyTimeout)
+}
+
 // applyProject is the transactional endpoint. On success it emits one
 // NotifyAppChanged per inserted/updated app so schedd can pick up
 // the rows without polling; on quota failure it surfaces the matching
@@ -107,6 +116,9 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //     so the CLI's `faas apply` flow can show "app X: deployment Y,
 //     build Z" per workload (PR-A, Phase 5 close-the-loop).
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	ctx, cancel := projectApplyContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	planToken := r.URL.Query().Get("plan_token")
 	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(r, acct, planToken, true)
 	if prob != nil {

@@ -8745,6 +8745,12 @@ const (
 	// per-VM capacity wait, and guest execution. The edge must permit their
 	// worst-case serial composition or it silently becomes the policy owner.
 	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetPlanMax
+	// ProjectApplyTimeout bounds one project apply (POST /v1/projects): the
+	// source upload, re-scan, reconcile and every workload's build enqueue
+	// share that request, so apid's default budget cannot hold it. Hunt #9 on
+	// production-us: the apps committed, then the enqueue failed on the 5 s
+	// deadline and left them undeployed.
+	ProjectApplyTimeout = RequestUploadTimeoutMax + RequestBudgetMax
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
