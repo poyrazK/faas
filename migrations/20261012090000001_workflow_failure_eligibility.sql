@@ -1,5 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_failure_eligibility_queue_idx') IS NOT NULL THEN
+  RETURN;
+ END IF;
 ALTER TABLE workflow_recovery_failure_evidence
  ADD COLUMN eligibility_observed_at timestamptz CHECK (isfinite(eligibility_observed_at) AND eligibility_observed_at>=observed_at),
  ADD COLUMN eligibility jsonb,
@@ -12,6 +19,8 @@ ALTER TABLE workflow_recovery_failure_evidence
  (eligibility->>'observed_at')::timestamptz=eligibility_observed_at));
 CREATE INDEX workflow_failure_eligibility_queue_idx
  ON workflow_recovery_failure_evidence (eligibility_observed_at NULLS FIRST,observed_at,id);
+END
+$replay_guard$;
 -- +goose StatementEnd
 
 -- +goose Down

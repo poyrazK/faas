@@ -1,5 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('event_recovery_workflow_results') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='workflow_runs'::regclass AND tgname='event_recovery_workflow_result' AND NOT tgisinternal) THEN
+  RETURN;
+ END IF;
 -- Item-owned evidence survives workflow/run-history pruning.
 CREATE TABLE event_recovery_workflow_results (
  job_id uuid NOT NULL,
@@ -66,12 +73,14 @@ CREATE TRIGGER event_recovery_workflow_result
  FOR EACH ROW EXECUTE FUNCTION record_event_recovery_workflow_result();
 
 -- Backfill retained evidence only; do not infer outcomes from missing history.
-SELECT capture_event_recovery_workflow_result(r.id,r.app_id,r.workflow_name,r.resume_count,r.status,
+PERFORM capture_event_recovery_workflow_result(r.id,r.app_id,r.workflow_name,r.resume_count,r.status,
  r.updated_at,r.finished_at,r.cancelled_at IS NOT NULL OR coalesce(r.last_error='cancelled by operator',false))
 FROM workflow_runs r WHERE EXISTS (
  SELECT 1 FROM event_recovery_items i JOIN event_recovery_jobs j ON j.id=i.job_id
  WHERE i.state='queued' AND j.selection->>'mode'='workflow' AND j.app_id=r.app_id
  AND (i.expected_progress->>'run_id')::uuid=r.id);
+END
+$replay_guard$;
 -- +goose StatementEnd
 
 -- +goose Down

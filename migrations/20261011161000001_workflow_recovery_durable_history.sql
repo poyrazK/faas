@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_history_events_app_sequence') IS NOT NULL THEN
+  RETURN;
+ END IF;
 CREATE TABLE workflow_recovery_history_events (
  id uuid PRIMARY KEY,
  sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE CHECK(sequence>0),
@@ -19,6 +27,10 @@ CREATE INDEX workflow_recovery_history_events_app_time ON workflow_recovery_hist
 CREATE INDEX workflow_recovery_history_events_app_recorded ON workflow_recovery_history_events(app_id,recorded_at DESC,id DESC);
 CREATE INDEX workflow_recovery_history_events_recorded ON workflow_recovery_history_events(recorded_at,id);
 CREATE INDEX workflow_recovery_history_events_app_sequence ON workflow_recovery_history_events(app_id,sequence DESC);
+END
+$replay_guard$;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

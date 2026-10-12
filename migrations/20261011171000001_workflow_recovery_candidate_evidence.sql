@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='workflow_recovery_history_events'::regclass AND conname='workflow_recovery_history_candidate_evidence_check') THEN
+  RETURN;
+ END IF;
 ALTER TABLE workflow_recovery_history_events DROP CONSTRAINT workflow_recovery_history_events_check;
 ALTER TABLE workflow_recovery_history_events ADD CONSTRAINT workflow_recovery_history_events_check CHECK((
   jsonb_typeof(entry)='object' AND entry->'durable'='true'::jsonb
@@ -21,6 +29,10 @@ ALTER TABLE workflow_recovery_history_events ADD CONSTRAINT workflow_recovery_hi
  AND (entry->'candidate_evidence'->>'observed_at')::timestamptz=occurred_at
  AND NOT (entry->'candidate_evidence' ? 'plan')
  )) IS TRUE);
+END
+$replay_guard$;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

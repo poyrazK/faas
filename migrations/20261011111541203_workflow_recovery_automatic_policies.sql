@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_policy_executions_applied') IS NOT NULL AND to_regclass('workflow_recovery_policy_execution_charges_budget') IS NOT NULL THEN
+  RETURN;
+ END IF;
 ALTER TABLE workflow_recovery_policies DROP CONSTRAINT workflow_recovery_policies_policy_check;
 ALTER TABLE workflow_recovery_policies ADD CONSTRAINT workflow_recovery_policies_policy_check CHECK(jsonb_typeof(policy)='object' AND policy->>'mode' IN ('preview','automatic_retry'));
 ALTER TABLE workflow_recovery_policies DROP CONSTRAINT workflow_recovery_policies_status_check;
@@ -29,13 +37,15 @@ CREATE TABLE workflow_recovery_policy_execution_charges (
 CREATE INDEX workflow_recovery_policy_execution_charges_budget ON workflow_recovery_policy_execution_charges(app_id,applied_at);
 CREATE INDEX workflow_recovery_policy_executions_pending ON workflow_recovery_policy_executions(app_id,policy_version,review_id,position) WHERE status='pending';
 CREATE INDEX workflow_recovery_policy_executions_applied ON workflow_recovery_policy_executions(app_id,applied_at) WHERE status='applied';
--- +goose StatementBegin
 DO $$ DECLARE definition text; BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk';
  ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
  EXECUTE format('ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((%s) OR event=%L)',substring(definition from 8 for length(definition)-8),'automation.recovery_policy_paused');
 END $$;
+END
+$replay_guard$;
 -- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

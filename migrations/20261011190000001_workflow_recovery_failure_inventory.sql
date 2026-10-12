@@ -1,5 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_failure_capture') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='workflow_runs'::regclass AND tgname='workflow_recovery_failure_evidence_capture' AND NOT tgisinternal) THEN
+  RETURN;
+ END IF;
 -- Schema-enforced capture bounds mirror pkg/api/limits.go; checked by state tests.
 CREATE TABLE workflow_recovery_failure_capture (
  singleton boolean PRIMARY KEY CHECK(singleton),
@@ -54,7 +61,10 @@ END $$;
 CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status,resume_count ON workflow_runs
  FOR EACH ROW EXECUTE FUNCTION record_workflow_recovery_failure();
 -- Prospective capture only: no inference or backfill from retained live rows.
+END
+$replay_guard$;
 -- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

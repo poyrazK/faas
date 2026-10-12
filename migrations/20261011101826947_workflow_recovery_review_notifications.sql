@@ -1,11 +1,17 @@
 -- +goose Up
 -- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_review_notifications_pending') IS NOT NULL THEN
+  RETURN;
+ END IF;
 DO $$ DECLARE definition text; BEGIN
  SELECT pg_get_constraintdef(oid) INTO definition FROM pg_constraint WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk';
  ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
  EXECUTE format('ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((%s) OR event=%L)',substring(definition from 8 for length(definition)-8),'automation.recovery_review_ready');
 END $$;
--- +goose StatementEnd
 CREATE TABLE workflow_recovery_review_notifications (
  review_id uuid PRIMARY KEY REFERENCES workflow_recovery_policy_reviews(id) ON DELETE CASCADE,
  next_at timestamptz NOT NULL DEFAULT now(),
@@ -13,6 +19,10 @@ CREATE TABLE workflow_recovery_review_notifications (
 );
 CREATE INDEX workflow_recovery_review_notifications_pending ON workflow_recovery_review_notifications(next_at,review_id) WHERE receipt IS NULL;
 INSERT INTO workflow_recovery_review_notifications(review_id) SELECT id FROM workflow_recovery_policy_reviews WHERE review ? 'plan';
+END
+$replay_guard$;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_policy_controls_app_idx') IS NOT NULL THEN
+  RETURN;
+ END IF;
 CREATE TABLE workflow_recovery_policy_controls (
  id uuid PRIMARY KEY,
  app_id uuid NOT NULL REFERENCES workflow_recovery_policies(app_id) ON DELETE CASCADE,
@@ -10,6 +18,9 @@ CREATE TABLE workflow_recovery_policy_controls (
  controlled_at timestamptz NOT NULL
 );
 CREATE INDEX workflow_recovery_policy_controls_app_idx ON workflow_recovery_policy_controls(app_id,controlled_at);
+END
+$replay_guard$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

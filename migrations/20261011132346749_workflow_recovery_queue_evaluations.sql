@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='workflow_recovery_policy_executions'::regclass AND attname='last_evaluation' AND NOT attisdropped) THEN
+  RETURN;
+ END IF;
 ALTER TABLE workflow_recovery_policy_executions ADD COLUMN last_evaluation jsonb
  CHECK(last_evaluation IS NULL OR (
   jsonb_typeof(last_evaluation)='object'
@@ -7,6 +15,9 @@ ALTER TABLE workflow_recovery_policy_executions ADD COLUMN last_evaluation jsonb
   AND (NOT last_evaluation ? 'waiting_since' OR jsonb_typeof(last_evaluation->'waiting_since')='string')
   AND (last_evaluation->>'reason' NOT IN ('child_created','result_recorded','suppressed') OR NOT last_evaluation ? 'waiting_since')
  ));
+END
+$replay_guard$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

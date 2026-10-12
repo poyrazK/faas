@@ -1,5 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('event_recovery_items_workflow_run_key') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='event_recovery_items'::regclass AND conname='event_recovery_items_target_check') THEN
+  RETURN;
+ END IF;
 ALTER TABLE event_recovery_items ALTER COLUMN outbox_id DROP NOT NULL;
 ALTER TABLE event_recovery_items DROP CONSTRAINT event_recovery_items_subscription_id_check;
 ALTER TABLE event_recovery_items ADD CONSTRAINT event_recovery_items_target_check CHECK (
@@ -20,6 +27,8 @@ ALTER TABLE event_recovery_jobs ADD CONSTRAINT event_recovery_child_request_chk 
    AND coalesce(jsonb_typeof(selection->'workflow_routing'),'')='object')
  ))
 );
+END
+$replay_guard$;
 -- +goose StatementEnd
 
 -- +goose Down

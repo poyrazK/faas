@@ -1,4 +1,12 @@
 -- +goose Up
+-- +goose StatementBegin
+-- The complete feature marker survives later migrations. Reconciliation must
+-- preserve retained evidence and must not restore an earlier, narrower constraint.
+DO $replay_guard$
+BEGIN
+ IF to_regclass('workflow_recovery_action_receipts') IS NOT NULL THEN
+  RETURN;
+ END IF;
 CREATE TABLE workflow_recovery_action_receipts (
  job_id uuid NOT NULL REFERENCES event_recovery_jobs(id) ON DELETE CASCADE,
  request_id uuid NOT NULL,
@@ -9,6 +17,10 @@ CREATE TABLE workflow_recovery_action_receipts (
  actor_id text NOT NULL,
  PRIMARY KEY(job_id,request_id)
 );
+END
+$replay_guard$;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
