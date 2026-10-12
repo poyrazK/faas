@@ -141,7 +141,9 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if err := store.AdoptEnvironmentGitOps(t.Context(), account.ID, source.ID, preview.Hash); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
+	// The graph claim itself can run for five minutes. Give the test enough
+	// time to observe its terminal result and the subsequent serving revision.
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
