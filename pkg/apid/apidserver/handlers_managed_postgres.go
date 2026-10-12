@@ -15,6 +15,7 @@ import (
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
+	detail := err.Error()
 	switch {
 	case errors.Is(err, managedpostgres.ErrUnavailable):
 		status, code, title = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable"
@@ -29,14 +30,11 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		status, code, title = http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 	case errors.Is(err, managedpostgres.ErrUsageStale):
-		status, code, title = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale"
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale", managedpostgres.UsageStaleDetail
 	}
-	detail := err.Error()
 	if errors.Is(err, managedpostgres.ErrUnavailable) {
 		detail = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
-	} else if errors.Is(err, managedpostgres.ErrUsageStale) {
-		detail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
-	} else if status >= 500 {
+	} else if status >= 500 && !errors.Is(err, managedpostgres.ErrUsageStale) {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
 	problem := api.NewProblem(status, code, title, detail)
