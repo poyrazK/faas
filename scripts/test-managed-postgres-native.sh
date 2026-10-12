@@ -2,6 +2,7 @@
 set -eu
 umask 077
 : "${DATABASE_URL:?Use a disposable PostgreSQL cluster with TLS and SCRAM enabled}"
+: "${GREGALE_POSTGRES_NATIVE_CA_PATH:?Set the disposable SQL certificate/CA with the proxy IP in its SAN}"
 : "${FAAS_TEST_KERNEL:?Set the qualified guest kernel}"
 : "${FAAS_BUILDER_BASE_PATH:?Set the qualified builder base}"
 : "${FAAS_GUEST_INIT:?Set the real guest init compiled from this checkout}"
@@ -25,7 +26,7 @@ case "$GREGALE_POSTGRES_NATIVE_HOST_CLASS" in
   nested-diagnostic) echo 'Nested virtualization diagnostic: this run cannot qualify production rollout.' ;;
   *) echo 'Host class must be native or nested-diagnostic.' >&2; exit 1 ;;
 esac
-if [ -n "${FAAS_SKIP_PG_TESTS:-}" ] || [ ! -r "$FAAS_TEST_KERNEL" ] || [ ! -r "$FAAS_BUILDER_BASE_PATH" ] || [ ! -x "$FAAS_GUEST_INIT" ]; then
+if [ -n "${FAAS_SKIP_PG_TESTS:-}" ] || [ ! -r "$GREGALE_POSTGRES_NATIVE_CA_PATH" ] || [ ! -r "$FAAS_TEST_KERNEL" ] || [ ! -r "$FAAS_BUILDER_BASE_PATH" ] || [ ! -x "$FAAS_GUEST_INIT" ]; then
   echo 'Cannot skip PostgreSQL or use unreadable native fixtures.' >&2
   exit 1
 fi

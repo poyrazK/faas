@@ -18,7 +18,10 @@ T = TypeVar("T", bound="ScenarioTestChaosRule")
 
 @_attrs_define
 class ScenarioTestChaosRule:
-    """One bounded HTTP request, TCP stream, or new TCP connection fault for matching internal scenario services."""
+    """One bounded HTTP request, private-service DNS lookup, TCP stream, or new TCP connection fault for matching scenario
+    workloads.
+
+    """
 
     to: str
     kind: ScenarioTestChaosRuleKind

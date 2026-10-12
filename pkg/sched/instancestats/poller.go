@@ -74,15 +74,18 @@ type EgressAbuseHandler func(ctx context.Context, row InstanceStat, reason sched
 // state lives in the Reader; the poller itself is stateless across
 // ticks so process restart has no plumbing consequence.
 type Poller struct {
-	Interval  time.Duration
-	Store     state.Store
-	Dialer    Dialer
-	TLS       *tls.Config
-	Reader    *Reader
-	Metrics   *wire.OpsMetrics
-	Log       *slog.Logger
-	Now       func() time.Time
-	Freshness time.Duration
+	// rssHistory is each instance's recent resident memory for the ADR-909
+	// charge; only the tick goroutine touches it.
+	rssHistory *rssHistory
+	Interval   time.Duration
+	Store      state.Store
+	Dialer     Dialer
+	TLS        *tls.Config
+	Reader     *Reader
+	Metrics    *wire.OpsMetrics
+	Log        *slog.Logger
+	Now        func() time.Time
+	Freshness  time.Duration
 	// Telemetry is the notification/stream-backed node observer cache. When
 	// set, Tick only projects its local snapshot and never dials vmmd.
 	Telemetry *sched.NodeTelemetryCache

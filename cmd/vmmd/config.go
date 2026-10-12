@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -64,9 +65,9 @@ type Config struct {
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
-	// it over virtio-blk. It must be on the same reflink-capable filesystem
-	// as the cached bases. Empty (the default) keeps virtio-blk;
-	// FAAS_PMEM_BASE_DIR overrides TOML.
+	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
+	// that holds its base; a path must be on that same mount. Empty or
+	// "off" keeps virtio-blk. FAAS_PMEM_BASE_DIR overrides TOML.
 	PmemBaseDir string `toml:"pmem_base_dir"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
@@ -500,6 +501,10 @@ func LoadConfig(path string) (*Config, error) {
 		// (below), so a node does not depend on an Ansible drop-in to
 		// skip network setup on its restores.
 		PreparedNetworks: api.DefaultPreparedNetworkCacheSize,
+		// ADR-908 (amended 2026-10-12): per-account pmem bases on by
+		// default. Bases without the pmem label, filesystems without
+		// reflink and native recovery all keep virtio-blk.
+		PmemBaseDir: fcvm.PmemBaseDirAuto,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml

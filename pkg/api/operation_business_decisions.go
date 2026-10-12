@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -13,12 +15,13 @@ const OperationBusinessDecisionKind = "gregale.business-decision.v1"
 
 // OperationBusinessDecision is application-reported reasoning, not execution authority.
 type OperationBusinessDecision struct {
-	Workflow    string `json:"workflow"`
-	InstanceID  string `json:"instance_id"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	RuleID      string `json:"rule_id"`
-	RuleVersion string `json:"rule_version"`
+	Conditions  []OperationBusinessConditionResult `json:"conditions,omitempty"`
+	Workflow    string                             `json:"workflow"`
+	InstanceID  string                             `json:"instance_id"`
+	Code        string                             `json:"code"`
+	Description string                             `json:"description"`
+	RuleID      string                             `json:"rule_id"`
+	RuleVersion string                             `json:"rule_version"`
 }
 
 type OperationBusinessDecisionPayload struct {
@@ -39,7 +42,8 @@ func ValidateOperationBusinessDecision(d OperationBusinessDecision) error {
 			return fmt.Errorf("business decision requires bounded nonempty instance ID, description, and rule version without control characters")
 		}
 	}
-	return nil
+	_, err := CanonicalOperationBusinessConditionResults(d.Conditions)
+	return err
 }
 
 // ParseOperationBusinessDecision recognizes only the versioned envelope. Ordinary
@@ -57,6 +61,7 @@ func ParseOperationBusinessDecision(data []byte) (*OperationBusinessDecision, er
 	if err := ValidateOperationBusinessDecision(payload.Decision); err != nil {
 		return nil, err
 	}
+	payload.Decision.Conditions, _ = CanonicalOperationBusinessConditionResults(payload.Decision.Conditions)
 	return &payload.Decision, nil
 }
 
@@ -67,4 +72,137 @@ func operationMilestoneHasKind(data []byte, kind string) bool {
 		Kind string `json:"kind"`
 	}
 	return json.Unmarshal(data, &header) == nil && header.Kind == kind
+}
+
+// OperationWorkflowChangeReason links an application explanation to a transaction-backed decision.
+type OperationWorkflowChangeReason struct {
+	MilestoneID string                    `json:"milestone_id"`
+	Decision    OperationBusinessDecision `json:"decision"`
+}
+
+func CloneOperationWorkflowChangeReason(input *OperationWorkflowChangeReason) *OperationWorkflowChangeReason {
+	if input == nil {
+		return nil
+	}
+	copy := *input
+	copy.Decision = CloneOperationBusinessDecision(input.Decision)
+	return &copy
+}
+func CanonicalOperationWorkflowChangeReason(input *OperationWorkflowChangeReason) (*OperationWorkflowChangeReason, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if err := ValidateOperationBusinessDecision(input.Decision); err != nil {
+		return nil, err
+	}
+	p := OperationWorkflowPathSelection{DecisionMilestoneID: input.MilestoneID, DecisionCode: input.Decision.Code, DecisionDescription: input.Decision.Description, DecisionRuleID: input.Decision.RuleID, DecisionRuleVersion: input.Decision.RuleVersion}
+	if err := ValidateOperationWorkflowPathDecision(p); err != nil {
+		return nil, err
+	}
+	if input.MilestoneID == "" {
+		return nil, fmt.Errorf("workflow change reason requires a milestone ID")
+	}
+	out := CloneOperationWorkflowChangeReason(input)
+	out.Decision.Conditions, _ = CanonicalOperationBusinessConditionResults(out.Decision.Conditions)
+	return out, nil
+}
+
+// OperationBusinessConditionDefinition declares public reasoning vocabulary on a pinned milestone step.
+type OperationBusinessConditionDefinition struct {
+	ExpectedStates        []string `json:"expected_states,omitempty" yaml:"expected_states,omitempty" toml:"expected_states,omitempty"`
+	RefreshOwner          string   `json:"refresh_owner,omitempty" yaml:"refresh_owner,omitempty" toml:"refresh_owner,omitempty"`
+	RefreshInstructions   string   `json:"refresh_instructions,omitempty" yaml:"refresh_instructions,omitempty" toml:"refresh_instructions,omitempty"`
+	EvidenceMaxAgeSeconds int64    `json:"evidence_max_age_seconds,omitempty" yaml:"evidence_max_age_seconds,omitempty" toml:"evidence_max_age_seconds,omitempty"`
+	ID                    string   `json:"id" yaml:"id" toml:"id"`
+	Description           string   `json:"description" yaml:"description" toml:"description"`
+}
+
+// OperationBusinessConditionResult is reported by the application; Gregale never evaluates it.
+type OperationBusinessConditionResult struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Result      string `json:"result"`
+}
+
+func CanonicalOperationBusinessConditions(input []OperationBusinessConditionDefinition) ([]OperationBusinessConditionDefinition, error) {
+	if len(input) > OperationBusinessConditionsMax {
+		return nil, fmt.Errorf("business conditions exceed limit")
+	}
+	out := append([]OperationBusinessConditionDefinition(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	for i, c := range out {
+		states := append([]string(nil), c.ExpectedStates...)
+		if len(states) > OperationWorkflowStatesMax {
+			return nil, fmt.Errorf("condition expected states exceed limit")
+		}
+		sort.Strings(states)
+		for j, state := range states {
+			if ValidateOperationWorkflowStateName(state) != nil || j > 0 && states[j-1] == state {
+				return nil, fmt.Errorf("condition expected states require unique valid state names")
+			}
+		}
+		out[i].ExpectedStates = states
+		if !validBusinessConditionRefreshText(c.RefreshOwner, OperationBusinessConditionRefreshOwnerMaxBytes) || !validBusinessConditionRefreshText(c.RefreshInstructions, OperationBusinessConditionRefreshInstructionsMaxBytes) {
+			return nil, fmt.Errorf("condition refresh guidance requires bounded public text without controls or surrounding whitespace")
+		}
+		if c.EvidenceMaxAgeSeconds < 0 || c.EvidenceMaxAgeSeconds > OperationBusinessConditionEvidenceMaxAgeSeconds {
+			return nil, fmt.Errorf("condition evidence age budget is out of range")
+		}
+		if !operationWorkflowStateName.MatchString(c.ID) || strings.TrimSpace(c.Description) == "" || len(c.Description) > OperationBusinessConditionDescriptionMaxBytes || !utf8.ValidString(c.Description) || strings.ContainsFunc(c.Description, func(r rune) bool { return r < 0x20 || r == 0x7f }) || i > 0 && out[i-1].ID == c.ID {
+			return nil, fmt.Errorf("business conditions require unique bounded IDs and public descriptions without control characters")
+		}
+	}
+	return out, nil
+}
+func CanonicalOperationBusinessConditionResults(input []OperationBusinessConditionResult) ([]OperationBusinessConditionResult, error) {
+	if len(input) > OperationBusinessConditionsMax {
+		return nil, fmt.Errorf("business conditions exceed limit")
+	}
+	definitions := make([]OperationBusinessConditionDefinition, 0, len(input))
+	for _, c := range input {
+		if c.Result != "pass" && c.Result != "fail" && c.Result != "unknown" {
+			return nil, fmt.Errorf("business condition result must be pass, fail, or unknown")
+		}
+		definitions = append(definitions, OperationBusinessConditionDefinition{ID: c.ID, Description: c.Description})
+	}
+	if _, err := CanonicalOperationBusinessConditions(definitions); err != nil {
+		return nil, err
+	}
+	out := append([]OperationBusinessConditionResult(nil), input...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+func ValidateOperationBusinessConditionContract(declarations []OperationBusinessConditionDefinition, d OperationBusinessDecision) error {
+	for _, c := range d.Conditions {
+		matched := false
+		for _, definition := range declarations {
+			if c.ID == definition.ID && c.Description == definition.Description {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("business condition %s does not match the pinned milestone declaration", c.ID)
+		}
+	}
+	return nil
+}
+func CloneOperationBusinessDecision(d OperationBusinessDecision) OperationBusinessDecision {
+	d.Conditions = append([]OperationBusinessConditionResult(nil), d.Conditions...)
+	return d
+}
+func SameOperationBusinessDecision(a, b OperationBusinessDecision) bool {
+	var err error
+	a.Conditions, err = CanonicalOperationBusinessConditionResults(a.Conditions)
+	if err != nil {
+		return false
+	}
+	b.Conditions, err = CanonicalOperationBusinessConditionResults(b.Conditions)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func validBusinessConditionRefreshText(value string, limit int) bool {
+	return len(value) <= limit && utf8.ValidString(value) && strings.TrimSpace(value) == value && !strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }

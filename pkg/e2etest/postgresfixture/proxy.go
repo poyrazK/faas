@@ -26,6 +26,7 @@ type proxyState struct {
 	connections         map[net.Conn]struct{}
 	closed, unavailable bool
 	connectDelay        time.Duration
+	nextConnectDelay    time.Duration
 }
 
 // Disconnect retires existing sessions while allowing new TLS sessions.
@@ -43,6 +44,14 @@ func (p Proxy) SetConnectDelay(delay time.Duration) {
 	p.state.mu.Lock()
 	defer p.state.mu.Unlock()
 	p.state.connectDelay = max(delay, 0)
+}
+
+// DelayNextConnection models one slow provider handshake. The fault is consumed
+// when accepted, so a cold-boot replacement can use recovered SQL independently.
+func (p Proxy) DelayNextConnection(delay time.Duration) {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	p.state.nextConnectDelay = max(delay, 0)
 }
 
 // SetAvailable controls an explicit SQL outage; it never changes the cluster.
@@ -87,6 +96,10 @@ func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16
 				continue
 			}
 			delay := state.connectDelay
+			if state.nextConnectDelay > 0 {
+				delay = state.nextConnectDelay
+				state.nextConnectDelay = 0
+			}
 			state.connections[client] = struct{}{}
 			state.mu.Unlock()
 			wg.Add(1)

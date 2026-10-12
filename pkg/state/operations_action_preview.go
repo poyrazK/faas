@@ -32,6 +32,12 @@ func previewOperationWorkflowActions(ctx context.Context, store OperationMilesto
 		return api.OperationWorkflowActionPreviewResponse{}, err
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
+	if page.WorkflowInstance != nil && page.WorkflowInstance.ConditionReporting != nil {
+		at = page.WorkflowInstance.ConditionReporting.EvaluatedAt
+	}
+	if page.WorkflowInstance != nil && !page.WorkflowInstance.RetainedMilestoneEvaluatedAt.IsZero() {
+		at = page.WorkflowInstance.RetainedMilestoneEvaluatedAt
+	}
 	out := api.OperationWorkflowActionPreviewResponse{Subject: req.Subject, Workflow: req.Workflow, InstanceID: req.InstanceID, EvaluatedAt: at, Actions: make([]api.OperationWorkflowTransitionReadiness, 0), Reason: "state_unknown"}
 	instance := page.WorkflowInstance
 	if instance == nil {
