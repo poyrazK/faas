@@ -2,7 +2,7 @@
 
 - Status: Proposed (vmmd prototype; schedd, gateway and host swap not wired)
 - Date: 2026-10-12
-- Related: ADR-005, ADR-009, ADR-071, ADR-074, ADR-149, ADR-680, ADR-983
+- Related: ADR-005, ADR-009, ADR-071, ADR-074, ADR-149, ADR-159, ADR-680, ADR-983
 - Builds on: the warm pool (`StateWarm`, #3067), which already resumes a
   paused VM in place
 - Amends (when accepted): spec §6 state machine, §6.2 invariant 2 accounting,
@@ -11,11 +11,12 @@
 ## Context
 
 An idle app parks after its plan's idle timeout (30/60/300/600 s). Parking
-writes a snapshot and destroys the VM, so the app holds no RAM (invariant 4).
-The next request restores the snapshot. In prod over three days, vmmd restore
-took p50 378 ms and p90 750 ms. Steady-state hits took p50 555 ms from
-admission to first byte, and none came in under 350 ms. Creating the
-snapshot itself takes about 520 ms of a paused guest.
+destroys the VM, so the app holds no RAM (invariant 4). It writes a snapshot
+only when the deployment has no usable one: ADR-159 reuses an existing
+capture, which takes about 520 ms of a paused guest to create. The next
+request restores the snapshot. In prod over three days, vmmd restore took
+p50 378 ms and p90 750 ms. Steady-state hits took p50 555 ms from admission
+to first byte, and none came in under 350 ms.
 
 The warm pool keeps paid, provisioned capacity as paused VMs (`StateWarm`)
 and resumes them in place. Each one keeps its full plan RAM and vCPU
@@ -47,7 +48,7 @@ lz4 zram:
 
 | | park + restore | freeze + thaw |
 |---|---|---|
-| leave serving | snapshot create ~520 ms | pause + reclaim 10–20 ms |
+| leave serving | destroy (snapshot reused, ADR-159); ~520 ms create when none exists | pause + reclaim 10–20 ms |
 | come back, after 3 s idle | restore + hook, first byte p50 ~190 ms | 4–37 ms |
 | come back, after 10–40 s idle | same | 16–150 ms |
 | host RAM while idle | 0 | ~2 MB cgroup + 1.6–3 MB compressed |
