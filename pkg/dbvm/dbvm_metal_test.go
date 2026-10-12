@@ -170,7 +170,7 @@ func (vm *runningVM) park(t *testing.T) time.Duration {
 
 func connectVM(ctx context.Context, t *testing.T, uds, password string) *pgx.Conn {
 	t.Helper()
-	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=dbvm user=postgres dbname=postgres sslmode=disable password=%s", password))
+	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=dbvm user=app dbname=app sslmode=disable password=%s", password))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +187,21 @@ func connectVM(ctx context.Context, t *testing.T, uds, password string) *pgx.Con
 func routeToVM(cfg *pgx.ConnConfig, uds string) {
 	cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) { return []string{host}, nil }
 	cfg.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) { return Dial(ctx, uds, dbguest.DataPort) }
+}
+
+// createAppRole provisions the customer role and database through the
+// admin control op, as the native driver will.
+func createAppRole(t *testing.T, control func(dbguest.Request) (dbguest.Response, error), password string) {
+	t.Helper()
+	for _, sql := range []string{
+		"CREATE ROLE app LOGIN PASSWORD '" + password + "'",
+		"CREATE DATABASE app OWNER app",
+	} {
+		resp, err := control(dbguest.Request{Op: dbguest.OpAdminSQL, SQL: sql})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("admin sql %s: %+v %v", strings.Fields(sql)[1], resp, err)
+		}
+	}
 }
 
 func TestMetalDatabaseVMBootstrapParkAndColdBoot(t *testing.T) {
@@ -211,13 +226,29 @@ func TestMetalDatabaseVMBootstrapParkAndColdBoot(t *testing.T) {
 	}
 	firstControl := time.Since(started)
 	bootstrapStarted := time.Now()
-	if resp, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap, SuperuserPassword: password}); err != nil || resp.Error != "" {
+	if resp, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap}); err != nil || resp.Error != "" {
 		t.Fatalf("bootstrap: %+v %v", resp, err)
 	}
 	if _, err := WaitState(vm.alive, vm.uds, dbguest.StateReady); err != nil {
 		t.Fatal(err)
 	}
 	bootstrap := time.Since(bootstrapStarted)
+	control := func(req dbguest.Request) (dbguest.Response, error) { return Control(ctx, vm.uds, req) }
+	createAppRole(t, control, password)
+	if resp, err := control(dbguest.Request{Op: dbguest.OpAdminSQL, SQL: "CREATE ROLE app LOGIN"}); err != nil || resp.Error != dbguest.ErrCodeAdminSQLFailed || resp.SQLState != "42710" {
+		t.Fatalf("duplicate role = %+v, %v; want admin_sql_failed 42710", resp, err)
+	}
+	superuser, err := pgx.ParseConfig("host=dbvm user=postgres dbname=postgres sslmode=disable password=" + password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeToVM(superuser, vm.uds)
+	if conn, err := pgx.ConnectConfig(ctx, superuser); err == nil {
+		_ = conn.Close(ctx)
+		t.Fatal("superuser reachable through the data port")
+	} else if pgErr := (*pgconn.PgError)(nil); !errors.As(err, &pgErr) || pgErr.Code != "28000" {
+		t.Fatalf("superuser over data port = %v, want SQLSTATE 28000 (peer authentication)", err)
+	}
 
 	conn := connectVM(ctx, t, vm.uds, password)
 	if _, err := conn.Exec(ctx, "create table parked(id int primary key, note text not null)"); err != nil {
@@ -227,7 +258,7 @@ func TestMetalDatabaseVMBootstrapParkAndColdBoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = conn.Close(ctx)
-	if resp, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap, SuperuserPassword: password}); err != nil || resp.Error != dbguest.ErrCodeAlreadyInitialized {
+	if resp, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap}); err != nil || resp.Error != dbguest.ErrCodeAlreadyInitialized {
 		t.Fatalf("second bootstrap = %+v, %v; want %s", resp, err, dbguest.ErrCodeAlreadyInitialized)
 	}
 	park := vm.park(t)
@@ -266,13 +297,14 @@ func TestMetalDatabaseVMRejectsWrongPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	password := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
-	if _, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap, SuperuserPassword: password}); err != nil {
+	if _, err := Control(ctx, vm.uds, dbguest.Request{Op: dbguest.OpBootstrap}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := WaitState(vm.alive, vm.uds, dbguest.StateReady); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := pgx.ParseConfig("host=dbvm user=postgres dbname=postgres sslmode=disable password=wrong-password")
+	createAppRole(t, func(req dbguest.Request) (dbguest.Response, error) { return Control(ctx, vm.uds, req) }, password)
+	cfg, err := pgx.ParseConfig("host=dbvm user=app dbname=app sslmode=disable password=wrong-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,12 +361,13 @@ func TestMetalRuntimeJailedLifecycle(t *testing.T) {
 	firstBoot := time.Since(started)
 	assertJailedProcess(t, rt, id, parent)
 	password := hex.EncodeToString([]byte("runtime-metal-test-superuser-pw!"))
-	if resp, err := rt.Control(ctx, id, dbguest.Request{Op: dbguest.OpBootstrap, SuperuserPassword: password}); err != nil || resp.Error != "" {
+	if resp, err := rt.Control(ctx, id, dbguest.Request{Op: dbguest.OpBootstrap}); err != nil || resp.Error != "" {
 		t.Fatalf("bootstrap: %+v %v", resp, err)
 	}
 	if _, err := rt.WaitState(ctx, id, dbguest.StateReady); err != nil {
 		t.Fatal(err)
 	}
+	createAppRole(t, func(req dbguest.Request) (dbguest.Response, error) { return rt.Control(ctx, id, req) }, password)
 	conn := connectRuntime(ctx, t, rt, id, password)
 	if _, err := conn.Exec(ctx, "create table jailed(v text); insert into jailed values ('kept')"); err != nil {
 		t.Fatal(err)
@@ -379,7 +412,7 @@ func TestMetalRuntimeJailedLifecycle(t *testing.T) {
 
 func connectRuntime(ctx context.Context, t *testing.T, rt *Runtime, id, password string) *pgx.Conn {
 	t.Helper()
-	cfg, err := pgx.ParseConfig("host=dbvm user=postgres dbname=postgres sslmode=disable password=" + password)
+	cfg, err := pgx.ParseConfig("host=dbvm user=app dbname=app sslmode=disable password=" + password)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,10 +31,9 @@ const (
 	MaxMajor = 18
 
 	// MaxRequestBytes bounds one control request line.
-	MaxRequestBytes = 4096
-	// MinSuperuserPasswordLen rejects weak bootstrap passwords; the host
-	// generates them, so anything shorter is a caller bug.
-	MinSuperuserPasswordLen = 32
+	MaxRequestBytes = 64 << 10
+	// MaxAdminSQLBytes bounds the SQL of one admin request.
+	MaxAdminSQLBytes = 60 << 10
 )
 
 // Op is one control request.
@@ -44,8 +43,13 @@ const (
 	// OpStatus reports the database state without side effects.
 	OpStatus Op = "status"
 	// OpBootstrap initializes an empty volume. It is accepted once, while
-	// the state is StateNeedsBootstrap.
+	// the state is StateNeedsBootstrap, and carries no secret: the
+	// superuser authenticates only by peer inside the guest.
 	OpBootstrap Op = "bootstrap"
+	// OpAdminSQL runs SQL as the superuser, stopping at the first error.
+	// Batches that must be atomic wrap themselves in BEGIN/COMMIT. Only
+	// the control plane reaches the control port; customers never do.
+	OpAdminSQL Op = "admin_sql"
 	// OpStop shuts PostgreSQL down cleanly; the VM powers off afterwards.
 	OpStop Op = "stop"
 )
@@ -71,14 +75,15 @@ const (
 	ErrCodeInitFailed         = "init_failed"
 	ErrCodeStartFailed        = "start_failed"
 	ErrCodeVolumeFailed       = "volume_failed"
+	ErrCodeAdminSQLFailed     = "admin_sql_failed"
 )
 
 // Request is one control request line.
 type Request struct {
 	Op Op `json:"op"`
-	// SuperuserPassword sets the cluster superuser's SCRAM secret on
-	// bootstrap. It is never logged or echoed.
-	SuperuserPassword string `json:"superuser_password,omitempty"`
+	// SQL is the admin statement batch for OpAdminSQL. It can carry role
+	// passwords and is never logged or echoed.
+	SQL string `json:"sql,omitempty"`
 }
 
 // Response answers one control request.
@@ -86,22 +91,24 @@ type Response struct {
 	State State  `json:"state"`
 	Major int    `json:"pg_major,omitempty"`
 	Error string `json:"error,omitempty"`
+	// SQLState is the PostgreSQL error code of a failed admin request.
+	SQLState string `json:"sqlstate,omitempty"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.
 func (r Request) Validate() error {
 	switch r.Op {
-	case OpStatus, OpStop:
-		if r.SuperuserPassword != "" {
-			return fmt.Errorf("%s: unexpected password", r.Op)
+	case OpStatus, OpStop, OpBootstrap:
+		if r.SQL != "" {
+			return fmt.Errorf("%s: unexpected sql", r.Op)
 		}
 		return nil
-	case OpBootstrap:
-		if len(r.SuperuserPassword) < MinSuperuserPasswordLen {
-			return errors.New("bootstrap: superuser password too short")
+	case OpAdminSQL:
+		if strings.TrimSpace(r.SQL) == "" || len(r.SQL) > MaxAdminSQLBytes {
+			return errors.New("admin_sql: sql is empty or too large")
 		}
-		if strings.ContainsAny(r.SuperuserPassword, "\x00\r\n") {
-			return errors.New("bootstrap: superuser password contains a line break or NUL")
+		if strings.ContainsRune(r.SQL, 0) {
+			return errors.New("admin_sql: sql contains NUL")
 		}
 		return nil
 	default:

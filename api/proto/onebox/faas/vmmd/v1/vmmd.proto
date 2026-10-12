@@ -527,7 +527,8 @@ service Vmmd {
   // StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
   // jail teardown.
   rpc StopDatabase(StopDatabaseRequest) returns (StopDatabaseResponse);
-  // DatabaseControl relays one guest control request (status, bootstrap).
+  // DatabaseControl relays one guest control request (status, bootstrap,
+  // admin_sql).
   rpc DatabaseControl(DatabaseControlRequest) returns (DatabaseControlResponse);
 }
 
@@ -2608,10 +2609,12 @@ message StopDatabaseResponse {}
 
 message DatabaseControlRequest {
   string database_id = 1;
-  // One of status, bootstrap. Stop goes through StopDatabase.
+  // One of status, bootstrap, admin_sql. Stop goes through StopDatabase.
   string op = 2;
-  // Bootstrap only. Sensitive: never logged.
-  string superuser_password = 3;
+  // admin_sql only: statements run as the superuser, stopping at the first
+  // error; atomic batches wrap themselves in BEGIN/COMMIT.
+  // Sensitive (can carry role passwords): never logged.
+  string sql = 3;
 }
 
 message DatabaseControlResponse {
@@ -2619,4 +2622,6 @@ message DatabaseControlResponse {
   int32 postgres_major = 2;
   // Stable guest error code; never PostgreSQL output.
   string error_code = 3;
+  // PostgreSQL SQLSTATE of a failed admin_sql batch.
+  string sqlstate = 4;
 }

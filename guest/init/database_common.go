@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -17,7 +18,6 @@ const (
 	databaseMountPoint   = "/var/lib/postgresql"
 	databasePGData       = databaseMountPoint + "/data"
 	databaseSocketDir    = "/run/postgresql"
-	databaseBootstrapDir = "/run/gregale-bootstrap"
 	databaseOSUser       = "postgres"
 	// databaseMaxConnections stays small: clients reach the database
 	// through the platform proxy, which pools connections.
@@ -82,19 +82,56 @@ func databaseServerArgs(major int, memTotalKiB int64) []string {
 	return args
 }
 
-// databaseInitdbArgs initializes the cluster with SCRAM authentication for
-// every connection; the superuser secret comes from a 0600 file in tmpfs.
-func databaseInitdbArgs(major int, pwfile string) []string {
+// databaseInitdbArgs initializes the cluster without any password: the
+// superuser authenticates only by peer, as the guest's postgres OS user,
+// and databaseHBA then requires SCRAM for every other role.
+func databaseInitdbArgs(major int) []string {
 	return []string{
 		databaseBinDir(major) + "/initdb",
 		"-D", databasePGData,
 		"-U", databaseOSUser,
-		"--pwfile=" + pwfile,
-		"--auth=scram-sha-256",
+		"--auth-local=peer",
+		"--auth-host=reject",
 		"--encoding=UTF8",
 		"--locale=C.UTF-8",
 		"--no-instructions",
 	}
+}
+
+// databaseHBA replaces initdb's pg_hba.conf. Clients reach PostgreSQL only
+// through guest-init's vsock bridge, which runs as root, so peer
+// authentication can never admit them as the superuser; the superuser is
+// reachable only by the admin control op running as the postgres OS user.
+const databaseHBA = `# Managed by guest-init (ADR-1027). Do not edit.
+local all postgres peer
+local all all scram-sha-256
+`
+
+// databasePsqlArgs runs an admin batch from stdin as the superuser,
+// stopping at the first error and reporting it as a SQLSTATE. Batches that
+// must be atomic wrap themselves in BEGIN/COMMIT; CREATE DATABASE cannot
+// run inside a transaction, so psql does not add one.
+func databasePsqlArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/psql",
+		"-X", "-q",
+		"-v", "ON_ERROR_STOP=1",
+		"-v", "VERBOSITY=sqlstate",
+		"-h", databaseSocketDir,
+		"-U", databaseOSUser,
+		"-d", "postgres",
+		"-f", "-",
+	}
+}
+
+var sqlStatePattern = regexp.MustCompile(`ERROR:\s+([0-9A-Z]{5})\b`)
+
+// parseSQLState extracts the SQLSTATE psql printed for a failed batch.
+func parseSQLState(stderr []byte) string {
+	if m := sqlStatePattern.FindSubmatch(stderr); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // clusterMajor parses PG_VERSION. A cluster from another major must not be

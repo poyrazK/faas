@@ -87,27 +87,30 @@ func TestStartDatabaseValidatesShapeAndMapsRateLimits(t *testing.T) {
 	}
 }
 
-func TestDatabaseControlAllowsOnlyStatusAndBootstrap(t *testing.T) {
-	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, Major: 17}}
+func TestDatabaseControlValidatesAndRelays(t *testing.T) {
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, Major: 17, Error: dbguest.ErrCodeAdminSQLFailed, SQLState: "42710"}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	ctx := context.Background()
-	for _, op := range []string{"stop", "drop", ""} {
-		if _, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: op}); status.Code(err) != codes.InvalidArgument {
-			t.Errorf("op %q = %v, want InvalidArgument", op, err)
+	for _, req := range []*vmmdpb.DatabaseControlRequest{
+		{DatabaseId: testDatabaseID, Op: "stop"},
+		{DatabaseId: testDatabaseID, Op: "drop"},
+		{DatabaseId: testDatabaseID, Op: ""},
+		{DatabaseId: testDatabaseID, Op: "admin_sql"},
+		{DatabaseId: testDatabaseID, Op: "bootstrap", Sql: "select 1"},
+	} {
+		if _, err := s.DatabaseControl(ctx, req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%+v = %v, want InvalidArgument", req, err)
 		}
-	}
-	if _, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "bootstrap", SuperuserPassword: "short"}); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("weak bootstrap = %v, want InvalidArgument", err)
 	}
 	if len(rt.controls) != 0 {
 		t.Fatalf("invalid requests reached the guest: %+v", rt.controls)
 	}
-	resp, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "bootstrap", SuperuserPassword: strings.Repeat("p", 40)})
-	if err != nil || resp.GetState() != "ready" || resp.GetPostgresMajor() != 17 {
-		t.Fatalf("bootstrap = %v, %v", resp, err)
+	resp, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "admin_sql", Sql: "create role app login"})
+	if err != nil || resp.GetErrorCode() != dbguest.ErrCodeAdminSQLFailed || resp.GetSqlstate() != "42710" {
+		t.Fatalf("admin_sql = %v, %v", resp, err)
 	}
-	if len(rt.controls) != 1 || rt.controls[0].SuperuserPassword != strings.Repeat("p", 40) {
-		t.Fatalf("bootstrap not relayed: %+v", rt.controls)
+	if len(rt.controls) != 1 || rt.controls[0].SQL != "create role app login" {
+		t.Fatalf("admin_sql not relayed: %+v", rt.controls)
 	}
 }
 

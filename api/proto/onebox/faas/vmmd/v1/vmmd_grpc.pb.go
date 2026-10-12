@@ -542,7 +542,8 @@ type VmmdClient interface {
 	// StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
 	// jail teardown.
 	StopDatabase(ctx context.Context, in *StopDatabaseRequest, opts ...grpc.CallOption) (*StopDatabaseResponse, error)
-	// DatabaseControl relays one guest control request (status, bootstrap).
+	// DatabaseControl relays one guest control request (status, bootstrap,
+	// admin_sql).
 	DatabaseControl(ctx context.Context, in *DatabaseControlRequest, opts ...grpc.CallOption) (*DatabaseControlResponse, error)
 }
 
@@ -1627,7 +1628,8 @@ type VmmdServer interface {
 	// StopDatabase parks the database: clean PostgreSQL shutdown, VM exit,
 	// jail teardown.
 	StopDatabase(context.Context, *StopDatabaseRequest) (*StopDatabaseResponse, error)
-	// DatabaseControl relays one guest control request (status, bootstrap).
+	// DatabaseControl relays one guest control request (status, bootstrap,
+	// admin_sql).
 	DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }

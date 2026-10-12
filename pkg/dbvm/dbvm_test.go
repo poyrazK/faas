@@ -169,8 +169,10 @@ func TestControlRoundTrip(t *testing.T) {
 }
 
 func TestControlRejectsInvalidRequestLocally(t *testing.T) {
-	if _, err := Control(context.Background(), "/nonexistent", dbguest.Request{Op: dbguest.OpBootstrap}); err == nil {
-		t.Fatal("bootstrap without a password was sent")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := Control(ctx, "/nonexistent", dbguest.Request{Op: dbguest.OpAdminSQL}); err == nil || !strings.Contains(err.Error(), "admin_sql") {
+		t.Fatalf("admin_sql without SQL = %v; want a local validation error", err)
 	}
 }
 

@@ -129,16 +129,17 @@ func (s *Server) StopDatabase(ctx context.Context, req *vmmdpb.StopDatabaseReque
 	return &vmmdpb.StopDatabaseResponse{}, nil
 }
 
-// DatabaseControl relays status and bootstrap. Stop goes through
-// StopDatabase so the jail is always torn down with the VM.
+// DatabaseControl relays status, bootstrap and admin SQL. Stop goes through
+// StopDatabase so the jail is always torn down with the VM. The SQL can
+// carry role passwords and is never logged.
 func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseControlRequest) (*vmmdpb.DatabaseControlResponse, error) {
 	rt, err := s.databaseRuntime()
 	if err != nil {
 		return nil, err
 	}
-	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SuperuserPassword: req.GetSuperuserPassword()}
-	if control.Op != dbguest.OpStatus && control.Op != dbguest.OpBootstrap {
-		return nil, status.Error(codes.InvalidArgument, "database control op must be status or bootstrap")
+	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql()}
+	if control.Op == dbguest.OpStop {
+		return nil, status.Error(codes.InvalidArgument, "stop a database with StopDatabase")
 	}
 	if err := control.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid database control request")
@@ -147,7 +148,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err != nil {
 		return nil, s.databaseStatus("control", err)
 	}
-	return &vmmdpb.DatabaseControlResponse{State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error}, nil
+	return &vmmdpb.DatabaseControlResponse{
+		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState,
+	}, nil
 }
 
 // databaseStatus maps runtime errors to stable gRPC codes and logs

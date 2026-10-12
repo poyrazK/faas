@@ -10912,12 +10912,14 @@ func (*StopDatabaseResponse) Descriptor() ([]byte, []int) {
 type DatabaseControlRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	DatabaseId string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
-	// One of status, bootstrap. Stop goes through StopDatabase.
+	// One of status, bootstrap, admin_sql. Stop goes through StopDatabase.
 	Op string `protobuf:"bytes,2,opt,name=op,proto3" json:"op,omitempty"`
-	// Bootstrap only. Sensitive: never logged.
-	SuperuserPassword string `protobuf:"bytes,3,opt,name=superuser_password,json=superuserPassword,proto3" json:"superuser_password,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// admin_sql only: statements run as the superuser, stopping at the first
+	// error; atomic batches wrap themselves in BEGIN/COMMIT.
+	// Sensitive (can carry role passwords): never logged.
+	Sql           string `protobuf:"bytes,3,opt,name=sql,proto3" json:"sql,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DatabaseControlRequest) Reset() {
@@ -10964,9 +10966,9 @@ func (x *DatabaseControlRequest) GetOp() string {
 	return ""
 }
 
-func (x *DatabaseControlRequest) GetSuperuserPassword() string {
+func (x *DatabaseControlRequest) GetSql() string {
 	if x != nil {
-		return x.SuperuserPassword
+		return x.Sql
 	}
 	return ""
 }
@@ -10976,7 +10978,9 @@ type DatabaseControlResponse struct {
 	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	PostgresMajor int32                  `protobuf:"varint,2,opt,name=postgres_major,json=postgresMajor,proto3" json:"postgres_major,omitempty"`
 	// Stable guest error code; never PostgreSQL output.
-	ErrorCode     string `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorCode string `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// PostgreSQL SQLSTATE of a failed admin_sql batch.
+	Sqlstate      string `protobuf:"bytes,4,opt,name=sqlstate,proto3" json:"sqlstate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -11028,6 +11032,13 @@ func (x *DatabaseControlResponse) GetPostgresMajor() int32 {
 func (x *DatabaseControlResponse) GetErrorCode() string {
 	if x != nil {
 		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *DatabaseControlResponse) GetSqlstate() string {
+	if x != nil {
+		return x.Sqlstate
 	}
 	return ""
 }
@@ -11873,17 +11884,18 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x13StopDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\"\x16\n" +
-	"\x14StopDatabaseResponse\"x\n" +
+	"\x14StopDatabaseResponse\"[\n" +
 	"\x16DatabaseControlRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x0e\n" +
-	"\x02op\x18\x02 \x01(\tR\x02op\x12-\n" +
-	"\x12superuser_password\x18\x03 \x01(\tR\x11superuserPassword\"u\n" +
+	"\x02op\x18\x02 \x01(\tR\x02op\x12\x10\n" +
+	"\x03sql\x18\x03 \x01(\tR\x03sql\"\x91\x01\n" +
 	"\x17DatabaseControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
 	"\x0epostgres_major\x18\x02 \x01(\x05R\rpostgresMajor\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\tR\terrorCode*D\n" +
+	"error_code\x18\x03 \x01(\tR\terrorCode\x12\x1a\n" +
+	"\bsqlstate\x18\x04 \x01(\tR\bsqlstate*D\n" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +
 	"\x0eWAKE_COLD_BOOT\x10\x00\x12\x10\n" +

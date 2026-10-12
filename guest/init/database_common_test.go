@@ -55,6 +55,9 @@ func TestDatabaseServerArgsPinSafetySettings(t *testing.T) {
 		t.Fatalf("unexpected binary or data dir: %v", args[:3])
 	}
 	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--single-transaction") {
+		t.Fatalf("psql must not wrap admin batches; CREATE DATABASE cannot run in a transaction: %s", joined)
+	}
 	for _, want := range []string{
 		"-c listen_addresses= ",
 		"-c unix_socket_directories=/run/postgresql",
@@ -69,19 +72,61 @@ func TestDatabaseServerArgsPinSafetySettings(t *testing.T) {
 	}
 }
 
-func TestDatabaseInitdbArgs(t *testing.T) {
-	args := databaseInitdbArgs(16, "/run/gregale-bootstrap/pw")
+func TestDatabaseInitdbArgsCarryNoSecret(t *testing.T) {
+	args := databaseInitdbArgs(16)
 	if args[0] != "/usr/lib/postgresql/16/bin/initdb" {
 		t.Fatalf("initdb binary = %q", args[0])
 	}
-	for _, want := range []string{"--auth=scram-sha-256", "--pwfile=/run/gregale-bootstrap/pw", "-U", "postgres", "--encoding=UTF8"} {
+	for _, want := range []string{"--auth-local=peer", "--auth-host=reject", "-U", "postgres", "--encoding=UTF8"} {
 		if !slices.Contains(args, want) {
 			t.Errorf("initdb args missing %q: %v", want, args)
 		}
 	}
 	for _, arg := range args {
-		if strings.Contains(arg, "trust") {
-			t.Fatalf("initdb must not configure trust authentication: %v", args)
+		if strings.Contains(arg, "trust") || strings.Contains(arg, "pwfile") {
+			t.Fatalf("initdb must not use trust or a password file: %v", args)
+		}
+	}
+}
+
+// TestDatabaseHBAKeepsSuperuserLocal pins the authentication policy: the
+// superuser only by peer, everyone else by SCRAM, nothing trusted.
+func TestDatabaseHBAKeepsSuperuserLocal(t *testing.T) {
+	var rules []string
+	for _, line := range strings.Split(databaseHBA, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			rules = append(rules, strings.Join(strings.Fields(line), " "))
+		}
+	}
+	want := []string{"local all postgres peer", "local all all scram-sha-256"}
+	if !slices.Equal(rules, want) {
+		t.Fatalf("pg_hba rules = %q, want %q", rules, want)
+	}
+}
+
+func TestDatabasePsqlArgs(t *testing.T) {
+	args := databasePsqlArgs(17)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--single-transaction") {
+		t.Fatalf("psql must not wrap admin batches; CREATE DATABASE cannot run in a transaction: %s", joined)
+	}
+	for _, want := range []string{"/usr/lib/postgresql/17/bin/psql -X", "ON_ERROR_STOP=1", "VERBOSITY=sqlstate", "-U postgres", "-f -"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("psql args missing %q: %s", want, joined)
+		}
+	}
+}
+
+func TestParseSQLState(t *testing.T) {
+	cases := map[string]string{
+		"psql:<stdin>:1: ERROR:  42710\n":              "42710",
+		"psql:<stdin>:3: ERROR:  42P01\nother noise\n": "42P01",
+		"psql: error: connection to server failed\n":   "",
+		"": "",
+	}
+	for in, want := range cases {
+		if got := parseSQLState([]byte(in)); got != want {
+			t.Errorf("parseSQLState(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

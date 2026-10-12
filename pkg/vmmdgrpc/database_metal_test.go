@@ -110,11 +110,13 @@ func TestMetalDatabaseRPCLifecycle(t *testing.T) {
 	if _, err := client.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("delete while running = %v, want FailedPrecondition", err)
 	}
-	password := strings.Repeat("rpc-metal-", 4)
-	if c, err := client.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: "bootstrap", SuperuserPassword: password}); err != nil || c.GetErrorCode() != "" {
+	if c, err := client.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: "bootstrap"}); err != nil || c.GetErrorCode() != "" {
 		t.Fatalf("bootstrap = %v, %v", c, err)
 	}
 	waitRPCReady(ctx, t, client, id)
+	if c, err := client.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: "admin_sql", Sql: "CREATE ROLE app LOGIN PASSWORD '" + strings.Repeat("rpc-metal-", 4) + "'"}); err != nil || c.GetErrorCode() != "" {
+		t.Fatalf("admin_sql = %v, %v", c, err)
+	}
 	if _, err := client.StopDatabase(ctx, &vmmdpb.StopDatabaseRequest{DatabaseId: id}); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +130,7 @@ func TestMetalDatabaseRPCLifecycle(t *testing.T) {
 	}
 	waitRPCReady(ctx, t, client, id)
 	wake := time.Since(woke)
-	if c, err := client.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: "bootstrap", SuperuserPassword: password}); err != nil || c.GetErrorCode() != dbguest.ErrCodeAlreadyInitialized {
+	if c, err := client.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: "bootstrap"}); err != nil || c.GetErrorCode() != dbguest.ErrCodeAlreadyInitialized {
 		t.Fatalf("bootstrap after wake = %v, %v; want %s", c, err, dbguest.ErrCodeAlreadyInitialized)
 	}
 	if _, err := client.StopDatabase(ctx, &vmmdpb.StopDatabaseRequest{DatabaseId: id}); err != nil {

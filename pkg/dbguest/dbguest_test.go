@@ -51,7 +51,6 @@ func TestBootArgsRoundTrip(t *testing.T) {
 }
 
 func TestRequestValidate(t *testing.T) {
-	strong := strings.Repeat("a", MinSuperuserPasswordLen)
 	cases := []struct {
 		name    string
 		req     Request
@@ -59,11 +58,13 @@ func TestRequestValidate(t *testing.T) {
 	}{
 		{name: "status", req: Request{Op: OpStatus}},
 		{name: "stop", req: Request{Op: OpStop}},
-		{name: "bootstrap", req: Request{Op: OpBootstrap, SuperuserPassword: strong}},
-		{name: "bootstrap short password", req: Request{Op: OpBootstrap, SuperuserPassword: "short"}, wantErr: true},
-		{name: "bootstrap newline", req: Request{Op: OpBootstrap, SuperuserPassword: strong + "\n"}, wantErr: true},
-		{name: "bootstrap NUL", req: Request{Op: OpBootstrap, SuperuserPassword: strong + "\x00"}, wantErr: true},
-		{name: "status with password", req: Request{Op: OpStatus, SuperuserPassword: strong}, wantErr: true},
+		{name: "bootstrap", req: Request{Op: OpBootstrap}},
+		{name: "admin sql", req: Request{Op: OpAdminSQL, SQL: "create role app login"}},
+		{name: "bootstrap with sql", req: Request{Op: OpBootstrap, SQL: "select 1"}, wantErr: true},
+		{name: "status with sql", req: Request{Op: OpStatus, SQL: "select 1"}, wantErr: true},
+		{name: "admin sql empty", req: Request{Op: OpAdminSQL, SQL: "  "}, wantErr: true},
+		{name: "admin sql too large", req: Request{Op: OpAdminSQL, SQL: strings.Repeat("x", MaxAdminSQLBytes+1)}, wantErr: true},
+		{name: "admin sql NUL", req: Request{Op: OpAdminSQL, SQL: "select 1\x00"}, wantErr: true},
 		{name: "unknown op", req: Request{Op: "drop"}, wantErr: true},
 	}
 	for _, tc := range cases {

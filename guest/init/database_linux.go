@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,10 +32,11 @@ import (
 // cold boot. Database VMs are never memory-snapshotted.
 
 const (
-	databaseControlTimeout = 2 * time.Minute
-	databaseReadyPoll      = 5 * time.Millisecond
-	databaseFastStopWait   = 60 * time.Second
-	databaseQuitStopWait   = 10 * time.Second
+	databaseControlTimeout  = 2 * time.Minute
+	databaseReadyPoll       = 5 * time.Millisecond
+	databaseFastStopWait    = 60 * time.Second
+	databaseQuitStopWait    = 10 * time.Second
+	databaseAdminSQLTimeout = 60 * time.Second
 )
 
 // poweroffDatabase ends the VM with a guest reset rather than a power-off:
@@ -191,7 +194,9 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 	case err != nil:
 		resp.Error = dbguest.ErrCodeInvalidRequest
 	case req.Op == dbguest.OpBootstrap:
-		resp = g.bootstrap(req.SuperuserPassword)
+		resp = g.bootstrap()
+	case req.Op == dbguest.OpAdminSQL:
+		resp = g.adminSQL(req.SQL)
 	case req.Op == dbguest.OpStop:
 		g.stop()
 		resp = g.response()
@@ -199,16 +204,15 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 	_ = json.NewEncoder(conn).Encode(resp)
 }
 
-// bootstrap initializes an empty volume once, then starts PostgreSQL. The
-// superuser secret only ever exists in a 0600 tmpfs file removed after
-// initdb.
-func (g *databaseGuest) bootstrap(password string) dbguest.Response {
+// bootstrap initializes an empty volume once, then starts PostgreSQL. No
+// secret is involved: the superuser authenticates only by peer.
+func (g *databaseGuest) bootstrap() dbguest.Response {
 	if g.currentState() != dbguest.StateNeedsBootstrap {
 		resp := g.response()
 		resp.Error = dbguest.ErrCodeAlreadyInitialized
 		return resp
 	}
-	if err := g.initCluster(password); err != nil {
+	if err := g.initCluster(); err != nil {
 		g.fail(dbguest.ErrCodeInitFailed, "initialize cluster", err)
 		return g.response()
 	}
@@ -217,32 +221,71 @@ func (g *databaseGuest) bootstrap(password string) dbguest.Response {
 	return g.response()
 }
 
-func (g *databaseGuest) initCluster(password string) error {
+func (g *databaseGuest) initCluster() error {
 	if err := os.Chown(databaseMountPoint, g.uid, g.gid); err != nil {
 		return err
 	}
 	if err := os.Chmod(databaseMountPoint, 0o700); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(databaseBootstrapDir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chown(databaseBootstrapDir, g.uid, g.gid); err != nil {
-		return err
-	}
-	pwfile := filepath.Join(databaseBootstrapDir, "superuser")
-	defer func() { _ = os.Remove(pwfile) }()
-	if err := os.WriteFile(pwfile, []byte(password+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err := os.Chown(pwfile, g.uid, g.gid); err != nil {
-		return err
-	}
-	args := databaseInitdbArgs(g.major, pwfile)
+	args := databaseInitdbArgs(g.major)
 	cmd := g.asDatabaseUser(exec.Command(args[0], args[1:]...))
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	hba := filepath.Join(databasePGData, "pg_hba.conf")
+	if err := os.WriteFile(hba, []byte(databaseHBA), 0o600); err != nil {
+		return err
+	}
+	return os.Chown(hba, g.uid, g.gid)
+}
+
+// adminSQL runs a control-plane batch as the superuser. The SQL can carry
+// role passwords, so neither it nor psql's output is logged; only the
+// SQLSTATE of a failure is returned.
+func (g *databaseGuest) adminSQL(sql string) dbguest.Response {
+	if g.currentState() != dbguest.StateReady {
+		resp := g.response()
+		resp.Error = dbguest.ErrCodeNotReady
+		return resp
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), databaseAdminSQLTimeout)
+	defer cancel()
+	args := databasePsqlArgs(g.major)
+	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd.Stdin = strings.NewReader(sql)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &limitedWriter{w: &stderr, n: 4096}
+	resp := g.response()
+	if err := cmd.Run(); err != nil {
+		resp.Error = dbguest.ErrCodeAdminSQLFailed
+		resp.SQLState = parseSQLState(stderr.Bytes())
+	}
+	return resp
+}
+
+// limitedWriter keeps the first n bytes and drops the rest.
+type limitedWriter struct {
+	w io.Writer
+	n int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if l.n > 0 {
+		keep := p
+		if len(keep) > l.n {
+			keep = keep[:l.n]
+		}
+		written, err := l.w.Write(keep)
+		l.n -= written
+		if err != nil {
+			return written, err
+		}
+	}
+	return len(p), nil
 }
 
 func (g *databaseGuest) asDatabaseUser(cmd *exec.Cmd) *exec.Cmd {
