@@ -130,8 +130,24 @@ jobs:
           GOMEMLIMIT: 10GiB
           GOMAXPROCS: 4
         run: |
-          # shellcheck disable=SC2086 # space-separated package list
-          go vet $PKGS
+          # apidserver's external tests (apidserver_test, ADR-982) import its
+          # internal test variant, so vetting them compiles apidserver with its
+          # internal tests: ~5 GB of live heap. Next to three other vet
+          # processes that lost the hosted runner, so vet it alone first under
+          # the full tier's vet bounds, then the rest as before.
+          apid=./pkg/apid/apidserver
+          rest=""
+          for pkg in $PKGS; do
+            if [ "$pkg" = "$apid" ]; then
+              GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go vet "$apid"
+            else
+              rest="$rest $pkg"
+            fi
+          done
+          if [ -n "$rest" ]; then
+            # shellcheck disable=SC2086 # space-separated package list
+            go vet $rest
+          fi
       # Same linter, rules and per-package invocation as the mega tier's
       # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
       # packages this change touches. The complete tree is linted nightly and
