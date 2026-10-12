@@ -58,7 +58,7 @@ func standardProjectSource(t *testing.T, names ...string) []byte {
 
 func standardProjectApply(t *testing.T, e standardOnboardingBoundaryEnv, source []byte) api.ApplyResponse {
 	t.Helper()
-	r := scanAuditRegressionRequest(t, e.key, source, map[string]string{"project_slug": "standard-services"})
+	r := standardProjectScanRequest(t, e.key, source, map[string]string{"project_slug": "standard-services"})
 	r.URL.Path = "/v1/projects"
 	w := httptest.NewRecorder()
 	e.handler.ServeHTTP(w, r)
@@ -321,7 +321,7 @@ func standardProjectScopeChange(t *testing.T, base standardProjectBoundaryStore)
 	// reconciliation and the request's first standard read. An org-wide
 	// standard still applies, but that does not authorize the old project
 	// request to enqueue source for the now-independent application.
-	r := scanAuditRegressionRequest(t, e.key, standardProjectSource(t, "standards-detached"), map[string]string{"project_slug": "standard-services"})
+	r := standardProjectScanRequest(t, e.key, standardProjectSource(t, "standards-detached"), map[string]string{"project_slug": "standard-services"})
 	r.URL.Path = "/v1/projects"
 	w := httptest.NewRecorder()
 	e.handler.ServeHTTP(w, r)

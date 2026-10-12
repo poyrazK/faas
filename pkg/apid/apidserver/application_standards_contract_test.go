@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"go/ast"

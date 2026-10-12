@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,16 +11,19 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,7 +43,7 @@ type standardOnboardingBoundaryEnv struct {
 	assignment  string
 	destination api.ApplicationStandardLogDestination
 	publisher   api.ApplicationStandardPublisher
-	github      *appsNewFake
+	github      *applicationStandardsGithubFake
 }
 
 func standardOnboardingBoundaryRequest(t *testing.T, e standardOnboardingBoundaryEnv, method, path string, body any) *httptest.ResponseRecorder {
@@ -82,8 +86,10 @@ func newStandardOnboardingBoundary(t *testing.T, store standardOnboardingBoundar
 	if _, err := store.CreateAPIKey(t.Context(), owner.Account.ID, hash, "onboarding", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
-	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "boundary-binding"}
+	gh := &applicationStandardsGithubFake{
+		repos:    []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}},
+		verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "boundary-binding",
+	}
 	s := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, nil, nil, 0, "")
 	s.WithApplicationStandardMutationsEnabled(true)
 	e := standardOnboardingBoundaryEnv{store: store, owner: owner, server: s, handler: s.handler(), key: plain, github: gh}
@@ -243,7 +249,7 @@ func standardOnboardingWizard(t *testing.T, e standardOnboardingBoundaryEnv) api
 	form := url.Values{"csrf_token": {csrf}, "installation_id": {"42"}, "repo_full_name": {"octocat/hello"}, "production_branch": {"main"}, "slug": {"boundary-wizard"}}
 	r := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stampCookie(t, mgr, raw, "alice")})
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: applicationStandardsStampCookie(t, mgr, raw, "alice")})
 	r.AddCookie(&http.Cookie{Name: githubWizardCreateCSRFCookie, Value: csrf})
 	response := httptest.NewRecorder()
 	e.handler.ServeHTTP(response, r)
@@ -257,4 +263,101 @@ func standardOnboardingWizard(t *testing.T, e standardOnboardingBoundaryEnv) api
 	result := api.AppResponse{ID: app.ID, Slug: app.Slug}
 	standardOnboardingPending(t, e, result)
 	return result
+}
+
+type applicationStandardsGithubFake struct {
+	repos         []Repo
+	verified      bool
+	accountLogin  string
+	defaultBranch string
+	bindReturn    string
+	bindCalls     int
+}
+
+func (f *applicationStandardsGithubFake) GetInstallState(context.Context, string) (InstallState, string, string, error) {
+	return InstallStateUnspecified, "", "", (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) ExchangeOAuthCode(context.Context, string, string, string) (string, string, error) {
+	return "", "", (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
+	return f.repos, nil
+}
+
+func (f *applicationStandardsGithubFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
+	f.bindCalls++
+	if f.bindReturn != "" {
+		return f.bindReturn, nil
+	}
+	return "boundary-binding", nil
+}
+
+func (f *applicationStandardsGithubFake) UnbindAppRepo(context.Context, string, string) error {
+	return (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) GetAppBinding(context.Context, string, string) (AppBinding, error) {
+	return AppBinding{}, (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) CreateDeploymentFromPush(context.Context, string, string, string, string) (string, string, error) {
+	return "", "", (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) WriteCheck(context.Context, string, string, CheckPhase, string, string) error {
+	return (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) VerifyInstallation(context.Context, int64, string) (bool, string, string, error) {
+	return f.verified, f.accountLogin, f.defaultBranch, nil
+}
+
+func (f *applicationStandardsGithubFake) MintInstallationToken(context.Context, string, int64) (string, time.Time, error) {
+	return "", time.Time{}, (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*StreamSourceRefResult, error) {
+	return nil, (*ErrGithubdNotReady)
+}
+
+func (f *applicationStandardsGithubFake) Close() error { return nil }
+
+func applicationStandardsStampCookie(t *testing.T, mgr *session.Manager, raw, login string) string {
+	t.Helper()
+	env, err := mgr.Verify(raw)
+	if err != nil {
+		t.Fatalf("verify existing cookie: %v", err)
+	}
+	out, err := mgr.IssueWithSessionAndGithubLogin(env.Sid, env.AccountID, login, false)
+	if err != nil {
+		t.Fatalf("seal GitHub login: %v", err)
+	}
+	return out
+}
+
+func standardProjectScanRequest(t *testing.T, key string, source []byte, fields map[string]string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("source", "project.tar.gz")
+	if err != nil {
+		t.Fatalf("create source part: %v", err)
+	}
+	if _, err := fw.Write(source); err != nil {
+		t.Fatalf("write source part: %v", err)
+	}
+	for name, value := range fields {
+		if err := mw.WriteField(name, value); err != nil {
+			t.Fatalf("write field %s: %v", name, err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/projects/scan", &body)
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("Content-Type", mw.FormDataContentType())
+	return request
 }
