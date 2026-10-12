@@ -162,6 +162,7 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
+	ReviewImpact             *OperationWorkflowPlaybookReviewImpact  `json:"review_impact,omitempty"`
 	DependencyReviewDueAt    *time.Time                              `json:"dependency_review_due_at,omitempty"`
 	DependencyReviewRevision int64                                   `json:"dependency_review_revision,omitempty"`
 	Readiness                *OperationWorkflowPlaybookStepReadiness `json:"readiness,omitempty"`
@@ -399,14 +400,23 @@ type OperationWorkflowPlaybookOutcomeFollowUp struct {
 	ChecklistComplete bool                                     `json:"checklist_complete"`
 }
 
+// OperationWorkflowPlaybookReviewImpact explains the business result protected by a human review.
+type OperationWorkflowPlaybookReviewImpact struct {
+	Kind        string `json:"kind" yaml:"kind" toml:"kind"`
+	Code        string `json:"code" yaml:"code" toml:"code"`
+	Description string `json:"description" yaml:"description" toml:"description"`
+	Priority    string `json:"priority" yaml:"priority" toml:"priority"`
+}
+
 type OperationWorkflowPlaybookStepAssignmentPolicy struct {
-	ReviewAfterSeconds      int64  `json:"review_after_seconds,omitempty" yaml:"review_after_seconds,omitempty" toml:"review_after_seconds"`
-	ReviewFallbackOwner     string `json:"review_fallback_owner,omitempty" yaml:"review_fallback_owner,omitempty" toml:"review_fallback_owner"`
-	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty" yaml:"acknowledge_after_seconds,omitempty" toml:"acknowledge_after_seconds"`
-	FallbackOwner           string `json:"fallback_owner,omitempty" yaml:"fallback_owner,omitempty" toml:"fallback_owner"`
-	Label                   string `json:"label" yaml:"label" toml:"label"`
-	Owner                   string `json:"owner" yaml:"owner" toml:"owner"`
-	CompleteAfterSeconds    int64  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
+	ReviewImpact            *OperationWorkflowPlaybookReviewImpact `json:"review_impact,omitempty" yaml:"review_impact,omitempty" toml:"review_impact"`
+	ReviewAfterSeconds      int64                                  `json:"review_after_seconds,omitempty" yaml:"review_after_seconds,omitempty" toml:"review_after_seconds"`
+	ReviewFallbackOwner     string                                 `json:"review_fallback_owner,omitempty" yaml:"review_fallback_owner,omitempty" toml:"review_fallback_owner"`
+	AcknowledgeAfterSeconds int64                                  `json:"acknowledge_after_seconds,omitempty" yaml:"acknowledge_after_seconds,omitempty" toml:"acknowledge_after_seconds"`
+	FallbackOwner           string                                 `json:"fallback_owner,omitempty" yaml:"fallback_owner,omitempty" toml:"fallback_owner"`
+	Label                   string                                 `json:"label" yaml:"label" toml:"label"`
+	Owner                   string                                 `json:"owner" yaml:"owner" toml:"owner"`
+	CompleteAfterSeconds    int64                                  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
 }
 type OperationWorkflowPlaybookStepAssignmentReference struct {
 	DependencyReviewRevision int64                                                `json:"dependency_review_revision,omitempty"`
@@ -415,6 +425,7 @@ type OperationWorkflowPlaybookStepAssignmentReference struct {
 	Notification             OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
 }
 type OperationWorkflowPlaybookStepAssignment struct {
+	ReviewImpact                 *OperationWorkflowPlaybookReviewImpact        `json:"review_impact,omitempty"`
 	DependencyReviewStatus       string                                        `json:"dependency_review_status,omitempty"`
 	DependencyReviewPrerequisite string                                        `json:"dependency_review_prerequisite,omitempty"`
 	DependencyReview             *OperationWorkflowPlaybookProgressItem        `json:"dependency_review,omitempty"`

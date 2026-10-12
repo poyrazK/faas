@@ -362,3 +362,5 @@ type OperationWorkflowPlaybookDependencyState = api.OperationWorkflowPlaybookDep
 type OperationWorkflowPlaybookDependencyRegression = api.OperationWorkflowPlaybookDependencyRegression
 
 type OperationWorkflowPlaybookDependencyRecovery = api.OperationWorkflowPlaybookDependencyRecovery
+
+type OperationWorkflowPlaybookReviewImpact = api.OperationWorkflowPlaybookReviewImpact

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
+
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookStepAssignmentPolicy")
 
@@ -24,6 +28,9 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
     complete_after_seconds: int
     """OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list
     review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days."""
+    review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     review_after_seconds: int | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting
     at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline.
@@ -46,6 +53,10 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
 
         complete_after_seconds = self.complete_after_seconds
 
+        review_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_impact, Unset):
+            review_impact = self.review_impact.to_dict()
+
         review_after_seconds = self.review_after_seconds
 
         review_fallback_owner = self.review_fallback_owner
@@ -63,6 +74,8 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
                 "complete_after_seconds": complete_after_seconds,
             }
         )
+        if review_impact is not UNSET:
+            field_dict["review_impact"] = review_impact
         if review_after_seconds is not UNSET:
             field_dict["review_after_seconds"] = review_after_seconds
         if review_fallback_owner is not UNSET:
@@ -76,12 +89,21 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
+
         d = dict(src_dict)
         label = d.pop("label")
 
         owner = d.pop("owner")
 
         complete_after_seconds = d.pop("complete_after_seconds")
+
+        _review_impact = d.pop("review_impact", UNSET)
+        review_impact: OperationWorkflowPlaybookReviewImpact | Unset
+        if isinstance(_review_impact, Unset):
+            review_impact = UNSET
+        else:
+            review_impact = OperationWorkflowPlaybookReviewImpact.from_dict(_review_impact)
 
         review_after_seconds = d.pop("review_after_seconds", UNSET)
 
@@ -95,6 +117,7 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
             label=label,
             owner=owner,
             complete_after_seconds=complete_after_seconds,
+            review_impact=review_impact,
             review_after_seconds=review_after_seconds,
             review_fallback_owner=review_fallback_owner,
             acknowledge_after_seconds=acknowledge_after_seconds,

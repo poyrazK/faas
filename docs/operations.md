@@ -3423,3 +3423,25 @@ When a prerequisite reopens, the server stores `dependency_review_due_at` on the
 Active watches deliver the review task with its pinned follow-up time and deadline target. The retained-inbox response worker rechecks exact active progress before escalation, even if the delivery watch is disabled, without requiring fresh application reports. An unresolved target emits one `escalation_response_overdue` notice. It transfers the task to the fallback only if the original owner is unchanged, assignment history is complete and empty, and the task has not been manually completed. Source owner changes, manual routing and automatic fallback remain recorded and protected.
 
 Inbox acknowledgment, manual completion or clearing/rescheduling inbox attention do not validate the checklist and do not satisfy this review target. A source confirmation, redo request or superseding episode closes it. Notification retention and inactive source progress retain their existing limits; retired progress does not manufacture a review decision.
+
+### Business impact of unresolved validity reviews
+
+Applications can add `review_impact` to a frozen outcome follow-up assignment policy. It declares `kind` (`milestone` or `outcome`), a result `code`, a required business-risk `description`, and `priority` (`normal`, `high` or `critical`). Outcome targets must be the pinned expected outcome or an explicitly acceptable alternative. Milestone targets use workflow milestone slugs; the declaration itself does not establish milestone existence or completion. Descriptions are trimmed, control-free UTF-8 text limited to 1024 bytes.
+
+```yaml
+follow_up_assignments:
+  - label: Verify downstream delivery
+    owner: fulfillment
+    complete_after_seconds: 3600
+    review_after_seconds: 1800
+    review_fallback_owner: operations
+    review_impact:
+      kind: milestone
+      code: delivery_confirmed
+      description: Confirm that the delivery remains valid after payment verification reopens.
+      priority: critical
+```
+
+The impact is copied from the pinned policy when the outcome follow-up list is first enrolled and preserved through subsequent reviews. Review inbox tasks retain the same declaration alongside prior completion evidence, effective inbox owner and review deadline. Case views group unresolved validity obligations by protected business result, show contributing steps, their declared risk, checklist owner and deadline, and list critical results first. The highest declared priority represents a group containing several review steps. Effective inbox ownership may differ after fallback or manual routing.
+
+These groups describe human confidence awaiting review, independently of fresh or unavailable application outcome reports. They disappear after explicit validity confirmation or redo requests clear the obligations; redeployments, prerequisite recovery, acknowledgment and inbox retention cannot silently revalidate the work. Existing playbooks without impact declarations retain their current behavior. Priority changes presentation only and does not authorize execution, alter deadlines or replace the reported business outcome.

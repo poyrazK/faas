@@ -81514,12 +81514,39 @@ components:
         review_suggested:
           type: boolean
           description: OperationWorkflowPlaybookStepReadiness.review_suggested. A previously completed dependent step now has unsatisfied prerequisites; original review is preserved.
+    OperationWorkflowPlaybookReviewImpact:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected by human review; advisory confidence, independent of reported business state.
+      required: [kind, code, description, priority]
+      properties:
+        kind:
+          type: string
+          enum: [milestone, outcome]
+          description: OperationWorkflowPlaybookReviewImpact.kind. Result category in this workflow case.
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: OperationWorkflowPlaybookReviewImpact.code. Milestone slug or expected or explicitly acceptable outcome code from this pinned playbook. A milestone name is declared guidance, not verified existence or completion.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowPlaybookReviewImpact.description. Application-authored explanation of the business risk; trimmed control-free UTF-8 text limited to 1024 bytes.
+        priority:
+          type: string
+          enum: [normal, high, critical]
+          description: OperationWorkflowPlaybookReviewImpact.priority. Declared priority for operator triage, independent of deadline and observed business success.
     OperationWorkflowPlaybookStepAssignmentPolicy:
       type: object
       additionalProperties: false
       description: OperationWorkflowPlaybookStepAssignmentPolicy. Pinned team and completion window for one declared outcome follow-up step; coordination only.
       required: [label, owner, complete_after_seconds]
       properties:
+        review_impact:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookReviewImpact'
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
         review_after_seconds:
           type: integer
           format: int64
@@ -81581,6 +81608,9 @@ components:
       description: OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
       required: [progress_id, outcome_code, item_index, label, status, due_at, last_step_owner, manual_owner, history, history_truncated]
       properties:
+        review_impact:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookReviewImpact'
+          description: OperationWorkflowPlaybookStepAssignment.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
         dependency_review_status:
           type: string
           enum: [awaiting, confirmed, redo_requested, superseded]
@@ -82025,6 +82055,9 @@ components:
       - note
       - evidence
       properties:
+        review_impact:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookReviewImpact'
+          description: OperationWorkflowPlaybookProgressItem.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
         dependency_review_due_at:
           type: string
           format: date-time

@@ -2,10 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookReviewImpact } from './OperationWorkflowPlaybookReviewImpact.js';
 /**
  * OperationWorkflowPlaybookStepAssignmentPolicy. Pinned team and completion window for one declared outcome follow-up step; coordination only.
  */
 export type OperationWorkflowPlaybookStepAssignmentPolicy = {
+  /**
+   * OperationWorkflowPlaybookStepAssignmentPolicy.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
+   */
+  review_impact?: OperationWorkflowPlaybookReviewImpact;
   /**
    * OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline. Inbox acknowledgment does not satisfy this target.
    */

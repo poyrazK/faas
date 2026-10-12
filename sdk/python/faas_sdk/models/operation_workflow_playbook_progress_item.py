@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
     from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+    from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
     from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
 
 
@@ -37,6 +38,9 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     dependency_review_due_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at
     prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an
@@ -76,6 +80,10 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        review_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_impact, Unset):
+            review_impact = self.review_impact.to_dict()
+
         dependency_review_due_at: str | Unset = UNSET
         if not isinstance(self.dependency_review_due_at, Unset):
             dependency_review_due_at = self.dependency_review_due_at.isoformat()
@@ -112,6 +120,8 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if review_impact is not UNSET:
+            field_dict["review_impact"] = review_impact
         if dependency_review_due_at is not UNSET:
             field_dict["dependency_review_due_at"] = dependency_review_due_at
         if dependency_review_revision is not UNSET:
@@ -135,6 +145,7 @@ class OperationWorkflowPlaybookProgressItem:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+        from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
         from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
 
         d = dict(src_dict)
@@ -150,6 +161,13 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = OperationWorkflowPlaybookEvidence.from_dict(evidence_item_data)
 
             evidence.append(evidence_item)
+
+        _review_impact = d.pop("review_impact", UNSET)
+        review_impact: OperationWorkflowPlaybookReviewImpact | Unset
+        if isinstance(_review_impact, Unset):
+            review_impact = UNSET
+        else:
+            review_impact = OperationWorkflowPlaybookReviewImpact.from_dict(_review_impact)
 
         _dependency_review_due_at = d.pop("dependency_review_due_at", UNSET)
         dependency_review_due_at: datetime.datetime | Unset
@@ -197,6 +215,7 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            review_impact=review_impact,
             dependency_review_due_at=dependency_review_due_at,
             dependency_review_revision=dependency_review_revision,
             readiness=readiness,

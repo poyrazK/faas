@@ -311,6 +311,7 @@
  };
  window.renderPlaybookStepAssignment = (parent,step) => {
   if(!step)return;
+  if(step.review_impact)text(parent,'Protected business '+step.review_impact.kind+' · '+step.review_impact.code+' · '+step.review_impact.priority+' priority · '+step.review_impact.description);
   if(step.dependency_review){const review=step.dependency_review;text(parent,'Dependency validity review · '+(step.dependency_review_status||'awaiting').replace(/_/g,' ')+' · prerequisite '+(step.dependency_review_prerequisite||'see progress history')+' reopened at progress revision '+review.dependency_review_revision);text(parent,'Prior completion: '+review.note+' · '+(review.reviewed_by||'')+' · '+(review.reviewed_at||''));for(const ref of review.evidence||[])text(parent,'Prior evidence: '+ref.operation_id+(ref.milestone_id?' / '+ref.milestone_id:''));if((step.dependency_review_status||'awaiting')==='awaiting')text(parent,'Open the workflow case to confirm validity with evidence or mark pending for redo. Prerequisite recovery alone does not close this task.');}
   if(step.readiness){text(parent,'Step readiness: '+step.readiness.status+(step.readiness.waiting_for.length ? ' · Waiting for '+step.readiness.waiting_for.join(', ') : ''));if(step.readiness.review_suggested)text(parent,'Review suggested: a completed step has reopened prerequisites.');}
   if(step.dependency_review && step.response){text(parent,'Validity review deadline: '+new Date(step.response.deadline_at).toLocaleString()+' · '+step.response.status+(step.response.fallback_owner?' · Fallback team: '+step.response.fallback_owner:''));text(parent,'Acknowledging the inbox does not complete this review.');}else window.renderEscalationResponse(parent,step.response);
@@ -775,11 +776,26 @@
     const saved=p.outcome_follow_ups?.find(f=>f.outcome_code===guidance.outcome_code);
     const current=p.business_outcome;
     const canStart=current && ['achieved','different_outcome'].includes(current.status) && current.evidence.reported_outcome_code===guidance.outcome_code;
-    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[],owner:guidance.follow_up_assignments?.find(a=>a.label===label)?.owner||'',readiness:{status:guidance.follow_up_dependencies?.some(d=>d.label===label)?'waiting':'ready',waiting_for:guidance.follow_up_dependencies?.find(d=>d.label===label)?.prerequisites||[],review_suggested:false}})),not_started:true,can_start:canStart});
+    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[],owner:guidance.follow_up_assignments?.find(a=>a.label===label)?.owner||'',review_impact:guidance.follow_up_assignments?.find(a=>a.label===label)?.review_impact,readiness:{status:guidance.follow_up_dependencies?.some(d=>d.label===label)?'waiting':'ready',waiting_for:guidance.follow_up_dependencies?.find(d=>d.label===label)?.prerequisites||[],review_suggested:false}})),not_started:true,can_start:canStart});
+   }
+   const impacts=new Map();
+   for(const list of lists)for(const item of list.items){
+    if(!item.dependency_review_revision || !item.review_impact)continue;
+    const impact=item.review_impact,key=impact.kind+':'+impact.code;
+    if(!impacts.has(key))impacts.set(key,{impact,items:[]});
+    const group=impacts.get(key);group.items.push({item,outcomeCode:list.outcome_code});
+    const ranks={normal:0,high:1,critical:2};if(ranks[impact.priority]>ranks[group.impact.priority])group.impact=impact;
+   }
+   if(impacts.size){section.append(node('h5','Business confidence awaiting review'),node('p','Application-declared impact of unresolved human reviews. Current application outcome reports remain authoritative.'));
+    const ranks={normal:0,high:1,critical:2};
+    for(const group of [...impacts.values()].sort((a,b)=>ranks[b.impact.priority]-ranks[a.impact.priority] || a.impact.code.localeCompare(b.impact.code))){section.append(node('p','Protected '+group.impact.kind+' '+group.impact.code+' · '+group.impact.priority+' priority · '+group.items.length+' unresolved review(s)'));
+     for(const {item,outcomeCode} of group.items)section.append(node('p',outcomeCode+' · '+item.label+' · '+item.review_impact.description+' · Step owner: '+(item.owner||'unassigned')+(item.dependency_review_due_at?' · Review due '+clock(item.dependency_review_due_at):'')));
+    }
    }
    for(const list of lists){
     if(list.outcome_code){section.append(node('h5','Outcome follow-up · '+list.outcome_code));section.append(node('p',list.not_started ? (list.can_start ? 'First review will capture this current reported outcome.' : 'A fresh report of this outcome is required before the first review.') : list.completed_count+'/'+list.items.length+' steps reviewed complete'+(list.checklist_complete?' · Follow-up checklist complete':'')));if(list.observation){const evidence=list.observation.evidence;section.append(node('p','Original outcome report '+evidence.report_id+' · Revision '+evidence.state_revision+' · Captured '+clock(evidence.checked_at)+'. Later application changes do not rewrite this record.'));} }
     list.items.forEach((item,index)=>{
+    if(item.review_impact)section.append(node('p','Protected business '+item.review_impact.kind+' '+item.review_impact.code+' · '+item.review_impact.priority+' priority · '+item.review_impact.description));
     if(item.readiness){section.append(node('p','Step readiness: '+item.readiness.status+(item.readiness.waiting_for.length ? ' · Waiting for '+item.readiness.waiting_for.join(', ') : '')));if(item.readiness.review_suggested)section.append(node('p','Review required after a prerequisite regression. Mark completed with explanation and evidence to confirm the work is still valid, or pending to request a redo. The original review remains in history.'));}
     if(item.dependency_review_due_at)section.append(node('p','Validity review due '+clock(item.dependency_review_due_at)+'. Recovery and inbox acknowledgment do not clear this deadline.'));
     if(item.evidence_check){

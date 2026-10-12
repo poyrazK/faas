@@ -344,3 +344,5 @@ export { validateDurableEntityRestore, type DurableEntityRestoreValidationOption
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export type { OperationWorkflowPlaybookReviewImpact } from './generated/models/OperationWorkflowPlaybookReviewImpact.js';

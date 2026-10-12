@@ -19,6 +19,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+    from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
     from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
     from ..models.operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
     from ..models.operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
@@ -57,6 +58,9 @@ class OperationWorkflowPlaybookStepAssignment:
     """OperationWorkflowPlaybookStepAssignment.history. Bounded retained checklist and inbox assignment changes."""
     history_truncated: bool
     """OperationWorkflowPlaybookStepAssignment.history_truncated. Older ownership changes are no longer retained."""
+    review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     dependency_review_status: OperationWorkflowPlaybookStepAssignmentDependencyReviewStatus | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this
     review episode, observed by an active watch; independent of inbox acknowledgment or manual completion."""
@@ -102,6 +106,10 @@ class OperationWorkflowPlaybookStepAssignment:
 
         history_truncated = self.history_truncated
 
+        review_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_impact, Unset):
+            review_impact = self.review_impact.to_dict()
+
         dependency_review_status: str | Unset = UNSET
         if not isinstance(self.dependency_review_status, Unset):
             dependency_review_status = self.dependency_review_status
@@ -138,6 +146,8 @@ class OperationWorkflowPlaybookStepAssignment:
                 "history_truncated": history_truncated,
             }
         )
+        if review_impact is not UNSET:
+            field_dict["review_impact"] = review_impact
         if dependency_review_status is not UNSET:
             field_dict["dependency_review_status"] = dependency_review_status
         if dependency_review_prerequisite is not UNSET:
@@ -156,6 +166,7 @@ class OperationWorkflowPlaybookStepAssignment:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+        from ..models.operation_workflow_playbook_review_impact import OperationWorkflowPlaybookReviewImpact
         from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
         from ..models.operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
         from ..models.operation_workflow_readiness_escalation_response import (
@@ -187,6 +198,13 @@ class OperationWorkflowPlaybookStepAssignment:
             history.append(history_item)
 
         history_truncated = d.pop("history_truncated")
+
+        _review_impact = d.pop("review_impact", UNSET)
+        review_impact: OperationWorkflowPlaybookReviewImpact | Unset
+        if isinstance(_review_impact, Unset):
+            review_impact = UNSET
+        else:
+            review_impact = OperationWorkflowPlaybookReviewImpact.from_dict(_review_impact)
 
         _dependency_review_status = d.pop("dependency_review_status", UNSET)
         dependency_review_status: OperationWorkflowPlaybookStepAssignmentDependencyReviewStatus | Unset
@@ -233,6 +251,7 @@ class OperationWorkflowPlaybookStepAssignment:
             manual_owner=manual_owner,
             history=history,
             history_truncated=history_truncated,
+            review_impact=review_impact,
             dependency_review_status=dependency_review_status,
             dependency_review_prerequisite=dependency_review_prerequisite,
             dependency_review=dependency_review,

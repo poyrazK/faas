@@ -4,11 +4,16 @@
 /* eslint-disable */
 import type { OperationWorkflowPlaybookEvidence } from './OperationWorkflowPlaybookEvidence.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
+import type { OperationWorkflowPlaybookReviewImpact } from './OperationWorkflowPlaybookReviewImpact.js';
 import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflowPlaybookStepReadiness.js';
 /**
  * OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgressItem = {
+  /**
+   * OperationWorkflowPlaybookProgressItem.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
+   */
+  review_impact?: OperationWorkflowPlaybookReviewImpact;
   /**
    * OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an explicit review clears it with the obligation.
    */

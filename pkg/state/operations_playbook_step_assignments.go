@@ -190,7 +190,7 @@ func publishPlaybookReviewAssignments(r *readinessSubscriptionRecord, index int,
 			if owner == "" {
 				owner = w.Owner
 			}
-			n.PlaybookStep = &api.OperationWorkflowPlaybookStepAssignment{DependencyReviewStatus: "awaiting", DependencyReview: &prior, Readiness: &ready, SourceRevision: p.Revision, ProgressID: p.ID, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Label: item.Label, Status: item.Status, DueAt: n.CreatedAt, LastStepOwner: item.Owner, History: []api.OperationWorkflowReadinessAssignmentChange{}}
+			n.PlaybookStep = &api.OperationWorkflowPlaybookStepAssignment{ReviewImpact: item.ReviewImpact, DependencyReviewStatus: "awaiting", DependencyReview: &prior, Readiness: &ready, SourceRevision: p.Revision, ProgressID: p.ID, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Label: item.Label, Status: item.Status, DueAt: n.CreatedAt, LastStepOwner: item.Owner, History: []api.OperationWorkflowReadinessAssignmentChange{}}
 			for _, change := range p.History {
 				if change.Revision == item.DependencyReviewRevision && change.OutcomeCode == follow.OutcomeCode {
 					n.PlaybookStep.DependencyReviewPrerequisite = change.Item.Label

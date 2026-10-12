@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
+import type { OperationWorkflowPlaybookReviewImpact } from './OperationWorkflowPlaybookReviewImpact.js';
 import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflowPlaybookStepReadiness.js';
 import type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';
 import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
@@ -10,6 +11,10 @@ import type { OperationWorkflowReadinessEscalationResponse } from './OperationWo
  * OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
  */
 export type OperationWorkflowPlaybookStepAssignment = {
+  /**
+   * OperationWorkflowPlaybookStepAssignment.review_impact. Pinned application-declared business result and priority protected by validity review; does not assert actual business failure or change reported outcome.
+   */
+  review_impact?: OperationWorkflowPlaybookReviewImpact;
   /**
    * OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this review episode, observed by an active watch; independent of inbox acknowledgment or manual completion.
    */

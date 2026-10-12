@@ -87,6 +87,20 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 				return nil, fmt.Errorf("workflow playbook step assignments exceed their limit")
 			}
 			r.OutcomeGuidance[j].FollowUpAssignments = slices.Clone(guidance.FollowUpAssignments)
+			for k := range r.OutcomeGuidance[j].FollowUpAssignments {
+				policy := &r.OutcomeGuidance[j].FollowUpAssignments[k]
+				if policy.ReviewImpact == nil {
+					continue
+				}
+				impact := *policy.ReviewImpact
+				if !slices.Contains([]string{"milestone", "outcome"}, impact.Kind) || ValidateOperationWorkflowStateName(impact.Code) != nil || !slices.Contains([]string{"normal", "high", "critical"}, impact.Priority) || !text(impact.Description, OperationWorkflowReadinessFollowUpNoteMaxBytes, true) {
+					return nil, fmt.Errorf("workflow playbook review business impact is invalid")
+				}
+				if impact.Kind == "outcome" && impact.Code != r.ExpectedOutcomeCode && (r.OutcomeAcceptance == nil || !slices.Contains(r.OutcomeAcceptance.AlternativeOutcomeCodes, impact.Code)) {
+					return nil, fmt.Errorf("workflow playbook review impact references an undeclared outcome")
+				}
+				policy.ReviewImpact = &impact
+			}
 			slices.SortFunc(r.OutcomeGuidance[j].FollowUpAssignments, func(a, b OperationWorkflowPlaybookStepAssignmentPolicy) int { return strings.Compare(a.Label, b.Label) })
 			assigned := map[string]bool{}
 			for _, policy := range guidance.FollowUpAssignments {

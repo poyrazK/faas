@@ -216,6 +216,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 				for i := range *items {
 					if (*items)[i].Label == policy.Label {
 						(*items)[i].Owner = policy.Owner
+						(*items)[i].ReviewImpact = policy.ReviewImpact
 					}
 				}
 			}
@@ -226,7 +227,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		owner = *req.Owner
 	}
 	reopened := followUpIndex >= 0 && (*items)[req.ItemIndex].Status == "completed" && req.Status == "pending"
-	item := api.OperationWorkflowPlaybookProgressItem{Owner: owner, DueAt: (*items)[req.ItemIndex].DueAt, Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
+	item := api.OperationWorkflowPlaybookProgressItem{ReviewImpact: (*items)[req.ItemIndex].ReviewImpact, Owner: owner, DueAt: (*items)[req.ItemIndex].DueAt, Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
 	(*items)[req.ItemIndex] = item
 	p.Revision++
 	p.UpdatedAt = now
