@@ -1,10 +1,13 @@
 from typing import Literal
 
-EventRecoveryExecutionJobHealthState = Literal["cancelled", "completed"]
+EventRecoveryExecutionJobHealthState = Literal["cancelled", "completed", "expired", "paused", "running"]
 
 EVENT_RECOVERY_EXECUTION_JOB_HEALTH_STATE_VALUES: set[EventRecoveryExecutionJobHealthState] = {
     "cancelled",
     "completed",
+    "expired",
+    "paused",
+    "running",
 }
 
 

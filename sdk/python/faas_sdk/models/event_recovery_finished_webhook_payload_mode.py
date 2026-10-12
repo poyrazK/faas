@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryFinishedWebhookPayloadMode = Literal["execution", "routing"]
+EventRecoveryFinishedWebhookPayloadMode = Literal["execution", "routing", "workflow"]
 
 EVENT_RECOVERY_FINISHED_WEBHOOK_PAYLOAD_MODE_VALUES: set[EventRecoveryFinishedWebhookPayloadMode] = {
     "execution",
     "routing",
+    "workflow",
 }
 
 

@@ -19,10 +19,13 @@ T = TypeVar("T", bound="EventRecoveryExecution")
 
 @_attrs_define
 class EventRecoveryExecution:
-    """Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take
-    precedence and survive execution-history pruning until recovery job retention. Later replays never replace them.
-    Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and
-    items not admitted.
+    """Read-only observation of the exact admitted replay or workflow resume. Invocation mode prefers saved confirmed
+    terminal results, retained with the recovery job. Workflow mode prefers saved terminal results for the admitted
+    resume, then live retained run and resume evidence. Missing evidence without a saved result is unknown. Native
+    failed/dead runs both report failed. Pending and running workflow states report queued and running; awaiting_event
+    also reports running. Without a saved result, later native resumes report superseded with no completion time. Saved
+    native results survive workflow-history pruning for the recovery job retention period; the first confirmed terminal
+    result wins across later resumes. Omitted for routing recovery and items not admitted.
 
     """
 
@@ -30,7 +33,7 @@ class EventRecoveryExecution:
     state: EventRecoveryExecutionState
     source: EventRecoveryExecutionSource
     attempts: int
-    """Recorded dispatch attempt count for the tracked generation."""
+    """Recorded dispatch attempt count for the tracked invocation generation; zero for workflow-run observations."""
     recorded_at: datetime.datetime | Unset = UNSET
     """When terminal evidence was saved; present only for recovery_result."""
     evidence_source: EventRecoveryExecutionEvidenceSource | Unset = UNSET

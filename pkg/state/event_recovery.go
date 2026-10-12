@@ -19,7 +19,7 @@ var _ EventRecoveryStore = (*PgStore)(nil)
 var _ EventRecoveryStore = (*MemStore)(nil)
 
 var (
-	ErrEventRecoveryRetryParent     = errors.New("parent must be a completed or cancelled execution recovery")
+	ErrEventRecoveryRetryParent     = errors.New("parent must be a terminal recovery of the matching execution type")
 	ErrEventRecoveryRequestConflict = errors.New("request_id is already used with a different recovery selection")
 	ErrEventRecoveryState           = errors.New("event recovery job is completed, cancelled, or expired")
 	ErrEventRecoveryQuery           = errors.New("invalid event recovery request")
@@ -57,6 +57,12 @@ func normalizeEventRecovery(accountID, appID string, req *api.EventRecoveryReque
 	if req.RequestID != "" {
 		req.RequestID = canonicalMemUUID(req.RequestID)
 	}
+	if req.WorkflowRuns != nil && req.Mode == "" {
+		req.Mode = "workflow"
+	}
+	if req.WorkflowRouting != nil && req.Mode == "" {
+		req.Mode = "routing"
+	}
 	if req.RatePerSecond == 0 {
 		req.RatePerSecond = api.EventRecoveryRateDefault
 	}
@@ -71,6 +77,12 @@ func eventRecoveryIDs(accountID, jobID string) error {
 	return nil
 }
 func eventRecoveryCandidates(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, accountID, appID string, req api.EventRecoveryRequest, now time.Time) ([]sqlc.EventRecoveryCandidatesRow, error) {
+	if req.WorkflowRuns != nil {
+		return workflowRunRecoveryCandidates(ctx, q, db, accountID, appID, req)
+	}
+	if req.WorkflowRouting != nil {
+		return workflowRecoveryCandidates(ctx, q, db, accountID, appID, req)
+	}
 	if req.ParentJobID != "" {
 		return eventRecoveryRetryCandidates(ctx, q, db, accountID, appID, req, now)
 	}
@@ -81,11 +93,13 @@ func eventRecoveryCandidates(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX,
 }
 func recoveryCandidateItem(row sqlc.EventRecoveryCandidatesRow, position int64) api.EventRecoveryItem {
 	out := api.EventRecoveryItem{InvocationID: executionRecoveryInvocationID(row.ExpectedProgress), Position: position, EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SubscriptionID: row.SubscriptionID, FailedAt: timeFromPgtype(row.FailedAt), FailureCode: eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes), Retryable: row.Retryable, State: "pending"}
+	workflowRunRecoveryItem(&out, row.ExpectedProgress)
 	recoveryItemLineage(&out, row.ExpectedProgress)
 	return out
 }
 func recoveryStoredItem(row sqlc.EventRecoveryItem) api.EventRecoveryItem {
 	out := api.EventRecoveryItem{InvocationID: executionRecoveryInvocationID(row.ExpectedProgress), Position: row.Position, EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SubscriptionID: row.SubscriptionID, FailedAt: timeFromPgtype(row.FailedAt), FailureCode: eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes), Retryable: row.Retryable, State: row.State, Reason: row.Reason}
+	workflowRunRecoveryItem(&out, row.ExpectedProgress)
 	recoveryItemLineage(&out, row.ExpectedProgress)
 	if row.ReplayInvocationID.Valid {
 		out.ReplayInvocationID = uuidString(row.ReplayInvocationID)
@@ -122,6 +136,18 @@ func (s *PgStore) PreviewEventRecovery(ctx context.Context, accountID, appID str
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return api.EventRecoveryJob{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	out, err := createEventRecoveryTx(ctx, tx, accountID, appID, req)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func createEventRecoveryTx(ctx context.Context, tx pgx.Tx, accountID, appID string, req api.EventRecoveryRequest) (api.EventRecoveryJob, error) {
 	if req.ParentJobID != "" && req.RequestID == "" {
 		return api.EventRecoveryJob{}, fmt.Errorf("%w: request_id is required for a child recovery", ErrEventRecoveryQuery)
 	}
@@ -133,11 +159,6 @@ func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID stri
 		return api.EventRecoveryJob{}, err
 	}
 	req.Reason = ""
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return api.EventRecoveryJob{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	// Serialize job quota decisions and retained-receipt selection with pruning.
 	if err = q.EventReplayBackfillLockAccountRange(ctx, tx, mustPgUUID(accountID)); err != nil {
@@ -153,7 +174,7 @@ func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID stri
 		return api.EventRecoveryJob{}, err
 	}
 	if existing != nil {
-		return *existing, tx.Commit(ctx)
+		return *existing, nil
 	}
 	active, err := q.EventRecoveryActiveCount(ctx, tx, mustPgUUID(accountID))
 	if err != nil {
@@ -200,7 +221,7 @@ func (s *PgStore) CreateEventRecovery(ctx context.Context, accountID, appID stri
 			return out, err
 		}
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 func getEventRecoveryMetadata(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, accountID, jobID string) (api.EventRecoveryJob, error) {
 	if err := eventRecoveryIDs(accountID, jobID); err != nil {
@@ -300,6 +321,12 @@ func (s *PgStore) ListEventRecoveryItems(ctx context.Context, accountID, jobID s
 			return out, err
 		}
 	}
+	if job.Selection.Mode == "workflow" && len(rows) > 0 {
+		observations, err = observeWorkflowRecoveryExecutions(ctx, q, tx, accountID, jobID, after, rows[len(rows)-1].Position, time.Now().UTC())
+		if err != nil {
+			return out, err
+		}
+	}
 	for _, row := range rows {
 		item := recoveryStoredItem(row)
 		if execution, ok := observations[row.Position]; ok {
@@ -347,13 +374,23 @@ func (s *PgStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) (
 	if err = json.Unmarshal(job.Selection, &selection); err != nil {
 		return false, err
 	}
-	if selection.Mode == "execution" {
+	if selection.WorkflowRuns != nil {
+		state, reason, err = processWorkflowRunRecoveryTx(ctx, tx, job, item, selection)
+		if err != nil {
+			return false, err
+		}
+	} else if selection.WorkflowRouting != nil {
+		state, reason, err = processWorkflowRecoveryTx(ctx, q, tx, job, item, selection, now)
+		if err != nil {
+			return false, err
+		}
+	} else if selection.Mode == "execution" {
 		state, reason, err = processEventExecutionRecoveryTx(ctx, q, tx, job, item, now)
 		if err != nil {
 			return false, err
 		}
 	} else {
-		target, err := q.EventRecoveryTarget(ctx, tx, sqlc.EventRecoveryTargetParams{AccountID: job.AccountID, AppID: job.AppID, OutboxID: item.OutboxID, SubscriptionID: item.SubscriptionID, ExpectedProgress: item.ExpectedProgress})
+		target, err := q.EventRecoveryTarget(ctx, tx, sqlc.EventRecoveryTargetParams{AccountID: job.AccountID, AppID: job.AppID, OutboxID: item.OutboxID.Int64, SubscriptionID: item.SubscriptionID, ExpectedProgress: item.ExpectedProgress})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			state, reason = "skipped", "receipt_expired"

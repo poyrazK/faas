@@ -1,0 +1,26 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func TestAutomationHistoryCLI(t *testing.T) {
+	eventRecoveryAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/consumer/recovery-policy/history" || r.URL.Query().Get("workflow") != "recover" || r.URL.Query().Get("limit") != "25" {
+			t.Errorf("request %s %s", r.Method, r.URL)
+		}
+		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryHistory{Entries: []api.WorkflowRecoveryHistoryEntry{{Kind: "retry_evaluation", Outcome: "pending", Reason: "execution_quota", ChildJobID: "child"}}, NextAfter: "cursor", RetainedObservations: true})
+	})
+	out := captureAutomationStdout(t)
+	if code := cmdAutomationsHistory([]string{"--app", "consumer", "--workflow", "recover"}); code != 0 || !strings.Contains(out.String(), "retry_evaluation | pending | execution_quota") || !strings.Contains(out.String(), "Next cursor: cursor") {
+		t.Fatalf("history %d %s", code, out)
+	}
+	if code := cmdAutomationsHistory([]string{"--app", "consumer", "--limit", "101"}); code != 1 {
+		t.Fatal("invalid limit accepted")
+	}
+}

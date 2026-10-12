@@ -512,6 +512,8 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
+from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
@@ -1227,8 +1229,10 @@ from .event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapa
 from .event_recovery_preflight_item import EventRecoveryPreflightItem
 from .event_recovery_preflight_item_capacity_scope import EventRecoveryPreflightItemCapacityScope
 from .event_recovery_preflight_item_reason import EventRecoveryPreflightItemReason
+from .event_recovery_preflight_item_saved_outcome import EventRecoveryPreflightItemSavedOutcome
 from .event_recovery_preflight_item_status import EventRecoveryPreflightItemStatus
 from .event_recovery_preflight_reason_counts import EventRecoveryPreflightReasonCounts
+from .event_recovery_preflight_review_mode import EventRecoveryPreflightReviewMode
 from .event_recovery_preflight_state import EventRecoveryPreflightState
 from .event_recovery_preview import EventRecoveryPreview
 from .event_recovery_preview_coverage import EventRecoveryPreviewCoverage
@@ -1256,6 +1260,7 @@ from .event_retention_health import EventRetentionHealth
 from .event_retention_sample import EventRetentionSample
 from .event_retention_sample_hold_reason import EventRetentionSampleHoldReason
 from .event_retention_sample_status import EventRetentionSampleStatus
+from .event_routing_recovery_expectation import EventRoutingRecoveryExpectation
 from .event_routing_retry_policy import EventRoutingRetryPolicy
 from .event_routing_retry_policy_response import EventRoutingRetryPolicyResponse
 from .event_schema import EventSchema
@@ -1275,6 +1280,8 @@ from .event_subscription_response_work_action import EventSubscriptionResponseWo
 from .event_subscription_resume_request import EventSubscriptionResumeRequest
 from .event_subscription_schema_versions_request import EventSubscriptionSchemaVersionsRequest
 from .event_subscription_schema_versions_response import EventSubscriptionSchemaVersionsResponse
+from .event_workflow_recovery_plan import EventWorkflowRecoveryPlan
+from .event_workflow_recovery_target import EventWorkflowRecoveryTarget
 from .exclusive_app_task_operation_request import ExclusiveAppTaskOperationRequest
 from .exclusive_job_operation_request import ExclusiveJobOperationRequest
 from .exclusive_operation_accepted import ExclusiveOperationAccepted
@@ -3542,6 +3549,7 @@ from .set_route_priorities_request import SetRoutePrioritiesRequest
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
+from .set_workflow_recovery_policy_request import SetWorkflowRecoveryPolicyRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -3615,6 +3623,7 @@ from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePla
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
+from .suppress_workflow_recovery_automatic_action_request import SuppressWorkflowRecoveryAutomaticActionRequest
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
@@ -3852,6 +3861,94 @@ from .workflow_queued_run_cancel_outcome_outcome import WorkflowQueuedRunCancelO
 from .workflow_queued_run_cancel_outcome_status import WorkflowQueuedRunCancelOutcomeStatus
 from .workflow_queued_run_cancel_request import WorkflowQueuedRunCancelRequest
 from .workflow_queued_run_cancel_response import WorkflowQueuedRunCancelResponse
+from .workflow_recovery_action_receipt import WorkflowRecoveryActionReceipt
+from .workflow_recovery_automatic_action import WorkflowRecoveryAutomaticAction
+from .workflow_recovery_automatic_action_status import WorkflowRecoveryAutomaticActionStatus
+from .workflow_recovery_automatic_blocked_notification import WorkflowRecoveryAutomaticBlockedNotification
+from .workflow_recovery_automatic_blocked_notification_reason import WorkflowRecoveryAutomaticBlockedNotificationReason
+from .workflow_recovery_automatic_blocked_notification_status import WorkflowRecoveryAutomaticBlockedNotificationStatus
+from .workflow_recovery_automatic_evaluation import WorkflowRecoveryAutomaticEvaluation
+from .workflow_recovery_automatic_evaluation_reason import WorkflowRecoveryAutomaticEvaluationReason
+from .workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
+from .workflow_recovery_automatic_queue_entry import WorkflowRecoveryAutomaticQueueEntry
+from .workflow_recovery_automatic_suppression import WorkflowRecoveryAutomaticSuppression
+from .workflow_recovery_cancellation_request import WorkflowRecoveryCancellationRequest
+from .workflow_recovery_cancellation_response import WorkflowRecoveryCancellationResponse
+from .workflow_recovery_cancellation_response_outcome import WorkflowRecoveryCancellationResponseOutcome
+from .workflow_recovery_candidate_evidence import WorkflowRecoveryCandidateEvidence
+from .workflow_recovery_execution_attention import WorkflowRecoveryExecutionAttention
+from .workflow_recovery_execution_attention_target import WorkflowRecoveryExecutionAttentionTarget
+from .workflow_recovery_execution_attention_target_status import WorkflowRecoveryExecutionAttentionTargetStatus
+from .workflow_recovery_execution_attention_webhook_payload import WorkflowRecoveryExecutionAttentionWebhookPayload
+from .workflow_recovery_failure_coverage import WorkflowRecoveryFailureCoverage
+from .workflow_recovery_failure_coverage_coverage import WorkflowRecoveryFailureCoverageCoverage
+from .workflow_recovery_failure_eligibility import WorkflowRecoveryFailureEligibility
+from .workflow_recovery_failure_eligibility_assessment import WorkflowRecoveryFailureEligibilityAssessment
+from .workflow_recovery_failure_eligibility_assessment_freshness import (
+    WorkflowRecoveryFailureEligibilityAssessmentFreshness,
+)
+from .workflow_recovery_health_alert_policy import WorkflowRecoveryHealthAlertPolicy
+from .workflow_recovery_health_incident import WorkflowRecoveryHealthIncident
+from .workflow_recovery_health_incident_status import WorkflowRecoveryHealthIncidentStatus
+from .workflow_recovery_health_notification import WorkflowRecoveryHealthNotification
+from .workflow_recovery_health_notification_status import WorkflowRecoveryHealthNotificationStatus
+from .workflow_recovery_health_webhook_payload import WorkflowRecoveryHealthWebhookPayload
+from .workflow_recovery_health_webhook_payload_status import WorkflowRecoveryHealthWebhookPayloadStatus
+from .workflow_recovery_history import WorkflowRecoveryHistory
+from .workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
+from .workflow_recovery_policy import WorkflowRecoveryPolicy
+from .workflow_recovery_policy_assessment import WorkflowRecoveryPolicyAssessment
+from .workflow_recovery_policy_assessment_eligibility import WorkflowRecoveryPolicyAssessmentEligibility
+from .workflow_recovery_policy_assessment_execution_pressure import WorkflowRecoveryPolicyAssessmentExecutionPressure
+from .workflow_recovery_policy_assessment_preparation import WorkflowRecoveryPolicyAssessmentPreparation
+from .workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
+from .workflow_recovery_policy_change_candidate import WorkflowRecoveryPolicyChangeCandidate
+from .workflow_recovery_policy_change_entry import WorkflowRecoveryPolicyChangeEntry
+from .workflow_recovery_policy_change_entry_effect import WorkflowRecoveryPolicyChangeEntryEffect
+from .workflow_recovery_policy_change_preview import WorkflowRecoveryPolicyChangePreview
+from .workflow_recovery_policy_decision import WorkflowRecoveryPolicyDecision
+from .workflow_recovery_policy_evaluation import WorkflowRecoveryPolicyEvaluation
+from .workflow_recovery_policy_evaluation_candidate import WorkflowRecoveryPolicyEvaluationCandidate
+from .workflow_recovery_policy_evaluation_candidate_evidence_source import (
+    WorkflowRecoveryPolicyEvaluationCandidateEvidenceSource,
+)
+from .workflow_recovery_policy_evaluation_request import WorkflowRecoveryPolicyEvaluationRequest
+from .workflow_recovery_policy_evaluation_totals import WorkflowRecoveryPolicyEvaluationTotals
+from .workflow_recovery_policy_failure_statuses_item import WorkflowRecoveryPolicyFailureStatusesItem
+from .workflow_recovery_policy_health import WorkflowRecoveryPolicyHealth
+from .workflow_recovery_policy_health_status import WorkflowRecoveryPolicyHealthStatus
+from .workflow_recovery_policy_mode import WorkflowRecoveryPolicyMode
+from .workflow_recovery_policy_paused_webhook_payload import WorkflowRecoveryPolicyPausedWebhookPayload
+from .workflow_recovery_policy_response import WorkflowRecoveryPolicyResponse
+from .workflow_recovery_policy_response_status import WorkflowRecoveryPolicyResponseStatus
+from .workflow_recovery_policy_review import WorkflowRecoveryPolicyReview
+from .workflow_recovery_policy_reviews import WorkflowRecoveryPolicyReviews
+from .workflow_recovery_policy_triggers_item import WorkflowRecoveryPolicyTriggersItem
+from .workflow_recovery_queue_blocked_webhook_payload import WorkflowRecoveryQueueBlockedWebhookPayload
+from .workflow_recovery_queue_blocked_webhook_payload_reason import WorkflowRecoveryQueueBlockedWebhookPayloadReason
+from .workflow_recovery_queue_blocked_webhook_payload_status import WorkflowRecoveryQueueBlockedWebhookPayloadStatus
+from .workflow_recovery_report import WorkflowRecoveryReport
+from .workflow_recovery_report_blocker import WorkflowRecoveryReportBlocker
+from .workflow_recovery_report_group import WorkflowRecoveryReportGroup
+from .workflow_recovery_report_totals import WorkflowRecoveryReportTotals
+from .workflow_recovery_response_action import WorkflowRecoveryResponseAction
+from .workflow_recovery_response_action_kind import WorkflowRecoveryResponseActionKind
+from .workflow_recovery_response_plan import WorkflowRecoveryResponsePlan
+from .workflow_recovery_review_action_status import WorkflowRecoveryReviewActionStatus
+from .workflow_recovery_review_action_status_outcome import WorkflowRecoveryReviewActionStatusOutcome
+from .workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
+from .workflow_recovery_review_completion_notification import WorkflowRecoveryReviewCompletionNotification
+from .workflow_recovery_review_completion_notification_status import WorkflowRecoveryReviewCompletionNotificationStatus
+from .workflow_recovery_review_decision import WorkflowRecoveryReviewDecision
+from .workflow_recovery_review_decision_decision import WorkflowRecoveryReviewDecisionDecision
+from .workflow_recovery_review_decision_request import WorkflowRecoveryReviewDecisionRequest
+from .workflow_recovery_review_decision_request_decision import WorkflowRecoveryReviewDecisionRequestDecision
+from .workflow_recovery_review_finished_webhook_payload import WorkflowRecoveryReviewFinishedWebhookPayload
+from .workflow_recovery_review_notification import WorkflowRecoveryReviewNotification
+from .workflow_recovery_review_notification_status import WorkflowRecoveryReviewNotificationStatus
+from .workflow_recovery_review_ready_webhook_payload import WorkflowRecoveryReviewReadyWebhookPayload
+from .workflow_recovery_review_status import WorkflowRecoveryReviewStatus
+from .workflow_recovery_review_status_outcome import WorkflowRecoveryReviewStatusOutcome
 from .workflow_resume_preview import WorkflowResumePreview
 from .workflow_resume_response import WorkflowResumeResponse
 from .workflow_resume_response_previous_status import WorkflowResumeResponsePreviousStatus
@@ -3860,6 +3957,8 @@ from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_diagnostics_response import WorkflowRunDiagnosticsResponse
 from .workflow_run_diagnostics_response_state_reason import WorkflowRunDiagnosticsResponseStateReason
 from .workflow_run_diagnostics_response_status import WorkflowRunDiagnosticsResponseStatus
+from .workflow_run_recovery_plan import WorkflowRunRecoveryPlan
+from .workflow_run_recovery_target import WorkflowRunRecoveryTarget
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
 from .workflow_schedule_catch_up_preview import WorkflowScheduleCatchUpPreview
@@ -4411,6 +4510,8 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlWorkflowRecoveryPolicyRequest",
+    "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
     "CorsPresetResponse",
     "CreateAccountReleaseWebhookRequest",
@@ -5098,8 +5199,10 @@ __all__ = (
     "EventRecoveryPreflightItem",
     "EventRecoveryPreflightItemCapacityScope",
     "EventRecoveryPreflightItemReason",
+    "EventRecoveryPreflightItemSavedOutcome",
     "EventRecoveryPreflightItemStatus",
     "EventRecoveryPreflightReasonCounts",
+    "EventRecoveryPreflightReviewMode",
     "EventRecoveryPreflightState",
     "EventRecoveryPreview",
     "EventRecoveryPreviewCoverage",
@@ -5127,6 +5230,7 @@ __all__ = (
     "EventRetentionSample",
     "EventRetentionSampleHoldReason",
     "EventRetentionSampleStatus",
+    "EventRoutingRecoveryExpectation",
     "EventRoutingRetryPolicy",
     "EventRoutingRetryPolicyResponse",
     "EventSchema",
@@ -5146,6 +5250,8 @@ __all__ = (
     "EventSubscriptionResumeRequest",
     "EventSubscriptionSchemaVersionsRequest",
     "EventSubscriptionSchemaVersionsResponse",
+    "EventWorkflowRecoveryPlan",
+    "EventWorkflowRecoveryTarget",
     "ExclusiveAppTaskOperationRequest",
     "ExclusiveJobOperationRequest",
     "ExclusiveOperationAccepted",
@@ -7259,6 +7365,7 @@ __all__ = (
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
     "SetServiceWakeAheadRequest",
+    "SetWorkflowRecoveryPolicyRequest",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",
@@ -7322,6 +7429,7 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
     "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
+    "SuppressWorkflowRecoveryAutomaticActionRequest",
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
@@ -7541,6 +7649,90 @@ __all__ = (
     "WorkflowQueuedRunCancelOutcomeStatus",
     "WorkflowQueuedRunCancelRequest",
     "WorkflowQueuedRunCancelResponse",
+    "WorkflowRecoveryActionReceipt",
+    "WorkflowRecoveryAutomaticAction",
+    "WorkflowRecoveryAutomaticActionStatus",
+    "WorkflowRecoveryAutomaticBlockedNotification",
+    "WorkflowRecoveryAutomaticBlockedNotificationReason",
+    "WorkflowRecoveryAutomaticBlockedNotificationStatus",
+    "WorkflowRecoveryAutomaticEvaluation",
+    "WorkflowRecoveryAutomaticEvaluationReason",
+    "WorkflowRecoveryAutomaticQueue",
+    "WorkflowRecoveryAutomaticQueueEntry",
+    "WorkflowRecoveryAutomaticSuppression",
+    "WorkflowRecoveryCancellationRequest",
+    "WorkflowRecoveryCancellationResponse",
+    "WorkflowRecoveryCancellationResponseOutcome",
+    "WorkflowRecoveryCandidateEvidence",
+    "WorkflowRecoveryExecutionAttention",
+    "WorkflowRecoveryExecutionAttentionTarget",
+    "WorkflowRecoveryExecutionAttentionTargetStatus",
+    "WorkflowRecoveryExecutionAttentionWebhookPayload",
+    "WorkflowRecoveryFailureCoverage",
+    "WorkflowRecoveryFailureCoverageCoverage",
+    "WorkflowRecoveryFailureEligibility",
+    "WorkflowRecoveryFailureEligibilityAssessment",
+    "WorkflowRecoveryFailureEligibilityAssessmentFreshness",
+    "WorkflowRecoveryHealthAlertPolicy",
+    "WorkflowRecoveryHealthIncident",
+    "WorkflowRecoveryHealthIncidentStatus",
+    "WorkflowRecoveryHealthNotification",
+    "WorkflowRecoveryHealthNotificationStatus",
+    "WorkflowRecoveryHealthWebhookPayload",
+    "WorkflowRecoveryHealthWebhookPayloadStatus",
+    "WorkflowRecoveryHistory",
+    "WorkflowRecoveryHistoryEntry",
+    "WorkflowRecoveryPolicy",
+    "WorkflowRecoveryPolicyAssessment",
+    "WorkflowRecoveryPolicyAssessmentEligibility",
+    "WorkflowRecoveryPolicyAssessmentExecutionPressure",
+    "WorkflowRecoveryPolicyAssessmentPreparation",
+    "WorkflowRecoveryPolicyAutomaticExecution",
+    "WorkflowRecoveryPolicyChangeCandidate",
+    "WorkflowRecoveryPolicyChangeEntry",
+    "WorkflowRecoveryPolicyChangeEntryEffect",
+    "WorkflowRecoveryPolicyChangePreview",
+    "WorkflowRecoveryPolicyDecision",
+    "WorkflowRecoveryPolicyEvaluation",
+    "WorkflowRecoveryPolicyEvaluationCandidate",
+    "WorkflowRecoveryPolicyEvaluationCandidateEvidenceSource",
+    "WorkflowRecoveryPolicyEvaluationRequest",
+    "WorkflowRecoveryPolicyEvaluationTotals",
+    "WorkflowRecoveryPolicyFailureStatusesItem",
+    "WorkflowRecoveryPolicyHealth",
+    "WorkflowRecoveryPolicyHealthStatus",
+    "WorkflowRecoveryPolicyMode",
+    "WorkflowRecoveryPolicyPausedWebhookPayload",
+    "WorkflowRecoveryPolicyResponse",
+    "WorkflowRecoveryPolicyResponseStatus",
+    "WorkflowRecoveryPolicyReview",
+    "WorkflowRecoveryPolicyReviews",
+    "WorkflowRecoveryPolicyTriggersItem",
+    "WorkflowRecoveryQueueBlockedWebhookPayload",
+    "WorkflowRecoveryQueueBlockedWebhookPayloadReason",
+    "WorkflowRecoveryQueueBlockedWebhookPayloadStatus",
+    "WorkflowRecoveryReport",
+    "WorkflowRecoveryReportBlocker",
+    "WorkflowRecoveryReportGroup",
+    "WorkflowRecoveryReportTotals",
+    "WorkflowRecoveryResponseAction",
+    "WorkflowRecoveryResponseActionKind",
+    "WorkflowRecoveryResponsePlan",
+    "WorkflowRecoveryReviewActionStatus",
+    "WorkflowRecoveryReviewActionStatusOutcome",
+    "WorkflowRecoveryReviewAutomaticExecution",
+    "WorkflowRecoveryReviewCompletionNotification",
+    "WorkflowRecoveryReviewCompletionNotificationStatus",
+    "WorkflowRecoveryReviewDecision",
+    "WorkflowRecoveryReviewDecisionDecision",
+    "WorkflowRecoveryReviewDecisionRequest",
+    "WorkflowRecoveryReviewDecisionRequestDecision",
+    "WorkflowRecoveryReviewFinishedWebhookPayload",
+    "WorkflowRecoveryReviewNotification",
+    "WorkflowRecoveryReviewNotificationStatus",
+    "WorkflowRecoveryReviewReadyWebhookPayload",
+    "WorkflowRecoveryReviewStatus",
+    "WorkflowRecoveryReviewStatusOutcome",
     "WorkflowResumePreview",
     "WorkflowResumeResponse",
     "WorkflowResumeResponsePreviousStatus",
@@ -7549,6 +7741,8 @@ __all__ = (
     "WorkflowRunDiagnosticsResponse",
     "WorkflowRunDiagnosticsResponseStateReason",
     "WorkflowRunDiagnosticsResponseStatus",
+    "WorkflowRunRecoveryPlan",
+    "WorkflowRunRecoveryTarget",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
     "WorkflowScheduleCatchUpPreview",
