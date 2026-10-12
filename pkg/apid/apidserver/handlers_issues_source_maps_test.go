@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 1113
@@ -26,17 +27,17 @@ func TestIssueNodeSourceMapsGroupActualFailuresAcrossDeployments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-source-maps")
-	server := httptest.NewServer(e.h)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-source-maps")
+	server := httptest.NewServer((*e.H()))
 	defer server.Close()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, symbol := range []string{"a", "b"} {
-		dep := issueSeedDeployment(t, e, app, i+1)
-		token := issueCreateToken(t, e, app.Slug, dep)
+		dep := apidserver.IssueSeedDeployment(t, e, app, i+1)
+		token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 		bundle := filepath.Join(t.TempDir(), "chunk-"+symbol+".mjs")
 		code := "function " + symbol + "(){throw new Error('payment failed')} export {" + symbol + " as fail};"
 		if err := os.WriteFile(bundle, []byte(code), 0600); err != nil {
@@ -68,7 +69,7 @@ if(reporter.stats().mappedFrames!==1)process.exit(3);
 			t.Fatalf("mapped Node capture: %v %s", err, out)
 		}
 	}
-	client := api.NewClient(server.URL, e.key)
+	client := api.NewClient(server.URL, (*e.Key()))
 	list, err := client.ListIssues(t.Context(), app.Slug, "", "", "")
 	if err != nil || len(list.Items) != 1 || list.Items[0].EventCount != 2 {
 		t.Fatalf("bundle changes split the original failure: %+v %v", list, err)

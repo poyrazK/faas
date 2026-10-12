@@ -351,6 +351,38 @@ func TestScanSource_SkipsVendoredDirs(t *testing.T) {
 	}
 }
 
+// Hunt #9: the check matched only the `app` receiver and 127.0.0.1, so
+// Node's own `server.listen(port, '127.0.0.1')` and every 'localhost' bind
+// reported loopback-bind ok and then failed the wake.
+func TestLoopbackBindRegexListenerShapes(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"app.listen(8080, '127.0.0.1');", true},
+		{"app.listen('127.0.0.1', 8080);", true},
+		{"server.listen(3000, '127.0.0.1', () => {});", true},
+		{"server.listen(process.env.PORT || 3000, 'localhost');", true},
+		{"fastify.listen({ port: 3000, host: '127.0.0.1' })", true},
+		{"server.listen(8080, '::1')", true},
+		{"s.bind(('127.0.0.1', 8080))", true},
+		{"app.run(host='127.0.0.1', port=8080)", true},
+		{"uvicorn.run(app, host=\"localhost\", port=8000)", true},
+		{"http.ListenAndServe(\"localhost:8080\", nil)", true},
+		{"ln, err := net.Listen(\"tcp\", \"127.0.0.1:\"+port)", true},
+		{"server.listen(process.env.PORT || 8080, '0.0.0.0')", false},
+		{"app.listen(PORT, () => console.log('listening on localhost'))", false},
+		{"http.ListenAndServe(\":\"+port, nil)", false},
+		{"app.run(host='0.0.0.0', port=8080)", false},
+		{"const db = new Client({ host: 'localhost' })", false},
+		{"mongoose.connect('mongodb://localhost:27017/app')", false},
+	} {
+		if got := loopbackBindRegex.MatchString(tc.line); got != tc.want {
+			t.Errorf("loopbackBindRegex.MatchString(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
 // TestRenderDoctorHuman_HasAllChecks pins the human-renderer
 // shape. The customer-facing line count must be stable so
 // script consumers grep on a fixed line index per check.

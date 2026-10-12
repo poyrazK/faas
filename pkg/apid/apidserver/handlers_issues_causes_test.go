@@ -1,10 +1,11 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -15,25 +16,25 @@ import (
 
 // adr: 1117
 func TestIssueCauseGroupingPersistsEvidenceAndRetryProvenance(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-causes")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-causes")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Wrapper", Message: "wrapped", GroupingStrategy: "cause-chain-v1",
 		Causes: []api.IssueCause{{ExceptionType: "DatabaseError", Message: "query failed", ErrorCode: "DB_DOWN", Frames: []api.IssueFrame{{File: "/app/src/db.ts", Function: "query", InApp: true}}}}}
-	first := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
-	retry := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	first := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, event), 202)
+	retry := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, event), 202)
 	if !retry.Duplicate || retry.IssueID != first.IssueID {
 		t.Fatal("retry changed identity")
 	}
 	event.EventID = uuid.NewString()
 	event.ExceptionType = "OtherWrapper"
 	event.Message = "other wording"
-	second := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	second := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, event), 202)
 	if second.IssueID != first.IssueID {
 		t.Fatal("wrapper split cause")
 	}
-	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+first.IssueID, nil, nil), 200)
+	detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+first.IssueID, nil, nil), 200)
 	if detail.Issue.GroupingVersion != 3 || detail.Issue.EventCount != 2 || len(detail.Events) != 2 {
 		t.Fatal("wrong group totals")
 	}
@@ -44,7 +45,7 @@ func TestIssueCauseGroupingPersistsEvidenceAndRetryProvenance(t *testing.T) {
 	}
 	event.EventID = uuid.NewString()
 	event.CausesIncomplete = true
-	partial := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	partial := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, event), 202)
 	if partial.IssueID == first.IssueID {
 		t.Fatal("partial root merged")
 	}
@@ -58,11 +59,11 @@ func TestIssueCauseSDKEndToEndPostgres(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Fatal("SDK acceptance requires enabled PostgreSQL tests")
 	}
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-sdk")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
-	server := httptest.NewServer(e.h)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-sdk")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	server := httptest.NewServer((*e.H()))
 	defer server.Close()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
@@ -101,7 +102,7 @@ assert r.close()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Python capture: %v %s", err, out)
 	}
-	c := api.NewClient(server.URL, e.key)
+	c := api.NewClient(server.URL, (*e.Key()))
 	list, err := c.ListIssues(t.Context(), app.Slug, "", "", "")
 	if err != nil || len(list.Items) != 2 {
 		t.Fatalf("SDK issues = %+v %v", list, err)

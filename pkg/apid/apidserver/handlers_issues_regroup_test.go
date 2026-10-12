@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -20,12 +21,12 @@ import (
 
 // adr: 1114
 func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-regroup")
-	old, fixed := issueSeedDeployment(t, e, app, 1), issueSeedDeployment(t, e, app, 2)
-	oldToken, fixedToken := issueCreateToken(t, e, app.Slug, old), issueCreateToken(t, e, app.Slug, fixed)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-regroup")
+	old, fixed := apidserver.IssueSeedDeployment(t, e, app, 1), apidserver.IssueSeedDeployment(t, e, app, 2)
+	oldToken, fixedToken := apidserver.IssueCreateToken(t, e, app.Slug, old), apidserver.IssueCreateToken(t, e, app.Slug, fixed)
 	requestID := uuid.NewString()
-	issueSeedRequestAttribution(t, e, app, old, requestID)
+	apidserver.IssueSeedRequestAttribution(t, e, app, old, requestID)
 	event := func(function string) api.IssueEvent {
 		return api.IssueEvent{
 			EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "payment failed",
@@ -35,7 +36,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 	}
 	send := func(token api.IssueIngestToken, ev api.IssueEvent) api.IssueEventResponse {
 		t.Helper()
-		return issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
+		return apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
 	}
 	firstEvent := event("charge")
 	source := send(oldToken, firstEvent).IssueID
@@ -44,20 +45,20 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 	base := "/v1/apps/" + app.Slug + "/issues/"
 	act := func(id string, in api.IssueActionRequest) api.Issue {
 		t.Helper()
-		return issueDecode[api.Issue](t, e.do(t, "POST", base+id+"/actions", in, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", base+id+"/actions", in, nil), http.StatusOK)
 	}
 	get := func(id string) api.IssueDetail {
 		t.Helper()
-		return issueDecode[api.IssueDetail](t, e.do(t, "GET", base+id, nil, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", base+id, nil, nil), http.StatusOK)
 	}
 	original := get(source)
-	act(target, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.acct.ID})
+	act(target, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.Acct().ID})
 	act(target, api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
 	merged := act(strings.ToUpper(source), api.IssueActionRequest{Action: "merge", TargetIssueID: strings.ToUpper(target)})
-	if merged.ID != target || merged.EventCount != 3 || merged.State != "resolved" || merged.AssigneeAccountID != e.acct.ID {
+	if merged.ID != target || merged.EventCount != 3 || merged.State != "resolved" || merged.AssigneeAccountID != e.Acct().ID {
 		t.Fatalf("merge did not adopt destination lifecycle and combine counters: %+v", merged)
 	}
-	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", strings.TrimSuffix(base, "/")+"?sort=impact&min_customers=1", nil, nil), http.StatusOK)
+	list := apidserver.IssueDecode[api.ListIssuesResponse](t, e.Do(t, "GET", strings.TrimSuffix(base, "/")+"?sort=impact&min_customers=1", nil, nil), http.StatusOK)
 	if len(list.Items) != 1 || list.Items[0].ID != target || list.Items[0].Impact24h == nil ||
 		list.Items[0].Impact24h.IdentifiedCustomers != 1 || list.Items[0].Impact24h.ObservedEvents != 3 {
 		t.Fatalf("merged inbox/verified impact was not deduplicated: %+v", list)
@@ -88,7 +89,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 	}
 	conflict := firstEvent
 	conflict.Message = "changed payload"
-	if w := issueSend(t, e, app.Slug, oldToken, conflict); w.Code != http.StatusConflict {
+	if w := apidserver.IssueSend(t, e, app.Slug, oldToken, conflict); w.Code != http.StatusConflict {
 		t.Fatal("regrouping weakened payload conflict detection")
 	}
 	if receipt := send(fixedToken, event("charge")); receipt.IssueID != target || !receipt.Regressed {
@@ -107,7 +108,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 			t.Fatal("assignment through a linked ID did not apply to all members")
 		}
 	}
-	act(source, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.acct.ID})
+	act(source, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.Acct().ID})
 	until := time.Now().Add(time.Minute)
 	act(target, api.IssueActionRequest{Action: "ignore", IgnoredUntil: &until})
 	for _, member := range get(source).GroupMembers {
@@ -121,7 +122,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 	detached := get(source)
 	if remaining.ID != target || remaining.EventCount != 2 || remaining.State != "resolved" ||
 		detached.Issue.ID != source || detached.Issue.EventCount != 3 || detached.Issue.RegressionCount != 1 ||
-		detached.Issue.State != "open" || detached.Issue.ResolvedAt != nil || detached.Issue.AssigneeAccountID != e.acct.ID ||
+		detached.Issue.State != "open" || detached.Issue.ResolvedAt != nil || detached.Issue.AssigneeAccountID != e.Acct().ID ||
 		len(detached.GroupMembers) != 0 || len(detached.Releases) != 2 {
 		t.Fatalf("split lost original identity/history or changed remaining lifecycle: remaining=%+v detached=%+v", remaining, detached)
 	}
@@ -137,7 +138,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 		t.Fatal("future captures did not follow detached original identity")
 	}
 	// Lifetime release totals and identities must survive occurrence retention.
-	if err := sqlc.New().IssuePurgeEvents(t.Context(), e.pool, sqlc.IssuePurgeEventsParams{
+	if err := sqlc.New().IssuePurgeEvents(t.Context(), (*e.Pool()), sqlc.IssuePurgeEventsParams{
 		AppID:  pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
 		Before: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}); err != nil {
@@ -162,7 +163,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 		ev := event("charge")
 		wg.Go(func() {
 			<-start
-			w := issueSend(t, e, app.Slug, fixedToken, ev)
+			w := apidserver.IssueSend(t, e, app.Slug, fixedToken, ev)
 			if w.Code != 202 {
 				t.Errorf("concurrent capture: %d %s", w.Code, w.Body.String())
 			}
@@ -170,7 +171,7 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 	}
 	wg.Go(func() {
 		<-start
-		w := e.do(t, "POST", base+target+"/actions", api.IssueActionRequest{Action: "split", MemberIssueID: source}, nil)
+		w := e.Do(t, "POST", base+target+"/actions", api.IssueActionRequest{Action: "split", MemberIssueID: source}, nil)
 		if w.Code != 200 {
 			t.Errorf("concurrent split: %d %s", w.Code, w.Body.String())
 		}
@@ -184,39 +185,39 @@ func TestIssueRegroupingPreservesOriginalEvidenceAndLifetimeHistory(t *testing.T
 }
 
 func TestIssueRegroupingRejectsScopeChangesCyclesAndStaleSources(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-link-bounds")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-link-bounds")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 	capture := func(function string) string {
 		t.Helper()
 		ev := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error",
 			Frames: []api.IssueFrame{{File: "/app/src/main.ts", Function: function, InApp: true}}}
-		return issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), 202).IssueID
+		return apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), 202).IssueID
 	}
 	a, b, c, d := capture("a"), capture("b"), capture("c"), capture("d")
 	path := func(id string) string { return "/v1/apps/" + app.Slug + "/issues/" + id + "/actions" }
 	for _, in := range []api.IssueActionRequest{
 		{Action: "merge"}, {Action: "split"}, {Action: "merge", TargetIssueID: "bad"},
 		{Action: "merge", TargetIssueID: a}, {Action: "split", MemberIssueID: a},
-		{Action: "merge", TargetIssueID: b, AssigneeAccountID: e.acct.ID},
+		{Action: "merge", TargetIssueID: b, AssigneeAccountID: e.Acct().ID},
 		{Action: "resolve", FixedDeploymentID: dep.ID, MemberIssueID: b},
 	} {
-		if w := e.do(t, "POST", path(a), in, nil); w.Code != 400 {
+		if w := e.Do(t, "POST", path(a), in, nil); w.Code != 400 {
 			t.Fatalf("invalid action accepted: %+v status=%d %s", in, w.Code, w.Body.String())
 		}
 	}
-	other := seedPGApp(t, e, "issue-link-other")
-	otherDep := issueSeedDeployment(t, e, other, 1)
-	otherToken := issueCreateToken(t, e, other.Slug, otherDep)
-	foreign := issueDecode[api.IssueEventResponse](t, issueSend(t, e, other.Slug, otherToken,
+	other := apidserver.SeedPGApp(t, e, "issue-link-other")
+	otherDep := apidserver.IssueSeedDeployment(t, e, other, 1)
+	otherToken := apidserver.IssueCreateToken(t, e, other.Slug, otherDep)
+	foreign := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, other.Slug, otherToken,
 		api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Other"}), 202)
-	if w := e.do(t, "POST", path(a), api.IssueActionRequest{Action: "merge", TargetIssueID: foreign.IssueID}, nil); w.Code != 404 {
+	if w := e.Do(t, "POST", path(a), api.IssueActionRequest{Action: "merge", TargetIssueID: foreign.IssueID}, nil); w.Code != 404 {
 		t.Fatal("cross-app destination was exposed or accepted")
 	}
 	q := sqlc.New()
-	staging, err := q.IssueCreate(t.Context(), e.pool, sqlc.IssueCreateParams{
-		AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+	staging, err := q.IssueCreate(t.Context(), (*e.Pool()), sqlc.IssueCreateParams{
+		AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.Acct().ID), Valid: true},
 		AppID:     pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Environment: "staging",
 		Fingerprint: strings.Repeat("a", 64), GroupingVersion: 1, Title: "staging",
 		OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -224,11 +225,11 @@ func TestIssueRegroupingRejectsScopeChangesCyclesAndStaleSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := e.do(t, "POST", path(a), api.IssueActionRequest{Action: "merge", TargetIssueID: uuid.UUID(staging.ID.Bytes).String()}, nil); w.Code != 409 {
+	if w := e.Do(t, "POST", path(a), api.IssueActionRequest{Action: "merge", TargetIssueID: uuid.UUID(staging.ID.Bytes).String()}, nil); w.Code != 409 {
 		t.Fatal("cross-environment merge accepted")
 	}
 	for _, pair := range [][2]string{{a, b}, {b, c}} {
-		issueDecode[api.Issue](t, e.do(t, "POST", path(pair[0]), api.IssueActionRequest{Action: "merge", TargetIssueID: pair[1]}, nil), 200)
+		apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", path(pair[0]), api.IssueActionRequest{Action: "merge", TargetIssueID: pair[1]}, nil), 200)
 	}
 	for _, in := range []struct {
 		id     string
@@ -238,16 +239,16 @@ func TestIssueRegroupingRejectsScopeChangesCyclesAndStaleSources(t *testing.T) {
 		{c, api.IssueActionRequest{Action: "merge", TargetIssueID: a}},
 		{d, api.IssueActionRequest{Action: "split", MemberIssueID: a}},
 	} {
-		if w := e.do(t, "POST", path(in.id), in.action, nil); w.Code != 409 {
+		if w := e.Do(t, "POST", path(in.id), in.action, nil); w.Code != 409 {
 			t.Fatalf("stale source/cycle/unrelated split accepted: %+v status=%d", in, w.Code)
 		}
 	}
-	group := issueDecode[api.IssueDetail](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+a, nil, nil), 200)
+	group := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+a, nil, nil), 200)
 	if group.Issue.ID != c || len(group.GroupMembers) != 3 || group.Issue.EventCount != 3 {
 		t.Fatal("merge of existing groups did not flatten history")
 	}
 	// The persistence guard also rejects direct nested/cyclic links.
-	if err := q.IssueLinkGroup(t.Context(), e.pool, sqlc.IssueLinkGroupParams{
+	if err := q.IssueLinkGroup(t.Context(), (*e.Pool()), sqlc.IssueLinkGroupParams{
 		SourceID: pgtype.UUID{Bytes: uuid.MustParse(c), Valid: true},
 		TargetID: pgtype.UUID{Bytes: uuid.MustParse(a), Valid: true},
 		AppID:    pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Environment: "application",
@@ -258,13 +259,13 @@ func TestIssueRegroupingRejectsScopeChangesCyclesAndStaleSources(t *testing.T) {
 }
 
 func TestIssueRegroupingMemberBoundRejectsWithoutPartialChanges(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-member-limit")
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-member-limit")
 	q := sqlc.New()
 	var identities []pgtype.UUID
 	for i := 0; i <= api.IssueGroupMembersMax; i++ {
-		row, err := q.IssueCreate(t.Context(), e.pool, sqlc.IssueCreateParams{
-			AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+		row, err := q.IssueCreate(t.Context(), (*e.Pool()), sqlc.IssueCreateParams{
+			AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.Acct().ID), Valid: true},
 			AppID:     pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Environment: "application",
 			Fingerprint: strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", ""), GroupingVersion: 1, Title: "bounded identity",
 			OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -275,7 +276,7 @@ func TestIssueRegroupingMemberBoundRejectsWithoutPartialChanges(t *testing.T) {
 		identities = append(identities, row.ID)
 	}
 	for _, id := range identities[1:api.IssueGroupMembersMax] {
-		if err := q.IssueLinkGroup(t.Context(), e.pool, sqlc.IssueLinkGroupParams{
+		if err := q.IssueLinkGroup(t.Context(), (*e.Pool()), sqlc.IssueLinkGroupParams{
 			SourceID: id, TargetID: identities[0], AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
 			Environment: "application", Now: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
@@ -284,59 +285,59 @@ func TestIssueRegroupingMemberBoundRejectsWithoutPartialChanges(t *testing.T) {
 	}
 	root, extra := uuid.UUID(identities[0].Bytes).String(), uuid.UUID(identities[len(identities)-1].Bytes).String()
 	base := "/v1/apps/" + app.Slug + "/issues/"
-	w := e.do(t, "POST", base+extra+"/actions", api.IssueActionRequest{Action: "merge", TargetIssueID: root}, nil)
+	w := e.Do(t, "POST", base+extra+"/actions", api.IssueActionRequest{Action: "merge", TargetIssueID: root}, nil)
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "33") {
 		t.Fatalf("group member bound lacks evidence: %d %s", w.Code, w.Body.String())
 	}
-	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", base+root, nil, nil), 200)
-	separate := issueDecode[api.IssueDetail](t, e.do(t, "GET", base+extra, nil, nil), 200)
+	detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", base+root, nil, nil), 200)
+	separate := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", base+extra, nil, nil), 200)
 	if len(detail.GroupMembers) != api.IssueGroupMembersMax || separate.Issue.ID != extra || len(detail.Activity) != 0 {
 		t.Fatal("rejected merge partially changed membership or audit")
 	}
 }
 
 func TestIssueRegroupingLateAttributionNotifiesCurrentCanonicalIssue(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-regroup-impact")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
-	store := e.store.(state.IssueStore)
-	if _, err := store.SetIssueImpactAlertPolicy(t.Context(), app.ID, e.acct.ID, 2, time.Now()); err != nil {
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-regroup-impact")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	store := (*e.Store()).(state.IssueStore)
+	if _, err := store.SetIssueImpactAlertPolicy(t.Context(), app.ID, e.Acct().ID, 2, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
-		AccountID: e.acct.ID, AppID: app.ID, TargetURL: "https://example.com/issues", Enabled: true,
+	hook, err := (*e.Store()).CreateAppWebhook(t.Context(), state.AppWebhook{
+		AccountID: e.Acct().ID, AppID: app.ID, TargetURL: "https://example.com/issues", Enabled: true,
 		EventFilter: []string{"issue.impact_threshold_reached"}, SecretSealed: []byte("test-sealed"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sourceRequest, targetRequest := uuid.NewString(), uuid.NewString()
-	issueSeedRequestAttribution(t, e, app, dep, targetRequest)
+	apidserver.IssueSeedRequestAttribution(t, e, app, dep, targetRequest)
 	capture := func(function, requestID string) string {
 		t.Helper()
-		return issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, api.IssueEvent{
+		return apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, api.IssueEvent{
 			EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", RequestID: requestID,
 			Frames: []api.IssueFrame{{File: "/app/src/main.ts", Function: function, InApp: true}},
 		}), 202).IssueID
 	}
 	source, target := capture("a", sourceRequest), capture("b", targetRequest)
-	if _, err := store.ActOnIssue(t.Context(), app.ID, source, e.acct.ID,
+	if _, err := store.ActOnIssue(t.Context(), app.ID, source, e.Acct().ID,
 		api.IssueActionRequest{Action: "merge", TargetIssueID: target}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	issueSeedRequestAttribution(t, e, app, dep, sourceRequest)
-	if err := e.store.(*state.PgStore).MaintainIssues(t.Context(), time.Now().Add(2*api.IssueMaintenanceInterval)); err != nil {
+	apidserver.IssueSeedRequestAttribution(t, e, app, dep, sourceRequest)
+	if err := (*e.Store()).(*state.PgStore).MaintainIssues(t.Context(), time.Now().Add(2*api.IssueMaintenanceInterval)); err != nil {
 		t.Fatal(err)
 	}
 	detail, err := store.GetIssueDetail(t.Context(), app.ID, source, time.Now().Add(-time.Hour), time.Now(), state.IssueDetailCursors{})
 	if err != nil || detail.Issue.ID != target || detail.Impact.IdentifiedCustomers != 2 || detail.Impact.UnattributedEvents != 0 {
 		t.Fatalf("late attribution ignored current membership: %+v %v", detail, err)
 	}
-	if n, err := e.store.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {
+	if n, err := (*e.Store()).(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("canonical impact transition: %d %v", n, err)
 	}
-	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	deliveries, _, err := (*e.Store()).ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
 	if err != nil || len(deliveries) != 1 {
 		t.Fatalf("canonical impact notification missing: %+v %v", deliveries, err)
 	}
@@ -347,14 +348,14 @@ func TestIssueRegroupingLateAttributionNotifiesCurrentCanonicalIssue(t *testing.
 }
 
 func TestIssueRegroupingCombinesEarlyReleaseMetadataByDeploymentIdentity(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-release-metadata")
-	dep := issueSeedDeployment(t, e, app, 1)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-release-metadata")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
 	q := sqlc.New()
 	var groups []pgtype.UUID
 	for i, commit := range []string{"", strings.Repeat("b", 40)} {
-		row, err := q.IssueCreate(t.Context(), e.pool, sqlc.IssueCreateParams{
-			AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+		row, err := q.IssueCreate(t.Context(), (*e.Pool()), sqlc.IssueCreateParams{
+			AccountID: pgtype.UUID{Bytes: uuid.MustParse(e.Acct().ID), Valid: true},
 			AppID:     pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Environment: "application",
 			Fingerprint: strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", ""), GroupingVersion: 1, Title: "release evidence",
 			OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -363,7 +364,7 @@ func TestIssueRegroupingCombinesEarlyReleaseMetadataByDeploymentIdentity(t *test
 			t.Fatal(err)
 		}
 		groups = append(groups, row.ID)
-		if _, err := q.IssueObserve(t.Context(), e.pool, sqlc.IssueObserveParams{
+		if _, err := q.IssueObserve(t.Context(), (*e.Pool()), sqlc.IssueObserveParams{
 			ID: row.ID, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
 			t.Fatal(err)
@@ -372,16 +373,16 @@ func TestIssueRegroupingCombinesEarlyReleaseMetadataByDeploymentIdentity(t *test
 		if i == 1 {
 			image = dep.ImageDigest
 		}
-		if err := q.IssueObserveRelease(t.Context(), e.pool, sqlc.IssueObserveReleaseParams{
+		if err := q.IssueObserveRelease(t.Context(), (*e.Pool()), sqlc.IssueObserveReleaseParams{
 			IssueID: row.ID, DeploymentID: pgtype.UUID{Bytes: uuid.MustParse(dep.ID), Valid: true},
 			CommitSha: commit, ImageDigest: image, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	store := e.store.(state.IssueStore)
+	store := (*e.Store()).(state.IssueStore)
 	source, target := uuid.UUID(groups[0].Bytes).String(), uuid.UUID(groups[1].Bytes).String()
-	if _, err := store.ActOnIssue(t.Context(), app.ID, source, e.acct.ID,
+	if _, err := store.ActOnIssue(t.Context(), app.ID, source, e.Acct().ID,
 		api.IssueActionRequest{Action: "merge", TargetIssueID: target}, time.Now()); err != nil {
 		t.Fatal(err)
 	}

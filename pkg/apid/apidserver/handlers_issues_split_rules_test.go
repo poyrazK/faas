@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
@@ -17,24 +17,25 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // adr: 1116
 func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "split-rules-history")
-	old, fixed := issueSeedDeployment(t, e, app, 1), issueSeedDeployment(t, e, app, 2)
-	token := issueCreateToken(t, e, app.Slug, old)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "split-rules-history")
+	old, fixed := apidserver.IssueSeedDeployment(t, e, app, 1), apidserver.IssueSeedDeployment(t, e, app, 2)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, old)
 	requestID := uuid.NewString()
-	issueSeedRequestAttribution(t, e, app, old, requestID)
+	apidserver.IssueSeedRequestAttribution(t, e, app, old, requestID)
 	event := func(route, code string) api.IssueEvent {
 		return api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "payment failed", FingerprintOverride: "legacy-payment", Route: route, ErrorCode: code, SourceKind: "exception", RequestID: requestID}
 	}
 	send := func(tok api.IssueIngestToken, ev api.IssueEvent) api.IssueEventResponse {
 		t.Helper()
-		return issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, tok, ev), http.StatusAccepted)
+		return apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, tok, ev), http.StatusAccepted)
 	}
 	var source string
 	var cutoff time.Time
@@ -52,32 +53,32 @@ func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *test
 			movedEvent = ev
 		}
 	}
-	if err := sqlc.New().IssuePurgeEvents(t.Context(), e.pool, sqlc.IssuePurgeEventsParams{AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Before: pgtype.Timestamptz{Time: cutoff, Valid: true}}); err != nil {
+	if err := sqlc.New().IssuePurgeEvents(t.Context(), (*e.Pool()), sqlc.IssuePurgeEventsParams{AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Before: pgtype.Timestamptz{Time: cutoff, Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	base := "/v1/apps/" + app.Slug + "/issues/"
 	get := func(id string) api.IssueDetail {
 		t.Helper()
-		return issueDecode[api.IssueDetail](t, e.do(t, "GET", base+id, nil, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", base+id, nil, nil), http.StatusOK)
 	}
 	act := func(id string, in api.IssueActionRequest) api.Issue {
 		t.Helper()
-		return issueDecode[api.Issue](t, e.do(t, "POST", base+id+"/actions", in, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", base+id+"/actions", in, nil), http.StatusOK)
 	}
-	act(source, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.acct.ID})
+	act(source, api.IssueActionRequest{Action: "assign", AssigneeAccountID: e.Acct().ID})
 	act(source, api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
 	before := get(source)
 	matcher := api.IssueSplitMatcher{Route: "/checkout", ErrorCode: "DECLINED"}
 	create := func() api.IssueSplitRule {
 		t.Helper()
-		return issueDecode[api.IssueSplitRule](t, e.do(t, "POST", base+strings.ToUpper(source)+"/split-rules", matcher, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "POST", base+strings.ToUpper(source)+"/split-rules", matcher, nil), http.StatusOK)
 	}
 	rule := create()
 	if rule.SourceIssueID != source || rule.TargetIssueID == source || rule.Priority != 1 || !rule.Enabled || rule.InitialMovedEventCount != 3 || rule.UnavailableHistoryEventCount != 2 {
 		t.Fatalf("wrong rule accounting: %+v", rule)
 	}
 	original, branch := get(source), get(rule.TargetIssueID)
-	if original.Issue.EventCount != 4 || branch.Issue.EventCount != 3 || original.Issue.State != "resolved" || branch.Issue.State != "open" || branch.Issue.AssigneeAccountID != e.acct.ID || branch.Issue.SplitSourceIssueID != source {
+	if original.Issue.EventCount != 4 || branch.Issue.EventCount != 3 || original.Issue.State != "resolved" || branch.Issue.State != "open" || branch.Issue.AssigneeAccountID != e.Acct().ID || branch.Issue.SplitSourceIssueID != source {
 		t.Fatalf("wrong split counts or lifecycle: original=%+v branch=%+v", original.Issue, branch.Issue)
 	}
 	if !original.Issue.FirstSeenAt.Equal(before.Issue.FirstSeenAt) || !branch.Issue.LastSeenAt.Before(rule.CreatedAt) {
@@ -110,7 +111,7 @@ func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *test
 	}
 	update := func(enabled bool) api.IssueSplitRule {
 		t.Helper()
-		return issueDecode[api.IssueSplitRule](t, e.do(t, "PATCH", base+source+"/split-rules/"+rule.ID, api.IssueSplitRuleUpdate{Enabled: enabled}, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "PATCH", base+source+"/split-rules/"+rule.ID, api.IssueSplitRuleUpdate{Enabled: enabled}, nil), http.StatusOK)
 	}
 	update(false)
 	if same := create(); same.Enabled || same.ID != rule.ID {
@@ -128,8 +129,8 @@ func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *test
 		t.Fatal("re-enabled rule reclassified a source retry")
 	}
 	act(rule.TargetIssueID, api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
-	later := issueSeedDeployment(t, e, app, 3)
-	laterToken := issueCreateToken(t, e, app.Slug, later)
+	later := apidserver.IssueSeedDeployment(t, e, app, 3)
+	laterToken := apidserver.IssueCreateToken(t, e, app.Slug, later)
 	fresh := event("/checkout", "DECLINED")
 	fresh.RequestID = ""
 	if got := send(laterToken, fresh); got.IssueID != rule.TargetIssueID || !got.Regressed {
@@ -150,7 +151,7 @@ func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *test
 		t.Fatal("detached branch no longer received matching captures")
 	}
 	// Retention can remove evidence without resetting transferred release/lifetime counts.
-	if err := sqlc.New().IssuePurgeEvents(t.Context(), e.pool, sqlc.IssuePurgeEventsParams{AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Before: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}}); err != nil {
+	if err := sqlc.New().IssuePurgeEvents(t.Context(), (*e.Pool()), sqlc.IssuePurgeEventsParams{AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true}, Before: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	original, branch = get(source), get(rule.TargetIssueID)
@@ -170,38 +171,38 @@ func TestIssueSplitRulesConserveHistoryPreserveProvenanceAndRouteRetries(t *test
 
 // adr: 1116
 func TestIssueSplitRulesUseStablePriorityAndDoNotReplayOnReenable(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "split-rule-priority")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "split-rule-priority")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 	send := func(route, code string) (api.IssueEvent, api.IssueEventResponse) {
 		t.Helper()
 		ev := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "failed", FingerprintOverride: "priority", Route: route, ErrorCode: code}
-		return ev, issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
+		return ev, apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
 	}
 	_, first := send("/checkout", "DECLINED")
 	source := first.IssueID
 	base := "/v1/apps/" + app.Slug + "/issues/" + source + "/split-rules"
 	create := func(m api.IssueSplitMatcher) api.IssueSplitRule {
 		t.Helper()
-		return issueDecode[api.IssueSplitRule](t, e.do(t, "POST", base, m, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "POST", base, m, nil), http.StatusOK)
 	}
 	a := create(api.IssueSplitMatcher{ErrorCode: "DECLINED"})
-	issueDecode[api.IssueSplitRule](t, e.do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil), http.StatusOK)
+	apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil), http.StatusOK)
 	old, _ := send("/checkout", "DECLINED")
 	send("/checkout", "APPROVED")
 	send("/refund", "APPROVED")
-	issueDecode[api.IssueSplitRule](t, e.do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: true}, nil), http.StatusOK)
-	preview := issueDecode[api.IssueSplitPreview](t, e.do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
+	apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: true}, nil), http.StatusOK)
+	preview := apidserver.IssueDecode[api.IssueSplitPreview](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
 	if preview.MatchingEventCount != 2 || preview.EligibleEventCount != 1 || preview.ShadowedEventCount != 1 || len(preview.EligibleEventIDs) != 1 || preview.ApplicationStatus != "new-rule" {
 		t.Fatalf("priority preview disagrees with apply: %+v", preview)
 	}
 	b := create(api.IssueSplitMatcher{Route: "/checkout"})
-	duplicatePreview := issueDecode[api.IssueSplitPreview](t, e.do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
+	duplicatePreview := apidserver.IssueDecode[api.IssueSplitPreview](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
 	if duplicatePreview.ApplicationStatus != "existing-rule" || duplicatePreview.ExistingRuleID != b.ID || duplicatePreview.ExistingTargetIssueID != b.TargetIssueID || duplicatePreview.EligibleEventCount != 0 {
 		t.Fatal("repeat creation preview promises a replay")
 	}
-	branchPreview := issueDecode[api.IssueSplitPreview](t, e.do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+b.TargetIssueID+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
+	branchPreview := apidserver.IssueDecode[api.IssueSplitPreview](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+b.TargetIssueID+"/split-preview", api.IssueSplitMatcher{Route: "/checkout"}, nil), 200)
 	if branchPreview.ApplicationStatus != "derived-branch" || branchPreview.EligibleEventCount != 0 {
 		t.Fatal("nested branch preview offers apply")
 	}
@@ -214,11 +215,11 @@ func TestIssueSplitRulesUseStablePriorityAndDoNotReplayOnReenable(t *testing.T) 
 	if _, got := send("/checkout", "APPROVED"); got.IssueID != b.TargetIssueID {
 		t.Fatal("later eligible rule did not route")
 	}
-	retry := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, old), http.StatusAccepted)
+	retry := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, old), http.StatusAccepted)
 	if !retry.Duplicate || retry.IssueID != source {
 		t.Fatal("reenable/create retrospectively stole a source occurrence")
 	}
-	issueDecode[api.IssueSplitRule](t, e.do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil), http.StatusOK)
+	apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "PATCH", base+"/"+a.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil), http.StatusOK)
 	if _, got := send("/checkout", "DECLINED"); got.IssueID != b.TargetIssueID {
 		t.Fatal("disabled first rule blocked later rule")
 	}
@@ -226,16 +227,16 @@ func TestIssueSplitRulesUseStablePriorityAndDoNotReplayOnReenable(t *testing.T) 
 
 // adr: 1116
 func TestIssueSplitRulesEnforceScopesBoundsAndImmutableDefinitions(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "split-rule-bounds")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "split-rule-bounds")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 	ev := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "failed", FingerprintOverride: "bounds", Route: "/original"}
-	source := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), http.StatusAccepted).IssueID
+	source := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), http.StatusAccepted).IssueID
 	base := "/v1/apps/" + app.Slug + "/issues/"
 	var first api.IssueSplitRule
 	for i := 0; i < api.IssueSplitRulesPerIssueMax; i++ {
-		rule := issueDecode[api.IssueSplitRule](t, e.do(t, "POST", base+source+"/split-rules", api.IssueSplitMatcher{Route: fmt.Sprintf("/future-%d", i)}, nil), http.StatusOK)
+		rule := apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "POST", base+source+"/split-rules", api.IssueSplitMatcher{Route: fmt.Sprintf("/future-%d", i)}, nil), http.StatusOK)
 		if i == 0 {
 			first = rule
 		}
@@ -243,22 +244,22 @@ func TestIssueSplitRulesEnforceScopesBoundsAndImmutableDefinitions(t *testing.T)
 			t.Fatal("empty prospective rule was not bounded and ordered")
 		}
 	}
-	if res := e.do(t, "POST", base+source+"/split-rules", api.IssueSplitMatcher{Route: "/overflow"}, nil); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "8") {
+	if res := e.Do(t, "POST", base+source+"/split-rules", api.IssueSplitMatcher{Route: "/overflow"}, nil); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "8") {
 		t.Fatalf("rule bound: %d %s", res.Code, res.Body.String())
 	}
-	if res := e.do(t, "POST", base+first.TargetIssueID+"/split-rules", api.IssueSplitMatcher{Route: "/nested"}, nil); res.Code != http.StatusBadRequest {
+	if res := e.Do(t, "POST", base+first.TargetIssueID+"/split-rules", api.IssueSplitMatcher{Route: "/nested"}, nil); res.Code != http.StatusBadRequest {
 		t.Fatalf("nested rule accepted: %d", res.Code)
 	}
-	other := seedPGApp(t, e, "split-rule-other")
-	if res := e.do(t, "PATCH", "/v1/apps/"+other.Slug+"/issues/"+source+"/split-rules/"+first.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil); res.Code != http.StatusNotFound {
+	other := apidserver.SeedPGApp(t, e, "split-rule-other")
+	if res := e.Do(t, "PATCH", "/v1/apps/"+other.Slug+"/issues/"+source+"/split-rules/"+first.ID, api.IssueSplitRuleUpdate{Enabled: false}, nil); res.Code != http.StatusNotFound {
 		t.Fatal("cross-app rule toggle was allowed")
 	}
 	for _, body := range []any{map[string]any{}, map[string]any{"enabled": nil}, map[string]any{"enabled": true, "route": "/edit"}} {
-		if res := e.do(t, "PATCH", base+source+"/split-rules/"+first.ID, body, nil); res.Code != http.StatusBadRequest {
+		if res := e.Do(t, "PATCH", base+source+"/split-rules/"+first.ID, body, nil); res.Code != http.StatusBadRequest {
 			t.Fatalf("invalid update body accepted: %d", res.Code)
 		}
 	}
-	if _, err := e.pool.Exec(t.Context(), `UPDATE issue_split_rules SET route='/tampered' WHERE id=$1`, first.ID); err == nil {
+	if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE issue_split_rules SET route='/tampered' WHERE id=$1`, first.ID); err == nil {
 		t.Fatal("database allowed immutable matcher edit")
 	} else {
 		var pgerr *pgconn.PgError
@@ -268,33 +269,33 @@ func TestIssueSplitRulesEnforceScopesBoundsAndImmutableDefinitions(t *testing.T)
 	}
 	ev.EventID = uuid.NewString()
 	ev.FingerprintOverride = "quota-source"
-	second := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), http.StatusAccepted).IssueID
-	count, err := sqlc.New().IssueCount(t.Context(), e.pool, pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true})
+	second := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), http.StatusAccepted).IssueID
+	count, err := sqlc.New().IssueCount(t.Context(), (*e.Pool()), pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	limits := api.PlanHobby.IssueLimits()
 	limits.IssuesPerApp = int(count)
-	_, err = e.store.(state.IssueStore).CreateIssueSplitRule(t.Context(), app.ID, second, e.acct.ID, api.IssueSplitMatcher{Route: "/original"}, limits, time.Now())
+	_, err = (*e.Store()).(state.IssueStore).CreateIssueSplitRule(t.Context(), app.ID, second, e.Acct().ID, api.IssueSplitMatcher{Route: "/original"}, limits, time.Now())
 	var limit *state.IssueLimitError
 	if !errors.As(err, &limit) || limit.Resource != "issues" {
 		t.Fatalf("branch ignored storage quota: %v", err)
 	}
-	after, err := sqlc.New().IssueCount(t.Context(), e.pool, pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true})
+	after, err := sqlc.New().IssueCount(t.Context(), (*e.Pool()), pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true})
 	if err != nil || after != count {
 		t.Fatal("rejected rules created partial branches")
 	}
 	// Mutation forms require the authenticated Issues CSRF token.
 	page := httptest.NewRequest("GET", "/dashboard/apps/"+app.Slug+"/issues?issue="+source+"&split_preview=1&split_route=/original", nil)
-	e.addAdminSession(t, page)
+	e.AddAdminSession(t, page)
 	rendered := httptest.NewRecorder()
-	e.h.ServeHTTP(rendered, page)
+	(*e.H()).ServeHTTP(rendered, page)
 	if rendered.Code != http.StatusOK || strings.Contains(rendered.Body.String(), "Apply split rule") || !strings.Contains(rendered.Body.String(), "maximum eight rules") || !strings.Contains(rendered.Body.String(), "Disable future routing") {
 		t.Fatalf("missing routing UI: %d %s", rendered.Code, rendered.Body.String())
 	}
 	var csrf *http.Cookie
 	for _, c := range rendered.Result().Cookies() {
-		if c.Name == dashboardIssueCookie {
+		if c.Name == apidserver.DashboardIssueCookie {
 			csrf = c
 		}
 	}
@@ -304,20 +305,20 @@ func TestIssueSplitRulesEnforceScopesBoundsAndImmutableDefinitions(t *testing.T)
 	form := url.Values{"enabled": {"false"}}
 	request := httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/"+source+"/split-rules/"+first.ID, strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	e.addAdminSession(t, request)
+	e.AddAdminSession(t, request)
 	request.AddCookie(csrf)
 	rejected := httptest.NewRecorder()
-	e.h.ServeHTTP(rejected, request)
+	(*e.H()).ServeHTTP(rejected, request)
 	if rejected.Code != http.StatusBadRequest {
 		t.Fatalf("missing CSRF accepted: %d", rejected.Code)
 	}
 	form.Set("csrf_token", csrf.Value)
 	request = httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/"+source+"/split-rules/"+first.ID, strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	e.addAdminSession(t, request)
+	e.AddAdminSession(t, request)
 	request.AddCookie(csrf)
 	accepted := httptest.NewRecorder()
-	e.h.ServeHTTP(accepted, request)
+	(*e.H()).ServeHTTP(accepted, request)
 	if accepted.Code != http.StatusSeeOther || !strings.Contains(accepted.Header().Get("Location"), first.TargetIssueID) {
 		t.Fatalf("valid routing form failed: %d %s", accepted.Code, accepted.Body.String())
 	}
@@ -325,13 +326,13 @@ func TestIssueSplitRulesEnforceScopesBoundsAndImmutableDefinitions(t *testing.T)
 
 // adr: 1116
 func TestIssueSplitRuleCreationSerializesWithCaptures(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "split-rule-race")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "split-rule-race")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
 	send := func() api.IssueEventResponse {
 		ev := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "failed", FingerprintOverride: "race", Route: "/checkout"}
-		return issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
+		return apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, ev), http.StatusAccepted)
 	}
 	source := send().IssueID
 	for i := 0; i < 9; i++ {
@@ -344,10 +345,10 @@ func TestIssueSplitRuleCreationSerializesWithCaptures(t *testing.T) {
 		go func() { defer wg.Done(); <-start; send() }()
 	}
 	close(start)
-	rule := issueDecode[api.IssueSplitRule](t, e.do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-rules", api.IssueSplitMatcher{Route: "/checkout"}, nil), http.StatusOK)
+	rule := apidserver.IssueDecode[api.IssueSplitRule](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issues/"+source+"/split-rules", api.IssueSplitMatcher{Route: "/checkout"}, nil), http.StatusOK)
 	wg.Wait()
 	get := func(id string) api.IssueDetail {
-		return issueDecode[api.IssueDetail](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+id, nil, nil), http.StatusOK)
+		return apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+id, nil, nil), http.StatusOK)
 	}
 	original, branch := get(source), get(rule.TargetIssueID)
 	if original.Issue.EventCount != 0 || len(original.Releases) != 0 || branch.Issue.EventCount != 20 || len(branch.Events) != 20 || len(branch.Releases) != 1 || branch.Releases[0].EventCount != 20 {
