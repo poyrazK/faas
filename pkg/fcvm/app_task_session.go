@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -84,7 +85,11 @@ func (s *AppTaskSession) Destroy(ctx context.Context) error {
 	s.destroyMu.Unlock()
 	var closeErr error
 	if s.conn != nil {
-		closeErr = s.conn.Close()
+		// A cancelled exchange may already have closed the connection; that
+		// is not a teardown failure.
+		if err := s.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			closeErr = err
+		}
 	}
 	if s.destroyVM != nil {
 		if err := s.destroyVM(ctx); err != nil {

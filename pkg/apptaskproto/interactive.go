@@ -130,22 +130,31 @@ func (c *Client) Interact(ctx context.Context, req Request, input <-chan InputEv
 	c.used = true
 	c.mu.Unlock()
 
+	// Cancelling ctx closes the connection so a blocked read returns. A session
+	// that ends normally must leave the connection open for its owner to
+	// close, so the watcher is stopped before the session's own cancel runs.
 	sessionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	stop := closeOnCancel(sessionCtx, c.conn)
-	defer stop()
+	var writerDone chan struct{}
+	defer func() {
+		stop()
+		if writerDone != nil {
+			// Unblock a pending input write without closing the connection.
+			_ = c.conn.SetWriteDeadline(time.Now())
+		}
+		cancel()
+		if writerDone != nil {
+			<-writerDone
+		}
+	}()
 	var writeMu sync.Mutex
 	if err := writeFrame(sessionCtx, c.conn, FrameRequest, body); err != nil {
 		return zero, err
 	}
-	writerDone := make(chan struct{})
+	writerDone = make(chan struct{})
 	go func() {
 		defer close(writerDone)
 		forwardInput(sessionCtx, c.conn, &writeMu, input)
-	}()
-	defer func() {
-		cancel()
-		<-writerDone
 	}()
 
 	for {

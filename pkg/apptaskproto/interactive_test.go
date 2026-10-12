@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -229,5 +230,37 @@ func TestInputEventCodec(t *testing.T) {
 	}
 	if _, err := decodeInput(FrameResize, []byte{0, 1}); err == nil {
 		t.Fatal("short resize accepted")
+	}
+}
+
+// TestInteractiveLeavesConnectionOpenAfterResult pins the owner's teardown
+// contract: a session that ends with a result must not close the connection
+// itself (its owner closes it and treats an unexpected close as a failure).
+// The race it guards against is timing-dependent, so repeat.
+func TestInteractiveLeavesConnectionOpenAfterResult(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		host, guest := net.Pipe()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		go func() {
+			_ = ServeSession(ctx, guest, func(context.Context, Request, *OutputWriter, *OutputWriter) (Result, error) {
+				return Result{}, nil
+			}, func(context.Context, *InteractiveSession) (Result, error) {
+				exit := 0
+				return Result{Status: StatusSucceeded, ExitCode: &exit}, nil
+			})
+		}()
+		client, _ := NewClient(host)
+		if _, err := client.Interact(ctx, interactiveRequest(), nil, nil); err != nil {
+			cancel()
+			t.Fatalf("iteration %d: Interact: %v", i, err)
+		}
+		_ = host.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
+		_, err := host.Write([]byte("x"))
+		cancel()
+		_ = host.Close()
+		_ = guest.Close()
+		if errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("iteration %d: Interact closed the connection after a normal result", i)
+		}
 	}
 }
