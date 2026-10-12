@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_outcome_deadline_policy import (
         OperationWorkflowPlaybookOutcomeDeadlinePolicy,
     )
+    from ..models.operation_workflow_playbook_outcome_guidance import OperationWorkflowPlaybookOutcomeGuidance
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybook")
@@ -44,6 +45,9 @@ class OperationWorkflowPlaybook:
     summary: str
     """OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or surrounding
     whitespace."""
+    outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
+    """OperationWorkflowPlaybook.outcome_guidance. Optional pinned descriptions and suggested follow-up for the
+    expected outcome and explicitly allowed alternatives; unique by outcome code."""
     outcome_acceptance: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
     playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy
@@ -81,6 +85,13 @@ class OperationWorkflowPlaybook:
         match_code = self.match_code
 
         summary = self.summary
+
+        outcome_guidance: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.outcome_guidance, Unset):
+            outcome_guidance = []
+            for outcome_guidance_item_data in self.outcome_guidance:
+                outcome_guidance_item = outcome_guidance_item_data.to_dict()
+                outcome_guidance.append(outcome_guidance_item)
 
         outcome_acceptance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_acceptance, Unset):
@@ -120,6 +131,8 @@ class OperationWorkflowPlaybook:
                 "summary": summary,
             }
         )
+        if outcome_guidance is not UNSET:
+            field_dict["outcome_guidance"] = outcome_guidance
         if outcome_acceptance is not UNSET:
             field_dict["outcome_acceptance"] = outcome_acceptance
         if outcome_deadline is not UNSET:
@@ -150,6 +163,7 @@ class OperationWorkflowPlaybook:
         from ..models.operation_workflow_playbook_outcome_deadline_policy import (
             OperationWorkflowPlaybookOutcomeDeadlinePolicy,
         )
+        from ..models.operation_workflow_playbook_outcome_guidance import OperationWorkflowPlaybookOutcomeGuidance
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -161,6 +175,15 @@ class OperationWorkflowPlaybook:
         match_code = d.pop("match_code")
 
         summary = d.pop("summary")
+
+        _outcome_guidance = d.pop("outcome_guidance", UNSET)
+        outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
+        if _outcome_guidance is not UNSET:
+            outcome_guidance = []
+            for outcome_guidance_item_data in _outcome_guidance:
+                outcome_guidance_item = OperationWorkflowPlaybookOutcomeGuidance.from_dict(outcome_guidance_item_data)
+
+                outcome_guidance.append(outcome_guidance_item)
 
         _outcome_acceptance = d.pop("outcome_acceptance", UNSET)
         outcome_acceptance: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset
@@ -203,6 +226,7 @@ class OperationWorkflowPlaybook:
             match_kind=match_kind,
             match_code=match_code,
             summary=summary,
+            outcome_guidance=outcome_guidance,
             outcome_acceptance=outcome_acceptance,
             outcome_deadline=outcome_deadline,
             expected_outcome_code=expected_outcome_code,

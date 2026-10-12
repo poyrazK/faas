@@ -3,11 +3,20 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookOutcomeAcceptancePolicy } from './OperationWorkflowPlaybookOutcomeAcceptancePolicy.js';
+import type { OperationWorkflowPlaybookOutcomeGuidance } from './OperationWorkflowPlaybookOutcomeGuidance.js';
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 /**
  * OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
  */
 export type OperationWorkflowPlaybookBusinessOutcome = {
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.outcome_guidance. Frozen complete guidance set retained for later exact-contract observations; never an execution instruction.
+   */
+  outcome_guidance?: Array<OperationWorkflowPlaybookOutcomeGuidance>;
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.guidance. Matching pinned guidance for the fresh comparable reported terminal outcome; omitted for pending or unavailable reports.
+   */
+  guidance?: OperationWorkflowPlaybookOutcomeGuidance;
   acceptance_policy?: OperationWorkflowPlaybookOutcomeAcceptancePolicy;
   /**
    * OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy. Omitted for legacy playbooks; alternatives never change the primary expected-outcome status.

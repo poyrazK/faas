@@ -34,6 +34,8 @@ func readPlaybookCompletionOutcome(ctx context.Context, store readinessSubscript
 		status = "unavailable"
 	}
 	result := &api.OperationWorkflowPlaybookCompletionOutcome{Resolution: resolution, Alignment: "unavailable", Explanation: "Current application evidence cannot determine whether the declared resolution matches the expected result.", Observation: api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence, DeadlineAt: &escalation.DeadlineAt, DeadlineReached: !at.Before(escalation.DeadlineAt)}}
+	result.Observation.OutcomeGuidance = append([]api.OperationWorkflowPlaybookOutcomeGuidance(nil), escalation.Current.OutcomeGuidance...)
+	projectPlaybookOutcomeGuidance(&result.Observation)
 	classifyPlaybookOutcomeAcceptance(&result.Observation, escalation.Current.AcceptancePolicy)
 	switch {
 	case resolution == "follow_up_canceled":

@@ -116,6 +116,7 @@ type OperationWorkflowPlaybookEvidenceCheck struct {
 }
 
 type OperationWorkflowPlaybook struct {
+	OutcomeGuidance      []OperationWorkflowPlaybookOutcomeGuidance        `json:"outcome_guidance,omitempty" yaml:"outcome_guidance,omitempty" toml:"outcome_guidance"`
 	OutcomeAcceptance    *OperationWorkflowPlaybookOutcomeAcceptancePolicy `json:"outcome_acceptance,omitempty" yaml:"outcome_acceptance,omitempty" toml:"outcome_acceptance"`
 	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy   `json:"outcome_deadline,omitempty" yaml:"outcome_deadline,omitempty" toml:"outcome_deadline"`
 	ExpectedOutcomeCode  string                                            `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
@@ -298,6 +299,8 @@ type OperationWorkflowPlaybookEvidenceEvent struct {
 
 // Business results are observed separately from human progress and do not establish causation.
 type OperationWorkflowPlaybookBusinessOutcome struct {
+	OutcomeGuidance  []OperationWorkflowPlaybookOutcomeGuidance        `json:"outcome_guidance,omitempty"`
+	Guidance         *OperationWorkflowPlaybookOutcomeGuidance         `json:"guidance,omitempty"`
 	AcceptancePolicy *OperationWorkflowPlaybookOutcomeAcceptancePolicy `json:"acceptance_policy,omitempty"`
 	Acceptance       string                                            `json:"acceptance,omitempty"`
 	DeadlineAt       *time.Time                                        `json:"deadline_at,omitempty"`
@@ -363,4 +366,11 @@ type OperationWorkflowPlaybookCompletionReviewEvent struct {
 // Explicit empty alternatives means only the expected terminal outcome is acceptable.
 type OperationWorkflowPlaybookOutcomeAcceptancePolicy struct {
 	AlternativeOutcomeCodes []string `json:"alternative_outcome_codes" yaml:"alternative_outcome_codes" toml:"alternative_outcome_codes"`
+}
+
+// Plain-text application guidance conveys meaning and suggested human follow-up, never execution authority.
+type OperationWorkflowPlaybookOutcomeGuidance struct {
+	OutcomeCode       string `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
+	Description       string `json:"description" yaml:"description" toml:"description"`
+	SuggestedFollowUp string `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
 }

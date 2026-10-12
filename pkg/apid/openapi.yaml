@@ -81238,6 +81238,15 @@ components:
       description: OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
       required: [status, reason, evidence]
       properties:
+        outcome_guidance:
+          type: array
+          maxItems: 17
+          description: OperationWorkflowPlaybookBusinessOutcome.outcome_guidance. Frozen complete guidance set retained for later exact-contract observations; never an execution instruction.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeGuidance'
+        guidance:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeGuidance'
+          description: OperationWorkflowPlaybookBusinessOutcome.guidance. Matching pinned guidance for the fresh comparable reported terminal outcome; omitted for pending or unavailable reports.
         acceptance_policy:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeAcceptancePolicy'
         acceptance:
@@ -81344,6 +81353,26 @@ components:
           type: string
           format: date-time
           description: OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation, retained through corrections or evidence loss; does not prove when the business result occurred.
+    OperationWorkflowPlaybookOutcomeGuidance:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
+      required: [outcome_code, description]
+      properties:
+        outcome_code:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+          description: OperationWorkflowPlaybookOutcomeGuidance.outcome_code. Primary expected outcome or explicit acceptable alternative; unique within the playbook guidance set.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowPlaybookOutcomeGuidance.description. Required trimmed UTF-8 plain-text business meaning, at most 1024 bytes and no control characters.
+        suggested_follow_up:
+          type: string
+          maxLength: 1024
+          description: OperationWorkflowPlaybookOutcomeGuidance.suggested_follow_up. Optional trimmed UTF-8 plain-text suggestion, at most 1024 bytes and no control characters; application-owned decisions and execution remain separate.
     OperationWorkflowPlaybookOutcomeAcceptancePolicy:
       type: object
       additionalProperties: false
@@ -81472,6 +81501,12 @@ components:
         and links are never executed by Gregale.
       required: [id, version, summary, match_kind, match_code]
       properties:
+        outcome_guidance:
+          type: array
+          maxItems: 17
+          description: OperationWorkflowPlaybook.outcome_guidance. Optional pinned descriptions and suggested follow-up for the expected outcome and explicitly allowed alternatives; unique by outcome code.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeGuidance'
         outcome_acceptance:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeAcceptancePolicy'
         outcome_deadline:

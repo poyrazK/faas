@@ -346,3 +346,5 @@ type OperationWorkflowPlaybookCompletionReview = api.OperationWorkflowPlaybookCo
 type OperationWorkflowPlaybookCompletionReviewEvent = api.OperationWorkflowPlaybookCompletionReviewEvent
 
 type OperationWorkflowPlaybookOutcomeAcceptancePolicy = api.OperationWorkflowPlaybookOutcomeAcceptancePolicy
+
+type OperationWorkflowPlaybookOutcomeGuidance = api.OperationWorkflowPlaybookOutcomeGuidance

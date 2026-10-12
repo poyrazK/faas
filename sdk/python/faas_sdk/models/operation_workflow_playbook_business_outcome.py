@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_outcome_acceptance_policy import (
         OperationWorkflowPlaybookOutcomeAcceptancePolicy,
     )
+    from ..models.operation_workflow_playbook_outcome_guidance import OperationWorkflowPlaybookOutcomeGuidance
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
 
 
@@ -46,6 +47,13 @@ class OperationWorkflowPlaybookBusinessOutcome:
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
     immutable; current checks are live reads."""
+    outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
+    """OperationWorkflowPlaybookBusinessOutcome.outcome_guidance. Frozen complete guidance set retained for later
+    exact-contract observations; never an execution instruction."""
+    guidance: OperationWorkflowPlaybookOutcomeGuidance | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human
+    follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes
+    outcome acceptance."""
     acceptance_policy: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
     playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy
@@ -65,6 +73,17 @@ class OperationWorkflowPlaybookBusinessOutcome:
         reason = self.reason
 
         evidence = self.evidence.to_dict()
+
+        outcome_guidance: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.outcome_guidance, Unset):
+            outcome_guidance = []
+            for outcome_guidance_item_data in self.outcome_guidance:
+                outcome_guidance_item = outcome_guidance_item_data.to_dict()
+                outcome_guidance.append(outcome_guidance_item)
+
+        guidance: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.guidance, Unset):
+            guidance = self.guidance.to_dict()
 
         acceptance_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.acceptance_policy, Unset):
@@ -89,6 +108,10 @@ class OperationWorkflowPlaybookBusinessOutcome:
                 "evidence": evidence,
             }
         )
+        if outcome_guidance is not UNSET:
+            field_dict["outcome_guidance"] = outcome_guidance
+        if guidance is not UNSET:
+            field_dict["guidance"] = guidance
         if acceptance_policy is not UNSET:
             field_dict["acceptance_policy"] = acceptance_policy
         if acceptance is not UNSET:
@@ -105,6 +128,7 @@ class OperationWorkflowPlaybookBusinessOutcome:
         from ..models.operation_workflow_playbook_outcome_acceptance_policy import (
             OperationWorkflowPlaybookOutcomeAcceptancePolicy,
         )
+        from ..models.operation_workflow_playbook_outcome_guidance import OperationWorkflowPlaybookOutcomeGuidance
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
 
         d = dict(src_dict)
@@ -113,6 +137,22 @@ class OperationWorkflowPlaybookBusinessOutcome:
         reason = d.pop("reason")
 
         evidence = OperationWorkflowReadinessBusinessOutcome.from_dict(d.pop("evidence"))
+
+        _outcome_guidance = d.pop("outcome_guidance", UNSET)
+        outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
+        if _outcome_guidance is not UNSET:
+            outcome_guidance = []
+            for outcome_guidance_item_data in _outcome_guidance:
+                outcome_guidance_item = OperationWorkflowPlaybookOutcomeGuidance.from_dict(outcome_guidance_item_data)
+
+                outcome_guidance.append(outcome_guidance_item)
+
+        _guidance = d.pop("guidance", UNSET)
+        guidance: OperationWorkflowPlaybookOutcomeGuidance | Unset
+        if isinstance(_guidance, Unset):
+            guidance = UNSET
+        else:
+            guidance = OperationWorkflowPlaybookOutcomeGuidance.from_dict(_guidance)
 
         _acceptance_policy = d.pop("acceptance_policy", UNSET)
         acceptance_policy: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset
@@ -141,6 +181,8 @@ class OperationWorkflowPlaybookBusinessOutcome:
             status=status,
             reason=reason,
             evidence=evidence,
+            outcome_guidance=outcome_guidance,
+            guidance=guidance,
             acceptance_policy=acceptance_policy,
             acceptance=acceptance,
             deadline_at=deadline_at,

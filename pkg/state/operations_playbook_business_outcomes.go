@@ -27,6 +27,8 @@ func projectWorkflowPlaybookBusinessOutcomes(out *api.OperationWorkflowCase) {
 			evidence.Explanation = "The pinned playbook is invalid; its business expectation cannot be evaluated."
 		}
 		p.BusinessOutcome = &api.OperationWorkflowPlaybookBusinessOutcome{Status: status, Reason: reason, Evidence: evidence, DeadlineAt: p.OutcomeDeadlineAt, DeadlineReached: p.OutcomeDeadlineAt != nil && !out.EvidenceCheckedAt.Before(*p.OutcomeDeadlineAt)}
+		p.BusinessOutcome.OutcomeGuidance = slices.Clone(p.Playbook.OutcomeGuidance)
+		projectPlaybookOutcomeGuidance(p.BusinessOutcome)
 		classifyPlaybookOutcomeAcceptance(p.BusinessOutcome, p.Playbook.OutcomeAcceptance)
 	}
 	out.Limitations = append(out.Limitations, "Playbook business results follow the frozen expected terminal outcome in the exact workflow contract. They neither close human checklists nor establish that playbook work caused an application outcome.")
@@ -59,6 +61,7 @@ func guardPlaybookWatchOutcome(w *api.OperationWorkflowPlaybookEvidenceWatch, cu
 	if observed.Status != "unavailable" {
 		w.OutcomeStateRevision = max(w.OutcomeStateRevision, observed.Evidence.StateRevision)
 	}
+	projectPlaybookOutcomeGuidance(&observed)
 	classifyPlaybookOutcomeAcceptance(&observed, observed.AcceptancePolicy)
 	w.BusinessOutcome = &observed
 }
@@ -81,5 +84,19 @@ func classifyPlaybookOutcomeAcceptance(out *api.OperationWorkflowPlaybookBusines
 		out.Acceptance = "pending"
 	default:
 		out.Acceptance = "unavailable"
+	}
+}
+
+func projectPlaybookOutcomeGuidance(out *api.OperationWorkflowPlaybookBusinessOutcome) {
+	out.Guidance = nil
+	if out.Status != "achieved" && out.Status != "different_outcome" {
+		return
+	}
+	for _, guidance := range out.OutcomeGuidance {
+		if guidance.OutcomeCode == out.Evidence.ReportedOutcomeCode {
+			copy := guidance
+			out.Guidance = &copy
+			return
+		}
 	}
 }

@@ -56,6 +56,19 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 			}
 			r.OutcomeAcceptance = &policy
 		}
+		if len(r.OutcomeGuidance) > OperationWorkflowPlaybookEvidenceMax+1 || (len(r.OutcomeGuidance) > 0 && r.ExpectedOutcomeCode == "") {
+			return nil, fmt.Errorf("workflow playbook outcome guidance is invalid")
+		}
+		r.OutcomeGuidance = slices.Clone(r.OutcomeGuidance)
+		slices.SortFunc(r.OutcomeGuidance, func(a, b OperationWorkflowPlaybookOutcomeGuidance) int {
+			return strings.Compare(a.OutcomeCode, b.OutcomeCode)
+		})
+		for j, guidance := range r.OutcomeGuidance {
+			allowed := guidance.OutcomeCode == r.ExpectedOutcomeCode || (r.OutcomeAcceptance != nil && slices.Contains(r.OutcomeAcceptance.AlternativeOutcomeCodes, guidance.OutcomeCode))
+			if !allowed || (j > 0 && r.OutcomeGuidance[j-1].OutcomeCode == guidance.OutcomeCode) || !text(guidance.Description, OperationWorkflowReadinessFollowUpNoteMaxBytes, true) || !text(guidance.SuggestedFollowUp, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
+				return nil, fmt.Errorf("workflow playbook outcome guidance code or text is invalid or duplicated")
+			}
+		}
 		if r.OutcomeDeadline != nil {
 			policy := *r.OutcomeDeadline
 			if policy.AcknowledgeAfterSeconds < 0 || policy.AcknowledgeAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (policy.FallbackOwner != "" && (policy.AcknowledgeAfterSeconds == 0 || policy.FallbackOwner == policy.Owner || !text(policy.FallbackOwner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true))) || r.ExpectedOutcomeCode == "" || policy.AfterSeconds < 1 || policy.AfterSeconds > OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds || policy.FollowUpAfterSeconds < 1 || policy.FollowUpAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || !text(policy.Note, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {

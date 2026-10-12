@@ -1697,3 +1697,7 @@ Business-aware completion may opt into a review window of at most seven days, pi
 ### Pinned business outcome acceptance rules
 
 Playbooks may explicitly enumerate up to 16 acceptable terminal alternatives, excluding the primary expected outcome. Canonicalization copies, validates and sorts the list. Explicit empty and absent policies are distinct: empty allows no alternatives; absence preserves legacy reviewer acceptance. The frozen policy accompanies business observations and governs completion alignment and bounded post-completion reviews, independently of subsequent deployments. Acceptance classification never changes the application's reported status or the primary expected-outcome deadline. Contrary results remain observable and human closure remains possible; immutable completion is preserved.
+
+### Pinned business outcome explanations
+
+Optional outcome guidance gives application-defined meanings and suggested human follow-up for the expected code and explicitly acceptable alternatives. The bounded list is validated, copied and sorted as part of canonical playbook guidance. The entire set accompanies business observations, allowing completion and bounded post-completion reviews to select the correct original meaning through later result changes. Matching guidance is exposed only for fresh comparable terminal reports; advisory prose never changes acceptance, deadlines, authorization or execution. Existing records without guidance retain their behavior, and saved closures remain immutable.
