@@ -9711,6 +9711,36 @@ func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype
 	return err
 }
 
+const deleteDatabaseRoleVerifier = `-- name: DeleteDatabaseRoleVerifier :execrows
+DELETE FROM database_role_verifiers
+WHERE database_id = $1 AND role_name = $2
+`
+
+type DeleteDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+}
+
+func (q *Queries) DeleteDatabaseRoleVerifier(ctx context.Context, db DBTX, arg DeleteDatabaseRoleVerifierParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteDatabaseRoleVerifiers = `-- name: DeleteDatabaseRoleVerifiers :execrows
+DELETE FROM database_role_verifiers WHERE database_id = $1
+`
+
+func (q *Queries) DeleteDatabaseRoleVerifiers(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseRoleVerifiers, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteDatabaseVM = `-- name: DeleteDatabaseVM :execrows
 DELETE FROM database_vms WHERE database_id = $1 AND state = 'deleting'
 `
@@ -17302,6 +17332,23 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getDatabaseRoleVerifier = `-- name: GetDatabaseRoleVerifier :one
+SELECT verifier FROM database_role_verifiers
+WHERE database_id = $1 AND role_name = $2
+`
+
+type GetDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+}
+
+func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetDatabaseRoleVerifierParams) (string, error) {
+	row := db.QueryRow(ctx, getDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName)
+	var verifier string
+	err := row.Scan(&verifier)
+	return verifier, err
 }
 
 const getDatabaseVM = `-- name: GetDatabaseVM :one
@@ -71729,6 +71776,23 @@ func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDat
 		arg.VolumeCapacityBytes,
 		arg.Lifecycle,
 	)
+	return err
+}
+
+const upsertDatabaseRoleVerifier = `-- name: UpsertDatabaseRoleVerifier :exec
+INSERT INTO database_role_verifiers (database_id, role_name, verifier)
+VALUES ($1, $2, $3)
+ON CONFLICT (database_id, role_name) DO UPDATE SET verifier = EXCLUDED.verifier, updated_at = now()
+`
+
+type UpsertDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+}
+
+func (q *Queries) UpsertDatabaseRoleVerifier(ctx context.Context, db DBTX, arg UpsertDatabaseRoleVerifierParams) error {
+	_, err := db.Exec(ctx, upsertDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName, arg.Verifier)
 	return err
 }
 

@@ -159,8 +159,8 @@ func TestWakeParkAndTouch(t *testing.T) {
 	ctx := context.Background()
 	vm := provision(t, s)
 	woke, err := s.Wake(ctx, vm.DatabaseID)
-	if err != nil || woke.State != StateRunning || woke.LastActiveAt.IsZero() {
-		t.Fatalf("wake = %+v, %v", woke, err)
+	if err != nil || woke.State != StateRunning || woke.LastActiveAt.IsZero() || woke.NodeTarget != "unix:///a" {
+		t.Fatalf("wake = %+v, %v; want running with the node target", woke, err)
 	}
 	if _, err := s.Wake(ctx, vm.DatabaseID); err != nil || vmm.callCount("start") != 2 {
 		t.Fatalf("wake of a running database must not boot again: starts=%d err=%v", vmm.callCount("start"), err)

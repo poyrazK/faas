@@ -47,10 +47,25 @@ CREATE TABLE IF NOT EXISTS database_vms (
 
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx
     ON database_vms (node_id, state);
+
+-- The SCRAM-SHA-256 verifier of each customer role, in pg_authid format.
+-- apid writes it when it sets the role's password inside the VM; pgproxyd
+-- reads it to authenticate a client before waking the database and then
+-- logs in with the client's proven key. No password is ever stored.
+CREATE TABLE IF NOT EXISTS database_role_verifiers (
+    database_id uuid NOT NULL,
+    role_name text NOT NULL
+        CHECK (role_name ~ '^[a-z_][a-z0-9_]{0,62}$'),
+    verifier text NOT NULL
+        CHECK (verifier ~ '^SCRAM-SHA-256\$[0-9]+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$'),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (database_id, role_name)
+);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TABLE IF EXISTS database_role_verifiers;
 DROP TABLE IF EXISTS database_vms;
 DROP TABLE IF EXISTS database_nodes;
 -- +goose StatementEnd

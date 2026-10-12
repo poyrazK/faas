@@ -62,6 +62,9 @@ type VM struct {
 	LastActiveAt   time.Time
 	StateChangedAt time.Time
 	CreatedAt      time.Time
+	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
+	// Wake and Get; stores do not persist it.
+	NodeTarget string
 }
 
 // TransitionOptions annotate a state change.

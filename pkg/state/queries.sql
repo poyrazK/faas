@@ -18494,3 +18494,19 @@ WHERE database_id = sqlc.arg(database_id) AND state = 'running';
 
 -- name: DeleteDatabaseVM :execrows
 DELETE FROM database_vms WHERE database_id = sqlc.arg(database_id) AND state = 'deleting';
+
+-- name: UpsertDatabaseRoleVerifier :exec
+INSERT INTO database_role_verifiers (database_id, role_name, verifier)
+VALUES (sqlc.arg(database_id), sqlc.arg(role_name), sqlc.arg(verifier))
+ON CONFLICT (database_id, role_name) DO UPDATE SET verifier = EXCLUDED.verifier, updated_at = now();
+
+-- name: GetDatabaseRoleVerifier :one
+SELECT verifier FROM database_role_verifiers
+WHERE database_id = sqlc.arg(database_id) AND role_name = sqlc.arg(role_name);
+
+-- name: DeleteDatabaseRoleVerifier :execrows
+DELETE FROM database_role_verifiers
+WHERE database_id = sqlc.arg(database_id) AND role_name = sqlc.arg(role_name);
+
+-- name: DeleteDatabaseRoleVerifiers :execrows
+DELETE FROM database_role_verifiers WHERE database_id = sqlc.arg(database_id);

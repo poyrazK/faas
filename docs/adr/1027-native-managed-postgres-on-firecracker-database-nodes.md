@@ -149,6 +149,26 @@ Provision, delete, admin and get accept only apid's client certificate;
 wake, park and touch also accept pgproxyd. A `[database_scheduler]` table in
 schedd's config enables the scheduler and lists the database nodes.
 
+### Proxy surface
+
+`pgproxyd` (`pkg/pgproxy`, `cmd/pgproxyd`) accepts PostgreSQL over TLS only
+(SSLRequest or PostgreSQL 17 direct TLS), routes by SNI
+`<database-id>.<host_suffix>` or an `endpoint=<id>` startup option, and runs
+SCRAM-SHA-256 with the client against the role's verifier from
+`database_role_verifiers` before anything is woken. An unknown database or
+role gets a deterministic decoy verifier, so it fails exactly like a wrong
+password (`28P01`) and wakes nothing. After the client proves its key, the
+proxy wakes the database through schedd (`WakeDatabase`, which also returns
+the node's vmmd target), opens a `DatabaseSession` stream through vmmd to
+the VM's data port, and logs in to PostgreSQL with the proven ClientKey
+(SCRAM pass-through). Passwords never reach the proxy or the control plane:
+the driver hashes each role password into a verifier, sets that verifier in
+PostgreSQL through `admin_sql` and stores it for the proxy.
+
+vmmd's database lifecycle RPCs accept only schedd's certificate and
+`DatabaseSession` only pgproxyd's, so the proxy can reach a database's data
+port but never its control port.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through

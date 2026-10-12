@@ -66,7 +66,8 @@ docs/adr/
   `gatewayd` daemon was removed in PR-A (Tier A7 ship). Cross-node
   HA is achieved by having N nodes each with one `gatewayd-public` in
   front of their local `gatewayd-internal` set — NOT by having multiple
-  public listeners on one node.
+  public listeners on one node. Database nodes (ADR-1027) run no app VMs
+  and their one public listener is `pgproxyd`.
 - Components talk via Postgres rows + `pg_notify`, or gRPC on unix sockets in /run/faas/.
   Never add a direct call that bypasses an owner (e.g. apid must not call vmmd).
 

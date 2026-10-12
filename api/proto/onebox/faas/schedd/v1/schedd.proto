@@ -1164,6 +1164,9 @@ message DatabaseRuntime {
   bool bootstrapped = 4;
   // Stable error code of the last failed transition.
   string last_error = 5;
+  // vmmd dial target of the database's node; pgproxyd opens the session
+  // there.
+  string vmmd_target = 6;
 }
 
 message TouchDatabaseResponse {}

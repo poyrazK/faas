@@ -530,6 +530,11 @@ service Vmmd {
   // DatabaseControl relays one guest control request (status, bootstrap,
   // admin_sql).
   rpc DatabaseControl(DatabaseControlRequest) returns (DatabaseControlResponse);
+  // DatabaseSession carries one client session to a running database VM's
+  // PostgreSQL data port, never its control port. The first client frame
+  // names the database; every later frame carries raw protocol bytes. The
+  // lifecycle RPCs above accept only schedd; this one only pgproxyd.
+  rpc DatabaseSession(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -2624,4 +2629,10 @@ message DatabaseControlResponse {
   string error_code = 3;
   // PostgreSQL SQLSTATE of a failed admin_sql batch.
   string sqlstate = 4;
+}
+
+message DatabaseSessionFrame {
+  // First client frame only.
+  string database_id = 1;
+  bytes data = 2;
 }

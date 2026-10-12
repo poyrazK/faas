@@ -1894,6 +1894,13 @@ type DatabaseNode struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type DatabaseRoleVerifier struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type DatabaseVm struct {
 	DatabaseID     pgtype.UUID
 	NodeID         string

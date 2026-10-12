@@ -79,6 +79,7 @@ const (
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
+	Vmmd_DatabaseSession_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseSession"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -545,6 +546,11 @@ type VmmdClient interface {
 	// DatabaseControl relays one guest control request (status, bootstrap,
 	// admin_sql).
 	DatabaseControl(ctx context.Context, in *DatabaseControlRequest, opts ...grpc.CallOption) (*DatabaseControlResponse, error)
+	// DatabaseSession carries one client session to a running database VM's
+	// PostgreSQL data port, never its control port. The first client frame
+	// names the database; every later frame carries raw protocol bytes. The
+	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
+	DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error)
 }
 
 type vmmdClient struct {
@@ -1167,6 +1173,19 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 	return out, nil
 }
 
+func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseSessionFrame, DatabaseSessionFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame]
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1631,6 +1650,11 @@ type VmmdServer interface {
 	// DatabaseControl relays one guest control request (status, bootstrap,
 	// admin_sql).
 	DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error)
+	// DatabaseSession carries one client session to a running database VM's
+	// PostgreSQL data port, never its control port. The first client frame
+	// names the database; every later frame carries raw protocol bytes. The
+	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
+	DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1811,6 +1835,9 @@ func (UnimplementedVmmdServer) StopDatabase(context.Context, *StopDatabaseReques
 }
 func (UnimplementedVmmdServer) DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseControl not implemented")
+}
+func (UnimplementedVmmdServer) DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
+	return status.Error(codes.Unimplemented, "method DatabaseSession not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -2783,6 +2810,13 @@ func _Vmmd_DatabaseControl_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_DatabaseSession_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).DatabaseSession(&grpc.GenericServerStream[DatabaseSessionFrame, DatabaseSessionFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseSessionServer = grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3030,6 +3064,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ForwardUDPStream",
 			Handler:       _Vmmd_ForwardUDPStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DatabaseSession",
+			Handler:       _Vmmd_DatabaseSession_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

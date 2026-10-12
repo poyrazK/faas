@@ -3,13 +3,23 @@ package vmmdgrpc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -40,6 +50,32 @@ func (f *fakeDatabaseRuntime) Stop(_ context.Context, id string) error {
 	f.stopped = id
 	return f.err
 }
+
+// Dial returns one end of a pipe whose other end echoes, standing in for
+// PostgreSQL behind the data port.
+func (f *fakeDatabaseRuntime) Dial(context.Context, string) (net.Conn, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	client, server := net.Pipe()
+	go func() {
+		defer func() { _ = server.Close() }()
+		_, _ = io.Copy(server, server)
+	}()
+	return client, nil
+}
+
+// unixCaller models a caller on vmmd's unix socket (no TLS).
+func unixCaller() context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{})
+}
+
+func tlsCaller(cn string) context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{AuthInfo: credentials.TLSInfo{
+		State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{CommonName: cn}}}},
+	}})
+}
+
 func (f *fakeDatabaseRuntime) Control(_ context.Context, _ string, req dbguest.Request) (dbguest.Response, error) {
 	f.controls = append(f.controls, req)
 	return f.controlRs, f.err
@@ -47,7 +83,7 @@ func (f *fakeDatabaseRuntime) Control(_ context.Context, _ string, req dbguest.R
 
 func TestDatabaseRPCsUnimplementedWithoutRuntime(t *testing.T) {
 	s := New(vmmStubBase{}, nil, "test", nil)
-	ctx := context.Background()
+	ctx := unixCaller()
 	calls := map[string]func() error{
 		"create":  func() error { _, err := s.CreateDatabaseVolume(ctx, &vmmdpb.CreateDatabaseVolumeRequest{}); return err },
 		"delete":  func() error { _, err := s.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{}); return err },
@@ -66,7 +102,7 @@ func TestStartDatabaseValidatesShapeAndMapsRateLimits(t *testing.T) {
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateNeedsBootstrap}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	valid := &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, VolumeBandwidthBytesPerSec: 50 << 20}
-	resp, err := s.StartDatabase(context.Background(), valid)
+	resp, err := s.StartDatabase(unixCaller(), valid)
 	if err != nil || resp.GetState() != string(dbguest.StateNeedsBootstrap) {
 		t.Fatalf("StartDatabase = %v, %v", resp, err)
 	}
@@ -81,7 +117,7 @@ func TestStartDatabaseValidatesShapeAndMapsRateLimits(t *testing.T) {
 	} {
 		req := &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384}
 		mutate(req)
-		if _, err := s.StartDatabase(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		if _, err := s.StartDatabase(unixCaller(), req); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("%s: StartDatabase = %v, want InvalidArgument", name, err)
 		}
 	}
@@ -90,7 +126,7 @@ func TestStartDatabaseValidatesShapeAndMapsRateLimits(t *testing.T) {
 func TestDatabaseControlValidatesAndRelays(t *testing.T) {
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, Major: 17, Error: dbguest.ErrCodeAdminSQLFailed, SQLState: "42710"}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
-	ctx := context.Background()
+	ctx := unixCaller()
 	for _, req := range []*vmmdpb.DatabaseControlRequest{
 		{DatabaseId: testDatabaseID, Op: "stop"},
 		{DatabaseId: testDatabaseID, Op: "drop"},
@@ -140,10 +176,81 @@ func TestDatabaseStatusCodesHideInternalDetail(t *testing.T) {
 func TestCreateDatabaseVolumeBounds(t *testing.T) {
 	rt := &fakeDatabaseRuntime{}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
-	if _, err := s.CreateDatabaseVolume(context.Background(), &vmmdpb.CreateDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
+	if _, err := s.CreateDatabaseVolume(unixCaller(), &vmmdpb.CreateDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("tiny volume = %v", err)
 	}
-	if _, err := s.CreateDatabaseVolume(context.Background(), &vmmdpb.CreateDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 10 << 30}); err != nil || rt.created != 10<<30 {
+	if _, err := s.CreateDatabaseVolume(unixCaller(), &vmmdpb.CreateDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 10 << 30}); err != nil || rt.created != 10<<30 {
 		t.Fatalf("create = %v, size %d", err, rt.created)
 	}
+}
+
+func TestDatabaseRPCCallerIdentity(t *testing.T) {
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(&fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady}})
+	start := func(ctx context.Context) error {
+		_, err := s.StartDatabase(ctx, &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384})
+		return err
+	}
+	admin := func(ctx context.Context) error {
+		_, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "admin_sql", Sql: "select 1"})
+		return err
+	}
+	cases := []struct {
+		name string
+		ctx  context.Context
+		call func(context.Context) error
+		want codes.Code
+	}{
+		{"schedd starts", tlsCaller("schedd.faas"), start, codes.OK},
+		{"unix caller starts", unixCaller(), start, codes.OK},
+		{"pgproxyd cannot start", tlsCaller("pgproxyd.faas"), start, codes.PermissionDenied},
+		{"pgproxyd cannot run admin sql", tlsCaller("pgproxyd.faas"), admin, codes.PermissionDenied},
+		{"gateway cannot run admin sql", tlsCaller("gatewayd-internal-public.faas"), admin, codes.PermissionDenied},
+		{"no peer", context.Background(), start, codes.PermissionDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := status.Code(tc.call(tc.ctx)); got != tc.want {
+				t.Fatalf("code = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDatabaseSessionRelaysBytes runs a session over a real gRPC stream to
+// an echoing data port.
+func TestDatabaseSessionRelaysBytes(t *testing.T) {
+	lis := bufconn.Listen(1 << 20)
+	gsrv := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(gsrv, New(vmmStubBase{}, nil, "test", nil).WithDatabases(&fakeDatabaseRuntime{}))
+	go func() { _ = gsrv.Serve(lis) }()
+	defer gsrv.Stop()
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	stream, err := vmmdpb.NewVmmdClient(conn).DatabaseSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&vmmdpb.DatabaseSessionFrame{DatabaseId: testDatabaseID, Data: []byte("hello ")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&vmmdpb.DatabaseSessionFrame{Data: []byte("postgres")}); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for len(got) < len("hello postgres") {
+		frame, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("recv after %q: %v", got, err)
+		}
+		got = append(got, frame.GetData()...)
+	}
+	if string(got) != "hello postgres" {
+		t.Fatalf("echo = %q", got)
+	}
+	_ = stream.CloseSend()
 }

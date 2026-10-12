@@ -29,6 +29,8 @@ func TestDatabaseVMsConstraints(t *testing.T) {
 	insertVM := `INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state, last_error)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	mustExec(t, pool, insertVM, uuid.NewString(), "db-1", 17, 1, 384, int64(1<<30), "provisioning", nil)
+	const validVerifier = "SCRAM-SHA-256$4096:c2FsdHNhbHRzYWx0c2FsdA==$c3RvcmVkc3RvcmVkc3RvcmVkc3RvcmVkc3RvcmVkMTI=:c2VydmVyc2VydmVyc2VydmVyc2VydmVyc2VydmVyMTI="
+	mustExec(t, pool, `INSERT INTO database_role_verifiers (database_id, role_name, verifier) VALUES ($1, 'app', $2)`, uuid.NewString(), validVerifier)
 
 	rejected := []struct {
 		name string
@@ -45,6 +47,8 @@ func TestDatabaseVMsConstraints(t *testing.T) {
 		{"bad node lifecycle", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle) VALUES ('db-2', 'tcp://x:1', 1, 1, 'zombie')`, nil, "23514"},
 		{"bad node id", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes) VALUES ('DB 2', 'tcp://x:1', 1, 1)`, nil, "23514"},
 		{"zero ceiling", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes) VALUES ('db-3', 'tcp://x:1', 0, 1)`, nil, "23514"},
+		{"plaintext password as verifier", `INSERT INTO database_role_verifiers (database_id, role_name, verifier) VALUES ($1, 'app', 'hunter2')`, []any{uuid.NewString()}, "23514"},
+		{"bad role name", `INSERT INTO database_role_verifiers (database_id, role_name, verifier) VALUES ($1, 'App; DROP', $2)`, []any{uuid.NewString(), validVerifier}, "23514"},
 	}
 	for _, tc := range rejected {
 		_, err := pool.Exec(ctx, tc.sql, tc.args...)

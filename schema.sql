@@ -17607,6 +17607,20 @@ CREATE TABLE public.database_nodes (
 
 
 --
+-- Name: database_role_verifiers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_role_verifiers (
+    database_id uuid NOT NULL,
+    role_name text NOT NULL,
+    verifier text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT database_role_verifiers_role_name_check CHECK ((role_name ~ '^[a-z_][a-z0-9_]{0,62}$'::text)),
+    CONSTRAINT database_role_verifiers_verifier_check CHECK ((verifier ~ '^SCRAM-SHA-256\$[0-9]+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$'::text))
+);
+
+
+--
 -- Name: database_vms; Type: TABLE; Schema: public; Owner: -
 --
 

@@ -71,7 +71,7 @@ func (s *Server) databaseScheduler(ctx context.Context, allowed ...string) (Data
 func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 	return &scheddpb.DatabaseRuntime{
 		DatabaseId: vm.DatabaseID, NodeId: vm.NodeID, State: string(vm.State),
-		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError,
+		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
 	}
 }
 

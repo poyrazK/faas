@@ -3199,7 +3199,10 @@ type DatabaseRuntime struct {
 	State        string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	Bootstrapped bool   `protobuf:"varint,4,opt,name=bootstrapped,proto3" json:"bootstrapped,omitempty"`
 	// Stable error code of the last failed transition.
-	LastError     string `protobuf:"bytes,5,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	LastError string `protobuf:"bytes,5,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	// vmmd dial target of the database's node; pgproxyd opens the session
+	// there.
+	VmmdTarget    string `protobuf:"bytes,6,opt,name=vmmd_target,json=vmmdTarget,proto3" json:"vmmd_target,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3265,6 +3268,13 @@ func (x *DatabaseRuntime) GetBootstrapped() bool {
 func (x *DatabaseRuntime) GetLastError() string {
 	if x != nil {
 		return x.LastError
+	}
+	return ""
+}
+
+func (x *DatabaseRuntime) GetVmmdTarget() string {
+	if x != nil {
+		return x.VmmdTarget
 	}
 	return ""
 }
@@ -3678,7 +3688,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"vcpu_count\x18\x03 \x01(\x05R\tvcpuCount\x12\x17\n" +
 	"\amem_mib\x18\x04 \x01(\x05R\x06memMib\x12!\n" +
-	"\fvolume_bytes\x18\x05 \x01(\x03R\vvolumeBytes\"\xa4\x01\n" +
+	"\fvolume_bytes\x18\x05 \x01(\x03R\vvolumeBytes\"\xc5\x01\n" +
 	"\x0fDatabaseRuntime\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x17\n" +
@@ -3686,7 +3696,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\"\n" +
 	"\fbootstrapped\x18\x04 \x01(\bR\fbootstrapped\x12\x1d\n" +
 	"\n" +
-	"last_error\x18\x05 \x01(\tR\tlastError\"\x17\n" +
+	"last_error\x18\x05 \x01(\tR\tlastError\x12\x1f\n" +
+	"\vvmmd_target\x18\x06 \x01(\tR\n" +
+	"vmmdTarget\"\x17\n" +
 	"\x15TouchDatabaseResponse\"I\n" +
 	"\x14DatabaseAdminRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +

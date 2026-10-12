@@ -3,8 +3,12 @@ package vmmdgrpc
 import (
 	"context"
 	"errors"
+	"net"
+	"slices"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -29,6 +33,33 @@ type DatabaseRuntime interface {
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
+	// Dial opens a stream to the VM's PostgreSQL data port only.
+	Dial(ctx context.Context, id string) (net.Conn, error)
+}
+
+// Platform client identities allowed on the database RPCs.
+const (
+	databaseCallerSchedd  = "schedd.faas"
+	databaseCallerPgproxy = "pgproxyd.faas"
+)
+
+// requireDatabaseCaller admits an mTLS client whose certificate names one
+// of allowed. A caller without TLS reached vmmd's unix socket, whose
+// permissions are the boundary there.
+func requireDatabaseCaller(ctx context.Context, allowed ...string) error {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return status.Error(codes.PermissionDenied, "database rpc: no peer")
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return nil
+	}
+	certs := tlsInfo.State.PeerCertificates
+	if len(certs) == 0 || !slices.Contains(allowed, certs[0].Subject.CommonName) {
+		return status.Error(codes.PermissionDenied, "database rpc: caller not allowed")
+	}
+	return nil
 }
 
 // WithDatabases enables the database VM RPCs on a database node.
@@ -37,15 +68,18 @@ func (s *Server) WithDatabases(rt DatabaseRuntime) *Server {
 	return s
 }
 
-func (s *Server) databaseRuntime() (DatabaseRuntime, error) {
+func (s *Server) databaseRuntime(ctx context.Context, allowed ...string) (DatabaseRuntime, error) {
 	if s.databases == nil {
 		return nil, status.Error(codes.Unimplemented, "database VMs are not enabled on this node")
+	}
+	if err := requireDatabaseCaller(ctx, allowed...); err != nil {
+		return nil, err
 	}
 	return s.databases, nil
 }
 
 func (s *Server) CreateDatabaseVolume(ctx context.Context, req *vmmdpb.CreateDatabaseVolumeRequest) (*vmmdpb.CreateDatabaseVolumeResponse, error) {
-	rt, err := s.databaseRuntime()
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +93,7 @@ func (s *Server) CreateDatabaseVolume(ctx context.Context, req *vmmdpb.CreateDat
 }
 
 func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDatabaseVolumeRequest) (*vmmdpb.DeleteDatabaseVolumeResponse, error) {
-	rt, err := s.databaseRuntime()
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +104,7 @@ func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDat
 }
 
 func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseRequest) (*vmmdpb.StartDatabaseResponse, error) {
-	rt, err := s.databaseRuntime()
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +153,7 @@ func volumeRateLimiter(bytesPerSec, opsPerSec int64) *fcvm.RateLimiter {
 }
 
 func (s *Server) StopDatabase(ctx context.Context, req *vmmdpb.StopDatabaseRequest) (*vmmdpb.StopDatabaseResponse, error) {
-	rt, err := s.databaseRuntime()
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +167,7 @@ func (s *Server) StopDatabase(ctx context.Context, req *vmmdpb.StopDatabaseReque
 // StopDatabase so the jail is always torn down with the VM. The SQL can
 // carry role passwords and is never logged.
 func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseControlRequest) (*vmmdpb.DatabaseControlResponse, error) {
-	rt, err := s.databaseRuntime()
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
 	}
@@ -181,4 +215,58 @@ func databaseCode(err error) codes.Code {
 	default:
 		return codes.Internal
 	}
+}
+
+// DatabaseSession relays one client session between pgproxyd and the
+// database VM's data port. Either side ending ends the session.
+func (s *Server) DatabaseSession(stream vmmdpb.Vmmd_DatabaseSessionServer) error {
+	ctx := stream.Context()
+	rt, err := s.databaseRuntime(ctx, databaseCallerPgproxy)
+	if err != nil {
+		return err
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	conn, err := rt.Dial(ctx, first.GetDatabaseId())
+	if err != nil {
+		return s.databaseStatus("session", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if data := first.GetData(); len(data) > 0 {
+		if _, err := conn.Write(data); err != nil {
+			return nil
+		}
+	}
+	done := make(chan struct{}, 2)
+	go func() {
+		defer func() { done <- struct{}{} }()
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := conn.Read(buf)
+			if n > 0 {
+				if stream.Send(&vmmdpb.DatabaseSessionFrame{Data: append([]byte(nil), buf[:n]...)}) != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			frame, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if _, err := conn.Write(frame.GetData()); err != nil {
+				return
+			}
+		}
+	}()
+	<-done
+	return nil
 }

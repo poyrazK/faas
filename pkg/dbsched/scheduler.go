@@ -218,9 +218,10 @@ func (s *Scheduler) Wake(ctx context.Context, id string) (VM, error) {
 	switch vm.State {
 	case StateRunning:
 		_ = s.store.Touch(ctx, id, s.now())
-		return vm, nil
+		return s.withTarget(ctx, vm), nil
 	case StateWaking:
-		return s.awaitRunning(ctx, id)
+		vm, err := s.awaitRunning(ctx, id)
+		return s.withTarget(ctx, vm), err
 	case StateParked:
 	default:
 		return vm, ErrConflict
@@ -244,7 +245,7 @@ func (s *Scheduler) Wake(ctx context.Context, id string) (VM, error) {
 	if err := s.store.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
 		return vm, err
 	}
-	return s.store.Get(ctx, id)
+	return s.Get(ctx, id)
 }
 
 // awaitRunning waits for a wake another replica started.
@@ -296,9 +297,20 @@ func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
 	return s.store.Transition(ctx, id, []State{StateParking}, StateParked, TransitionOptions{})
 }
 
-// Get returns the database's runtime record.
+// Get returns the database's runtime record with its node target.
 func (s *Scheduler) Get(ctx context.Context, id string) (VM, error) {
-	return s.store.Get(ctx, id)
+	vm, err := s.store.Get(ctx, id)
+	if err != nil {
+		return vm, err
+	}
+	return s.withTarget(ctx, vm), nil
+}
+
+func (s *Scheduler) withTarget(ctx context.Context, vm VM) VM {
+	if node, err := s.node(ctx, vm.NodeID); err == nil {
+		vm.NodeTarget = node.TargetURL
+	}
+	return vm
 }
 
 // Touch records client activity, deferring idle parking.

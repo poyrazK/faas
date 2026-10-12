@@ -478,6 +478,8 @@ type Querier interface {
 	// the GDPR path (delete-account cascades through
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
+	DeleteDatabaseRoleVerifier(ctx context.Context, db DBTX, arg DeleteDatabaseRoleVerifierParams) (int64, error)
+	DeleteDatabaseRoleVerifiers(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	DeleteDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
 	DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error)
@@ -1008,6 +1010,7 @@ type Querier interface {
 	// column (issue #954) so the typed DataUpstream.DeploymentScope
 	// in pkg/state/types.go round-trips through sqlc.
 	GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) (GetDataUpstreamByIDRow, error)
+	GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetDatabaseRoleVerifierParams) (string, error)
 	GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (DatabaseVm, error)
 	GetDeploymentRuntimeUpgradeAcceptance(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeAcceptance, error)
 	GetDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeBaseline, error)
@@ -3537,6 +3540,7 @@ type Querier interface {
 	// Database VMs (ADR-1027). database_nodes is inventory; database_vms is
 	// written only by schedd's database scheduler (pkg/dbsched).
 	UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) error
+	UpsertDatabaseRoleVerifier(ctx context.Context, db DBTX, arg UpsertDatabaseRoleVerifierParams) error
 	// Accept only a routable target on this app. Using INSERT .. SELECT makes the
 	// ownership/status check atomic with writing the alias.
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
