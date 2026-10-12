@@ -70,7 +70,12 @@ Also measured, and rejected:
   burst slows to that rate. Guest `/tmp` is tmpfs and is not affected.
 - Raising a plan's limit takes effect on the next boot or restore.
 - Network rate limits are not part of this decision; tenant egress stays
-  with nftables.
+  with nftables. On the n2 node, the host downloaded from a neighbour VM at
+  262–417 MB/s, which raised a victim VM's request latency from p50 1.2 /
+  p99 3.4–4.8 ms to 2.4–3.3 / 19–31 ms. Limiting the neighbour's guest tx
+  to 50 MB/s only partly helped (1.9–2.2 / 10.6–22 ms). On that two-vCPU
+  host the test's own download loop competes for the same CPUs, so this
+  needs a larger host before it can decide a network limit.
 
 ## Verification
 
