@@ -135,6 +135,7 @@ func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api
 // API Problem (live).
 func renderInspectErrorsHuman(w io.Writer, slug string, dep api.DeploymentResponse) {
 	renderDeploymentFailure(w, dep)
+	printDeploymentLogCommand(w, slug, dep.ID)
 	// Footer: when the failure happened (the apid stamps
 	// created_at; we accept the empty case gracefully).
 	_, _ = fmt.Fprintf(w, "  app: %s\n", slug)

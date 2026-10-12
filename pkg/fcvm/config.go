@@ -31,6 +31,10 @@ type VMConfig struct {
 	// shape inside is identical to the Vsock type the PUT /vsock API
 	// endpoint accepts.
 	VsockDevice *VsockDevice `json:"vsock,omitempty"`
+	// Balloon, when set, attaches a never-inflated balloon whose only job is
+	// free page reporting (ADR-907). JailerVMM.WithFreePageReporting sets it
+	// at boot; the config builders leave it nil.
+	Balloon *Balloon `json:"balloon,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
 	// unique scratch image deleted immediately after export, so provisioning
 	// may hard-link it instead of copying multi-gigabyte bytes. App and
@@ -339,8 +343,9 @@ type JobColdBootSpec struct {
 	TaskIndex int
 }
 
-// BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS and
-// balloon are off in v1 (spec §4.4); virtio-rng is always attached (spec §11).
+// BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is
+// off (spec §4.4); virtio-rng is always attached (spec §11). The VMM adds the
+// free-page-reporting balloon when enabled (ADR-907).
 //
 // slot is the per-instance slot from Lease.Slot; it must be in range [0, MaxSlots).
 // It derives GuestVsockCID so the in-guest resume listener is reachable at a
@@ -624,6 +629,19 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
+// vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
+// Builders and an empty plan use the legacy neutral 256 (the kernel accepts
+// [1, 10000]).
+func vmCPUWeight(plan api.Plan, isBuilder bool) int {
+	if isBuilder {
+		return 256
+	}
+	if w := plan.CPUWeight(); w > 0 {
+		return w
+	}
+	return 256
+}
+
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
@@ -660,17 +678,10 @@ func JailerCommand(s JailerSpec) []string {
 		execFile = FirecrackerBin
 	}
 	parentCgroup := ParentCgroupFor(s.Plan)
-	cpuWeight := s.Plan.CPUWeight()
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
-		cpuWeight = 256
 	}
-	if cpuWeight <= 0 {
-		// Empty plan: keep the legacy neutral default. cpu.weight
-		// must always be in [1, 10000] per the kernel; 256 is the
-		// mid of the normalised range.
-		cpuWeight = 256
-	}
+	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

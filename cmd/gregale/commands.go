@@ -334,8 +334,8 @@ func cmdApps() int {
 		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No apps yet.")
-		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --template hello-node` (or `gregale deploy --tarball path/to/source.tar.gz`).")
+		_, _ = fmt.Fprintf(osStdout, "No apps yet. No apps returned for the selected account (connection profile=%s).\n", oneLine(currentProfile()))
+		_, _ = fmt.Fprintf(osStdout, "Deploy from source (POSIX shells):\n  %s deploy --template hello-node --help\n", recoveryCLI())
 		return 0
 	}
 	// Header row + data rows. Deployment availability is separate from app

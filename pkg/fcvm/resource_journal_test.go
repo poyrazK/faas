@@ -402,3 +402,35 @@ func TestResourceJournalReopenedLeaseIgnoresProcessGeneration(t *testing.T) {
 		t.Fatalf("retired record survived reopen: %+v, %v", records, err)
 	}
 }
+
+// adr: 005 — production-us hunt #9 (H9-83): beginProcessAttempt restamps the
+// private profileStartedAt for the cold boot that replaces a failed restore.
+// The journal compared it as durable identity, so every fallback cold boot
+// failed with "launch lease mismatch" and the instance went FAILED; cold boot
+// must always work.
+func TestResourceJournalAcceptsColdBootFallbackAttempt(t *testing.T) {
+	journal := openTestResourceJournal(t, t.TempDir())
+	m := &Manager{}
+	restore := m.beginProcessAttempt(journalTestLease("instance-fallback", 3))
+	if err := journal.begin(restore); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(t.TempDir(), 0)
+	v.SetResourceJournal(journal)
+	if err := v.prepareJournalLaunch(restore); err != nil {
+		t.Fatalf("restore attempt: %v", err)
+	}
+	fallback := m.beginProcessAttempt(restore)
+	if fallback.profileStartedAt.Equal(restore.profileStartedAt) && fallback.processGeneration == restore.processGeneration {
+		t.Fatal("fallback did not start a new process attempt")
+	}
+	if err := v.prepareJournalLaunch(fallback); err != nil {
+		t.Fatalf("cold-boot fallback rejected: %v", err)
+	}
+	if !sameNativePhysicalLease(restore, fallback) {
+		t.Fatal("native lease identity changed across process attempts")
+	}
+	if err := journal.forget(fallback); err != nil {
+		t.Fatalf("fallback owner cannot retire its record: %v", err)
+	}
+}

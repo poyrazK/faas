@@ -55,6 +55,13 @@ func (m *MemStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowD
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) == nil {
 		outboundErr = m.validateWorkflowOutboundLocked(run.AppID, opts.AccountID, spec)
 	}
-	return buildWorkflowRunDiagnostics(run, m.workflowSteps[run.ID], m.workflowDispatchDeadlineLocked(run), now,
-		m.workflowDispatchOccupancyLocked(now), target, running, outboundErr), nil
+	result := buildWorkflowRunDiagnostics(run, m.workflowSteps[run.ID], m.workflowDispatchDeadlineLocked(run), now,
+		m.workflowDispatchOccupancyLocked(now), target, running, outboundErr)
+	if _, linked := m.operationForWorkflowLocked(run.ID); linked {
+		for i := range result.Steps {
+			result.Steps[i].RetryEligible = false
+			result.Steps[i].RetryReopenedSteps = nil
+		}
+	}
+	return result, nil
 }

@@ -147,6 +147,12 @@ func boot() error {
 		if err := startEventPublishProxy(slog.Default()); err != nil {
 			slog.Default().Warn("event publish proxy unavailable", "err", err)
 		}
+		// ADR-989: managed outbound integrations (including the AI gateway)
+		// through GREGALE_OUTBOUND_URL. vmmd binds the identity; no token or
+		// provider key is staged in the guest.
+		if err := startOutboundRelay(slog.Default()); err != nil {
+			slog.Default().Warn("outbound relay unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
@@ -506,6 +512,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampProfileEnv(env, m.Profiling)
 	env = stampTracingEnv(env, m.Tracing)

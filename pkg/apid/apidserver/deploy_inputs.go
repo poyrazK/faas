@@ -494,10 +494,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	// function deploy using the runner scaffold (§4.9). The runtime must
 	// be present and the handler must point at a real export.
 	if app.Type == state.AppTypeFunction {
-		if dockerfile || hasRootDockerfile {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Dockerfile functions unsupported",
-				"function deploys use the platform runtime scaffold; remove the Dockerfile and dockerfile=true"))
+		if prob := api.FunctionDockerfileProblem(app.Runtime, dockerfile || hasRootDockerfile); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		kind = state.DeploymentKindTarball
@@ -506,8 +504,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				"Runtime mismatch", "function deploys must match the app's runtime"))
 			return
 		}
-		if handler == "" {
-			api.WriteProblem(w, api.ErrHandlerMissing())
+		if prob := api.FunctionHandlerProblem(app.Runtime, handler); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 	}

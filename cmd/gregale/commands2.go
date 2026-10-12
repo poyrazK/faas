@@ -741,6 +741,7 @@ func cmdApp(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(a))
 		}
+		printAppReadContext(slug, *environment)
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
@@ -770,9 +771,12 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		// An unset idle timeout is stored as NULL and the plan default
-		// applies (600 s on Scale); printing "0s" read as "parks at once".
-		if a.IdleTimeoutS == 0 {
+		// An unset idle timeout is stored as NULL and the type default
+		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
+		// printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 && a.Type == "function" {
+			fmt.Printf("%-30s %s\n", "idle timeout:", fmt.Sprintf("function default (%ds)", api.FunctionIdleTimeoutDefaultSeconds))
+		} else if a.IdleTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
 		} else {
 			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
@@ -922,6 +926,7 @@ func cmdApp(args []string) int {
 		return 0
 	}
 
+	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -929,7 +934,7 @@ func cmdApp(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
 	}
-	PrintOK(osStdout, "Updated")
+	printAppSettingsReceipt(slug, *environment, req)
 	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
 	}
@@ -1955,6 +1960,14 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err := m.Validate(); err != nil {
 		return txn, err
 	}
+	return reconcileManifestCronsWithRollback(ctx, client, slug, m)
+}
+
+// reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback
+// for an already loaded and validated manifest. The functions fan-out
+// (ADR-985) passes each function's crons through it.
+func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
+	txn := &manifestCronTransaction{}
 	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var matching []gregalemanifest.Trigger
 	for _, t := range m.Triggers {
@@ -2180,6 +2193,10 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
+	case "function-rust":
+		// ADR-987: built from the template's Dockerfile; the handler value
+		// is vestigial, but the deploy API requires it to be non-empty.
+		return runtimeBinary, "handler", true
 	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
@@ -2277,7 +2294,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
-	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
+	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313|binary)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
@@ -3178,6 +3195,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
+	// ADR-985: a manifest listing several functions fans out into one
+	// single-function deploy per entry, before any app or upload exists.
+	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
+		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		if fnErr != nil {
+			return printErr("Invalid deploy manifest", fnErr)
+		}
+		if isFunctionSet {
+			return deployFunctionSet(ctx, functionSetDeploy{
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
+				noTriggers: *noTriggers,
+			})
+		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making
@@ -5288,7 +5321,7 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 		target = "command " + formatCronCommand(c)
 	}
 	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-	_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
+	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s crons run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
 	return 0
 }
 
@@ -6647,6 +6680,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	if explain {
 		collector = newExplainCollector(slug, deployment)
 	}
+	printedLines := 0
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -6686,6 +6720,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
+			printedLines++
 			line := e.Data
 			if !jsonOutput {
 				line = formatRuntimeLogLine(e.Data)
@@ -6702,6 +6737,14 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
+		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		if deployment != "" {
+			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
+		}
+		printEmptyResult("logs for app "+slug, fmt.Sprintf("deployment=%q; since=%q; level=%q; grep=%q; archive=%t", deployment, filter.Since, filter.Level, filter.Grep, archive != nil), next)
+		_, _ = fmt.Fprintln(osStdout, "No returned lines does not establish that the app emitted no logs; filters and retention may limit the result.")
 	}
 	return code
 }
@@ -7674,12 +7717,31 @@ func mapFailureMessage(err string) string {
 // detection sites (commits 7-13) emit typed *api.Problem and the
 // CLI renderer calls mapFailureProblem to lift the hint/why/fix
 // without re-classifying the failure.
+//
+// Production-us hunt #9 (H9-92): this returned only the hint, so a deploy
+// whose app listened on the wrong port printed "your app isn't accepting
+// traffic on the port we expect" with neither the cause nor the fix the
+// catalog carries.
 func mapFailureProblem(p *api.Problem) string {
 	if p == nil || p.Code == "" {
 		return ""
 	}
 	_ = whycopy.Decorate(p, p.Code, nil)
-	return p.Hint
+	if p.Hint == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(p.Hint)
+	if why := strings.TrimSpace(p.Why); why != "" {
+		b.WriteString("\n  why: " + why)
+	}
+	if fix := strings.TrimSpace(p.Fix); fix != "" {
+		b.WriteString("\n  fix:")
+		for _, line := range strings.Split(fix, "\n") {
+			b.WriteString("\n    " + strings.TrimSpace(line))
+		}
+	}
+	return b.String()
 }
 
 // cmdUsageDaily: GET /v1/usage/daily?day=YYYY-MM-DD. Per-(app, day)

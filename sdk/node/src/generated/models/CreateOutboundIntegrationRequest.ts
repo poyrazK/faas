@@ -19,5 +19,13 @@ export type CreateOutboundIntegrationRequest = {
    * Optional full request policy. Omission selects the default 10 RPS, burst 20, 10 in flight, and 30-second timeout.
    */
   request_policy?: OutboundRequestPolicy;
+  /**
+   * Optional AI gateway mode (ADR-988, ADR-991). Enables token usage extraction for that provider's response format.
+   */
+  ai_provider?: 'openai' | 'anthropic' | 'gemini' | 'azure_openai' | 'bedrock' | 'vertex';
+  /**
+   * Optional UTC-day input plus output token limit. Requires ai_provider.
+   */
+  ai_daily_token_limit?: number | null;
 };
 

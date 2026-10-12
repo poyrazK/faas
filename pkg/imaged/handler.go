@@ -2710,7 +2710,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		// doesn't carry the runtime — keeps older clients working.
 		runtime = dep.Handler
 	}
-	if runtime != RuntimeNode22 && runtime != RuntimePython312 && runtime != RuntimeGo124 && runtime != RuntimeGo124Alpine && runtime != RuntimeNode24 && runtime != RuntimePython313 {
+	if runtime != RuntimeNode22 && runtime != RuntimePython312 && runtime != RuntimeGo124 && runtime != RuntimeGo124Alpine && runtime != RuntimeNode24 && runtime != RuntimePython313 && runtime != RuntimeBinary {
 		_ = h.transitionFailure(ctx, dep.ID, "unsupported runtime: "+runtime)
 		return fmt.Errorf("imaged: unsupported function runtime %q", runtime)
 	}
@@ -2813,6 +2813,16 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			"--handler", "/app/handler",
 		}
 	}
+	if runtime == RuntimeBinary {
+		// ADR-987: the go124 runner execs any static executable that
+		// speaks the §4.9 envelope protocol; the executable named by the
+		// function's Dockerfile image was extracted to /app/handler.
+		manifest.Entrypoint = []string{
+			"/usr/local/bin/faas-runner",
+			"--runtime", runtime,
+			"--handler", "/app/handler",
+		}
+	}
 	// PR-B (issue #460 / ADR-053): same seam as buildImageLayer (handler.go:546).
 	// Function deploys build their manifest inline (no OCI pull), so the
 	// "OCI base" is the runtime-default argv from the switch above;
@@ -2844,7 +2854,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	// legacy raw-tarball path.
 	var builtLayers []io.Reader
 	var cleanupBuiltLayers func()
-	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine) &&
+	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary) &&
 		dep.RootfsPath != "" && dep.RootfsPath != dep.SourcePath && dep.Kind != state.DeploymentKindImage {
 		_, layers, cleanup, loadErr := loadLocalOCIArchive(dep.RootfsPath)
 		if loadErr != nil {
@@ -2904,8 +2914,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
 		}
 		defer cleanup()
+		handlerSource, handlerErr := functionHandlerSourcePath(runtime, dep.Handler, sourcePath)
+		if handlerErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, handlerErr, "select function handler file")
+			return fmt.Errorf("imaged: select function handler file: %w", handlerErr)
+		}
 		buildInput.Layers = layers
-		buildInput.FunctionHandlerSourcePath = sourcePath
+		buildInput.FunctionHandlerSourcePath = handlerSource
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
@@ -2955,6 +2970,8 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 // when nothing was wired. Empty string is the fail-loud signal — callers
 // must transition the deployment to failed before building.
 func (h *Handler) runnerPathFor(runtime string) string {
+	// binary shares the go124 runner (ADR-987).
+	runtime = api.FunctionBaseRuntime(runtime)
 	switch runtime {
 	case RuntimeNode22:
 		return h.functionRunnerNode22Path
@@ -2976,6 +2993,7 @@ func (h *Handler) runnerPathFor(runtime string) string {
 // fail-loud error message names the operator-facing knob (e.g. NODE22 for
 // FAAS_FUNCTION_RUNNER_NODE22).
 func runtimeToEnvSuffix(runtime string) string {
+	runtime = api.FunctionBaseRuntime(runtime)
 	switch runtime {
 	case RuntimeNode22:
 		return "NODE22"

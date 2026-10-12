@@ -539,8 +539,19 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 		return pick, nil, true, &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
 	}
 	class := h.routePriorityFor(ctx, app)
+	admissionStarted := time.Now()
 	ticket, depth, ok, queueErr := h.vmConcurrency.enterQueueWithPriority(ctx, app.ID, string(app.Plan), policy.MaxWaiters, policy.MaxWait, class)
 	if queueErr != nil {
+		// ctx carries the warm-queue wait budget. A request that spent all of
+		// it waiting for the shared permit waited exactly as long as a queued
+		// one would have, so it gets the queue timeout rather than an
+		// admission outage (production-us hunt #9, H9-76).
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return pick, nil, true, &ConcurrencyQueueWaitTimeoutError{Waited: time.Since(admissionStarted), RetryAfter: policy.MaxWait}
+		}
+		if ctx.Err() == nil && h.log != nil {
+			h.log.Warn("gateway: fleet concurrency queue admission failed", "app_id", app.ID, "err", queueErr)
+		}
 		return pick, nil, true, &ConcurrencyQueueAdmissionError{Err: queueErr, RetryAfter: policy.MaxWait}
 	}
 	if !ok {

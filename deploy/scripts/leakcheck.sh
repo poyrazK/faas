@@ -44,6 +44,7 @@ for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
              /sys/fs/cgroup/gregale-host-helpers/*/ \
              /sys/fs/cgroup/faas-tenant.slice/*/; do
   case "$scope" in
+    *.slice/) continue ;; # systemd child slices (spec §11 fence pins), not VM scopes
     /sys/fs/cgroup/faas-tenant.slice/tenant-free/|/sys/fs/cgroup/faas-tenant.slice/tenant-hobby/|/sys/fs/cgroup/faas-tenant.slice/tenant-pro/|/sys/fs/cgroup/faas-tenant.slice/tenant-scale/) continue ;;
   esac
   [[ -e "$scope/cgroup.procs" ]] && note "cgroup scope $scope"

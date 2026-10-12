@@ -72,6 +72,32 @@ func TestWorkloadOutputTailDropsGuestKernelLines(t *testing.T) {
 }
 
 // spec: §6.1
+// production-us hunt #9 (H9-91): a Node app that threw at startup failed its
+// deploy with "workload stopped during startup (guest … exited before
+// becoming ready)" and no output: the ring was read with Snapshot(0), which
+// means "tail from now". The error must carry the workload's own last lines.
+func TestGuestStoppedDuringStartupReportsTheWorkloadOutput(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 0)
+	ring := v.registerRing("inst")
+	for _, line := range []string{
+		"booting broken\n",
+		"Error: boom at startup\n",
+		"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
+	} {
+		if _, err := ring.Write("stdout", []byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := v.guestStoppedDuringStartup(Lease{Instance: "inst"})
+	if err == nil || !strings.Contains(err.Error(), "boom at startup") || !strings.Contains(err.Error(), "booting broken") {
+		t.Fatalf("startup failure = %v, want the workload's output", err)
+	}
+	if strings.Contains(err.Error(), "Kernel panic") {
+		t.Fatalf("startup failure kept kernel lines: %v", err)
+	}
+}
+
+// spec: §6.1
 // A restored guest must not report RCU stalls into customer logs (hunt #8).
 func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
 	for name, args := range map[string]string{"cold boot": coldBootArgs, "execution": executionBootArgs} {

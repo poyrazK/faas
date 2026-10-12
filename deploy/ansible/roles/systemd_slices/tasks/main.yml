@@ -139,10 +139,42 @@
     state: absent
   register: legacy_build_slice
 
+# Spec §11 fence pins. On every daemon-reload systemd recomputes a slice's
+# cgroup.subtree_control from the slice's own child units. The per-VM scopes
+# jailer creates are not units, so a VM parent slice with no child unit gets
+# an empty set and the kernel strips memory.max, cpu.weight and cpu.max from
+# every live VM below it, whichever role triggered the reload. One
+# always-active, empty child slice that needs the memory, cpu and pids
+# controllers makes systemd keep them enabled. The pin never holds a process;
+# vmmd and leakcheck ignore *.slice children of a VM parent.
+- name: systemd_slices — write per-VM fence pin slices
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}-fence.slice"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas keeps per-VM cgroup controllers enabled under {{ item }}.slice (spec §11)
+
+      [Slice]
+      # Each directive needs one controller (cpu, memory, pids). The slice is
+      # empty, so the weight never competes with the VMs beside it.
+      CPUWeight=1
+      MemoryAccounting=yes
+      TasksAccounting=yes
+  loop:
+    - faas-tenant-free
+    - faas-tenant-hobby
+    - faas-tenant-pro
+    - faas-tenant-scale
+    - faas-cp-build
+  register: fence_slices
+
 - name: systemd_slices — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true
-  when: cp_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed
+  when: cp_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed
 
 - name: systemd_slices — start cgroup parents before jailer can attach VMs
   ansible.builtin.systemd:
@@ -155,3 +187,14 @@
     - faas-tenant-hobby.slice
     - faas-tenant-pro.slice
     - faas-tenant-scale.slice
+
+- name: systemd_slices — start per-VM fence pin slices
+  ansible.builtin.systemd:
+    name: "{{ item }}-fence.slice"
+    state: started
+  loop:
+    - faas-tenant-free
+    - faas-tenant-hobby
+    - faas-tenant-pro
+    - faas-tenant-scale
+    - faas-cp-build

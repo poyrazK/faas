@@ -13,19 +13,26 @@ import (
 func TestEffectiveIdleTimeout(t *testing.T) {
 	tests := []struct {
 		plan       api.Plan
+		appType    string
 		configured int
 		want       int
 	}{
-		{api.PlanFree, 0, 60},    // default
-		{api.PlanPro, 0, 300},    // default
-		{api.PlanPro, 120, 120},  // in-bounds override
-		{api.PlanPro, 5, 10},     // below floor → 10
-		{api.PlanPro, 9999, 600}, // above ceiling (300×2) → 600
-		{api.PlanFree, 100, 100}, // Free ceiling = 60×2; 100 is in bounds
+		{api.PlanFree, "app", 0, 60},          // default
+		{api.PlanPro, "app", 0, 300},          // default
+		{api.PlanPro, "", 0, 300},             // legacy rows without a type keep the plan default
+		{api.PlanPro, "app", 120, 120},        // in-bounds override
+		{api.PlanPro, "app", 5, 10},           // below floor → 10
+		{api.PlanPro, "app", 9999, 600},       // above ceiling (300×2) → 600
+		{api.PlanFree, "app", 100, 100},       // Free ceiling = 60×2; 100 is in bounds
+		{api.PlanFree, "function", 0, 30},     // ADR-974 function default
+		{api.PlanScale, "function", 0, 30},    // same on every plan
+		{api.PlanScale, "function", 600, 600}, // explicit value still wins
+		{api.PlanPro, "function", 5, 10},      // same floor as apps
+		{api.PlanPro, "function", 9999, 600},  // same ceiling as apps
 	}
 	for _, tt := range tests {
-		if got := EffectiveIdleTimeoutS(tt.plan, tt.configured); got != tt.want {
-			t.Errorf("EffectiveIdleTimeoutS(%s, %d) = %d, want %d", tt.plan, tt.configured, got, tt.want)
+		if got := EffectiveIdleTimeoutS(tt.plan, tt.appType, tt.configured); got != tt.want {
+			t.Errorf("EffectiveIdleTimeoutS(%s, %q, %d) = %d, want %d", tt.plan, tt.appType, tt.configured, got, tt.want)
 		}
 	}
 }
@@ -41,10 +48,14 @@ func TestReapIdle(t *testing.T) {
 		{Instance: "waking", Plan: api.PlanPro, State: state.StateWaking, LastRequest: now.Add(-999 * time.Second)},
 		// Free 60s; idle 45s → keep.
 		{Instance: "free-idle", Plan: api.PlanFree, State: state.StateRunning, LastRequest: now.Add(-45 * time.Second)},
+		// ADR-974: a function on Pro defaults to 30s; idle 45s → reap.
+		{Instance: "fn-idle", AppID: "fn", AppType: "function", Plan: api.PlanPro, State: state.StateRunning, LastRequest: now.Add(-45 * time.Second)},
+		// A function with an explicit 300s timeout; idle 45s → keep.
+		{Instance: "fn-configured", AppID: "fn2", AppType: "function", Plan: api.PlanPro, IdleTimeoutS: 300, State: state.StateRunning, LastRequest: now.Add(-45 * time.Second)},
 	}
 	got := ReapIdle(now, instances, nil, nil)
-	if !equalSet(got, []string{"idle"}) {
-		t.Errorf("ReapIdle = %v, want [idle]", got)
+	if !equalSet(got, []string{"idle", "fn-idle"}) {
+		t.Errorf("ReapIdle = %v, want [idle fn-idle]", got)
 	}
 }
 

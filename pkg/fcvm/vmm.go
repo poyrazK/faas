@@ -73,6 +73,9 @@ type JailerVMM struct {
 	// and warms it ahead of the next wake (ADR-225). nil disables both the
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
+	// freePageReporting attaches a free-page-reporting balloon to every cold
+	// boot (ADR-907).
+	freePageReporting bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -91,6 +94,12 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+
+	// fences records the cgroup fence written for each live VM so
+	// RepairCgroupFences can restore it (cgroup_fence.go). fenceMu is never
+	// held while acquiring mu.
+	fenceMu sync.Mutex
+	fences  map[string]*cgroupFence
 
 	mu              sync.Mutex
 	resourceJournal *ResourceJournal
@@ -991,6 +1000,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}()
 	_ = v.registerRing(l.Instance)
 
+	cfg = v.withBalloon(cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
@@ -1523,9 +1533,12 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
 			return err
 		}
-		return nil
+		return v.trackCgroupFence(l)
 	}
 	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
+		return err
+	}
+	if err := v.trackCgroupFence(l); err != nil {
 		return err
 	}
 	// Firecracker is the only host process for every workload in the guest.
@@ -1547,7 +1560,13 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	value, err := appCPUMax(l.Plan, configuredMillicores)
+	if err != nil {
+		return err
+	}
+	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
 	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
+		revert()
 		return err
 	}
 	_ = workloads
@@ -1572,10 +1591,17 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
+	value, err := appCPUMax(l.Plan, cpuMillicores)
+	if err != nil {
+		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
 	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
 	// Only disarm the startup tail after the live write succeeds. If the
@@ -2149,6 +2175,10 @@ const (
 	// requests from the guest metadata endpoint. The listener is bound per
 	// instance, so the stream itself supplies the app/account identity.
 	VsockRuntimeConfigHostPort uint32 = 1031
+	// VsockOutboundRelayHostPort carries an app's HTTP bytes for managed
+	// outbound integrations (ADR-989). vmmd splices them to outboundd after a
+	// relay assertion for the instance bound to this listener.
+	VsockOutboundRelayHostPort uint32 = 1032
 )
 
 // GuestVsockStreamHandler handles one guest-initiated stream. The instance is
@@ -3133,7 +3163,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
 	}
-	restoreSnapshotLimit, snapshotErr := widenSnapshotMemoryCgroup(l)
+	restoreSnapshotLimit, snapshotErr := v.widenSnapshotFence(l)
 	if snapshotErr != nil {
 		return SnapshotInfo{}, snapshotErr
 	}
@@ -3612,6 +3642,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
 	}
+	v.untrackCgroupFence(l.Instance)
 	v.mu.Lock()
 	delete(v.proc, l.Instance)
 	delete(v.recs, l.Instance)
@@ -6349,7 +6380,10 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
-		for _, line := range ring.Snapshot(0) {
+		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
+		// nothing, so the crash output never reached the customer
+		// (production-us hunt #9, H9-91).
+		for _, line := range ring.Snapshot(1) {
 			lines = append(lines, line.Line)
 		}
 	}

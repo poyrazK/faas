@@ -46,6 +46,16 @@ type Executor struct {
 	build   commandBuilder
 	resolve commandResolver
 	now     func() time.Time
+	// outboundRelayURL is guest-init's loopback relay (ADR-989), set only
+	// when guest-init started it for this execution VM.
+	outboundRelayURL string
+}
+
+// WithOutboundRelay lets outbound-enabled Runs use guest-init's streaming
+// relay when vmmd advertises it for the request (ADR-990).
+func (e *Executor) WithOutboundRelay(endpoint string) *Executor {
+	e.outboundRelayURL = endpoint
+	return e
 }
 
 // New returns the production executor. The returned handler is safe to use
@@ -152,7 +162,12 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	var helper *executionOutboundHelper
-	if req.OutboundEnabled {
+	outboundURL := ""
+	if req.OutboundEnabled && req.OutboundRelay && e.outboundRelayURL != "" {
+		// ADR-990: vmmd serves the streaming relay for this Run, so calls go
+		// through guest-init's loopback relay instead of the buffered broker.
+		outboundURL = e.outboundRelayURL
+	} else if req.OutboundEnabled {
 		if broker == nil {
 			return executionproto.Result{}, errors.New("execution outbound capability is unavailable")
 		}
@@ -161,14 +176,15 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 			return executionproto.Result{}, err
 		}
 		defer helper.Close(commandCtx)
+		outboundURL = helper.endpoint
 	}
 	cmd := e.build(commandCtx, interpreter, args...)
 	if cmd == nil {
 		return executionproto.Result{}, errors.New("execution interpreter unavailable")
 	}
 	cmd.Env = guestEnv(req.Runtime)
-	if helper != nil {
-		cmd.Env = append(cmd.Env, "GREGALE_OUTBOUND_URL="+helper.endpoint)
+	if outboundURL != "" {
+		cmd.Env = append(cmd.Env, "GREGALE_OUTBOUND_URL="+outboundURL)
 	}
 	if req.Profile.Normalized() == api.ExecutionProfilePythonDataV1 {
 		cmd.Env = append(cmd.Env, "OPENBLAS_NUM_THREADS=1", "OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "NUMEXPR_NUM_THREADS=1")

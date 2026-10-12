@@ -434,9 +434,12 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
 	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
-		// Still breaching inside the cool-down: a degraded read that has
-		// recovered goes back to firing, as a lost claim did before.
-		if rule.State == state.AlertStateDegraded {
+		// Still breaching inside the cool-down: record the breach even
+		// though the cool-down withholds a delivery. That covers a degraded
+		// read that recovered and a new breach after the rule resolved to
+		// ok, which otherwise read "ok" for a whole incident (production-us
+		// hunt #9, H9-94).
+		if rule.State != state.AlertStateFiring {
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
 			}

@@ -70,6 +70,7 @@ type server struct {
 	operation             operation.Service // ADR-977; Host wired in newServer
 	appEvents             appevents.Service // ADR-977; Host wired in newServer
 	featureFlagsEnabled   bool
+	aiGatewayEnabled      bool
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
@@ -2744,6 +2745,24 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundIntegrationUsage))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundIntegrationDailyBudget))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/request-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRequestPolicy))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIPolicy)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-prices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIPrices)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-prices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIPrices)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundBindingAIBudget)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIRoutes)))))
+	mux.HandleFunc("POST /v1/outbound/ai-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.createOutboundAIRoute)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIRoute)))))
+	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/targets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIRouteTargets)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.deleteOutboundAIRoute)))))
+	// ADR-991: per-app guardrails, extra key pools, budget alerts and the
+	// opt-in AI request log.
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundBindingAIGuardrails)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/credential-keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundCredentialKeys)))))
+	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/credential-keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.createOutboundCredentialKey)))))
+	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.deleteOutboundCredentialKey)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIBudgetAlerts)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIRequestLog)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/probe-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundProbePolicy))))

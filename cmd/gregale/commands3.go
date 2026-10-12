@@ -94,27 +94,48 @@ func cmdSecrets(args []string) int {
 
 func secretsList(args []string) int {
 	fs := newFlagSet("secrets list", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
+	app := fs.String("app", "", "app slug (defaults to linked project app)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (defaults to linked project environment; '__all__' returns nested secrets_by_scope)")
 	secretClass := fs.String("class", "", "filter by snapshot-retention class (persistent or ephemeral)")
+	deliveryStatus := fs.String("delivery-status", "", "filter runtime-start delivery: delivered, pending, failed, or unknown (includes unconfirmed versions)")
 	olderThan := fs.String("older-than", "", "filter secrets not updated within a duration (for example 90d or 2160h)")
+	var keys []string
+	fs.Func("key", "include an exact secret key name (repeatable)", func(key string) error {
+		if problem := api.ValidateSecretKey(key); problem != nil {
+			return errors.New(problem.Detail)
+		}
+		keys = append(keys, key)
+		return nil
+	})
+	watch := fs.Bool("watch", false, "follow changes in secret delivery metadata")
+	interval := fs.Duration("interval", 5*time.Second, "poll interval for --watch (1s to 1h)")
+	timeout := fs.Duration("timeout", 0, "watch duration; zero watches until interrupted")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	keys = sortedUniqueStrings(keys)
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if err := validateInspectWatchOptions(fs, *watch, false, inspectWatchOptions{interval: *interval, timeout: *timeout}); err != nil {
+		return printErr("Invalid secret watch options", err)
+	}
 	if !validSecretClass(*secretClass) {
 		return printErr("Invalid --class", fmt.Errorf("must be %q or %q; got %q", api.SecretClassPersistent, api.SecretClassEphemeral, *secretClass))
+	}
+	if !validSecretDeliveryFilter(*deliveryStatus) {
+		return printErr("Invalid --delivery-status", errors.New("must be delivered, pending, failed, or unknown"))
 	}
 	age, err := parseSecretAge(*olderThan)
 	if err != nil {
 		return printErr("Invalid --older-than", err)
 	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__] [--class persistent|ephemeral] [--older-than 90d]", "secrets")
-		return 1
+	resolvedApp, appErr := resolveSecretApp(*app)
+	if appErr != nil {
+		return printErr("Could not resolve app", appErr)
 	}
+	*app = resolvedApp
+
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
@@ -124,40 +145,50 @@ func secretsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *watch {
+		return watchSecretList(client, *app, *scope, *secretClass, *olderThan, *deliveryStatus, age, *interval, *timeout, keys)
+	}
 	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	availableKeys := secretMetadataKeys(&resp)
 	filterAppSecretListByClass(&resp, *secretClass)
 	if age > 0 {
 		filterAppSecretListByAge(&resp, time.Now().Add(-age))
 	}
+	filterAppSecretListByDelivery(&resp, *deliveryStatus)
+	filterAppSecretListByKeys(&resp, keys)
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	if resp.Count == 0 {
-		if *secretClass != "" && age > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s: no %s secrets older than %s (0/%d)\n", *app, *secretClass, *olderThan, resp.Quota)
-			return 0
-		}
-		if *secretClass != "" {
-			_, _ = fmt.Fprintf(osStdout, "%s: no %s secrets (0/%d)\n", *app, *secretClass, resp.Quota)
-			return 0
-		}
-		if age > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s: no secrets older than %s (0/%d)\n", *app, *olderThan, resp.Quota)
-			return 0
-		}
-		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
+	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
+	return code
+}
+
+func renderSecretListHuman(app, scope, class, olderThan, deliveryStatus string, resp *api.AppSecretListResponse, keys ...string) int {
+	if !secretListHasRows(resp) {
+		_, _ = fmt.Fprintf(osStdout, "Secret metadata count: %d/%d (quota)\n", resp.Count, resp.Quota)
+		printEmptySecretList(app, scope, class, olderThan, deliveryStatus, keys...)
 		return 0
 	}
+
+	if len(keys) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Key filter: %s (exact names)\n", strings.Join(keys, ", "))
+	}
+	if deliveryStatus != "" {
+		_, _ = fmt.Fprintf(osStdout, "Delivery filter: %s (runtime-start delivery only)\n", deliveryStatus)
+	}
+	printSecretDeliveryOverview(app, scope, resp)
+
 	// ADR-092 PR-B: nested secrets_by_scope vs flat secrets is the
 	// discriminated union — render whichever arm the server returned.
 	if len(resp.SecretsByScope) > 0 {
-		renderSecretsByScope(osStdout, *app, &resp)
+		renderSecretsByScope(osStdout, app, resp)
 		return 0
 	}
-	renderFlatSecrets(osStdout, *app, &resp)
+	renderFlatSecrets(osStdout, app, resp)
 	return 0
 }
 
@@ -468,11 +499,15 @@ func secretRuntimeReloadTargetsLabel(currentVersion int64, targets []api.SecretR
 
 func secretsSet(args []string) int {
 	fs := newFlagSet("secrets set", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
+	dryRun := fs.Bool("dry-run", false, "validate input and preview the operation without API requests or changes")
+	app := fs.String("app", "", "app slug (defaults to linked project app)")
 	interactive := fs.Bool("interactive", false, "enter secrets with hidden values and review before saving")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
+	file := fs.String("file", "", "read KEY=VALUE pairs from a private file")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
 	secretClass := fs.String("class", "", "snapshot retention (persistent or ephemeral; omitted updates preserve the class)")
+	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for every updated key")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after saving values")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
@@ -482,17 +517,36 @@ func secretsSet(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>] [--class <persistent|ephemeral>] [--restart]", "secrets")
-		return 1
+	timeoutSpecified := false
+	fileSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "file" {
+			fileSpecified = true
+		}
+		if f.Name == "timeout" {
+			timeoutSpecified = true
+		}
+	})
+	if *timeout <= 0 || (timeoutSpecified && !*waitForAck) {
+		return printErr("Invalid secret wait options", errors.New("--timeout must be positive and requires --wait-for-ack when supplied"))
 	}
+	if fileSpecified && (strings.TrimSpace(*file) == "" || *fromStdin || *interactive || fs.NArg() != 0) {
+		return printErr("Invalid secret input", errors.New("--file requires a non-empty path and cannot be combined with --from-stdin, --interactive, or positional KEY=VALUE pairs"))
+	}
+	resolvedApp, appErr := resolveSecretApp(*app)
+	if appErr != nil {
+		return printErr("Could not resolve app", appErr)
+	}
+	appSource := targetValueSource(*app, resolvedApp)
+	*app = resolvedApp
+
 	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
 		fmt.Fprintln(os.Stderr, "secret set: --class must be persistent or ephemeral")
 		return 1
 	}
 	if *interactive {
-		if *fromStdin || fs.NArg() != 0 || *restart {
-			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, or --restart; the flow offers a restart after saving"))
+		if *fromStdin || fs.NArg() != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
+			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, --restart, --dry-run, --wait-for-ack, or --timeout; the flow offers a restart after saving"))
 		}
 		return secretsSetInteractive(*app, *scope, *secretClass)
 	}
@@ -500,10 +554,17 @@ func secretsSet(args []string) int {
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
+	scopeSource := targetValueSource(*scope, resolvedScope)
 	*scope = resolvedScope
 
 	pairs := []secretsPair{}
-	if *fromStdin {
+	if fileSpecified {
+		var err error
+		pairs, err = readSecretsFile(*file)
+		if err != nil {
+			return printErr("Could not read secrets file", err)
+		}
+	} else if *fromStdin {
 		if fs.NArg() != 0 {
 			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
 			return 1
@@ -553,18 +614,29 @@ func secretsSet(args []string) int {
 		}
 	}
 
+	if *dryRun {
+		keys := make([]string, len(pairs))
+		for i, pair := range pairs {
+			keys[i] = pair.Key
+		}
+		return previewSecrets("set", *app, *scope, appSource, scopeSource, keys, *secretClass, *restart, *waitForAck, *timeout)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 
-	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart)
+	printMutationTarget(*app, *scope, appSource, scopeSource)
+	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
 }
 
-func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool) int {
+func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool, waitOptions ...secretSetWaitOptions) int {
 	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		if err := client.SetSecretWithScopeAndClass(ctx, app, p.Key, p.Value, scope, secretClass); err != nil {
+			if len(keys) > 0 {
+				return printConfigurationPartialError("Set "+p.Key+" failed", err, app, scope, "Secret values saved for the confirmed keys; the failing write was not confirmed.", keys, "")
+			}
 			return printErr("Set "+p.Key+" failed", err)
 		}
 		keys = append(keys, p.Key)
@@ -572,6 +644,10 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
+	if len(waitOptions) > 0 && waitOptions[0].enabled {
+		return finishSecretSetWait(ctx, client, app, scope, keys, restart, waitOptions[0].timeout)
+	}
+
 	// Move 1 PR-A: post-write quota stamp. After every successful
 	// set, follow up with a ListSecrets and print "<slug>: N/M
 	// secrets" so the customer knows how close they are to the
@@ -598,7 +674,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 	if restart {
 		wakeID, parked, err := restartAfterSecretChange(ctx, client, app)
 		if err != nil {
-			return printErr("Restart failed", err)
+			return printConfigurationPartialError("Restart failed", err, app, scope, "All requested secret values were saved; restart was not confirmed.", keys, "")
 		}
 		if parked {
 			if jsonOutput {
@@ -617,6 +693,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			}))
 		}
 		PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", wakeID)
+		printSecretUpdateNextSteps(app, scope, wakeID, keys...)
 		return 0
 	}
 	if jsonOutput {
@@ -626,17 +703,23 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 		}))
 	}
 	PrintWarn(osStdout, "Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
+	printSecretUpdateNextSteps(app, scope, "", keys...)
 	return 0
 }
 
 type secretsSetReceipt struct {
-	App              string   `json:"app"`
-	Status           string   `json:"status"`
-	Scope            string   `json:"scope"`
-	Keys             []string `json:"keys"`
-	RestartRequested bool     `json:"restart_requested"`
-	WakeID           string   `json:"wake_id,omitempty"`
-	Warnings         []string `json:"warnings,omitempty"`
+	App                      string           `json:"app"`
+	Status                   string           `json:"status"`
+	Scope                    string           `json:"scope"`
+	Keys                     []string         `json:"keys"`
+	RestartRequested         bool             `json:"restart_requested"`
+	WakeID                   string           `json:"wake_id,omitempty"`
+	Warnings                 []string         `json:"warnings,omitempty"`
+	WaitForAckRequested      bool             `json:"wait_for_ack_requested,omitempty"`
+	AcknowledgementStatus    string           `json:"acknowledgement_status,omitempty"`
+	AcknowledgedKeys         []string         `json:"acknowledged_keys,omitempty"`
+	InstanceID               string           `json:"instance_id,omitempty"`
+	ObservedDeliveryVersions map[string]int64 `json:"observed_delivery_versions,omitempty"`
 }
 
 // reorderSecretsSetArgs keeps the documented "KEY=VALUE ... [flags]" form
@@ -653,7 +736,7 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			break
 		}
 		switch {
-		case a == "--app" || a == "-app" || a == "--scope" || a == "-scope" || a == "--class" || a == "-class":
+		case a == "--app" || a == "-app" || a == "--scope" || a == "-scope" || a == "--class" || a == "-class" || a == "--file" || a == "-file":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("%s requires a value", a)
 			}
@@ -666,6 +749,7 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			flags = append(flags, a, args[i+1])
 			i++
 		case strings.HasPrefix(a, "--app=") || strings.HasPrefix(a, "-app=") ||
+			strings.HasPrefix(a, "--file=") || strings.HasPrefix(a, "-file=") ||
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
 			strings.HasPrefix(a, "--class=") || strings.HasPrefix(a, "-class=") ||
 			strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "-timeout=") ||
@@ -673,6 +757,8 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			strings.HasPrefix(a, "--interactive=") || strings.HasPrefix(a, "-interactive=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
 			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||
+			a == "--dry-run" || a == "-dry-run" ||
+			strings.HasPrefix(a, "--dry-run=") || strings.HasPrefix(a, "-dry-run=") ||
 			a == "--restart" || a == "-restart" ||
 			strings.HasPrefix(a, "--restart=") || strings.HasPrefix(a, "-restart=") ||
 			a == "--wait-for-ack" || a == "-wait-for-ack" ||
@@ -832,7 +918,8 @@ func setProjectDeploySecretsWithScope(ctx context.Context, client *Client, workl
 func secretsUnset(args []string) int {
 	fs := newFlagSet("secrets unset", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose a secret and confirm removal")
-	app := fs.String("app", "", "app slug")
+	dryRun := fs.Bool("dry-run", false, "validate input and preview the operation without API requests or changes")
+	app := fs.String("app", "", "app slug (defaults to linked project app)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (defaults to linked project environment)")
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
@@ -845,8 +932,14 @@ func secretsUnset(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
-	if *app == "" || (!*interactive && fs.NArg() != 1) || (*interactive && fs.NArg() != 0) {
-		PrintUsage(os.Stderr, "usage: gregale secrets unset --app <slug> (KEY|--interactive) [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
+	resolvedApp, appErr := resolveSecretApp(*app)
+	if appErr != nil {
+		return printErr("Could not resolve app", appErr)
+	}
+	appSource := targetValueSource(*app, resolvedApp)
+	*app = resolvedApp
+	if (!*interactive && fs.NArg() < 1) || (*interactive && fs.NArg() != 0) {
+		PrintUsage(os.Stderr, "usage: gregale secrets unset [--app <slug>] (KEY...|--interactive) [--scope <name>] [--restart] [--dry-run] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
 	}
 	if *interactive {
@@ -879,13 +972,34 @@ func secretsUnset(args []string) int {
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
+	scopeSource := targetValueSource(*scope, resolvedScope)
 	*scope = resolvedScope
-	key := fs.Arg(0)
+	keys := []string{}
+	seen := map[string]bool{}
+	for _, key := range fs.Args() {
+		if problem := api.ValidateSecretKey(key); problem != nil {
+			return printErr("Invalid secret key", errors.New(problem.Detail))
+		}
+		if !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	if problem := api.ValidateScope(scopeOrDefault(*scope)); problem != nil {
+		return printErr("Invalid scope", errors.New(problem.Detail))
+	}
+	if *dryRun {
+		return previewSecrets("unset", *app, *scope, appSource, scopeSource, keys, "", *restart, *waitForAck, *timeout)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	return executeSecretsUnset(context.Background(), client, *app, key, *scope, *restart, *waitForAck, *timeout)
+	printMutationTarget(*app, *scope, appSource, scopeSource)
+	if len(keys) > 1 {
+		return executeSecretsUnsetBatch(client, *app, keys, *scope, *restart, *waitForAck, *timeout)
+	}
+	return executeSecretsUnset(context.Background(), client, *app, keys[0], *scope, *restart, *waitForAck, *timeout)
 }
 
 const parkedSecretChangeNote = "App is parked; its next wake boots with the updated secrets, so no restart was needed."
@@ -919,7 +1033,7 @@ func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope st
 		var parked bool
 		wakeID, parked, err = restartAfterSecretChange(ctx, client, app)
 		if err != nil {
-			return printErr("Secret removed, but restart failed", err)
+			return printConfigurationPartialError("Secret removed, but restart failed", err, app, scope, "Secret removal was saved; restart was not confirmed.", []string{key}, "")
 		}
 		if parked {
 			// Nothing runs the old environment; skip the restart receipt.
@@ -947,7 +1061,7 @@ func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope st
 			defer cancel()
 			progress, err := waitForSecretRevocationAck(ctx, client, app, revocation.ID)
 			if err != nil {
-				return printErr("Secret revocation acknowledgement incomplete", err)
+				return printConfigurationPartialError("Secret revocation acknowledgement incomplete", err, app, scope, "Secret removal was saved; runtime acknowledgement is incomplete.", []string{key}, wakeID)
 			}
 			receipt["revocation_status"] = progress.Status
 			receipt["target_count"] = progress.TargetCount
@@ -962,12 +1076,13 @@ func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope st
 	} else {
 		PrintWarn(osStdout, "Running instances keep the removed secret until their next cold wake. Use --restart to apply now.")
 	}
+	printSecretUpdateNextSteps(app, scope, wakeID, key)
 	if waitForAck {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		progress, err := waitForSecretRevocationAck(ctx, client, app, revocation.ID)
 		if err != nil {
-			return printErr("Secret revocation acknowledgement incomplete", err)
+			return printConfigurationPartialError("Secret revocation acknowledgement incomplete", err, app, scope, "Secret removal was saved; runtime acknowledgement is incomplete.", []string{key}, wakeID)
 		}
 		PrintOK(osStdout, "All %d authorized runtime(s) acknowledged secret removal", progress.AcknowledgedCount)
 	}

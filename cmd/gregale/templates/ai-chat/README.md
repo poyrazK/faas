@@ -1,8 +1,9 @@
 # ai-chat
 
 A minimal port-8080 Node.js endpoint that proxies chat completions
-to either **OpenAI** or **Anthropic**. Pick a provider by setting
-exactly one of `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The model
+to either **OpenAI** or **Anthropic**. Reach the provider through the
+Gregale AI gateway (no key in the app, see below), or set exactly one
+of `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The model
 defaults to `gpt-4o-mini` (OpenAI) or `claude-opus-5`
 (Anthropic); both are overridable via env. On Claude Opus 5 the
 endpoint opts into Anthropic's server-side refusal fallback
@@ -14,6 +15,23 @@ This is a SCAFFOLD, not a production chat app — it exposes a single
 provider's reply plus token usage. Streaming, conversation history
 persistence, and tool-use are out of scope (the customer adds them
 on top).
+
+## Use the Gregale AI gateway (no key in the app)
+
+Create a managed outbound integration with `ai_provider` set, store the
+provider key on it, and bind it to this app (see the outbound
+integrations guide). Then set two plain values instead of a provider key:
+
+```sh
+GREGALE_AI_INTEGRATION_ID=<integration-uuid>
+GREGALE_AI_PROVIDER=openai   # or anthropic, matching the integration
+```
+
+Calls go to `$GREGALE_OUTBOUND_URL/i/<integration-uuid>/...`, which
+Gregale exposes inside the VM. The gateway injects the key, applies the
+integration's rate limits and daily token limit, streams responses, and
+records token usage per app and model. Do not also set
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ## First deploy with secrets
 

@@ -16,6 +16,8 @@ import (
 const inspectSummarySchemaVersion = 3
 
 type inspectSummary struct {
+	RecentChanges   []inspectRecentChange      `json:"-"`
+	Failure         *inspectFailureOverview    `json:"-"`
 	SchemaVersion   int                        `json:"schema_version"`
 	App             inspectAppSummary          `json:"app"`
 	Runtime         inspectRuntimeSummary      `json:"runtime"`
@@ -136,6 +138,7 @@ type inspectRecommendation struct {
 }
 
 type inspectSummaryInputs struct {
+	RecentDeployments    []api.DeploymentResponse
 	Deployment           *api.DeploymentResponse
 	NewerFailedCandidate *api.DeploymentResponse
 	DeploymentErr        error
@@ -194,6 +197,10 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 			return
 		}
 		out.Deployment, out.NewerFailedCandidate = selectInspectDeployments(deployments)
+		if len(deployments) > 3 {
+			deployments = deployments[:3]
+		}
+		out.RecentDeployments = deployments
 	}()
 	go func() {
 		defer wg.Done()
@@ -245,6 +252,8 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		summary.Unavailable = append(summary.Unavailable, "openapi")
 	}
 	summary.Unavailable = sortedUniqueStrings(summary.Unavailable)
+	summary.RecentChanges = inspectRecentChanges(app.ID, in.RecentDeployments, in.Operational)
+	summary.Failure = inspectPersistedFailure(in.Deployment, in.NewerFailedCandidate)
 	summary.Recommendations = inspectRecommendations(summary)
 	return summary
 }
@@ -555,16 +564,19 @@ func containsString(values []string, want string) bool {
 }
 
 func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
+	renderInspectAttention(w, summary)
 	renderInspectApp(w, summary.App)
 	renderInspectRuntime(w, summary.Runtime)
 	renderInspectResources(w, summary.Resources)
 	renderInspectSignals(w, summary)
 	renderInspectRelease(w, summary.Release, containsString(summary.Unavailable, "deployment"))
+	renderInspectFailureDetails(w, summary)
 	if len(summary.Unavailable) > 0 {
 		_, _ = fmt.Fprintf(w, "  unavailable: %s\n", strings.Join(summary.Unavailable, ", "))
 	}
+	renderInspectRecentChanges(w, summary)
 	renderInspectOperational(w, summary.Operational)
-	renderInspectRecommendations(w, summary.Recommendations)
+	renderInspectRemainingRecommendations(w, summary)
 }
 
 func renderInspectApp(w io.Writer, app inspectAppSummary) {
@@ -596,6 +608,9 @@ func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
 		_, _ = fmt.Fprintf(w, " · %dms", runtime.Health.LatencyMS)
 	}
 	_, _ = fmt.Fprintln(w)
+	if runtime.Health.VerifiedAt != "" {
+		_, _ = fmt.Fprintf(w, "  recorded:  %s (deployment-time check; current health is separate)\n", compactInspectFailureText(runtime.Health.VerifiedAt))
+	}
 }
 
 func renderInspectResources(w io.Writer, resources inspectResourceSummary) {

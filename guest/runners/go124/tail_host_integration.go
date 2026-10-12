@@ -40,5 +40,5 @@ import (
 )
 
 func drainTailHost(ctx context.Context, env envelope, resp *response) {
-	internal.DrainForResponse(ctx, "go124", env.WaitUntilSec, env.TailPipePath, &resp.TailErrors)
+	internal.DrainForResponse(ctx, reportedRuntime, env.WaitUntilSec, env.TailPipePath, &resp.TailErrors)
 }

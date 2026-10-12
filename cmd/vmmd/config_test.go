@@ -183,6 +183,47 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	}
 }
 
+// adr: 149 — prepared wake networks are on by default; vmmd.toml or
+// FAAS_PREPARED_NETWORKS can still size or disable the cache.
+func TestLoadConfig_PreparedNetworksDefaultOnAndOverridable(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PreparedNetworks != api.DefaultPreparedNetworkCacheSize || cfg.PreparedNetworks == 0 || cfg.PreparedNetworksExplicit {
+		t.Errorf("PreparedNetworks = %d (explicit %v), want default %d", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, api.DefaultPreparedNetworkCacheSize)
+	}
+
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("prepared_networks = 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(path); err != nil || cfg.PreparedNetworks != 0 || !cfg.PreparedNetworksExplicit {
+		t.Errorf("TOML prepared_networks = 0: got %d (explicit %v), err %v; want explicitly disabled", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, err)
+	}
+
+	// Native recovery refuses the cache (ADR-568): the default yields to
+	// it, while an explicit size is kept so vmmd still reports the conflict.
+	native := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(native, []byte("native_process_recovery = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(native); err != nil || cfg.PreparedNetworks != 0 {
+		t.Errorf("native_process_recovery default: got %d, err %v; want disabled", cfg.PreparedNetworks, err)
+	}
+	if err := os.WriteFile(native, []byte("native_process_recovery = true\nprepared_networks = 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(native); err != nil || cfg.PreparedNetworks != 2 {
+		t.Errorf("native_process_recovery explicit: got %d, err %v; want 2", cfg.PreparedNetworks, err)
+	}
+
+	t.Setenv("FAAS_PREPARED_NETWORKS", "0")
+	if cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err != nil || cfg.PreparedNetworks != 0 || !cfg.PreparedNetworksExplicit {
+		t.Errorf("FAAS_PREPARED_NETWORKS=0: got %d (explicit %v), err %v; want explicitly disabled", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, err)
+	}
+}
+
 func TestLoadConfig_RestoreConcurrencyOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
 	if err := os.WriteFile(path, []byte("restore_concurrency = 2\n"), 0o600); err != nil {
@@ -961,5 +1002,42 @@ func TestLoadConfig_RestorePrefetchSwitch(t *testing.T) {
 	t.Setenv("FAAS_RESTORE_PREFETCH", "sometimes")
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_RESTORE_PREFETCH") {
 		t.Fatalf("invalid FAAS_RESTORE_PREFETCH error = %v, want named validation error", err)
+	}
+}
+
+// adr: 907 — free page reporting is on by default; TOML can disable it and
+// FAAS_FREE_PAGE_REPORTING overrides TOML in either direction.
+func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableFreePageReporting {
+		t.Fatal("free page reporting must default to enabled")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("disable_free_page_reporting = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env      string
+		disabled bool
+	}{{"", true}, {"1", false}, {"true", false}, {"0", true}, {"false", true}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_FREE_PAGE_REPORTING", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DisableFreePageReporting != tc.disabled {
+				t.Fatalf("DisableFreePageReporting = %v, want %v", cfg.DisableFreePageReporting, tc.disabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_FREE_PAGE_REPORTING", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_FREE_PAGE_REPORTING") {
+		t.Fatalf("invalid FAAS_FREE_PAGE_REPORTING error = %v, want named validation error", err)
 	}
 }

@@ -84,6 +84,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 958 | [Zero-config in-guest tracing for the debugger](958-zero-config-guest-tracing.md) | accepted for internal implementation; native acceptance pending | Opt-in OTLP bridge in guest-init, preloaded Node/Python auto-instrumentation, and a vmmd-brokered, apid-parsed path into request telemetry spans |
 | 849 | [Consumer usage alerts](849-api-consumer-usage-alerts.md) | accepted | Plan alert thresholds as percentages of the monthly unit cap; recorded once per consumer, month and threshold in the gateway admission transaction; consumer.usage_threshold webhook |
 | 975 | [Allowances and tiers on platform tenant rate cards](975-platform-tenant-allowances-and-tiers.md) | accepted | Tenant-wide monthly allowances and graduated tiers across apps; calendar-month statements re-priced against finalized lines; app card features only block fallback minutes |
+| 990 | [AI gateway phase 2: per-app limits, fallback routes, retries, cache and cost](990-ai-gateway-budgets-fallback-cost.md) | accepted | Per-app token limits, invisible OpenAI stream usage injection, replayable POST bodies for retries/cache/fallback routes, customer price lists with daily/monthly cost budgets, Runs streaming through the relay, `gregale ai` CLI |
+| 991 | [AI gateway phase 3: hard caps, guardrails, providers, translation, key pools and visibility](991-ai-gateway-hard-caps-providers-visibility.md) | accepted | Admission-time reservations make token/cost limits hard caps; per-app RPM/TPM, model allow-lists and output ceilings; Gemini, Azure OpenAI, Bedrock (SigV4) and Vertex (service account); OpenAI-format routes translating to Anthropic/Gemini; extra key pools with per-key cooldown; 80/100% budget alert webhooks, opt-in request metadata log, Grafana dashboard; the whole AI gateway ships behind the off-by-default `ai_gateway_enabled` / `FAAS_AI_GATEWAY_ENABLED` release gate |
+| 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
+| 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
@@ -740,6 +744,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-906: Frozen instances](906-frozen-instances.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -773,6 +778,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-941: Durable entity owner state recovery API](941-durable-entity-owner-state-recovery-api.md)
 
+- [ADR-907: Balloon free page reporting](907-balloon-free-page-reporting.md)
+
 - [ADR-942: Scheduled durable entity backups and restore preview](942-durable-entity-scheduled-backups-and-restore-preview.md)
 
 - [ADR-943: Application-validated durable entity restore](943-durable-entity-application-validated-restore.md)
@@ -797,3 +804,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
+
+- [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)

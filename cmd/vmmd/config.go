@@ -42,9 +42,15 @@ type Config struct {
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
 
-	// PreparedNetworks bounds the optional cache of unused namespaces.
-	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
+	// PreparedNetworks bounds the cache of unused namespaces (ADR-149).
+	// Defaults to api.DefaultPreparedNetworkCacheSize, or to zero under
+	// NativeProcessRecovery; zero disables it; FAAS_PREPARED_NETWORKS
+	// overrides TOML.
 	PreparedNetworks int `toml:"prepared_networks"`
+	// PreparedNetworksExplicit records that vmmd.toml or the environment
+	// chose the size. A default-sized cache yields to a host without the
+	// tenant bridge; an explicit one keeps failing startup.
+	PreparedNetworksExplicit bool `toml:"-"`
 	// RestoreConcurrency bounds simultaneous Firecracker snapshot restores.
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
@@ -52,6 +58,10 @@ type Config struct {
 	// DisableRestorePrefetch turns off the ADR-225 restore working-set
 	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
 	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
+	// DisableFreePageReporting stops attaching the ADR-907 balloon that
+	// returns guest-freed pages to the host. It is on by default on
+	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
+	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -479,6 +489,11 @@ func LoadConfig(path string) (*Config, error) {
 		FailureReportDir:   "/var/lib/faas/vmmd-failures",
 		SocketPath:         "/run/faas/vmmd.sock",
 		RestoreConcurrency: 3,
+		// ADR-149 (amended 2026-10-12): on unless vmmd.toml or
+		// FAAS_PREPARED_NETWORKS sets 0, or native recovery is on
+		// (below), so a node does not depend on an Ansible drop-in to
+		// skip network setup on its restores.
+		PreparedNetworks: api.DefaultPreparedNetworkCacheSize,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -520,6 +535,7 @@ func LoadConfig(path string) (*Config, error) {
 			VCPUBudget:         sizing.VCPUSlots,
 		},
 	}
+	preparedNetworksSet := false
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -534,8 +550,16 @@ func LoadConfig(path string) (*Config, error) {
 		// overlays ran — issue #938 / PR-A exposes that as a bug
 		// because FAAS_VCPU_BUDGET=0 silently bypassed the
 		// non-positive validator.)
-	} else if err := toml.Unmarshal(b, c); err != nil {
+	} else if md, err := toml.Decode(string(b), c); err != nil {
 		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
+	} else {
+		preparedNetworksSet = md.IsDefined("prepared_networks")
+	}
+	c.PreparedNetworksExplicit = preparedNetworksSet
+	// Native recovery refuses the cache until its claims are journaled
+	// (ADR-568), so the default must not stop such a node from starting.
+	if c.NativeProcessRecovery && !preparedNetworksSet {
+		c.PreparedNetworks = 0
 	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
 		return nil, err
@@ -681,6 +705,7 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
 		}
 		c.PreparedNetworks = n
+		c.PreparedNetworksExplicit = true
 	}
 	if v := os.Getenv("FAAS_RESTORE_CONCURRENCY"); v != "" {
 		n, perr := strconv.Atoi(v)
@@ -695,6 +720,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
 		}
 		c.DisableRestorePrefetch = !enabled
+	}
+	if v := os.Getenv("FAAS_FREE_PAGE_REPORTING"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
+		}
+		c.DisableFreePageReporting = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
