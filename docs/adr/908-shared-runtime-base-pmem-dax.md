@@ -131,6 +131,20 @@ used 4 KiB blocks on reflink XFS, with guest-init from this change.
 `TestMetalParkWakeCycle` (100 cycles over virtio-blk with the new
 guest-init) passed at p50 266 ms, p95 302 ms.
 
+At density through vmmd, `TestMetalPmemDensity` with
+`FAAS_TEST_PMEM_DENSITY=1` on the n2 node: six 1 GiB Node 22 VMs, split
+across two accounts, booted from a Node base built with 4 KiB blocks on
+reflink XFS and the pmem-aware guest-init. Each VM served `/` and a CPU-bound
+`/heavy` before measuring:
+
+| | host MemAvailable cost per VM | VM cgroup per VM |
+|---|---|---|
+| virtio-blk | 381 MB | 322 MB |
+| per-account pmem | 305 MB | 280 MB |
+
+Each VM costs the host 20% less, and the two accounts each got their own
+clone.
+
 Follow-ups:
 
 - **Base images:** bases are now built by `rootfs.BaseMkfsCommand`, with

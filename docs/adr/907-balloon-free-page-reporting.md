@@ -107,6 +107,12 @@ wall p50/p90 ms), and the raw harness above:
   with a dropped page cache (1.2–1.3 s against 1.8–2.4 s), which ADR-225's
   prefetch already addresses. It is worth revisiting only to load snapshots
   lazily from a remote store.
+  At scale it does worse. Six restores of one snapshot started at once on
+  the 2-vCPU node (two rounds) reached first byte at p50 608–737 ms with
+  File against 1.34–1.54 s with UFFD on demand. The following CPU-bound
+  request took ~2.0 s against 13–15.6 s, because faults were serialized
+  through the userspace handlers. The host paid 4.5 MB per VM against
+  109 MB.
 - **Guest `mitigations=off`**: boot, request latency, CPU-bound requests and
   restore were unchanged within noise over 3 interleaved rounds, so the
   guest keeps its default mitigations.
