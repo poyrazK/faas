@@ -6349,7 +6349,10 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
-		for _, line := range ring.Snapshot(0) {
+		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
+		// nothing, so the crash output never reached the customer
+		// (production-us hunt #9, H9-91).
+		for _, line := range ring.Snapshot(1) {
 			lines = append(lines, line.Line)
 		}
 	}
