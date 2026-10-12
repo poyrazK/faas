@@ -3304,7 +3304,7 @@ func DialGatewaySynth(socketPath string, log *slog.Logger) (GatewaySynth, error)
 			return net.Dial("unix", socketPath)
 		},
 	}
-	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	c := &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout}
 	return &httpGatewaySynth{
 		client:     c,
 		basePrefix: httpUnixBasePrefix,
@@ -3346,7 +3346,7 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			},
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: httpUnixBasePrefix,
 			log:        log,
 		}, nil
@@ -3357,10 +3357,10 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 		}
 		tr := &http.Transport{
 			TLSClientConfig:       tlsCfg,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: api.GatewaySynthDispatchTimeout,
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: scheme + "://" + t.Address,
 			log:        log,
 		}, nil
@@ -3601,6 +3601,20 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
 }
 
+// invocationDoError keeps transport detail out of the invocation's
+// customer-visible last_error when an attempt simply ran out of time. The
+// HTTP client's error names the internal unix-socket URL ("Post
+// \"http://unix/v1/invocations:dispatch\": … Client.Timeout exceeded") and
+// says nothing about the limit (production-us hunt #9, H9-135). A caller whose
+// own context ended keeps the original error.
+func invocationDoError(ctx context.Context, err error) error {
+	var netErr net.Error
+	if ctx.Err() == nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("%w: the invocation attempt exceeded the %s dispatch limit", ErrDispatchTimeout, api.GatewaySynthDispatchTimeout)
+	}
+	return fmt.Errorf("sched: invocation do: %w", err)
+}
+
 func boolToProtocolVersion(enabled bool) int {
 	if enabled {
 		return api.ManagedOperationResultVersion
@@ -3722,7 +3736,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
+		return inv, 0, invocationDoError(req.Context(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
