@@ -152,8 +152,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if !s.provisioningEnabled() {
 		return Database{}, ErrUnavailable
 	}
-	if request.AccountID == "" || !ValidName(request.Name) {
+	if request.AccountID == "" {
 		return Database{}, ErrInvalid
+	}
+	if !ValidName(request.Name) {
+		return Database{}, errInvalidName
 	}
 	if err := request.Spec.Validate(); err != nil {
 		return Database{}, err
