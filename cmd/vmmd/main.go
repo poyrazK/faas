@@ -988,6 +988,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		failureNodeID = localNode.ID
 	}
+	// The native qualification journal and RPC envelope must agree on the
+	// physical node that owns an attempt. A named node uses its registered
+	// identity; the single-box path uses the already-resolved default-local
+	// row without turning on unrelated multi-node lifecycle loops.
+	qualificationNodeID := ""
+	if cfg.NativeProcessRecovery {
+		qualificationNodeID = failureNodeID
+		mgr.WithNativeQualificationNodeID(qualificationNodeID)
+	}
 	// The schedd client mTLS material is loaded further down, after the
 	// node verifier exists; delivery reads it through this reference.
 	var failureReportTLS atomic.Pointer[tls.Config]
@@ -1532,6 +1541,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID).
+		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
