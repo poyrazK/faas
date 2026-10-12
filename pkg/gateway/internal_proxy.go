@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -519,14 +520,14 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		// middleware still observes bw.wrote.
 		if requestBudgetExpired(streamCtx) {
 			p.logger().Warn("internal round-trip exceeded request budget",
-				"target", p.Target.String(),
-				"err", err)
+				"target", logsanitize.Field(p.Target.String()),
+				"err", logsanitize.FieldAny(err))
 			writeRequestBudgetExceededForRequest(w, r)
 			return
 		}
 		p.logger().Warn("internal round-trip failed",
-			"target", p.Target.String(),
-			"err", err)
+			"target", logsanitize.Field(p.Target.String()),
+			"err", logsanitize.FieldAny(err))
 		if errors.Is(err, ErrNoComputeCapacity) {
 			writeForwarderProblem(w, http.StatusServiceUnavailable)
 			return

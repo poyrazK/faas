@@ -67,7 +67,7 @@ func internalMCPInstanceProbeHandler(
 		target, found, err := resolveTarget(r.Context(), appID, deploymentID, instanceID)
 		if err != nil {
 			if logger != nil {
-				logger.Warn("resolve MCP instance health target", "app_id", appID, "deployment_id", deploymentID, "instance_id", instanceID, "err", err)
+				logger.Warn("resolve MCP instance health target", "app_id", logsanitize.Field(appID), "deployment_id", logsanitize.Field(deploymentID), "instance_id", logsanitize.Field(instanceID), "err", logsanitize.FieldAny(err))
 			}
 			writeMCPInstanceProbeProblem(w, http.StatusServiceUnavailable, "target_lookup_failed", "MCP instance target could not be verified")
 			return

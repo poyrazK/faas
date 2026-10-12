@@ -971,7 +971,7 @@ func protocolResult(w http.ResponseWriter, result any) any {
 	if !ok {
 		return result
 	}
-	wire := make(map[string]any, len(fields)+3)
+	wire := make(map[string]any)
 	for key, value := range fields {
 		wire[key] = value
 	}

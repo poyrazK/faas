@@ -382,6 +382,26 @@ func TestInternalReverseProxy_DialFailure_502BadGateway(t *testing.T) {
 	}
 }
 
+func TestInternalReverseProxy_DialFailureSanitizesLog(t *testing.T) {
+	var logs bytes.Buffer
+	dialer := &stubDialer{dialErr: errors.New("failed\r\nFORGED\x00entry")}
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, logger, false)
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rr.Code)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode single log record: %v", err)
+	}
+	message, ok := entry["err"].(string)
+	if !ok || !strings.Contains(message, "failed··FORGED·entry") || strings.ContainsAny(message, "\r\n\x00") {
+		t.Fatalf("unsafe logged error: %q", message)
+	}
+}
+
 // TestInternalReverseProxy_BudgetExpiry_504NotBadGateway pins the
 // production regression this fix closes. Under a 1000-concurrency
 // burst the compute layer answered 200 for 99% of requests, but the
