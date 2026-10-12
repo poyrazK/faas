@@ -24,7 +24,7 @@
 // + extract machinery scanService expects; that path is
 // integration territory (Make test-metal / make leakcheck)
 // rather than a unit test, so we leave it there.
-package apidserver
+package apidserver_test
 
 import (
 	"log/slog"
@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -46,7 +47,7 @@ import (
 // any of "demo", "payments-api", or "my-org-2026" can drive the
 // test.
 func TestRenderProjectPreview_EmptyForm(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/projects/demo/preview", nil)
 	r.AddCookie(cookie)
@@ -92,7 +93,7 @@ func TestRenderProjectPreview_EmptyForm(t *testing.T) {
 // preview form doubles as the "first deploy" entry point so a
 // fresh operator can drop a tarball here to create the project.
 func TestRenderProjectPreview_UnknownSlugReturnsEmptyForm(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/projects/ghost/preview", nil)
 	r.AddCookie(cookie)
@@ -141,7 +142,7 @@ func TestPreviewSlugOK_PinsIDORSafety(t *testing.T) {
 		{"app\nname", false}, // newline
 	}
 	for _, tc := range cases {
-		got := previewSlugOK(tc.in)
+		got := apidserver.PreviewSlugOK(tc.in)
 		if got != tc.want {
 			t.Errorf("previewSlugOK(%q) = %v, want %v", tc.in, got, tc.want)
 		}
@@ -156,7 +157,7 @@ func TestPreviewSlugOK_PinsIDORSafety(t *testing.T) {
 // without a second switch.
 func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 	t.Run("create-affordance", func(t *testing.T) {
-		out := toProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "create"}}, false)
+		out := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "create"}}, false)
 		if len(out) != 1 {
 			t.Fatalf("len(out) = %d, want 1", len(out))
 		}
@@ -168,7 +169,7 @@ func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 		}
 	})
 	t.Run("update-affordance", func(t *testing.T) {
-		out := toProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "update", ID: "abc1234567"}}, false)
+		out := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "update", ID: "abc1234567"}}, false)
 		if len(out) != 1 {
 			t.Fatalf("len(out) = %d, want 1", len(out))
 		}
@@ -177,14 +178,14 @@ func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 		}
 	})
 	t.Run("noop-unaffected-vs-skipped", func(t *testing.T) {
-		unaff := toProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "noop", ID: "u1"}}, false)
+		unaff := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "noop", ID: "u1"}}, false)
 		if unaff[0].Excluded {
 			t.Errorf("unaffected row must NOT have Excluded=true")
 		}
 		if unaff[0].ActionLabel == "excluded" {
 			t.Errorf("unaffected label = %q, want non-excluded vocabulary", unaff[0].ActionLabel)
 		}
-		skip := toProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "noop"}}, true)
+		skip := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "noop"}}, true)
 		if !skip[0].Excluded {
 			t.Errorf("skipped row must have Excluded=true")
 		}
@@ -193,19 +194,19 @@ func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 		}
 	})
 	t.Run("remove-affordance", func(t *testing.T) {
-		out := toProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "remove"}}, false)
+		out := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{Slug: "x", Action: "remove"}}, false)
 		if out[0].ActionGlyph == "" || out[0].ActionLabel == "" {
 			t.Errorf("remove: empty glyph/label: %+v", out[0])
 		}
 	})
 	t.Run("empty-input-returns-nil", func(t *testing.T) {
-		out := toProjectPreviewAffected(nil, false)
+		out := apidserver.ToProjectPreviewAffected(nil, false)
 		if out != nil {
 			t.Errorf("nil in: %+v, want nil out", out)
 		}
 	})
 	t.Run("root-dir-drift-surfaces-existing-root", func(t *testing.T) {
-		out := toProjectPreviewAffected([]api.PlanAffectedApp{{
+		out := apidserver.ToProjectPreviewAffected([]api.PlanAffectedApp{{
 			Slug:            "x",
 			Action:          "update",
 			ID:              "i1",
@@ -219,7 +220,7 @@ func TestToProjectPreviewAffected_MapsActionVocabulary(t *testing.T) {
 
 func TestToProjectPreviewAsyncRoutes_MapsDiffAndRemovalCount(t *testing.T) {
 	policy := &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.5}
-	rows, removals := toProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
+	rows, removals := apidserver.ToProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
 		{App: "reports", Name: "generate", Action: "create", MatchHost: "api.example.test", MatchPath: "/reports", MatchMethods: []string{"POST"}, Priority: 100, Enabled: true, OnSuccess: "notify", RetryPolicy: policy, MaxAgeSeconds: 3600},
 		{App: "reports", Name: "old-report", Action: "remove", Reason: "route is no longer declared by the project manifest"},
 		{App: "reports", Name: "deferred", Action: "skipped", Reason: "--no-triggers is set; async routes remain unchanged"},
@@ -246,7 +247,7 @@ func TestToProjectPreviewAsyncRoutes_MapsDiffAndRemovalCount(t *testing.T) {
 }
 
 func TestRenderProjectPreview_ShowsAsyncRouteDiff(t *testing.T) {
-	routeRows, removals := toProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
+	routeRows, removals := apidserver.ToProjectPreviewAsyncRoutes([]api.PlanAsyncRoute{
 		{App: "reports", Name: "generate", Action: "create", MatchHost: "api.example.test", MatchPath: "/reports", MatchMethods: []string{"POST"}, Priority: 100, Enabled: true, OnSuccess: "notify-user", OnFailure: "cleanup", MaxAgeSeconds: 3600},
 		{App: "reports", Name: "legacy", Action: "remove", Reason: "route is no longer declared by the project manifest"},
 	})
@@ -286,7 +287,7 @@ func TestRenderProjectPreview_ShowsAsyncRouteDiff(t *testing.T) {
 // dashboardFireCronIDRe regex on the {id} segment of the cron
 // fire-now route.
 func TestPreviewDispatch_BadSlugRejected(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	form := url.Values{}
 	form.Set(middleware.FormFieldName, "anything")

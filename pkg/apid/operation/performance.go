@@ -21,6 +21,8 @@ func OperationWorkflowPerformanceOptions(r *http.Request, operator bool, appID s
 		}
 		switch key {
 		case "scope", "workflow":
+		case "baseline_token":
+			opts.BaselineToken = values[0]
 		case "tenant_id":
 			if !operator {
 				return opts, state.ErrInvalidArgument

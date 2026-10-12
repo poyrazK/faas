@@ -1586,11 +1586,12 @@ jobs:
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
-          promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
-          promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
-          promtool test rules deploy/ansible/roles/prometheus/files/faas_api_availability.test.yml
-          promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
-          make udp-alert-check tcp-tls-alert-check commit-alert-check host-alert-check
+          # Every rule fixture, not a hand-picked list: an unlisted
+          # fixture (slo_low_traffic) broke unnoticed when an alert changed.
+          for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do
+            echo "promtool test rules ${fixture}"
+            promtool test rules "${fixture}"
+          done
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check

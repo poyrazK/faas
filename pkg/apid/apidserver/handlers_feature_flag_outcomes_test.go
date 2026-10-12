@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http/httptest"
@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -18,7 +20,7 @@ func TestFeatureFlagOutcomeQueryClampsWindowAndScopesCustomer(t *testing.T) {
 	scope := state.FeatureFlagScope{AccountID: uuid.NewString()}
 	retention := 12 * time.Hour
 
-	params, start, end, err := featureFlagOutcomeQuery(r, scope, retention)
+	params, start, end, err := apidserver.FeatureFlagOutcomeQuery(r, scope, retention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func TestFeatureFlagOutcomeQueryClampsWindowAndScopesCustomer(t *testing.T) {
 	r = httptest.NewRequest("GET", "/?since=1h&rule_id=selected&config_version=9", nil)
 	r.SetPathValue("key", "export")
 	r.SetPathValue("environment", "production")
-	params, _, _, err = featureFlagOutcomeQuery(r, scope, retention)
+	params, _, _, err = apidserver.FeatureFlagOutcomeQuery(r, scope, retention)
 	if err != nil || params.RuleID != "selected" || params.ConfigVersion != 9 {
 		t.Fatalf("rule-filter query params=%+v err=%v", params, err)
 	}
@@ -55,7 +57,7 @@ func TestFeatureFlagOutcomeQueryRejectsInvalidFilters(t *testing.T) {
 			r := httptest.NewRequest("GET", tc.path, nil)
 			r.SetPathValue("key", tc.key)
 			r.SetPathValue("environment", "production")
-			if _, _, _, err := featureFlagOutcomeQuery(r, scope, 24*time.Hour); err == nil {
+			if _, _, _, err := apidserver.FeatureFlagOutcomeQuery(r, scope, 24*time.Hour); err == nil {
 				t.Fatal("expected invalid filter to fail")
 			}
 		})
@@ -65,7 +67,7 @@ func TestFeatureFlagOutcomeQueryRejectsInvalidFilters(t *testing.T) {
 func TestMakeFeatureFlagOutcomesResponseComputesRates(t *testing.T) {
 	start := time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
-	got := makeFeatureFlagOutcomesResponse([]sqlc.FeatureFlagRequestOutcomesRow{{
+	got := apidserver.MakeFeatureFlagOutcomesResponse([]sqlc.FeatureFlagRequestOutcomesRow{{
 		DecisionType: "variant", DecisionValue: "new", RequestCount: 10, UsedCount: 7, ErrorCount: 2,
 		P50LatencyMs: 40, P95LatencyMs: 90,
 	}}, start, end)
@@ -89,7 +91,7 @@ func TestMakeFeatureFlagOutcomesResponseBoundsHistoricalGroups(t *testing.T) {
 	for i := range rows {
 		rows[i] = sqlc.FeatureFlagRequestOutcomesRow{DecisionType: "variant", DecisionValue: "old", RequestCount: int64(101 - i)}
 	}
-	got := makeFeatureFlagOutcomesResponse(rows, time.Time{}, time.Time{})
+	got := apidserver.MakeFeatureFlagOutcomesResponse(rows, time.Time{}, time.Time{})
 	if len(got.Outcomes) != 100 || !got.Truncated || got.Outcomes[0].Value != "old" {
 		t.Fatalf("groups=%d truncated=%v", len(got.Outcomes), got.Truncated)
 	}

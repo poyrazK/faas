@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Smoke tests for the webhook handlers (issue #476 / ADR-076).
 //
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -39,9 +40,9 @@ func webhookReq() api.CreateAppWebhookRequest {
 	}
 }
 
-func mustCreateWebhook(t *testing.T, e testEnv, slug string, req api.CreateAppWebhookRequest) api.AppWebhookResponse {
+func mustCreateWebhook(t *testing.T, e apidserver.TestEnv, slug string, req api.CreateAppWebhookRequest) api.AppWebhookResponse {
 	t.Helper()
-	rec := e.do(t, "POST", "/v1/apps/"+slug+"/webhooks", req, nil)
+	rec := e.Do(t, "POST", "/v1/apps/"+slug+"/webhooks", req, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create webhook status %d: %s", rec.Code, rec.Body)
 	}
@@ -52,34 +53,34 @@ func mustCreateWebhook(t *testing.T, e testEnv, slug string, req api.CreateAppWe
 	return out
 }
 
-func setupWebhookTest(t *testing.T, plan api.Plan) testEnv {
+func setupWebhookTest(t *testing.T, plan api.Plan) apidserver.TestEnv {
 	t.Helper()
-	teardown := withTestRecipient(t)
+	teardown := apidserver.WithTestRecipient(t)
 	t.Cleanup(teardown)
-	return setup(t, plan)
+	return apidserver.Setup(t, plan)
 }
 
 func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "attempt-api")
+	appID := apidserver.MustSeedApp(t, e, "attempt-api")
 	hook := mustCreateWebhook(t, e, "attempt-api", webhookReq())
-	d, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
-		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+	d, err := (*e.Store()).RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: (*e.Acct()).ID,
 		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
+	claimed, err := (*e.Store()).ClaimDueAppWebhookDeliveries(t.Context(), 1, time.Now().Add(time.Second))
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim = %+v, err=%v", claimed, err)
 	}
-	if err := e.store.MarkAppWebhookDeliveryDead(t.Context(), d.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
+	if err := (*e.Store()).MarkAppWebhookDeliveryDead(t.Context(), d.ID, claimed[0].Attempt, claimed[0].NextAttemptAt,
 		"receiver rejected", state.AppWebhookAttemptMetadata{ResponseCode: 410}); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/attempt-api/webhooks/" + hook.ID + "/deliveries/" + d.ID + "/attempts"
-	rec := e.do(t, http.MethodGet, path, nil, nil)
+	rec := e.Do(t, http.MethodGet, path, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list attempts = %d: %s", rec.Code, rec.Body)
 	}
@@ -93,11 +94,11 @@ func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "payload") || strings.Contains(rec.Body.String(), "secret") {
 		t.Error("attempt history exposed payload or secret")
 	}
-	invalid := e.do(t, http.MethodGet, path+"?page_token=bad", nil, nil)
+	invalid := e.Do(t, http.MethodGet, path+"?page_token=bad", nil, nil)
 	if invalid.Code != http.StatusBadRequest {
 		t.Errorf("invalid cursor = %d: %s", invalid.Code, invalid.Body)
 	}
-	foreign := e.do(t, http.MethodGet, "/v1/apps/attempt-api/webhooks/00000000000000000000000000000000/deliveries/"+d.ID+"/attempts", nil, nil)
+	foreign := e.Do(t, http.MethodGet, "/v1/apps/attempt-api/webhooks/00000000000000000000000000000000/deliveries/"+d.ID+"/attempts", nil, nil)
 	if foreign.Code != http.StatusNotFound {
 		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
 	}
@@ -105,11 +106,11 @@ func TestListAppWebhookDeliveryAttempts_ScopedHistory(t *testing.T) {
 
 func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "health-api")
+	appID := apidserver.MustSeedApp(t, e, "health-api")
 	hook := mustCreateWebhook(t, e, "health-api", webhookReq())
 	due := time.Now().UTC().Add(-2 * time.Minute)
-	_, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
-		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+	_, err := (*e.Store()).RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: (*e.Acct()).ID,
 		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{"private":"never-show"}`),
 		NextAttemptAt: due,
 	})
@@ -117,7 +118,7 @@ func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/health-api/webhooks/" + hook.ID + "/health"
-	rec := e.do(t, http.MethodGet, path, nil, nil)
+	rec := e.Do(t, http.MethodGet, path, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
 	}
@@ -132,7 +133,7 @@ func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "never-show") {
 		t.Error("health response exposed delivery payload")
 	}
-	foreign := e.do(t, http.MethodGet, "/v1/apps/health-api/webhooks/00000000000000000000000000000000/health", nil, nil)
+	foreign := e.Do(t, http.MethodGet, "/v1/apps/health-api/webhooks/00000000000000000000000000000000/health", nil, nil)
 	if foreign.Code != http.StatusNotFound {
 		t.Errorf("foreign webhook = %d: %s", foreign.Code, foreign.Body)
 	}
@@ -140,27 +141,27 @@ func TestGetAppWebhookDeliveryHealth(t *testing.T) {
 
 func TestGetAppWebhookDeliveryHealth_ShowsReceiverCooldown(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "cooldown-health-api")
+	appID := apidserver.MustSeedApp(t, e, "cooldown-health-api")
 	hook := mustCreateWebhook(t, e, "cooldown-health-api", webhookReq())
 	now := time.Now().UTC()
-	delivery, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
-		WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+	delivery, err := (*e.Store()).RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+		WebhookID: hook.ID, AppID: appID, AccountID: (*e.Acct()).ID,
 		Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
 		NextAttemptAt: now.Add(-time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	claimed, err := (*e.Store()).ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim = %+v, %v", claimed, err)
 	}
 	until := now.Add(2 * time.Minute)
-	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), delivery.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
+	if err := (*e.Store()).MarkAppWebhookDeliveryFailed(t.Context(), delivery.ID, 429, claimed[0].Attempt, claimed[0].NextAttemptAt,
 		"rate limited", now.Add(time.Minute), state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/cooldown-health-api/webhooks/"+hook.ID+"/health", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/cooldown-health-api/webhooks/"+hook.ID+"/health", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
 	}
@@ -175,31 +176,31 @@ func TestGetAppWebhookDeliveryHealth_ShowsReceiverCooldown(t *testing.T) {
 
 func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "probe-health-api")
+	appID := apidserver.MustSeedApp(t, e, "probe-health-api")
 	hook := mustCreateWebhook(t, e, "probe-health-api", webhookReq())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 0; i < 2; i++ {
-		if _, err := e.store.RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
-			WebhookID: hook.ID, AppID: appID, AccountID: e.acct.ID,
+		if _, err := (*e.Store()).RecordAppWebhookDelivery(t.Context(), state.AppWebhookDelivery{
+			WebhookID: hook.ID, AppID: appID, AccountID: (*e.Acct()).ID,
 			Event: state.AppWebhookEventAppParked, Payload: json.RawMessage(`{}`),
 			NextAttemptAt: now.Add(-time.Minute),
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	initial, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
+	initial, err := (*e.Store()).ClaimDueAppWebhookDeliveries(t.Context(), 1, now)
 	if err != nil || len(initial) != 1 {
 		t.Fatalf("initial claim = %+v, %v", initial, err)
 	}
 	until := now.Add(-time.Second)
-	if err := e.store.MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
+	if err := (*e.Store()).MarkAppWebhookDeliveryFailed(t.Context(), initial[0].ID, 429, initial[0].Attempt, initial[0].NextAttemptAt,
 		"rate limited", until, state.AppWebhookAttemptMetadata{ReceiverCooldownUntil: &until, ReceiverCooldownTargetURL: hook.TargetURL}); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/probe-health-api/webhooks/" + hook.ID + "/health"
 	read := func() api.AppWebhookDeliveryHealthResponse {
 		t.Helper()
-		rec := e.do(t, http.MethodGet, path, nil, nil)
+		rec := e.Do(t, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("health status = %d: %s", rec.Code, rec.Body)
 		}
@@ -212,7 +213,7 @@ func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
 	if health := read(); health.ReceiverState != "awaiting_probe" || health.OldestOverdueAt == "" {
 		t.Fatalf("awaiting probe health = %+v", health)
 	}
-	probe, err := e.store.ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now().UTC())
+	probe, err := (*e.Store()).ClaimDueAppWebhookDeliveries(t.Context(), 10, time.Now().UTC())
 	if err != nil || len(probe) != 1 {
 		t.Fatalf("probe claim = %+v, %v", probe, err)
 	}
@@ -220,7 +221,7 @@ func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
 		t.Fatalf("live probe health = %+v", health)
 	}
 	finished := time.Now().UTC()
-	if err := e.store.MarkAppWebhookDeliverySucceeded(t.Context(), probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
+	if err := (*e.Store()).MarkAppWebhookDeliverySucceeded(t.Context(), probe[0].ID, 200, probe[0].Attempt, probe[0].NextAttemptAt,
 		finished, state.AppWebhookAttemptMetadata{FinishedAt: finished}); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestGetAppWebhookDeliveryHealth_ShowsRecoveryProbe(t *testing.T) {
 //   - store row carries the sealed ciphertext (plaintext is gone)
 func TestCreateAppWebhook_HappyPath(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-hp")
+	apidserver.MustSeedApp(t, e, "wh-hp")
 	out := mustCreateWebhook(t, e, "wh-hp", webhookReq())
 	if out.ID == "" {
 		t.Errorf("ID is empty")
@@ -256,7 +257,7 @@ func TestCreateAppWebhook_HappyPath(t *testing.T) {
 	if len(out.EventFilter) != 1 || out.EventFilter[0] != "app.parked" {
 		t.Errorf("event_filter: got %v, want [app.parked]", out.EventFilter)
 	}
-	row, err := e.store.AppWebhookByID(context.Background(), out.ID)
+	row, err := (*e.Store()).AppWebhookByID(context.Background(), out.ID)
 	if err != nil {
 		t.Fatalf("AppWebhookByID: %v", err)
 	}
@@ -271,14 +272,14 @@ func TestCreateAppWebhook_HappyPath(t *testing.T) {
 
 func TestCreateAppWebhook_CloudEventsFormatRoundTrip(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-cloudevents")
+	apidserver.MustSeedApp(t, e, "wh-cloudevents")
 	req := webhookReq()
 	req.DeliveryFormat = "cloudevents"
 	out := mustCreateWebhook(t, e, "wh-cloudevents", req)
 	if out.DeliveryFormat != "cloudevents" {
 		t.Fatalf("delivery_format: got %q, want cloudevents", out.DeliveryFormat)
 	}
-	row, err := e.store.AppWebhookByID(t.Context(), out.ID)
+	row, err := (*e.Store()).AppWebhookByID(t.Context(), out.ID)
 	if err != nil {
 		t.Fatalf("AppWebhookByID: %v", err)
 	}
@@ -289,10 +290,10 @@ func TestCreateAppWebhook_CloudEventsFormatRoundTrip(t *testing.T) {
 
 func TestCreateAppWebhook_DeliveryFormatOutOfVocabulary(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-bad-format")
+	apidserver.MustSeedApp(t, e, "wh-bad-format")
 	req := webhookReq()
 	req.DeliveryFormat = "cloud-events"
-	rec := e.do(t, "POST", "/v1/apps/wh-bad-format/webhooks", req, nil)
+	rec := e.Do(t, "POST", "/v1/apps/wh-bad-format/webhooks", req, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
@@ -305,9 +306,9 @@ func TestCreateAppWebhook_DeliveryFormatOutOfVocabulary(t *testing.T) {
 // and pins the empty-slice shape when no webhooks are configured.
 func TestListAppWebhooks_HappyPath(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-list")
+	apidserver.MustSeedApp(t, e, "wh-list")
 	mustCreateWebhook(t, e, "wh-list", webhookReq())
-	rec := e.do(t, "GET", "/v1/apps/wh-list/webhooks", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/wh-list/webhooks", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -325,8 +326,8 @@ func TestListAppWebhooks_HappyPath(t *testing.T) {
 // precedent.
 func TestCreateAppWebhook_FreeReturns402(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanFree)
-	mustSeedApp(t, e, "wh-free")
-	rec := e.do(t, "POST", "/v1/apps/wh-free/webhooks", webhookReq(), nil)
+	apidserver.MustSeedApp(t, e, "wh-free")
+	rec := e.Do(t, "POST", "/v1/apps/wh-free/webhooks", webhookReq(), nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Errorf("status: got %d, want 402 (Free plan)", rec.Code)
 	}
@@ -340,10 +341,10 @@ func TestCreateAppWebhook_FreeReturns402(t *testing.T) {
 // app_webhook_invalid.
 func TestCreateAppWebhook_RetryPolicyOutOfVocabulary(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-bad-policy")
+	apidserver.MustSeedApp(t, e, "wh-bad-policy")
 	req := webhookReq()
 	req.RetryPolicy = "defaultt"
-	rec := e.do(t, "POST", "/v1/apps/wh-bad-policy/webhooks", req, nil)
+	rec := e.Do(t, "POST", "/v1/apps/wh-bad-policy/webhooks", req, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
@@ -356,10 +357,10 @@ func TestCreateAppWebhook_RetryPolicyOutOfVocabulary(t *testing.T) {
 // drift rejection.
 func TestCreateAppWebhook_EventOutOfVocabulary(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-bad-event")
+	apidserver.MustSeedApp(t, e, "wh-bad-event")
 	req := webhookReq()
 	req.EventFilter = []string{"not.a.real.event"}
-	rec := e.do(t, "POST", "/v1/apps/wh-bad-event/webhooks", req, nil)
+	rec := e.Do(t, "POST", "/v1/apps/wh-bad-event/webhooks", req, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rec.Code)
 	}
@@ -371,10 +372,10 @@ func TestCreateAppWebhook_EventOutOfVocabulary(t *testing.T) {
 func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
 	// ADR-521: operation completion has its own producer-backed event.
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-no-producer")
+	apidserver.MustSeedApp(t, e, "wh-no-producer")
 	req := webhookReq()
 	req.EventFilter = []string{"app.deployed"}
-	rec := e.do(t, http.MethodPost, "/v1/apps/wh-no-producer/webhooks", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/wh-no-producer/webhooks", req, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
@@ -395,10 +396,10 @@ func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
 
 func TestCreateAppWebhook_WorkflowFinishedEvent(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-workflow-finished")
+	apidserver.MustSeedApp(t, e, "wh-workflow-finished")
 	req := webhookReq()
 	req.EventFilter = []string{"workflow.finished"}
-	rec := e.do(t, http.MethodPost, "/v1/apps/wh-workflow-finished/webhooks", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/wh-workflow-finished/webhooks", req, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201: %s", rec.Code, rec.Body.String())
 	}
@@ -406,10 +407,10 @@ func TestCreateAppWebhook_WorkflowFinishedEvent(t *testing.T) {
 
 func TestCreateAppWebhook_DeploymentLifecycleEvents(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-deploy-events")
+	apidserver.MustSeedApp(t, e, "wh-deploy-events")
 	req := webhookReq()
 	req.EventFilter = []string{"deployment.live", "deployment.failed"}
-	rec := e.do(t, http.MethodPost, "/v1/apps/wh-deploy-events/webhooks", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/wh-deploy-events/webhooks", req, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201: %s", rec.Code, rec.Body.String())
 	}
@@ -417,10 +418,10 @@ func TestCreateAppWebhook_DeploymentLifecycleEvents(t *testing.T) {
 
 func TestCreateAppWebhook_RolloutOutcomeEvents(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-rollout-events")
+	apidserver.MustSeedApp(t, e, "wh-rollout-events")
 	req := webhookReq()
 	req.EventFilter = []string{"rollout.completed", "rollout.aborted"}
-	rec := e.do(t, http.MethodPost, "/v1/apps/wh-rollout-events/webhooks", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/wh-rollout-events/webhooks", req, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201: %s", rec.Code, rec.Body.String())
 	}
@@ -429,14 +430,14 @@ func TestCreateAppWebhook_RolloutOutcomeEvents(t *testing.T) {
 // TestDeleteAppWebhook_HappyPath pins the DELETE → 204 round-trip.
 func TestDeleteAppWebhook_HappyPath(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-del")
+	apidserver.MustSeedApp(t, e, "wh-del")
 	created := mustCreateWebhook(t, e, "wh-del", webhookReq())
-	rec := e.do(t, "DELETE", "/v1/apps/wh-del/webhooks/"+created.ID, nil, nil)
+	rec := e.Do(t, "DELETE", "/v1/apps/wh-del/webhooks/"+created.ID, nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status: got %d, want 204", rec.Code)
 	}
 	// Subsequent get → 404.
-	rec = e.do(t, "GET", "/v1/apps/wh-del/webhooks/"+created.ID, nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/wh-del/webhooks/"+created.ID, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("post-delete get: got %d, want 404", rec.Code)
 	}
@@ -447,13 +448,13 @@ func TestDeleteAppWebhook_HappyPath(t *testing.T) {
 // remains masked.
 func TestRotateAppWebhookSecret_HappyPath(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-rotate")
+	apidserver.MustSeedApp(t, e, "wh-rotate")
 	created := mustCreateWebhook(t, e, "wh-rotate", webhookReq())
-	before, err := e.store.AppWebhookByID(t.Context(), created.ID)
+	before, err := (*e.Store()).AppWebhookByID(t.Context(), created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, "POST", "/v1/apps/wh-rotate/webhooks/"+created.ID+"/rotate-secret", api.RotateAppWebhookSecretRequest{WebhookSecret: "known-replacement"}, nil)
+	rec := e.Do(t, "POST", "/v1/apps/wh-rotate/webhooks/"+created.ID+"/rotate-secret", api.RotateAppWebhookSecretRequest{WebhookSecret: "known-replacement"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -467,7 +468,7 @@ func TestRotateAppWebhookSecret_HappyPath(t *testing.T) {
 	if out.RotatedAt == "" {
 		t.Errorf("rotated_at missing from response")
 	}
-	after, err := e.store.AppWebhookByID(t.Context(), created.ID)
+	after, err := (*e.Store()).AppWebhookByID(t.Context(), created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,20 +478,20 @@ func TestRotateAppWebhookSecret_HappyPath(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "known-replacement") || strings.Contains(string(after.SecretSealed), "known-replacement") {
 		t.Error("replacement plaintext leaked into response or persisted ciphertext")
 	}
-	namespace, plaintext, err := secretbox.OpenBytes(mfaIdentities()[0], after.SecretSealed)
+	namespace, plaintext, err := secretbox.OpenBytes((*apidserver.MfaIdentities)()[0], after.SecretSealed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if namespace != appWebhookSecretSealLabel || string(plaintext) != "known-replacement" {
+	if namespace != apidserver.AppWebhookSecretSealLabel || string(plaintext) != "known-replacement" {
 		t.Fatalf("unsealed rotation = namespace %q plaintext %q", namespace, plaintext)
 	}
 }
 
 func TestRotateAppWebhookSecret_RequiresReplacement(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "wh-rotate-empty")
+	apidserver.MustSeedApp(t, e, "wh-rotate-empty")
 	created := mustCreateWebhook(t, e, "wh-rotate-empty", webhookReq())
-	rec := e.do(t, "POST", "/v1/apps/wh-rotate-empty/webhooks/"+created.ID+"/rotate-secret", nil, nil)
+	rec := e.Do(t, "POST", "/v1/apps/wh-rotate-empty/webhooks/"+created.ID+"/rotate-secret", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowJoinAuthoringAndInspection(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "join-inspection")
 	ctx := context.Background()
-	if _, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "sha256:x", Workflows: json.RawMessage(`[]`)}); err != nil {
+	if _, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "sha256:x", Workflows: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	spec := api.WorkflowSpec{Name: "joined", Steps: []api.WorkflowStepSpec{
@@ -22,37 +23,37 @@ func TestWorkflowJoinAuthoringAndInspection(t *testing.T) {
 		{Name: "merge", DependsOn: []string{"a", "b"}, Join: &api.WorkflowJoinSpec{OutputFrom: []string{"b", "a"}}},
 	}}
 	base := "/v1/apps/" + app.Slug + "/automations"
-	response := e.do(t, "POST", base+":validate", api.ValidateAutomationRequest{Definition: spec}, nil)
+	response := e.Do(t, "POST", base+":validate", api.ValidateAutomationRequest{Definition: spec}, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("validate=%d %s", response.Code, response.Body.String())
 	}
-	response = e.do(t, "PUT", base+"/joined", api.SaveAutomationDraftRequest{Definition: spec}, nil)
+	response = e.Do(t, "PUT", base+"/joined", api.SaveAutomationDraftRequest{Definition: spec}, nil)
 	var draft api.AutomationResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &draft) != nil {
 		t.Fatalf("save=%d %s", response.Code, response.Body.String())
 	}
-	response = e.do(t, "POST", base+"/joined/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, nil)
+	response = e.Do(t, "POST", base+"/joined/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, nil)
 	var published api.AutomationResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &published) != nil || published.Published == nil || published.Published.Steps[2].Join == nil || published.Published.Steps[2].Join.OutputFrom[0] != "b" {
 		t.Fatalf("publication lost ordered join=%d %s", response.Code, response.Body.String())
 	}
 	snapshot, _ := json.Marshal(published.Published)
 	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, Input: json.RawMessage(`{}`), DefinitionSnapshot: snapshot}
-	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
+	if err := (*e.Store()).CreateWorkflowRun(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "a"}, {StepName: "b"}, {StepName: "merge"}}); err != nil {
+	if err := (*e.Store()).CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "a"}, {StepName: "b"}, {StepName: "merge"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"b", "a"} {
-		if err := e.store.MarkWorkflowStepStatus(ctx, run.ID, name, state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"done":true}`), nil); err != nil {
+		if err := (*e.Store()).MarkWorkflowStepStatus(ctx, run.ID, name, state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"done":true}`), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.store.ResolveWorkflowStepJoin(ctx, run.ID, "merge"); err != nil {
+	if _, err := (*e.Store()).ResolveWorkflowStepJoin(ctx, run.ID, "merge"); err != nil {
 		t.Fatal(err)
 	}
-	response = e.do(t, "GET", "/v1/workflows/runs/"+run.ID+"/steps", nil, nil)
+	response = e.Do(t, "GET", "/v1/workflows/runs/"+run.ID+"/steps", nil, nil)
 	var result api.ListWorkflowStepsResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil {
 		t.Fatalf("inspection=%d %s", response.Code, response.Body.String())

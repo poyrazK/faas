@@ -3,7 +3,7 @@
 // the right pkg/mail.Sender implementation through newMailerAdapter,
 // plus the magic-link login path actually delivers end-to-end.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -199,7 +200,7 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 			// would dial out on a probe; we don't probe through those,
 			// we only prove the adapter accepts the chosen transport
 			// without panicking and returns a non-nil Mailer.
-			if got := newMailerAdapter(m); got == nil {
+			if got := apidserver.NewMailerAdapter(m); got == nil {
 				t.Errorf("newMailerAdapter(%s) returned nil", tc.wantType)
 			}
 		})
@@ -211,11 +212,11 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 // pkg/mail.Sender with every field intact.
 func TestMailAdapter_ForwardsFields(t *testing.T) {
 	rec := &recordingSender{}
-	a := newMailerAdapter(rec)
+	a := apidserver.NewMailerAdapter(rec)
 	if a == nil {
 		t.Fatal("adapter is nil")
 	}
-	want := Message{
+	want := apidserver.Message{
 		To:       []string{"alice@example.com", "bob@example.com"},
 		Subject:  "magic link",
 		TextBody: "Click here",
@@ -241,8 +242,8 @@ func TestMailAdapter_ForwardsFields(t *testing.T) {
 // a nil underlying sender collapses to noopMailer{}, so callers that
 // never nil-check (the rest of the apid codebase) stay safe.
 func TestMailAdapter_NilSenderIsNoop(t *testing.T) {
-	a := newMailerAdapter(nil)
-	if err := a.Send(context.Background(), Message{Subject: "x"}); err != nil {
+	a := apidserver.NewMailerAdapter(nil)
+	if err := a.Send(context.Background(), apidserver.Message{Subject: "x"}); err != nil {
 		t.Errorf("nil-sender adapter should swallow, got %v", err)
 	}
 }
@@ -252,8 +253,8 @@ func TestMailAdapter_NilSenderIsNoop(t *testing.T) {
 // silently dropped.
 func TestMailAdapter_SurfacesSenderError(t *testing.T) {
 	rec := &recordingSender{err: mail.ErrTransient}
-	a := newMailerAdapter(rec)
-	err := a.Send(context.Background(), Message{Subject: "quota-warn"})
+	a := apidserver.NewMailerAdapter(rec)
+	err := a.Send(context.Background(), apidserver.Message{Subject: "quota-warn"})
 	if !errors.Is(err, mail.ErrTransient) {
 		t.Errorf("expected ErrTransient, got %v", err)
 	}
@@ -292,9 +293,9 @@ func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := &recordingSender{}
-	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.mailer = newMailerAdapter(rec)
-	h := srv.handler()
+	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Mailer()) = apidserver.NewMailerAdapter(rec)
+	h := srv.Handler()
 
 	form := url.Values{"email": {email}, "password": {password}}
 	req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
@@ -308,12 +309,12 @@ func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 	// The session cookie is the authentication contract now.
 	var gotSession bool
 	for _, c := range recHTTP.Result().Cookies() {
-		if c.Name == sessionCookie && c.Value != "" {
+		if c.Name == apidserver.SessionCookie && c.Value != "" {
 			gotSession = true
 		}
 	}
 	if !gotSession {
-		t.Errorf("expected %s session cookie to be set on /login", sessionCookie)
+		t.Errorf("expected %s session cookie to be set on /login", apidserver.SessionCookie)
 	}
 
 	// No login email should ever be dispatched.

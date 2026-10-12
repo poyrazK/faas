@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,38 +10,39 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestPlatformTenantSelfCredentialManagementIsPolicyBoundAndRedacted(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "self-credentials", "Self credentials", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "self-credentials", "Self credentials", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "other-self-credentials", "Other tenant", 250)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "other-self-credentials", "Other tenant", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	appID := mustSeedApp(t, e, "self-credentials-app")
-	consumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, "self-customer", "Self customer")
+	appID := apidserver.MustSeedApp(t, e, "self-credentials-app")
+	consumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, "self-customer", "Self customer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, tenant.ID, consumer.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, tenant.ID, consumer.ID); err != nil {
 		t.Fatal(err)
 	}
-	otherConsumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, "other-customer", "Other customer")
+	otherConsumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, "other-customer", "Other customer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, otherTenant.ID, otherConsumer.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, otherTenant.ID, otherConsumer.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	createToken := func(name, scope string) api.CreatePlatformTenantAccessTokenResponse {
 		t.Helper()
-		created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+		created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 			api.CreatePlatformTenantAccessTokenRequest{Name: name, Scopes: []string{scope}}, nil)
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create %s token: %d %s", scope, created.Code, created.Body)
@@ -69,7 +70,7 @@ func TestPlatformTenantSelfCredentialManagementIsPolicyBoundAndRedacted(t *testi
 		req := httptest.NewRequest(method, path, reader)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	consumers := request(readToken.Token, http.MethodGet, "/v1/platform-tenant-self/consumers", nil)
@@ -91,7 +92,7 @@ func TestPlatformTenantSelfCredentialManagementIsPolicyBoundAndRedacted(t *testi
 		t.Fatalf("default-disabled policy status=%d body=%s", denied.Code, denied.Body)
 	}
 
-	if _, err := e.store.SetPlatformTenantCredentialPolicy(ctx, e.acct.ID, tenant.ID, []string{"read"}, 1); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantCredentialPolicy(ctx, (*e.Acct()).ID, tenant.ID, []string{"read"}, 1); err != nil {
 		t.Fatal(err)
 	}
 	created := request(manageToken.Token, http.MethodPost, "/v1/platform-tenant-self/credentials/apply", input)
@@ -141,7 +142,7 @@ func TestPlatformTenantSelfCredentialManagementIsPolicyBoundAndRedacted(t *testi
 		t.Fatalf("tenant token reached account/other-tenant route: %d %s", denied.Code, denied.Body)
 	}
 
-	if _, err := e.store.SetPlatformTenantCredentialPolicy(ctx, e.acct.ID, tenant.ID, nil, 0); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantCredentialPolicy(ctx, (*e.Acct()).ID, tenant.ID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	revoked := request(manageToken.Token, http.MethodPost, "/v1/platform-tenant-self/credentials/apply",

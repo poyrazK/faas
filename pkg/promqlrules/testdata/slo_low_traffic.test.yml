@@ -58,8 +58,13 @@ tests:
         alertname: FaasSLOBurnRateHigh
 
   - interval: 30s
-    name: "500 502 503 and 504 traffic consumes availability"
+    name: "platform-produced 500 502 503 and 504 traffic consumes availability"
     input_series:
+      # gatewayd-internal counts the platform's own 5xx (not app-authored
+      # ones) in gateway_platform_errors_total; availability is measured
+      # from that series (H9-119).
+      - series: 'gateway_platform_errors_total{app="low-volume",plan="scale"}'
+        values: '0+6x50'
       - series: 'gateway_requests_total{code="200",app="low-volume"}'
         values: '0+1x50'
       - series: 'gateway_requests_total{code="500",app="low-volume"}'
@@ -80,13 +85,15 @@ tests:
               family: api_availability
             exp_annotations:
               summary: "API availability < 99.5% (rolling 5m)"
-              description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
+              description: "The share of eligible requests the platform answered (everything except platform-produced 5xx) over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
   - interval: 30s
     name: "all-5xx traffic is unavailable rather than idle"
     input_series:
       - series: 'gateway_requests_total{code="500",app="failed-only"}'
+        values: '0+1x70'
+      - series: 'gateway_platform_errors_total{app="failed-only",plan="scale"}'
         values: '0+1x70'
     promql_expr_test:
       - expr: '(((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) * 100) and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0) or vector(100)'
@@ -104,7 +111,7 @@ tests:
               family: api_availability
             exp_annotations:
               summary: "API availability < 99.5% (rolling 5m)"
-              description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
+              description: "The share of eligible requests the platform answered (everything except platform-produced 5xx) over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
       - eval_time: 15m
         alertname: FaasApiAvailabilityBurnRateHigh
@@ -115,7 +122,7 @@ tests:
               family: api_availability
             exp_annotations:
               summary: "API availability is consuming its monthly error budget rapidly"
-              description: "The API error rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+              description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
       - eval_time: 25m
         alertname: FaasSLOBurnRateHigh

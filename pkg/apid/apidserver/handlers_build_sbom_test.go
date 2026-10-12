@@ -11,7 +11,7 @@
 // `package main` file that reaches into the private `s.sbomRoot`
 // field directly so we can stage a per-test tempdir as the SBOM
 // root without standing up a full StorageBackend.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 )
@@ -51,13 +52,13 @@ func sbomTestServer(t *testing.T, sbomRoot string) (h http.Handler, key string, 
 	if _, err = store.CreateAPIKey(context.Background(), acct.ID, hash, "sbom-test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	backend, err := artifactstorage.NewLocalStorageBackend(sbomRoot)
 	if err != nil {
 		t.Fatalf("NewLocalStorageBackend: %v", err)
 	}
 	srv.WithSBOMRoot(sbomRoot).WithSBOMStorage(backend)
-	return srv.handler(), pt, store, acct
+	return srv.Handler(), pt, store, acct
 }
 
 // seedBuildForSBOM creates an app + deployment + build in `store`

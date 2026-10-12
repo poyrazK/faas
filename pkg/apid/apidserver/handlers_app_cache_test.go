@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,31 +28,31 @@ func (f *responseCachePurgeRecorderFake) CreateResponseCachePurge(_ context.Cont
 }
 
 func TestPurgeAppCacheUsesDurablePurgeStore(t *testing.T) {
-	e, notifier := newTestServerWithCapturingNotifier(t, api.PlanPro)
-	app := seedApp(t, e, "catalog")
-	store := &responseCachePurgeRecorderFake{Store: e.s.store}
-	e.s.store = store
-	e.s.notif = nil // the durable store commits the notification with the ledger row
+	e, notifier := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+	app := apidserver.SeedApp(t, e, "catalog")
+	store := &responseCachePurgeRecorderFake{Store: (*(*e.S()).Store())}
+	(*(*e.S()).Store()) = store
+	(*(*e.S()).Notif()) = nil // the durable store commits the notification with the ledger row
 	req := httptest.NewRequest(http.MethodDelete, "/v1/apps/catalog/cache?tag=Product%3A42", nil)
 	req.SetPathValue("slug", "catalog")
 	rec := httptest.NewRecorder()
-	e.s.purgeAppCache(rec, req, e.acct)
+	(*e.S()).PurgeAppCache(rec, req, (*e.Acct()))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %s; want 204", rec.Code, rec.Body.String())
 	}
 	if store.calls != 1 || store.appID != app.ID || store.pathGlob != "" || store.tag != "product:42" {
 		t.Fatalf("durable purge call = %+v; want app %s and normalized tag", store, app.ID)
 	}
-	notifier.mu.Lock()
-	defer notifier.mu.Unlock()
-	if len(notifier.emitted) != 0 {
-		t.Fatalf("notifier fallback emitted %v despite durable store", notifier.emitted)
+	(*notifier.Mu()).Lock()
+	defer (*notifier.Mu()).Unlock()
+	if len((*notifier.Emitted())) != 0 {
+		t.Fatalf("notifier fallback emitted %v despite durable store", (*notifier.Emitted()))
 	}
 }
 
 func TestPurgeAppCacheTagNotification(t *testing.T) {
-	e, notifier := newTestServerWithCapturingNotifier(t, api.PlanPro)
-	app := seedApp(t, e, "catalog")
+	e, notifier := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+	app := apidserver.SeedApp(t, e, "catalog")
 	for _, tc := range []struct {
 		query      string
 		wantStatus int
@@ -65,32 +66,32 @@ func TestPurgeAppCacheTagNotification(t *testing.T) {
 		{"tag=product%3A42&path=", http.StatusBadRequest, ""},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			notifier.mu.Lock()
-			notifier.emitted = nil
-			notifier.mu.Unlock()
+			(*notifier.Mu()).Lock()
+			(*notifier.Emitted()) = nil
+			(*notifier.Mu()).Unlock()
 			req := httptest.NewRequest(http.MethodDelete, "/v1/apps/catalog/cache?"+tc.query, nil)
 			req.SetPathValue("slug", "catalog")
 			rec := httptest.NewRecorder()
-			e.s.purgeAppCache(rec, req, e.acct)
+			(*e.S()).PurgeAppCache(rec, req, (*e.Acct()))
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
-			notifier.mu.Lock()
-			defer notifier.mu.Unlock()
+			(*notifier.Mu()).Lock()
+			defer (*notifier.Mu()).Unlock()
 			if tc.wantTag == "" {
-				if len(notifier.emitted) != 0 {
-					t.Errorf("invalid purge emitted %v", notifier.emitted)
+				if len((*notifier.Emitted())) != 0 {
+					t.Errorf("invalid purge emitted %v", (*notifier.Emitted()))
 				}
 				return
 			}
-			if len(notifier.emitted) != 1 || notifier.emitted[0].Channel != db.NotifyCachePurge {
-				t.Fatalf("notifications = %v", notifier.emitted)
+			if len((*notifier.Emitted())) != 1 || (*notifier.Emitted())[0].Channel != db.NotifyCachePurge {
+				t.Fatalf("notifications = %v", (*notifier.Emitted()))
 			}
 			var payload struct {
 				AppID string `json:"app_id"`
 				Tag   string `json:"tag"`
 			}
-			if err := json.Unmarshal([]byte(notifier.emitted[0].Payload), &payload); err != nil {
+			if err := json.Unmarshal([]byte((*notifier.Emitted())[0].Payload), &payload); err != nil {
 				t.Fatal(err)
 			}
 			if payload.AppID != app.ID || payload.Tag != tc.wantTag {

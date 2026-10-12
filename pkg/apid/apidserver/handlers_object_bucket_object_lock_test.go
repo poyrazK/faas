@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -12,20 +12,21 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 564
 func TestBucketObjectLockAuthorityMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	bucketObjectLockAuthority(t, e.s, e.store, e.acct)
+	e := apidserver.Setup(t, api.PlanPro)
+	bucketObjectLockAuthority(t, (*e.S()), (*e.Store()), (*e.Acct()))
 }
 func TestBucketObjectLockAuthorityPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	bucketObjectLockAuthority(t, e.s, e.store, e.acct)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	bucketObjectLockAuthority(t, (*e.S()), (*e.Store()), (*e.Acct()))
 }
-func bucketObjectLockAuthority(t *testing.T, s *server, st state.Store, account state.Account) {
+func bucketObjectLockAuthority(t *testing.T, s *apidserver.Server, st state.Store, account state.Account) {
 	var nativeCalls atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nativeCalls.Add(1)
@@ -35,7 +36,7 @@ func bucketObjectLockAuthority(t *testing.T, s *server, st state.Store, account 
 	defer upstream.Close()
 	_, b, _, policy := seedEncryptionJournalStorage(t, s, st, account, upstream.URL)
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{Enabled: true}))
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/encrypted-journal/buckets/" + b.ID + "/object-lock"
@@ -44,7 +45,7 @@ func bucketObjectLockAuthority(t *testing.T, s *server, st state.Store, account 
 		r.Header.Set("Authorization", "Bearer "+bearer)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		s.handler().ServeHTTP(w, r)
+		s.Handler().ServeHTTP(w, r)
 		return w
 	}
 	plain, hash, err := api.GenerateAPIKey()

@@ -79,7 +79,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 // the per-runtime counterpart to the hermetic
 // TestParity_AllRuntimesHonorWaitUntil file-walk. A fake handler
 // writes a JSONL line to the tail pipe before returning; the
-// runner's drainTailHost reads the pipe after invokeHandler returns.
+// runner core (internal.Serve) drains the pipe after the handler returns.
 // The response envelope stays intact (status=200, body unchanged).
 // The 0x04 DGRAM emit fails in unit tests (the proxy isn't running)
 // — that's expected; the runner keeps draining.

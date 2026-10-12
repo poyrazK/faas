@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -94,23 +96,23 @@ func (f *conditionalGCSWire) serve(w http.ResponseWriter, r *http.Request) {
 
 // adr: 955
 func TestConditionalGCSCLIJourneyMem(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	conditionalGCSCLIJourney(t, e.s, e.store, e.acct, e.key)
+	e := apidserver.Setup(t, api.PlanScale)
+	conditionalGCSCLIJourney(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()))
 }
 
 // adr: 955
 func TestConditionalGCSCLIJourneyPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanScale)
-	conditionalGCSCLIJourney(t, e.s, e.store, e.acct, e.key)
+	e := apidserver.SetupPGHandler(t, api.PlanScale)
+	conditionalGCSCLIJourney(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()))
 }
 
-func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account state.Account, bearer string) {
+func conditionalGCSCLIJourney(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, bearer string) {
 	t.Helper()
 	cli := os.Getenv("GREGALE_OBJECT_STORAGE_E2E_CLI")
 	if cli == "" {
 		t.Skip("built CLI required: GREGALE_OBJECT_STORAGE_E2E_CLI")
 	}
-	identity, teardown := withTestIdentities(t)
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &conditionalGCSWire{}
 	provider := httptest.NewServer(http.HandlerFunc(native.serve))
@@ -162,7 +164,7 @@ func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account s
 		t.Fatal(err)
 	}
 	s.WithObjectStorage(registry)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	backend, _ := registry.Default("us-east-1")
@@ -199,7 +201,7 @@ func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account s
 	}
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := httptest.NewRecorder()
-		s.handler().ServeHTTP(out, r)
+		s.Handler().ServeHTTP(out, r)
 		for k, v := range out.Header() {
 			w.Header()[k] = v
 		}

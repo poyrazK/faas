@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,15 +7,16 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "dlq-app")
-	invocationID := seedDeadLetterRow(t, e, appID, "poisoned")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "dlq-app")
+	invocationID := apidserver.SeedDeadLetterRow(t, e, appID, "poisoned")
 
-	list := e.do(t, http.MethodGet, "/v1/apps/dlq-app/dlq", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/apps/dlq-app/dlq", nil, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("list status = %d; body=%s", list.Code, list.Body.String())
 	}
@@ -34,12 +35,12 @@ func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
 		t.Errorf("payload = %s, want original queue payload", event.Payload)
 	}
 
-	inspect := e.do(t, http.MethodGet, "/v1/apps/dlq-app/dlq/"+event.ID, nil, nil)
+	inspect := e.Do(t, http.MethodGet, "/v1/apps/dlq-app/dlq/"+event.ID, nil, nil)
 	if inspect.Code != http.StatusOK {
 		t.Fatalf("inspect status = %d; body=%s", inspect.Code, inspect.Body.String())
 	}
 
-	replay := e.do(t, http.MethodPost, "/v1/apps/dlq-app/dlq/"+event.ID+"/replay", nil,
+	replay := e.Do(t, http.MethodPost, "/v1/apps/dlq-app/dlq/"+event.ID+"/replay", nil,
 		map[string]string{"Idempotency-Key": "unified-dlq-replay-1"})
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("replay status = %d; body=%s", replay.Code, replay.Body.String())
@@ -52,7 +53,7 @@ func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
 		t.Fatal("replayed_at = nil, want replay timestamp")
 	}
 
-	inv, err := e.store.InvocationByID(t.Context(), invocationID)
+	inv, err := (*e.Store()).InvocationByID(t.Context(), invocationID)
 	if err != nil {
 		t.Fatalf("InvocationByID: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
 		t.Fatalf("source after replay = state %q attempts %d, want pending/0", inv.State, inv.Attempts)
 	}
 
-	listAfterReplay := e.do(t, http.MethodGet, "/v1/apps/dlq-app/dlq", nil, nil)
+	listAfterReplay := e.Do(t, http.MethodGet, "/v1/apps/dlq-app/dlq", nil, nil)
 	if listAfterReplay.Code != http.StatusOK {
 		t.Fatalf("list after replay status = %d; body=%s", listAfterReplay.Code, listAfterReplay.Body.String())
 	}
@@ -74,12 +75,12 @@ func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
 }
 
 func TestUnifiedDeadLetter_AppScopePreventsCrossAppRead(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	ownerAppID := mustSeedApp(t, e, "dlq-owner")
-	mustSeedApp(t, e, "dlq-other")
-	seedDeadLetterRow(t, e, ownerAppID, "owner-only")
+	e := apidserver.Setup(t, api.PlanPro)
+	ownerAppID := apidserver.MustSeedApp(t, e, "dlq-owner")
+	apidserver.MustSeedApp(t, e, "dlq-other")
+	apidserver.SeedDeadLetterRow(t, e, ownerAppID, "owner-only")
 
-	ownerPage := e.do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq", nil, nil)
+	ownerPage := e.Do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq", nil, nil)
 	if ownerPage.Code != http.StatusOK {
 		t.Fatalf("owner list status = %d; body=%s", ownerPage.Code, ownerPage.Body.String())
 	}
@@ -91,19 +92,19 @@ func TestUnifiedDeadLetter_AppScopePreventsCrossAppRead(t *testing.T) {
 		t.Fatalf("owner events = %d, want 1", len(page.Events))
 	}
 
-	crossApp := e.do(t, http.MethodGet, "/v1/apps/dlq-other/dlq/"+page.Events[0].ID, nil, nil)
+	crossApp := e.Do(t, http.MethodGet, "/v1/apps/dlq-other/dlq/"+page.Events[0].ID, nil, nil)
 	if crossApp.Code != http.StatusNotFound {
 		t.Fatalf("cross-app inspect status = %d, want 404; body=%s", crossApp.Code, crossApp.Body.String())
 	}
 }
 
 func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "dlq-operator")
-	first := seedDeadLetterRow(t, e, appID, "first")
-	second := seedDeadLetterRow(t, e, appID, "second")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "dlq-operator")
+	first := apidserver.SeedDeadLetterRow(t, e, appID, "first")
+	second := apidserver.SeedDeadLetterRow(t, e, appID, "second")
 
-	replay := e.do(t, http.MethodPost, "/v1/apps/dlq-operator/dlq:replay_all?limit=1", nil,
+	replay := e.Do(t, http.MethodPost, "/v1/apps/dlq-operator/dlq:replay_all?limit=1", nil,
 		map[string]string{"Idempotency-Key": "unified-dlq-replay-all-1"})
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("replay-all status = %d; body=%s", replay.Code, replay.Body.String())
@@ -116,7 +117,7 @@ func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
 		t.Fatalf("replayed = %d, want 1", batch.Replayed)
 	}
 
-	page := e.do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq", nil, nil)
+	page := e.Do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq", nil, nil)
 	var events api.DeadLetterEventsResponse
 	if err := json.Unmarshal(page.Body.Bytes(), &events); err != nil {
 		t.Fatalf("decode page: %v", err)
@@ -138,23 +139,23 @@ func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
 	if purgeID == "" {
 		t.Fatal("replay-all unexpectedly replayed both sources")
 	}
-	purge := e.do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq/"+purgeID, nil,
+	purge := e.Do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq/"+purgeID, nil,
 		map[string]string{"Idempotency-Key": "unified-dlq-purge-1"})
 	if purge.Code != http.StatusNoContent {
 		t.Fatalf("purge status = %d; body=%s", purge.Code, purge.Body.String())
 	}
-	inspect := e.do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq/"+purgeID, nil, nil)
+	inspect := e.Do(t, http.MethodGet, "/v1/apps/dlq-operator/dlq/"+purgeID, nil, nil)
 	if inspect.Code != http.StatusNotFound {
 		t.Fatalf("purged inspect status = %d, want 404; body=%s", inspect.Code, inspect.Body.String())
 	}
-	inv, err := e.store.InvocationByID(t.Context(), purgeSourceID)
+	inv, err := (*e.Store()).InvocationByID(t.Context(), purgeSourceID)
 	if err != nil {
 		t.Fatalf("source after purge: %v", err)
 	}
 	if inv.State != state.InvocationDeadLetter {
 		t.Fatalf("source after purge = %q, want dead_letter", inv.State)
 	}
-	bulk := e.do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq?limit=10", nil,
+	bulk := e.Do(t, http.MethodDelete, "/v1/apps/dlq-operator/dlq?limit=10", nil,
 		map[string]string{"Idempotency-Key": "unified-dlq-purge-all-1"})
 	if bulk.Code != http.StatusOK {
 		t.Fatalf("bulk purge status = %d; body=%s", bulk.Code, bulk.Body.String())
@@ -171,11 +172,11 @@ func TestUnifiedDeadLetter_ReplayAllAndPurge(t *testing.T) {
 }
 
 func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "account-dlq-app")
-	eventSourceID := seedDeadLetterRow(t, e, appID, "account-scoped")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "account-dlq-app")
+	eventSourceID := apidserver.SeedDeadLetterRow(t, e, appID, "account-scoped")
 
-	list := e.do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("account list status = %d; body=%s", list.Code, list.Body.String())
 	}
@@ -188,12 +189,12 @@ func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
 	}
 	eventID := page.Events[0].ID
 
-	inspect := e.do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
+	inspect := e.Do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
 	if inspect.Code != http.StatusOK {
 		t.Fatalf("account inspect status = %d; body=%s", inspect.Code, inspect.Body.String())
 	}
 
-	replay := e.do(t, http.MethodPost, "/v1/account/dlq/"+eventID+"/replay", nil,
+	replay := e.Do(t, http.MethodPost, "/v1/account/dlq/"+eventID+"/replay", nil,
 		map[string]string{"Idempotency-Key": "account-dlq-replay-1"})
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("account replay status = %d; body=%s", replay.Code, replay.Body.String())
@@ -205,7 +206,7 @@ func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
 	if replayed.ReplayedAt == nil || replayed.AppSlug != "account-dlq-app" {
 		t.Fatalf("account replay = %+v, want replay timestamp and app slug", replayed)
 	}
-	inv, err := e.store.InvocationByID(t.Context(), eventSourceID)
+	inv, err := (*e.Store()).InvocationByID(t.Context(), eventSourceID)
 	if err != nil {
 		t.Fatalf("InvocationByID: %v", err)
 	}
@@ -213,19 +214,19 @@ func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
 		t.Fatalf("source after account replay = %q, want pending", inv.State)
 	}
 
-	delete := e.do(t, http.MethodDelete, "/v1/account/dlq/"+eventID, nil,
+	delete := e.Do(t, http.MethodDelete, "/v1/account/dlq/"+eventID, nil,
 		map[string]string{"Idempotency-Key": "account-dlq-delete-1"})
 	if delete.Code != http.StatusNoContent {
 		t.Fatalf("account delete status = %d; body=%s", delete.Code, delete.Body.String())
 	}
-	missing := e.do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
+	missing := e.Do(t, http.MethodGet, "/v1/account/dlq/"+eventID, nil, nil)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("deleted account event status = %d, want 404", missing.Code)
 	}
 
-	seedDeadLetterRow(t, e, appID, "account-batch-1")
-	seedDeadLetterRow(t, e, appID, "account-batch-2")
-	replayAll := e.do(t, http.MethodPost, "/v1/account/dlq:replay_all?limit=1", nil,
+	apidserver.SeedDeadLetterRow(t, e, appID, "account-batch-1")
+	apidserver.SeedDeadLetterRow(t, e, appID, "account-batch-2")
+	replayAll := e.Do(t, http.MethodPost, "/v1/account/dlq:replay_all?limit=1", nil,
 		map[string]string{"Idempotency-Key": "account-dlq-replay-all-1"})
 	if replayAll.Code != http.StatusAccepted {
 		t.Fatalf("account replay-all status = %d; body=%s", replayAll.Code, replayAll.Body.String())
@@ -234,7 +235,7 @@ func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
 	if err := json.Unmarshal(replayAll.Body.Bytes(), &replayBatch); err != nil || replayBatch.Replayed != 1 {
 		t.Fatalf("account replay-all = %+v, err=%v", replayBatch, err)
 	}
-	purgeAll := e.do(t, http.MethodDelete, "/v1/account/dlq?limit=10", nil,
+	purgeAll := e.Do(t, http.MethodDelete, "/v1/account/dlq?limit=10", nil,
 		map[string]string{"Idempotency-Key": "account-dlq-purge-all-1"})
 	if purgeAll.Code != http.StatusOK {
 		t.Fatalf("account purge-all status = %d; body=%s", purgeAll.Code, purgeAll.Body.String())
@@ -246,17 +247,17 @@ func TestAccountUnifiedDeadLetter_AccountScopeReplayAndPurge(t *testing.T) {
 }
 
 func TestAccountUnifiedDeadLetter_PreventsCrossAccountRead(t *testing.T) {
-	owner := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, owner, "account-dlq-owner")
-	seedDeadLetterRow(t, owner, appID, "owner-only")
-	page := owner.do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
+	owner := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, owner, "account-dlq-owner")
+	apidserver.SeedDeadLetterRow(t, owner, appID, "owner-only")
+	page := owner.Do(t, http.MethodGet, "/v1/account/dlq", nil, nil)
 	var events api.AccountDeadLetterEventsResponse
 	if err := json.Unmarshal(page.Body.Bytes(), &events); err != nil || len(events.Events) != 1 {
 		t.Fatalf("owner account events = %+v, err=%v", events.Events, err)
 	}
 
-	foreign := setup(t, api.PlanPro)
-	probe := foreign.do(t, http.MethodGet, "/v1/account/dlq/"+events.Events[0].ID, nil, nil)
+	foreign := apidserver.Setup(t, api.PlanPro)
+	probe := foreign.Do(t, http.MethodGet, "/v1/account/dlq/"+events.Events[0].ID, nil, nil)
 	if probe.Code != http.StatusNotFound {
 		t.Fatalf("cross-account account DLQ status = %d, want 404; body=%s", probe.Code, probe.Body.String())
 	}
@@ -272,10 +273,10 @@ func (pgDeadLetterIDStore) DeadLetterEventByID(context.Context, string, string) 
 // production-us hunt #4: `dlq inspect <app> not-an-id` returned 500 Internal
 // Error on Postgres, which rejects a non-UUID event id before the lookup.
 func TestUnifiedDeadLetter_MalformedIDIsNotFound(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "dlq-owner")
-	e.s.store = pgDeadLetterIDStore{MemStore: e.store}
-	rec := e.do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq/not-an-id", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "dlq-owner")
+	(*(*e.S()).Store()) = pgDeadLetterIDStore{MemStore: (*e.Store())}
+	rec := e.Do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq/not-an-id", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("malformed id status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}

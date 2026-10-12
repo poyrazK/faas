@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,25 +8,26 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetLatestAppDeploymentReturnsNewest(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	first := mustSeedDeployment(t, e, "latest-app")
-	app, err := e.store.AppBySlug(context.Background(), "latest-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	first := apidserver.MustSeedDeployment(t, e, "latest-app")
+	app, err := (*e.Store()).AppBySlug(context.Background(), "latest-app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest, err := e.store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, ImageDigest: "sha256:" + repeat("a", 64), Kind: state.DeploymentKindImage,
+	latest, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + apidserver.Repeat("a", 64), Kind: state.DeploymentKindImage,
 		Status: state.DeployLive, CreatedAt: first.CreatedAt.Add(time.Second),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/latest-app/deployments/latest", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/latest-app/deployments/latest", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -40,21 +41,21 @@ func TestGetLatestAppDeploymentReturnsNewest(t *testing.T) {
 }
 
 func TestGetLatestAppDeploymentNeverDeployedReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "never-deployed")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "never-deployed")
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/never-deployed/deployments/latest", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/never-deployed/deployments/latest", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 func TestGetLatestAppDeploymentForeignAppReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	foreign, err := e.store.CreateAccount(context.Background(), "foreign-latest@example.com", api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
+	foreign, err := (*e.Store()).CreateAccount(context.Background(), "foreign-latest@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustSeedAppFor(t, e.store, foreign.ID, "foreign-latest")
+	apidserver.MustSeedAppFor(t, (*e.Store()), foreign.ID, "foreign-latest")
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/foreign-latest/deployments/latest", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/foreign-latest/deployments/latest", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }

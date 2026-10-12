@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 361 — extra egress ports are Pro/Scale only, never forbidden ports,
@@ -33,12 +34,12 @@ func TestUpdateAppEgressPorts(t *testing.T) {
 		{name: "clear", plan: api.PlanPro, ports: []int{}, wantStatus: 200, wantPorts: []int{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, tc.plan)
-			mustSeedApp(t, e, "ports")
+			e := apidserver.Setup(t, tc.plan)
+			apidserver.MustSeedApp(t, e, "ports")
 			ports := tc.ports
-			rec := e.do(t, "PATCH", "/v1/apps/ports", api.UpdateAppRequest{EgressPorts: &ports}, nil)
+			rec := e.Do(t, "PATCH", "/v1/apps/ports", api.UpdateAppRequest{EgressPorts: &ports}, nil)
 			if tc.wantCode != "" {
-				assertProblem(t, rec, tc.wantStatus, tc.wantCode)
+				apidserver.AssertProblem(t, rec, tc.wantStatus, tc.wantCode)
 				return
 			}
 			if rec.Code != tc.wantStatus {
@@ -57,14 +58,14 @@ func TestUpdateAppEgressPorts(t *testing.T) {
 
 // Omitting egress_ports leaves the stored list untouched.
 func TestUpdateAppEgressPorts_OmittedKeepsValue(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "ports-keep")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "ports-keep")
 	ports := []int{5432}
-	if rec := e.do(t, "PATCH", "/v1/apps/ports-keep", api.UpdateAppRequest{EgressPorts: &ports}, nil); rec.Code != 200 {
+	if rec := e.Do(t, "PATCH", "/v1/apps/ports-keep", api.UpdateAppRequest{EgressPorts: &ports}, nil); rec.Code != 200 {
 		t.Fatalf("set: status %d: %s", rec.Code, rec.Body)
 	}
 	one := 1
-	rec := e.do(t, "PATCH", "/v1/apps/ports-keep", api.UpdateAppRequest{MinInstances: &one}, nil)
+	rec := e.Do(t, "PATCH", "/v1/apps/ports-keep", api.UpdateAppRequest{MinInstances: &one}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("unrelated patch: status %d: %s", rec.Code, rec.Body)
 	}

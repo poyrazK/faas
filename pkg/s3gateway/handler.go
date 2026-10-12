@@ -400,8 +400,9 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	// Bucket operations from the JavaScript SDK use /bucket/. Preserve the
-	// original URI for SigV4; only classify its empty final segment here.
+	// AWS JavaScript path-style bucket operations use /bucket/ (H9-132).
+	// Preserve the original URI for SigV4; classify its empty final segment
+	// as the bucket itself because S3 has no empty key.
 	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const (
@@ -140,10 +142,10 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
+			e := apidserver.Setup(t, api.PlanPro)
 			ctx := context.Background()
-			app, err := e.store.CreateApp(ctx, state.App{
-				AccountID: e.acct.ID,
+			app, err := (*e.Store()).CreateApp(ctx, state.App{
+				AccountID: (*e.Acct()).ID,
 				Slug:      "cb-drill-" + string(rune('a'+i)),
 				RAMMB:     256,
 				Status:    state.AppActive,
@@ -151,17 +153,17 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stable, err := e.store.CreateDeployment(ctx, state.Deployment{
+			stable, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 				AppID:       app.ID,
 				ImageDigest: "sha256:drill-stable",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := e.store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+			if err := (*e.Store()).MarkDeploymentLive(ctx, stable.ID); err != nil {
 				t.Fatal(err)
 			}
-			candidate, err := e.store.CreateDeployment(ctx, state.Deployment{
+			candidate, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 				AppID:            app.ID,
 				ImageDigest:      "sha256:drill-candidate",
 				CanaryPreset:     "balanced",
@@ -173,12 +175,12 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := e.store.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+			if err := (*e.Store()).MarkDeploymentLive(ctx, candidate.ID); err != nil {
 				t.Fatal(err)
 			}
 
 			now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-			if err := e.store.SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, now.Add(-time.Hour), "rolling_out"); err != nil {
+			if err := (*e.Store()).SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, now.Add(-time.Hour), "rolling_out"); err != nil {
 				t.Fatal(err)
 			}
 			observation := canary.CircuitBreakerObservation{
@@ -221,7 +223,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			}
 
 			mux := http.NewServeMux()
-			if err := e.s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", circuitBreakerDrillCanaryToken, circuitBreakerDrillActionToken); err != nil {
+			if err := (*e.S()).MountInternalSafeDeploy(mux, "127.0.0.1:9101", circuitBreakerDrillCanaryToken, circuitBreakerDrillActionToken); err != nil {
 				t.Fatal(err)
 			}
 			internalServer := httptest.NewServer(mux)
@@ -232,7 +234,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			progression.Now = func() time.Time { return now }
 			// The production worker renews its lease before every check, including
 			// the early route recovery check ahead of aggregate evaluation.
-			if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+			if err := (*e.Store()).StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
 				t.Fatal(err)
 			}
 
@@ -245,11 +247,11 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if stats.CircuitBreakerAborted != 1 || stats.Advanced != 0 || stats.Errors != 0 {
 					t.Fatalf("abort drill stats = %+v; want one abort, no advance/error", stats)
 				}
-				gotCandidate, err := e.store.DeploymentByID(ctx, candidate.ID)
+				gotCandidate, err := (*e.Store()).DeploymentByID(ctx, candidate.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				gotStable, err := e.store.DeploymentByID(ctx, stable.ID)
+				gotStable, err := (*e.Store()).DeploymentByID(ctx, stable.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -259,7 +261,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if gotStable.TrafficPercent != 100 {
 					t.Fatalf("predecessor traffic after abort = %d, want 100", gotStable.TrafficPercent)
 				}
-				audits, err := e.store.ListDeploymentAudit(ctx, candidate.ID, 10)
+				audits, err := (*e.Store()).ListDeploymentAudit(ctx, candidate.ID, 10)
 				if err != nil || len(audits) != 1 || audits[0].Kind != state.DeployRolledBack {
 					t.Fatalf("candidate rollback audits = %+v, err=%v; want one deploy.rolled_back audit", audits, err)
 				}
@@ -277,11 +279,11 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if replayed.Deployment.ID != candidate.ID || replayed.Deployment.RolloutState != "aborted" || replayed.Deployment.TrafficPercent != 0 {
 					t.Fatalf("replayed recovery deployment = %+v; want same aborted candidate", replayed.Deployment)
 				}
-				gotStable, err = e.store.DeploymentByID(ctx, stable.ID)
+				gotStable, err = (*e.Store()).DeploymentByID(ctx, stable.ID)
 				if err != nil || gotStable.TrafficPercent != 100 {
 					t.Fatalf("predecessor traffic after replay = %d, err=%v; want 100", gotStable.TrafficPercent, err)
 				}
-				audits, err = e.store.ListDeploymentAudit(ctx, candidate.ID, 10)
+				audits, err = (*e.Store()).ListDeploymentAudit(ctx, candidate.ID, 10)
 				if err != nil || len(audits) != 1 {
 					t.Fatalf("candidate rollback audits after replay = %+v, err=%v; want the single original audit", audits, err)
 				}
@@ -289,11 +291,11 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if stats.SkippedCircuitBreaker != 1 || stats.CircuitBreakerAborted != 0 || stats.Advanced != 0 {
 					t.Fatalf("hold drill stats = %+v; want held with no advance/abort", stats)
 				}
-				gotCandidate, err := e.store.DeploymentByID(ctx, candidate.ID)
+				gotCandidate, err := (*e.Store()).DeploymentByID(ctx, candidate.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				gotStable, err := e.store.DeploymentByID(ctx, stable.ID)
+				gotStable, err := (*e.Store()).DeploymentByID(ctx, stable.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -304,11 +306,11 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 				if stats.Advanced != 1 || stats.CircuitBreakerAborted != 0 || stats.Errors != 0 {
 					t.Fatalf("healthy drill stats = %+v; want one advance and no abort/error", stats)
 				}
-				gotCandidate, err := e.store.DeploymentByID(ctx, candidate.ID)
+				gotCandidate, err := (*e.Store()).DeploymentByID(ctx, candidate.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				gotStable, err := e.store.DeploymentByID(ctx, stable.ID)
+				gotStable, err := (*e.Store()).DeploymentByID(ctx, stable.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -321,7 +323,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 					t.Fatalf("event %q counter = %g, want 1", tc.wantEvent, got)
 				}
 			}
-			live, err := e.store.LiveDeployments(ctx, app.ID)
+			live, err := (*e.Store()).LiveDeployments(ctx, app.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -10,7 +10,7 @@
 // The cache is process-local; the test resets it between runs so
 // state from a sibling test does not bleed in.
 
-package apidserver
+package apidserver_test
 
 import (
 	"os"
@@ -19,18 +19,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 func resetBuildPlanCache(t *testing.T) {
 	t.Helper()
-	buildPlanCacheOnce = sync.Once{}
-	planCache = nil
+	(*apidserver.BuildPlanCacheOnce) = sync.Once{}
+	(*apidserver.PlanCache) = nil
 }
 
 func TestGetCachedBuildPlan_EmptyPath(t *testing.T) {
 	resetBuildPlanCache(t)
-	fw, ver := getCachedBuildPlan("")
+	fw, ver := apidserver.GetCachedBuildPlan("")
 	if fw != markers.FrameworkUnknown || ver != "" {
 		t.Errorf("empty path: got (%q, %q), want (unknown, \"\")", fw, ver)
 	}
@@ -38,7 +39,7 @@ func TestGetCachedBuildPlan_EmptyPath(t *testing.T) {
 
 func TestGetCachedBuildPlan_MissingFile(t *testing.T) {
 	resetBuildPlanCache(t)
-	fw, ver := getCachedBuildPlan("/no/such/path/garbage.tar.gz")
+	fw, ver := apidserver.GetCachedBuildPlan("/no/such/path/garbage.tar.gz")
 	if fw != markers.FrameworkUnknown || ver != "" {
 		t.Errorf("missing path: got (%q, %q), want (unknown, \"\")", fw, ver)
 	}
@@ -56,17 +57,18 @@ func TestGetCachedBuildPlan_CachesAcrossCalls(t *testing.T) {
 	// DetectFromTarball returns unknown for an invalid tarball,
 	// which it does — see pkg/markers/detect.go).
 	for i := 0; i < 2; i++ {
-		fw, _ := getCachedBuildPlan(path)
+		fw, _ := apidserver.GetCachedBuildPlan(path)
 		if fw != markers.FrameworkUnknown {
 			t.Errorf("call %d: expected unknown for invalid tarball, got %q", i, fw)
 		}
 	}
+	(*(
 	// Cache must be populated after the first call.
-	planCache.mu.Lock()
-	if _, ok := planCache.entries[path]; !ok {
+	*apidserver.PlanCache).Mu()).Lock()
+	if _, ok := (*(*apidserver.PlanCache).Entries())[path]; !ok {
 		t.Errorf("expected cache entry after first call")
 	}
-	planCache.mu.Unlock()
+	(*(*apidserver.PlanCache).Mu()).Unlock()
 }
 
 func TestGetCachedBuildPlan_MtimeInvalidates(t *testing.T) {
@@ -81,23 +83,24 @@ func TestGetCachedBuildPlan_MtimeInvalidates(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 	// First call populates the cache with mtime=initial.
-	_, _ = getCachedBuildPlan(path)
+	_, _ = apidserver.GetCachedBuildPlan(path)
 
 	// Rewrite the file with a newer mtime — should invalidate.
 	newer := initial.Add(time.Minute)
 	if err := os.Chtimes(path, newer, newer); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	_, _ = getCachedBuildPlan(path)
+	_, _ = apidserver.GetCachedBuildPlan(path)
+	(*(*
 
 	// Confirm the cache holds the newer mtime.
-	planCache.mu.Lock()
-	e, ok := planCache.entries[path]
+	apidserver.PlanCache).Mu()).Lock()
+	e, ok := (*(*apidserver.PlanCache).Entries())[path]
 	if !ok {
 		t.Fatal("expected cache entry")
 	}
-	if !e.mtime.Equal(newer) {
-		t.Errorf("cache mtime = %v, want %v", e.mtime, newer)
+	if !(*e.Mtime()).Equal(newer) {
+		t.Errorf("cache mtime = %v, want %v", (*e.Mtime()), newer)
 	}
-	planCache.mu.Unlock()
+	(*(*apidserver.PlanCache).Mu()).Unlock()
 }

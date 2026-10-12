@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -33,14 +34,14 @@ func seedOperatorJobRun(t *testing.T, store *state.MemStore) (state.Account, sta
 }
 
 func TestOperatorJobsActiveAndInspectUseSafeBoundedProjection(t *testing.T) {
-	srv, store, cookie := newForceHarness(t, nil)
+	srv, store, cookie := apidserver.NewForceHarness(t, nil)
 	tenant, _, run := seedOperatorJobRun(t, store)
 
 	activeReq := httptest.NewRequest(http.MethodGet,
 		"/v1/admin/ops/jobs/runs?account_id="+tenant.ID+"&limit=10", nil)
 	activeReq.AddCookie(cookie)
 	activeRec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(activeRec, activeReq)
+	srv.Handler().ServeHTTP(activeRec, activeReq)
 	if activeRec.Code != http.StatusOK {
 		t.Fatalf("active status = %d; body=%s", activeRec.Code, activeRec.Body.String())
 	}
@@ -61,7 +62,7 @@ func TestOperatorJobsActiveAndInspectUseSafeBoundedProjection(t *testing.T) {
 		"/v1/admin/ops/jobs/runs/"+run.ID+"?task_limit=2", nil)
 	inspectReq.AddCookie(cookie)
 	inspectRec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(inspectRec, inspectReq)
+	srv.Handler().ServeHTTP(inspectRec, inspectReq)
 	if inspectRec.Code != http.StatusOK {
 		t.Fatalf("inspect status = %d; body=%s", inspectRec.Code, inspectRec.Body.String())
 	}
@@ -79,7 +80,7 @@ func TestOperatorJobsActiveAndInspectUseSafeBoundedProjection(t *testing.T) {
 
 func TestOperatorJobsCancelIsGuardedAuditedAndAtomic(t *testing.T) {
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
-	srv, store, cookie := newForceHarness(t, nil)
+	srv, store, cookie := apidserver.NewForceHarness(t, nil)
 	tenant, _, run := seedOperatorJobRun(t, store)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/ops/jobs/runs/"+run.ID+"/cancel?confirm=true&reason=jobs_queue_incident", nil)
@@ -87,7 +88,7 @@ func TestOperatorJobsCancelIsGuardedAuditedAndAtomic(t *testing.T) {
 	req.Header.Set("Idempotency-Key", "operator-job-cancel-test")
 	req.Header.Set("X-Trace-Id", traceID)
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d; body=%s", rec.Code, rec.Body.String())
 	}
@@ -129,14 +130,14 @@ func TestOperatorJobsCancelRequiresConfirmationAndReason(t *testing.T) {
 		{name: "reason", query: "confirm=true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, store, cookie := newForceHarness(t, nil)
+			srv, store, cookie := apidserver.NewForceHarness(t, nil)
 			_, _, run := seedOperatorJobRun(t, store)
 			req := httptest.NewRequest(http.MethodPost,
 				"/v1/admin/ops/jobs/runs/"+run.ID+"/cancel?"+tc.query, nil)
 			req.AddCookie(cookie)
 			req.Header.Set("Idempotency-Key", "operator-job-cancel-validation-"+tc.name)
 			rec := httptest.NewRecorder()
-			srv.handler().ServeHTTP(rec, req)
+			srv.Handler().ServeHTTP(rec, req)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 			}

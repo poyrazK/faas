@@ -1,9 +1,10 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -28,7 +29,7 @@ func TestAttachRequestAnalyticsRouteDeploymentObservationsAllocatesAndCompares(t
 		},
 	}
 
-	attachRequestAnalyticsRouteDeploymentObservations(routes, rows, 100)
+	apidserver.AttachRequestAnalyticsRouteDeploymentObservations(routes, rows, 100)
 
 	checkout := routes[0]
 	if len(checkout.DeploymentObservations) != 2 || checkout.OtherDeploymentRequests != 5 {
@@ -64,7 +65,7 @@ func TestAnnotateRouteDeploymentCPURegressionsSkipsAmbiguousAndSmallSamples(t *t
 		{DeploymentID: "small", DeploymentCreatedAt: "2026-03-02T12:00:00Z", GuestCPUAvgMS: cpu(30), GuestCPUMeasuredRequests: 19},
 	}
 
-	annotateRouteDeploymentCPURegressions(observations)
+	apidserver.AnnotateRouteDeploymentCPURegressions(observations)
 
 	for _, observation := range observations {
 		if observation.GuestCPUChangePct != nil || observation.GuestCPURegression {

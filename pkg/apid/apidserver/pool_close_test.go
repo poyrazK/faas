@@ -1,10 +1,11 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
@@ -27,7 +28,7 @@ func TestClosePoolAfterCancel_ReleasesContextBoundHolders(t *testing.T) {
 	<-held
 
 	done := make(chan struct{})
-	go func() { closePoolAfterCancel(cancel, pool); close(done) }()
+	go func() { apidserver.ClosePoolAfterCancel(cancel, pool); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

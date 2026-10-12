@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,20 +10,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
 	at := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	accountID := uuid.MustParse(e.acct.ID)
+	accountID := uuid.MustParse((*e.Acct()).ID)
 	ids := []uuid.UUID{
 		uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		uuid.MustParse("00000000-0000-0000-0000-000000000003"),
 		uuid.MustParse("00000000-0000-0000-0000-000000000002"),
 	}
 	for _, id := range ids {
-		if err := e.store.InsertAuditLog(context.Background(), state.AuditLog{
+		if err := (*e.Store()).InsertAuditLog(context.Background(), state.AuditLog{
 			ID:         id,
 			Kind:       "account.updated",
 			AccountID:  &accountID,
@@ -33,7 +34,7 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 		}
 	}
 
-	first := e.do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2", nil, nil)
+	first := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2", nil, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first page: got %d, body=%s", first.Code, first.Body.String())
 	}
@@ -48,7 +49,7 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 		t.Fatalf("first page order: got %q, %q", firstBody.Items[0].ID, firstBody.Items[1].ID)
 	}
 
-	second := e.do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2&before="+firstBody.NextBefore, nil, nil)
+	second := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2&before="+firstBody.NextBefore, nil, nil)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second page: got %d, body=%s", second.Code, second.Body.String())
 	}
@@ -65,8 +66,8 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 }
 
 func TestObsAuditLogSearchRejectsMalformedBeforeCursor(t *testing.T) {
-	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?before=not-a-cursor", nil, nil)
+	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
+	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?before=not-a-cursor", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed before: got %d, want 400", rec.Code)
 	}

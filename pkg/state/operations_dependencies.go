@@ -87,6 +87,7 @@ func (m *MemStore) projectRelatedWorkflowsLocked(page *api.OperationMilestonesRe
 			continue
 		}
 		state := record.State
+		state.ChangeReason = api.CloneOperationWorkflowChangeReason(state.ChangeReason)
 		state.DependsOn = append([]api.OperationWorkflowDependency(nil), state.DependsOn...)
 		state.Blockers = append([]api.OperationWorkflowBlocker(nil), state.Blockers...)
 		state.BlockerResolutions = append([]api.OperationWorkflowBlockerResolution(nil), state.BlockerResolutions...)

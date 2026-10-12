@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,52 +10,53 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantSelfConsumerProvisioningIsScopedBoundedAndRetrySafe(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "self-provisioning", "Self provisioning", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "self-provisioning", "Self provisioning", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	appID := mustSeedApp(t, e, "self-provisioning-app")
-	limits, ok := api.LimitsFor(e.acct.Plan)
+	appID := apidserver.MustSeedApp(t, e, "self-provisioning-app")
+	limits, ok := api.LimitsFor((*e.Acct()).Plan)
 	if !ok {
 		t.Fatal("missing account plan limits")
 	}
-	surface, err := e.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
-		AccountID: e.acct.ID, AppID: appID, Name: "provisioning-surface",
+	surface, err := (*e.Store()).CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: (*e.Acct()).ID, AppID: appID, Name: "provisioning-surface",
 	}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
+	if err := (*e.Store()).UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surface.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenant.ID, surface.ID); err != nil {
 		t.Fatal(err)
 	}
-	unlinkedSurface, err := e.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
-		AccountID: e.acct.ID, AppID: appID, Name: "unlinked-provisioning-surface",
+	unlinkedSurface, err := (*e.Store()).CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: (*e.Acct()).ID, AppID: appID, Name: "unlinked-provisioning-surface",
 	}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpdateTenantSurfaceStatus(ctx, unlinkedSurface.ID, state.SurfaceStatusActive); err != nil {
+	if err := (*e.Store()).UpdateTenantSurfaceStatus(ctx, unlinkedSurface.ID, state.SurfaceStatusActive); err != nil {
 		t.Fatal(err)
 	}
-	otherTenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "other-self-provisioning", "Other tenant", 250)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "other-self-provisioning", "Other tenant", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, otherTenant.ID, unlinkedSurface.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, otherTenant.ID, unlinkedSurface.ID); err != nil {
 		t.Fatal(err)
 	}
 	createToken := func(name, scope string) api.CreatePlatformTenantAccessTokenResponse {
 		t.Helper()
-		created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+		created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 			api.CreatePlatformTenantAccessTokenRequest{Name: name, Scopes: []string{scope}}, nil)
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create %s token: %d %s", scope, created.Code, created.Body)
@@ -77,7 +78,7 @@ func TestPlatformTenantSelfConsumerProvisioningIsScopedBoundedAndRetrySafe(t *te
 		req := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/consumers", bytes.NewReader(encoded))
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	input := api.CreatePlatformTenantSelfConsumerRequest{SurfaceID: surface.ID, ExternalRef: "external-42", Name: "Customer 42"}
@@ -87,7 +88,7 @@ func TestPlatformTenantSelfConsumerProvisioningIsScopedBoundedAndRetrySafe(t *te
 	if denied := request(read.Token, input); denied.Code != http.StatusForbidden {
 		t.Fatalf("read-only token created customer: %d %s", denied.Code, denied.Body)
 	}
-	if _, err := e.store.SetPlatformTenantConsumerProvisioningPolicy(ctx, e.acct.ID, tenant.ID, true, 1); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantConsumerProvisioningPolicy(ctx, (*e.Acct()).ID, tenant.ID, true, 1); err != nil {
 		t.Fatal(err)
 	}
 	created := request(manage.Token, input)
@@ -122,7 +123,7 @@ func TestPlatformTenantSelfConsumerProvisioningIsScopedBoundedAndRetrySafe(t *te
 	if rejected := request(manage.Token, unknown); rejected.Code != http.StatusBadRequest {
 		t.Fatalf("caller-selected app_id status=%d body=%s", rejected.Code, rejected.Body)
 	}
-	if _, err := e.store.SetPlatformTenantConsumerProvisioningPolicy(ctx, e.acct.ID, tenant.ID, false, 0); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantConsumerProvisioningPolicy(ctx, (*e.Acct()).ID, tenant.ID, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	if replay := request(manage.Token, input); replay.Code != http.StatusOK {

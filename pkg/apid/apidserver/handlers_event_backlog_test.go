@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 617
 
@@ -12,21 +12,22 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestEventBacklogAPIRecoveryCountsAndCursors(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	seedAPIReceipt(t, e)
 	// Same consumers, a second receipt: counts must exceed the recipient page.
-	published := e.do(t, "POST", "/v1/events:publish", api.PublishEventRequest{ID: "receipt-2", Source: "orders", Type: "created", Data: json.RawMessage(`{}`)}, nil)
+	published := e.Do(t, "POST", "/v1/events:publish", api.PublishEventRequest{ID: "receipt-2", Source: "orders", Type: "created", Data: json.RawMessage(`{}`)}, nil)
 	if published.Code != 202 {
 		t.Fatalf("publish=%d %s", published.Code, published.Body)
 	}
 	read := func(path string) api.EventBacklogResponse {
 		t.Helper()
-		rec := e.do(t, "GET", path, nil, nil)
+		rec := e.Do(t, "GET", path, nil, nil)
 		var result api.EventBacklogResponse
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &result) != nil || rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("backlog=%d %s", rec.Code, rec.Body)
@@ -44,12 +45,12 @@ func TestEventBacklogAPIRecoveryCountsAndCursors(t *testing.T) {
 	}
 	ctx := context.Background()
 	for range 3 {
-		claim, err := e.store.ClaimDuePublishedEventRecipient(ctx, time.Now())
+		claim, err := (*e.Store()).ClaimDuePublishedEventRecipient(ctx, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 		if claim.Recipient.ID == entry.SubscriptionID {
-			if err := e.store.FinishPublishedEventRecipient(ctx, claim, state.PublishedEventRecipientProgress{State: "enqueued", Attempts: claim.TotalAttempts, UpdatedAt: time.Now()}, time.Now()); err != nil {
+			if err := (*e.Store()).FinishPublishedEventRecipient(ctx, claim, state.PublishedEventRecipientProgress{State: "enqueued", Attempts: claim.TotalAttempts, UpdatedAt: time.Now()}, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -64,23 +65,23 @@ func TestEventBacklogAPIRecoveryCountsAndCursors(t *testing.T) {
 		}
 	}
 	for _, query := range []string{"state=failed", "capacity_scope=unknown", "min_age_seconds=-1", "min_age_seconds=31536001", "limit=201", "consumer_limit=0", "after=bad", "after=" + url.QueryEscape(first.NextConsumersAfter), "state=pending&after=" + url.QueryEscape(first.NextAfter)} {
-		rec := e.do(t, "GET", "/v1/events/backlog?"+query, nil, nil)
+		rec := e.Do(t, "GET", "/v1/events/backlog?"+query, nil, nil)
 		if rec.Code != 400 {
 			t.Fatalf("query=%s status=%d %s", query, rec.Code, rec.Body)
 		}
 	}
-	other, err := e.store.CreateAccount(ctx, "backlog-foreign@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(ctx, "backlog-foreign@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: other.ID, Slug: "foreign-backlog", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: other.ID, Slug: "foreign-backlog", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.store.UpsertEventSubscription(ctx, other.ID, app.ID, "secret", "created", nil); err != nil {
+	if _, _, err := (*e.Store()).UpsertEventSubscription(ctx, other.ID, app.ID, "secret", "created", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.AppendEvent(ctx, "apid", "event.published", &other.ID, []byte(`{"id":"secret","source":"secret","type":"created","data":{}}`)); err != nil {
+	if err := (*e.Store()).AppendEvent(ctx, "apid", "event.published", &other.ID, []byte(`{"id":"secret","source":"secret","type":"created","data":{}}`)); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range read("/v1/events/backlog?account_id=" + other.ID).Recipients {
@@ -88,7 +89,7 @@ func TestEventBacklogAPIRecoveryCountsAndCursors(t *testing.T) {
 			t.Fatal("account query escaped authentication")
 		}
 	}
-	rec := e.do(t, "GET", "/v1/events/backlog?app=foreign-backlog", nil, nil)
+	rec := e.Do(t, "GET", "/v1/events/backlog?app=foreign-backlog", nil, nil)
 	if rec.Code != 404 {
 		t.Fatalf("foreign app=%d %s", rec.Code, rec.Body)
 	}
@@ -97,8 +98,8 @@ func TestEventBacklogAPIRecoveryCountsAndCursors(t *testing.T) {
 func TestEventBacklogScopes(t *testing.T) {
 	for _, scope := range []string{api.ScopeAppsRead, api.ScopeEventsPublish} {
 		t.Run(scope, func(t *testing.T) {
-			e := setupWithScopes(t, []string{scope})
-			rec := e.do(t, "GET", "/v1/events/backlog", nil, nil)
+			e := apidserver.SetupWithScopes(t, []string{scope})
+			rec := e.Do(t, "GET", "/v1/events/backlog", nil, nil)
 			want := 200
 			if scope == api.ScopeEventsPublish {
 				want = 403
@@ -116,9 +117,9 @@ func (s deadlineBacklogStore) EventBacklog(context.Context, string, state.EventB
 	return state.EventBacklog{}, context.DeadlineExceeded
 }
 func TestEventBacklogTimeoutDoesNotReturnEmptySuccess(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.store = deadlineBacklogStore{Store: e.store}
-	rec := e.do(t, "GET", "/v1/events/backlog", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).Store()) = deadlineBacklogStore{Store: (*e.Store())}
+	rec := e.Do(t, "GET", "/v1/events/backlog", nil, nil)
 	var p api.Problem
 	if rec.Code != 503 || json.Unmarshal(rec.Body.Bytes(), &p) != nil || p.Code != "event_backlog_read_timeout" {
 		t.Fatalf("timeout=%d %s", rec.Code, rec.Body)

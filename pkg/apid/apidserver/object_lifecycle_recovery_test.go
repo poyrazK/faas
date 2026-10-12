@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"fmt"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -56,27 +57,27 @@ func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	}
 	setFlag := func(enabled bool) {
 		t.Helper()
-		if _, err := f.st.UpsertRuntimeConfig(ctx, state.RuntimeConfigUpdate{Key: runtimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: boolJSON(enabled), ApplyMode: state.RuntimeConfigApplyHot, Reason: "lifecycle test"}); err != nil {
+		if _, err := f.st.UpsertRuntimeConfig(ctx, state.RuntimeConfigUpdate{Key: apidserver.RuntimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: apidserver.BoolJSON(enabled), ApplyMode: state.RuntimeConfigApplyHot, Reason: "lifecycle test"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	server := func() *server {
+	server := func() *apidserver.Server {
 		t.Helper()
-		runtime := newRuntimeConfigManager(nil)
-		if err := runtime.reconcile(ctx, f.st); err != nil {
+		runtime := apidserver.NewRuntimeConfigManager(nil)
+		if err := runtime.Reconcile(ctx, f.st); err != nil {
 			t.Fatal(err)
 		}
-		return newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry).WithRuntimeConfigManager(runtime)
+		return apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry).WithRuntimeConfigManager(runtime)
 	}
 	setFlag(false)
 	s := server()
-	if err := s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != 0 {
+	if err := (*s.Object()).ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != 0 {
 		t.Fatal("disabled storage dispatched lifecycle", err, requests.Load())
 	}
 	setFlag(true)
 	missing := server().WithObjectStorage(&objectstorage.Registry{Accounting: f.policy})
 	missingOutcome := ""
-	if err := missing.object.ReconcileObjectLifecycle(ctx, func(_, outcome string) { missingOutcome = outcome }); err != nil || requests.Load() != 0 || missingOutcome != "deferred" {
+	if err := (*missing.Object()).ReconcileObjectLifecycle(ctx, func(_, outcome string) { missingOutcome = outcome }); err != nil || requests.Load() != 0 || missingOutcome != "deferred" {
 		t.Fatal("missing placement was not deferred", err, requests.Load(), missingOutcome)
 	}
 	if rows, err := f.st.DueObjectLifecyclePolicies(ctx, api.ObjectLifecycleBatch); err != nil || len(rows) != 0 {
@@ -88,11 +89,11 @@ func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	s = server()
 	outcomes := []string{}
 	observe := func(operation, outcome string) { outcomes = append(outcomes, operation+":"+outcome) }
-	if err := s.object.ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
+	if err := (*s.Object()).ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
 		t.Fatal("wired expiration", err, deletes.Load())
 	}
 	s = server()
-	if err := s.object.ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
+	if err := (*s.Object()).ReconcileObjectLifecycle(ctx, observe); err != nil || deletes.Load() != 1 {
 		t.Fatal("restart repeated expiration", err, deletes.Load())
 	}
 	if strings.Join(outcomes, ",") != "lifecycle:scanning,lifecycle:completed" {

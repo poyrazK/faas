@@ -424,11 +424,15 @@ func projectOperationWorkflowInstance(page api.OperationMilestonesResponse, work
 			transitionIndexes[key] = struct{}{}
 			allowedTransitions = append(allowedTransitions, api.OperationWorkflowInstanceTransition{
 				From: transition.From, To: transition.To, Operation: declaration.Operation,
-				RequiredMilestones:          append([]string(nil), transition.RequiredMilestones...),
-				RequiredEffects:             append([]api.OperationWorkflowEffectRequirement(nil), transition.RequiredEffects...),
-				RequiredInvariants:          append([]api.OperationWorkflowInvariantRequirement(nil), transition.RequiredInvariants...),
-				RequiredPolicies:            append([]api.OperationWorkflowPolicyRequirement(nil), transition.RequiredPolicies...),
-				RequiredDependencyWorkflows: cloneTransitionDependencyWorkflows(transition.RequiredDependencyWorkflows),
+				RetainedMilestoneGroups:        api.CloneOperationWorkflowRetainedMilestoneGroups(transition.RetainedMilestoneGroups),
+				RetainedMilestoneFreshness:     append([]api.OperationWorkflowRetainedMilestoneFreshnessRule(nil), transition.RetainedMilestoneFreshness...),
+				RetainedMilestoneInvalidations: append([]api.OperationWorkflowRetainedMilestoneInvalidationRule(nil), transition.RetainedMilestoneInvalidations...),
+				RequiredRetainedMilestones:     append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), transition.RequiredRetainedMilestones...),
+				RequiredMilestones:             append([]string(nil), transition.RequiredMilestones...),
+				RequiredEffects:                append([]api.OperationWorkflowEffectRequirement(nil), transition.RequiredEffects...),
+				RequiredInvariants:             append([]api.OperationWorkflowInvariantRequirement(nil), transition.RequiredInvariants...),
+				RequiredPolicies:               append([]api.OperationWorkflowPolicyRequirement(nil), transition.RequiredPolicies...),
+				RequiredDependencyWorkflows:    cloneTransitionDependencyWorkflows(transition.RequiredDependencyWorkflows),
 			})
 		}
 	}
@@ -588,6 +592,45 @@ func workflowStateHistoryAfterCursor(row api.OperationWorkflowStateHistoryEntry,
 }
 
 func operationWorkflowStateHistoryPage(rows []api.OperationWorkflowStateHistoryEntry, limit int, cursor operationWorkflowStateHistoryCursor) ([]api.OperationWorkflowStateHistoryEntry, string) {
+	rows = append([]api.OperationWorkflowStateHistoryEntry(nil), rows...)
+	type revisionKey struct {
+		tenant, workflow, instance string
+		revision                   int64
+	}
+	counts := map[revisionKey]int{}
+	for _, row := range rows {
+		counts[revisionKey{row.PlatformTenantID, row.Workflow, row.InstanceID, row.Revision}]++
+	}
+	previousByRun := map[[3]string]int{}
+	for i := range rows {
+		row := rows[i]
+		run := [3]string{row.PlatformTenantID, row.Workflow, row.InstanceID}
+		var previous *api.OperationWorkflowStateHistoryEntry
+		if index, exists := previousByRun[run]; exists {
+			previous = &rows[index]
+		}
+		rows[i].Comparison = compareWorkflowRevisions(previous, row)
+		ambiguous := counts[revisionKey{row.PlatformTenantID, row.Workflow, row.InstanceID, row.Revision}] > 1
+		if previous != nil {
+			ambiguous = ambiguous || counts[revisionKey{previous.PlatformTenantID, previous.Workflow, previous.InstanceID, previous.Revision}] > 1
+		}
+		if ambiguous {
+			comparison := rows[i].Comparison
+			comparison.Status = "ambiguous_revision"
+			comparison.Summary = "Multiple reports share a revision on this page; changes cannot be determined."
+			comparison.Changes = []api.OperationWorkflowRevisionChange{}
+			comparison.Evidence = []api.OperationWorkflowRevisionEvidence{}
+			comparison.ConditionComparison = &api.OperationWorkflowConditionComparison{Status: "ambiguous_revision", Changes: []api.OperationWorkflowConditionChange{}}
+		}
+		previousByRun[run] = i
+	}
+
+	visible := rows
+	if len(visible) > limit {
+		visible = visible[:limit]
+	}
+	linkWorkflowOutcomes(visible)
+
 	if len(rows) <= limit {
 		return rows, ""
 	}

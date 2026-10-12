@@ -17,7 +17,7 @@
 // parallel TestSourceTarball_HappyPath
 // (cmd/apid/handlers_source_tarball_test.go) which shares the
 // same audit emission + Enqueue path.
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -31,53 +31,54 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-func startSession(t *testing.T, e testEnv, slug string, totalSize int64) startUploadResponse {
+func startSession(t *testing.T, e apidserver.TestEnv, slug string, totalSize int64) apidserver.StartUploadResponse {
 	t.Helper()
-	body, _ := json.Marshal(startUploadRequest{AppSlug: slug, TotalSize: totalSize})
+	body, _ := json.Marshal(apidserver.StartUploadRequest{AppSlug: slug, TotalSize: totalSize})
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("startSession: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp startUploadResponse
+	var resp apidserver.StartUploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("startSession decode: %v", err)
 	}
 	return resp
 }
 
-func appendChunk(t *testing.T, e testEnv, id string, offset int64, body []byte) *httptest.ResponseRecorder {
+func appendChunk(t *testing.T, e apidserver.TestEnv, id string, offset int64, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("PATCH", "/v1/uploads/"+id, bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Upload-Offset", strconv.FormatInt(offset, 10))
 	req.Header.Set("Content-Type", "application/offset+octet-stream")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	return rec
 }
 
-func cancelSession(t *testing.T, e testEnv, id string) *httptest.ResponseRecorder {
+func cancelSession(t *testing.T, e apidserver.TestEnv, id string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("DELETE", "/v1/uploads/"+id, nil)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	return rec
 }
 
 func TestUploadSession_PlanCap(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "over-cap"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "over-cap"}, nil)
 
 	// Free plan SourceTarballMaxMB is 100 MB. Request 200 MB.
-	rec := e.do(t, "POST", "/v1/uploads", startUploadRequest{
+	rec := e.Do(t, "POST", "/v1/uploads", apidserver.StartUploadRequest{
 		AppSlug: "over-cap", TotalSize: 200 * 1024 * 1024,
 	}, nil)
 	if rec.Code != http.StatusRequestEntityTooLarge {
@@ -101,10 +102,10 @@ func TestUploadSession_PlanCap(t *testing.T) {
 func TestUploadSession_RollbackOn5xxAllowedOnFreePlan(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "rollback-gate"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "rollback-gate"}, nil)
 	rollback := true
-	rec := e.do(t, "POST", "/v1/uploads", startUploadRequest{
+	rec := e.Do(t, "POST", "/v1/uploads", apidserver.StartUploadRequest{
 		AppSlug: "rollback-gate", TotalSize: 1024,
 		DeployOptions: &api.UploadDeployOptions{RollbackOn5xx: &rollback},
 	}, nil)
@@ -119,9 +120,9 @@ func TestUploadSession_RollbackOn5xxAllowedOnFreePlan(t *testing.T) {
 func TestUploadSession_UnknownAppDoesNotAllocateSpool(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 
-	rec := e.do(t, "POST", "/v1/uploads", startUploadRequest{
+	rec := e.Do(t, "POST", "/v1/uploads", apidserver.StartUploadRequest{
 		AppSlug: "missing", TotalSize: 1024,
 	}, nil)
 	if rec.Code != http.StatusNotFound {
@@ -145,19 +146,19 @@ func TestUploadSession_UnknownAppDoesNotAllocateSpool(t *testing.T) {
 
 func TestUploadSession_OpenCap(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "open-cap"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "open-cap"}, nil)
 
-	for i := 0; i < uploadSessionOpenCap; i++ {
+	for i := 0; i < apidserver.UploadSessionOpenCap; i++ {
 		startSession(t, e, "open-cap", 1024)
 	}
 	// 6th must be rejected with 429.
-	body, _ := json.Marshal(startUploadRequest{AppSlug: "open-cap", TotalSize: 1024})
+	body, _ := json.Marshal(apidserver.StartUploadRequest{AppSlug: "open-cap", TotalSize: 1024})
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("want 429, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -165,8 +166,8 @@ func TestUploadSession_OpenCap(t *testing.T) {
 
 func TestUploadSession_OffsetCAS(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cas"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cas"}, nil)
 
 	sess := startSession(t, e, "cas", 4096)
 	// 50 goroutines all PATCH at offset=0 with 4 bytes each.
@@ -199,10 +200,10 @@ func TestUploadSession_OffsetCAS(t *testing.T) {
 
 func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
 	rollback := true
-	body, err := json.Marshal(startUploadRequest{
+	body, err := json.Marshal(apidserver.StartUploadRequest{
 		AppSlug: "metadata", TotalSize: 4096,
 		DeployOptions: &api.UploadDeployOptions{
 			SourceRoot: "apps/api", Scope: "production", Dockerfile: true, Reason: "release",
@@ -215,18 +216,18 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
-	var started startUploadResponse
+	var started apidserver.StartUploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
-	row, err := e.store.GetUploadSession(t.Context(), started.UploadID)
+	row, err := (*e.Store()).GetUploadSession(t.Context(), started.UploadID)
 	if err != nil || !bytes.Contains(row.DeployOptions, []byte(`"source_root":"apps/api"`)) || !bytes.Contains(row.DeployOptions, []byte(`"scope":"production"`)) {
 		t.Fatalf("persisted options = %s, err=%v", row.DeployOptions, err)
 	}
@@ -238,9 +239,9 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 		t.Fatalf("persisted rollback option = %s", row.DeployOptions)
 	}
 	req = httptest.NewRequest("GET", "/v1/uploads/"+started.UploadID, nil)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec = httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
 	}
@@ -255,14 +256,14 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 
 func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "provenance"}, nil)
-	raw := buildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "provenance"}, nil)
+	raw := apidserver.BuildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{
 		"index.js": []byte("console.log(1)\n"),
 	})
 	const sourceURL = "github://acme/provenance@0123456789abcdef0123456789abcdef01234567"
 	const commitSHA = "0123456789abcdef0123456789abcdef01234567"
-	body, err := json.Marshal(startUploadRequest{
+	body, err := json.Marshal(apidserver.StartUploadRequest{
 		AppSlug: "provenance", TotalSize: int64(len(raw)),
 		DeployOptions: &api.UploadDeployOptions{SourceURL: sourceURL, CommitSHA: commitSHA, Scope: "production"},
 	})
@@ -270,14 +271,14 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
-	var started startUploadResponse
+	var started apidserver.StartUploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -285,9 +286,9 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 		t.Fatalf("append: %d %s", rec.Code, rec.Body.String())
 	}
 	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec = httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -301,7 +302,7 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 	if out.Scope != "production" {
 		t.Fatalf("response scope = %q, want production", out.Scope)
 	}
-	dep, err := e.store.LatestDeployment(t.Context(), out.AppID)
+	dep, err := (*e.Store()).LatestDeployment(t.Context(), out.AppID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
 	}
@@ -312,28 +313,28 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 
 func TestUploadSession_CommitPersistsManifestMainWorkloadDependencies(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	withTestSidecarRecipient(t)
-	e := setup(t, api.PlanPro)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "manifest-deps"}, nil)
+	apidserver.WithTestSidecarRecipient(t)
+	e := apidserver.Setup(t, api.PlanPro)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "manifest-deps"}, nil)
 	manifest := `main_depends_on:
   - name: proxy
     condition: healthy
 companions:
   - name: proxy
-    image: ` + goodSidecarImage + `
+    image: ` + apidserver.GoodSidecarImage + `
     startup_probe:
       tcp_socket:
         port: 8081
 `
-	raw := buildTestTarGz(t,
+	raw := apidserver.BuildTestTarGz(t,
 		[]tar.Header{{Name: "index.js"}, {Name: "gregale.yaml"}},
 		map[string][]byte{"index.js": []byte("ok\n"), "gregale.yaml": []byte(manifest)},
 	)
 	companion := api.Companion{
-		Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+		Name: "proxy", Image: apidserver.GoodSidecarImage, Type: api.SidecarTypeSidecar,
 		StartupProbe: &api.SidecarProbe{TCPSocket: &api.SidecarTCPSocketProbe{Port: 8081}},
 	}
-	body, err := json.Marshal(startUploadRequest{
+	body, err := json.Marshal(apidserver.StartUploadRequest{
 		AppSlug: "manifest-deps", TotalSize: int64(len(raw)),
 		DeployOptions: &api.UploadDeployOptions{Companions: api.Companions{companion}, Healthcheck: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}}},
 	})
@@ -341,14 +342,14 @@ companions:
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
-	var started startUploadResponse
+	var started apidserver.StartUploadResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -356,9 +357,9 @@ companions:
 		t.Fatalf("append: %d %s", rec.Code, rec.Body.String())
 	}
 	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec = httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -366,7 +367,7 @@ companions:
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	deployment, err := e.store.LatestDeployment(t.Context(), response.AppID)
+	deployment, err := (*e.Store()).LatestDeployment(t.Context(), response.AppID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
 	}
@@ -385,8 +386,8 @@ companions:
 
 func TestUploadSession_Cancel(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cancel"}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cancel"}, nil)
 
 	sess := startSession(t, e, "cancel", 4096)
 

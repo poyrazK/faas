@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,7 +33,7 @@ func TestRollbackOn5xxBreached(t *testing.T) {
 		{requests: 1000, serverErrors: 10, want: false}, // one bad route on a busy release
 		{requests: 0, serverErrors: 0, want: false},
 	} {
-		if got := rollbackOn5xxBreached(tc.requests, tc.serverErrors); got != tc.want {
+		if got := apidserver.RollbackOn5xxBreached(tc.requests, tc.serverErrors); got != tc.want {
 			t.Errorf("rollbackOn5xxBreached(%d, %d) = %v, want %v", tc.requests, tc.serverErrors, got, tc.want)
 		}
 	}
@@ -43,31 +44,31 @@ func TestRollbackOn5xxBreached(t *testing.T) {
 // opens the first-wake window on first traffic, leaves a healthy release
 // alone, and hands a failing one's predecessor to the readiness-gated rollback.
 func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	previous := mustSeedDeployment(t, e, "r5-app")
-	if err := e.store.MarkDeploymentLive(ctx, previous.ID); err != nil {
+	previous := apidserver.MustSeedDeployment(t, e, "r5-app")
+	if err := (*e.Store()).MarkDeploymentLive(ctx, previous.ID); err != nil {
 		t.Fatal(err)
 	}
-	app, _ := e.store.AppBySlug(ctx, "r5-app")
-	release, err := e.store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, ImageDigest: "sha256:" + repeat("f", 64), Kind: state.DeploymentKindImage,
+	app, _ := (*e.Store()).AppBySlug(ctx, "r5-app")
+	release, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + apidserver.Repeat("f", 64), Kind: state.DeploymentKindImage,
 		Status: state.DeployBuilding, CreatedAt: time.Now().UTC().Add(time.Second), RollbackOn5xx: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, release.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, release.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentSuperseded(ctx, previous.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentSuperseded(ctx, previous.ID); err != nil {
 		t.Fatal(err)
 	}
-	store := &rollbackOn5xxTestStore{MemStore: e.store}
-	e.s.store = store
+	store := &rollbackOn5xxTestStore{MemStore: (*e.Store())}
+	(*(*e.S()).Store()) = store
 	read := func(id string) state.Deployment {
 		t.Helper()
-		d, err := e.store.DeploymentByID(ctx, id)
+		d, err := (*e.Store()).DeploymentByID(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,7 +76,7 @@ func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
 	}
 	sweep := func() {
 		t.Helper()
-		if err := e.s.rollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/promql"
 )
 
@@ -32,9 +33,9 @@ func TestFetchAccountMetricsSnapshotSerializesRawScans(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := promql.NewClient(srv.URL, srv.Client())
-	snapshot := fetchAccountMetricsSnapshot(t.Context(), client, []string{"app-1"}, "24h", false, false)
-	if snapshot.requestsErr != nil || snapshot.latencyErr != nil || snapshot.coldBootsErr != nil {
-		t.Fatalf("snapshot errors: requests=%v latency=%v cold=%v", snapshot.requestsErr, snapshot.latencyErr, snapshot.coldBootsErr)
+	snapshot := apidserver.FetchAccountMetricsSnapshot(t.Context(), client, []string{"app-1"}, "24h", false, false)
+	if (*snapshot.RequestsErr()) != nil || (*snapshot.LatencyErr()) != nil || (*snapshot.ColdBootsErr()) != nil {
+		t.Fatalf("snapshot errors: requests=%v latency=%v cold=%v", (*snapshot.RequestsErr()), (*snapshot.LatencyErr()), (*snapshot.ColdBootsErr()))
 	}
 	if overlapped.Load() {
 		t.Fatal("request-count and latency-bucket scans overlapped")

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -6,17 +6,19 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestAdminMutationRoutesRejectBearerKeys is a route-table regression guard.
 // All provider-admin writes must require a verified operator session with a
 // fresh step-up; a valid admin-scoped bearer key is not sufficient proof.
 func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*
 	// The caller is an allowlisted operator: even an operator's admin key
 	// is not step-up proof. Non-operators stop earlier with admin_required
 	// (TestOperatorRoutesRefuseCustomers).
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	accountID := "00000000-0000-0000-0000-000000000001"
 	instanceID := "00000000-0000-0000-0000-000000000002"
 	paths := []struct {
@@ -56,48 +58,48 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 
 	for _, tc := range paths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			rec := e.do(t, tc.method, tc.path, nil, nil)
-			assertProblem(t, rec, http.StatusForbidden, api.CodeStepUpRequired)
+			rec := e.Do(t, tc.method, tc.path, nil, nil)
+			apidserver.AssertProblem(t, rec, http.StatusForbidden, api.CodeStepUpRequired)
 		})
 	}
 }
 
 func TestAdminMutationRejectsCrossOriginBrowserRequest(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
-	e.addAdminSession(t, req)
+	e.AddAdminSession(t, req)
 	req.Header.Set("Origin", "https://attacker.example")
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
-	assertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+	(*e.H()).ServeHTTP(rec, req)
+	apidserver.AssertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
 }
 
 func TestAdminMutationRequiresIdempotencyKey(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
-	e.addAdminSession(t, req)
+	e.AddAdminSession(t, req)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	(*e.H()).ServeHTTP(rec, req)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestAdminMutationAllowsOperationsOrigin(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s = e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()) = (*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
-	e.addAdminSession(t, req)
+	e.AddAdminSession(t, req)
 	req.Header.Set("Origin", "https://operations.gregale.dev")
 	req.Header.Set("Sec-Fetch-Site", "same-site")
 	req.Header.Set("Idempotency-Key", "test-admin-operations-origin")
 	rec := httptest.NewRecorder()
-	e.h = e.s.handler()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()) = (*e.S()).Handler()
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

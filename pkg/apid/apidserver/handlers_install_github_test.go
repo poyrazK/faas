@@ -11,7 +11,7 @@
 //     the github_login_required code so the dashboard renders
 //     "complete /v1/auth/github first" rather than the generic
 //     forged banner.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -70,39 +71,39 @@ func (f *bindPickerFake) BindAppRepo(_ context.Context, _, _ string, _ int64, _,
 // Unused methods — the bind picker doesn't call them but the
 // interface requires them. Returning the not-ready problem keeps
 // accidental calls loud (test would see 503 in the response).
-func (f *bindPickerFake) GetInstallState(context.Context, string) (InstallState, string, string, error) {
-	return InstallStateUnspecified, "", "", errGithubdNotReady
+func (f *bindPickerFake) GetInstallState(context.Context, string) (apidserver.InstallState, string, string, error) {
+	return apidserver.InstallStateUnspecified, "", "", (*apidserver.ErrGithubdNotReady)
 }
 func (f *bindPickerFake) ExchangeOAuthCode(context.Context, string, string, string) (string, string, error) {
-	return "", "", errGithubdNotReady
+	return "", "", (*apidserver.ErrGithubdNotReady)
 }
-func (f *bindPickerFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
-	return nil, errGithubdNotReady
+func (f *bindPickerFake) ListInstallableRepos(context.Context, string, int64) ([]apidserver.Repo, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
 }
 func (f *bindPickerFake) UnbindAppRepo(context.Context, string, string) error {
-	return errGithubdNotReady
+	return (*apidserver.ErrGithubdNotReady)
 }
-func (f *bindPickerFake) GetAppBinding(context.Context, string, string) (AppBinding, error) {
-	return AppBinding{}, errGithubdNotReady
+func (f *bindPickerFake) GetAppBinding(context.Context, string, string) (apidserver.AppBinding, error) {
+	return apidserver.AppBinding{}, (*apidserver.ErrGithubdNotReady)
 }
 func (f *bindPickerFake) CreateDeploymentFromPush(context.Context, string, string, string, string) (string, string, error) {
-	return "", "", errGithubdNotReady
+	return "", "", (*apidserver.ErrGithubdNotReady)
 }
-func (f *bindPickerFake) WriteCheck(context.Context, string, string, CheckPhase, string, string) error {
-	return errGithubdNotReady
+func (f *bindPickerFake) WriteCheck(context.Context, string, string, apidserver.CheckPhase, string, string) error {
+	return (*apidserver.ErrGithubdNotReady)
 }
 
 // MintInstallationToken is unused by the bind picker test. Returns
 // the not-ready problem so any accidental call would surface as a
 // 503 (DEPLOY-PROV-4 / ADR-092, issue #739).
 func (f *bindPickerFake) MintInstallationToken(context.Context, string, int64) (string, time.Time, error) {
-	return "", time.Time{}, errGithubdNotReady
+	return "", time.Time{}, (*apidserver.ErrGithubdNotReady)
 }
 
 // StreamSourceRef is unused by the bind picker test. Returns the
 // not-ready problem (DEPLOY-PROV-4 / ADR-092, issue #739).
-func (f *bindPickerFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*StreamSourceRefResult, error) {
-	return nil, errGithubdNotReady
+func (f *bindPickerFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*apidserver.StreamSourceRefResult, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
 }
 func (f *bindPickerFake) Close() error { return nil }
 
@@ -110,7 +111,7 @@ func (f *bindPickerFake) Close() error { return nil }
 // session cookie WITHOUT github_login, and returns the apid handler
 // with a programmable GithubdClient + the session.Manager so
 // callers can re-mint the cookie via SealGithubLogin.
-func newBindPickerTestServer(t *testing.T, gh GithubdClient) (http.Handler, *session.Manager, string, string) {
+func newBindPickerTestServer(t *testing.T, gh apidserver.GithubdClient) (http.Handler, *session.Manager, string, string) {
 	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
@@ -124,16 +125,16 @@ func newBindPickerTestServer(t *testing.T, gh GithubdClient) (http.Handler, *ses
 	}); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	cookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler()
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler()
 	return srv, mgr, acct.ID, cookie
 }
 
@@ -155,7 +156,7 @@ func stampCookie(t *testing.T, mgr *session.Manager, raw, login string) string {
 
 func bindJSONRequest(t *testing.T, mgr *session.Manager, accountID, payload string) *http.Request {
 	t.Helper()
-	tok, err := middleware.IssueForAuthenticatedNamed(mgr, githubBindAction, accountID, githubBindCSRFCookie)
+	tok, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.GithubBindAction, accountID, apidserver.GithubBindCSRFCookie)
 	if err != nil {
 		t.Fatalf("issue bind csrf: %v", err)
 	}
@@ -174,7 +175,7 @@ func bindJSONRequest(t *testing.T, mgr *session.Manager, accountID, payload stri
 	}
 	r := httptest.NewRequest(http.MethodPost, "/v1/apps/myapp/install/bind", strings.NewReader(string(body)))
 	r.Header.Set("Content-Type", "application/json")
-	r.AddCookie(&http.Cookie{Name: githubBindCSRFCookie, Value: tok})
+	r.AddCookie(&http.Cookie{Name: apidserver.GithubBindCSRFCookie, Value: tok})
 	return r
 }
 
@@ -191,7 +192,7 @@ func TestListInstallableRepos_UnauthenticatedRefused(t *testing.T) {
 	body := strings.NewReader(`{"installation_id": 42}`)
 	r := httptest.NewRequest(http.MethodPost, "/v1/install/repos/list", body)
 	r.Header.Set("Content-Type", "application/json")
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: cookie})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusForbidden {
@@ -219,7 +220,7 @@ func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 	body := strings.NewReader(`{"installation_id": 42}`)
 	r := httptest.NewRequest(http.MethodPost, "/v1/install/repos/list", body)
 	r.Header.Set("Content-Type", "application/json")
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusForbidden {
@@ -248,7 +249,7 @@ func TestBindAppToRepo_RejectsForeignInstall(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusForbidden {
@@ -281,7 +282,7 @@ func TestBindAppToRepo_PersistsOnHappyPath(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -311,7 +312,7 @@ func TestBindAppToRepo_GithubdTransportErrorReturns502(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello"}`)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusBadGateway {

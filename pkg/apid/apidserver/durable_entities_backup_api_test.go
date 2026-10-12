@@ -1,5 +1,5 @@
 // adr: 942
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -15,11 +15,11 @@ func TestBackupReadsAndRestorePreviewRemainReadOnly(t *testing.T) {
 	request := entityRequest("backup-source")
 	hook := entityOutboxHook(t, e, app)
 	seedAPIOutbox(t, e, app, request, hook.ID)
-	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
-	info, err := e.s.durable.Engine.BackupState(t.Context(), id)
+	info, err := (*e.s.Durable()).Engine.BackupState(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

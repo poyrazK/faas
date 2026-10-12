@@ -1,8 +1,10 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http/httptest"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestClientIPFromRequestUsesTrustedLocalProxyAddress(t *testing.T) {
@@ -10,7 +12,7 @@ func TestClientIPFromRequestUsesTrustedLocalProxyAddress(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Header.Set("X-Forwarded-For", "203.0.113.42")
 
-	if got := clientIPFromRequest(req); got != "203.0.113.42" {
+	if got := apidserver.ClientIPFromRequest(req); got != "203.0.113.42" {
 		t.Fatalf("clientIPFromRequest() = %q, want forwarded customer IP", got)
 	}
 }
@@ -20,7 +22,7 @@ func TestClientIPFromRequestRejectsUntrustedForwardedAddress(t *testing.T) {
 	req.RemoteAddr = "198.51.100.7:43210"
 	req.Header.Set("X-Forwarded-For", "203.0.113.42")
 
-	if got := clientIPFromRequest(req); got != "198.51.100.7" {
+	if got := apidserver.ClientIPFromRequest(req); got != "198.51.100.7" {
 		t.Fatalf("clientIPFromRequest() = %q, want direct peer IP", got)
 	}
 }
@@ -30,7 +32,7 @@ func TestClientIPFromRequestRejectsForwardedChain(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Header.Set("X-Forwarded-For", "203.0.113.42, 198.51.100.7")
 
-	if got := clientIPFromRequest(req); got != "127.0.0.1" {
+	if got := apidserver.ClientIPFromRequest(req); got != "127.0.0.1" {
 		t.Fatalf("clientIPFromRequest() = %q, want trusted peer fallback", got)
 	}
 }

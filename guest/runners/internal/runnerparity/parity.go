@@ -88,7 +88,7 @@ process.stdin.on('end', () => {
 // FakeNodeScriptWithTail is the Node counterpart of
 // FakeGoScriptWithTail. Writes a JSONL entry to envelope.TailPipePath
 // before returning the response envelope, so the runner's
-// drainTailHost reads the pipe after invokeHandler returns. The
+// internal.Serve drains the pipe after the handler returns. The
 // response envelope also echoes the tail_pipe_path and
 // wait_until_sec it saw in the input envelope — the per-runtime
 // parity test (RunWaitUntilEnvelopeRoundTrip) asserts the
@@ -143,7 +143,7 @@ sys.stdout.write(json.dumps(out))
 
 // FakePyScriptWithTail writes a JSONL entry to envelope.TailPipePath
 // before returning the response envelope. The runner's
-// drainTailHost reads the pipe after invokeHandler returns. The
+// internal.Serve drains the pipe after the handler returns. The
 // response envelope also echoes the tail_pipe_path and
 // wait_until_sec it saw in the input envelope — the per-runtime
 // parity test (RunWaitUntilEnvelopeRoundTrip) asserts the
@@ -419,7 +419,7 @@ func extractBodyB64(t *testing.T, marshaled []byte) string {
 //  3. The response envelope is intact (status=200, body unchanged).
 //
 // Unlike RunRoundTrip, this helper passes NON-ZERO tailWaitSec and
-// a non-empty tailPipePath so the runner's drainTailHost path is
+// a non-empty tailPipePath so the runner's tail drain (internal.Serve) is
 // exercised end-to-end. The 0x04 DGRAM emit fails in unit tests
 // (the proxy isn't running) — that's expected; the runner keeps
 // draining and the response stays clean (TailErrors empty on the
@@ -443,7 +443,7 @@ func RunWaitUntilEnvelopeRoundTrip(t *testing.T, fake FakeHandler, handler func(
 	signal := internal.NewRunnerSignal("parity-tail", time.Now())
 
 	// Per-test tempdir for the JSONL pipe. The runner's
-	// drainTailHost reads it after invokeHandler returns;
+	// internal.Serve drains it after the handler returns;
 	// the FakeHandlerWithTail writes one line before exiting.
 	dir := t.TempDir()
 	pipePath := filepath.Join(dir, "tail.jsonl")
@@ -497,7 +497,7 @@ func RunWaitUntilEnvelopeRoundTrip(t *testing.T, fake FakeHandler, handler func(
 		t.Errorf("body = %q, want contains echo:/hello", body.String())
 	}
 	// Drain must complete in << the 30s ceiling. A regression
-	// where the runner's drainTailHost hangs would surface here.
+	// where the runner's tail drain hangs would surface here.
 	if elapsed > 5*time.Second {
 		t.Errorf("drain did not return promptly: elapsed=%v, ceiling=5s", elapsed)
 	}

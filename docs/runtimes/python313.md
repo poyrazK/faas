@@ -33,6 +33,29 @@ field without renaming files.
 The runner shim sets `FAAS_RUNTIME=python313` in the handler's
 environment so customers can branch on runtime if they want.
 
+### Streaming
+
+A handler streams by returning a generator, async generator or other
+iterator as its `body` (ADR-999); strings, bytes, dicts and lists are sent
+as one response, as before:
+
+```python
+import asyncio
+
+def handler(event, ctx):
+    async def ticks():
+        for i in range(3):
+            yield f"data: tick {i}\n\n"
+            await asyncio.sleep(1)
+    return {"statusCode": 200, "headers": {"content-type": "text/event-stream"}, "body": ticks()}
+```
+
+An exception after streaming starts aborts the response; the client sees
+a truncated body. The invocation deadline (30 s) covers the whole stream,
+and the gateway carries it to the client on Hobby, Pro and Scale (Free
+buffers it). A header value may be a list, one header line each, so
+several `Set-Cookie` headers are sent.
+
 ### Minimal handler
 
 ```python

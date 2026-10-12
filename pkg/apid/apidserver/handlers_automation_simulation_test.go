@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,22 +8,25 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAutomationSimulationAPIHasNoExecutionEffects(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "simulation")
 	ctx := context.Background()
 	key, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(ctx, e.acct.ID, hash, "reader", []string{api.ScopeAppsRead}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(ctx, (*e.Acct()).ID, hash, "reader", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
 	}
-	e.key = key
+	(*e.Key()) = key
+	(*
 	// No deployment, disabled runtime and no draft: simulation is sample-only.
-	e.s.WithWorkflowRuntimeEnabled(false)
-	before, _ := e.store.ListEvents(ctx, e.acct.ID, 100)
+	e.S()).WithWorkflowRuntimeEnabled(false)
+	before, _ := (*e.Store()).ListEvents(ctx, (*e.Acct()).ID, 100)
 	spec := api.WorkflowSpec{Name: "paid", Steps: []api.WorkflowStepSpec{
 		{Name: "lookup", Run: "lookup", Input: json.RawMessage(`"{{input.id}}"`), Retry: &api.WorkflowRetrySpec{MaxAttempts: 2}, OnFailure: "fallback"},
 		{Name: "fallback", Run: "recover"},
@@ -33,7 +36,7 @@ func TestAutomationSimulationAPIHasNoExecutionEffects(t *testing.T) {
 	request := api.SimulateAutomationRequest{Definition: spec, Input: json.RawMessage(`{"id":9007199254740993}`), MockAttempts: map[string][]api.AutomationSimulationMockAttempt{
 		"lookup": {{Outcome: "failure", HTTPStatus: &status}, {Outcome: "success", Output: json.RawMessage(`null`)}},
 	}}
-	response := e.do(t, "POST", "/v1/apps/"+app.Slug+"/automations:simulate", request, nil)
+	response := e.Do(t, "POST", "/v1/apps/"+app.Slug+"/automations:simulate", request, nil)
 	var trace api.SimulateAutomationResponse
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &trace) != nil || !trace.DefinitionValid || trace.Complete || len(trace.Trace) != 3 {
 		t.Fatalf("simulation=%d %s", response.Code, response.Body.String())
@@ -45,26 +48,26 @@ func TestAutomationSimulationAPIHasNoExecutionEffects(t *testing.T) {
 	if rows["lookup"].State != "mocked" || len(rows["lookup"].Attempts) != 2 || rows["fallback"].Reason != state.WorkflowSkipRouteNotTaken || rows["send"].State != "would_execute" || string(rows["send"].Input) != "null" {
 		t.Fatalf("sample flow: %+v", trace.Trace)
 	}
-	runs, _, err := e.store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
+	runs, _, err := (*e.Store()).ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("created run: %v %v", runs, err)
 	}
-	invocations, err := e.store.ListInvocationsForApp(ctx, app.ID)
+	invocations, err := (*e.Store()).ListInvocationsForApp(ctx, app.ID)
 	if err != nil || len(invocations) != 0 {
 		t.Fatalf("invoked app: %v %v", invocations, err)
 	}
-	drafts, err := e.store.ListAutomations(ctx, app.ID)
+	drafts, err := (*e.Store()).ListAutomations(ctx, app.ID)
 	if err != nil || len(drafts) != 0 {
 		t.Fatalf("saved draft: %v %v", drafts, err)
 	}
-	after, err := e.store.ListEvents(ctx, e.acct.ID, 100)
+	after, err := (*e.Store()).ListEvents(ctx, (*e.Acct()).ID, 100)
 	if err != nil || len(after) != len(before) {
 		t.Fatalf("published/audited sample data: %v %v", after, err)
 	}
 }
 
 func TestAutomationSimulationAPIBoundsOwnershipAndValidation(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "simulation-bounds")
 	base := "/v1/apps/" + app.Slug + "/automations:simulate"
 	spec := api.WorkflowSpec{Name: "draft", Steps: []api.WorkflowStepSpec{{Name: "a", Run: "a"}}}
@@ -81,7 +84,7 @@ func TestAutomationSimulationAPIBoundsOwnershipAndValidation(t *testing.T) {
 		{"missing definition", map[string]any{}, 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := e.do(t, "POST", base, tc.body, nil)
+			rec := e.Do(t, "POST", base, tc.body, nil)
 			if rec.Code != tc.status {
 				t.Fatalf("%d %s", rec.Code, rec.Body.String())
 			}
@@ -90,52 +93,52 @@ func TestAutomationSimulationAPIBoundsOwnershipAndValidation(t *testing.T) {
 			}
 		})
 	}
-	other, err := e.store.CreateAccount(context.Background(), "other-simulation@example.com", api.PlanHobby)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other-simulation@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherApp, err := e.store.CreateApp(context.Background(), state.App{AccountID: other.ID, Slug: "other-simulation", Type: state.AppTypeApp})
+	otherApp, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: other.ID, Slug: "other-simulation", Type: state.AppTypeApp})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do(t, "POST", "/v1/apps/"+otherApp.Slug+"/automations:simulate", api.SimulateAutomationRequest{Definition: spec}, nil); rec.Code != 404 {
+	if rec := e.Do(t, "POST", "/v1/apps/"+otherApp.Slug+"/automations:simulate", api.SimulateAutomationRequest{Definition: spec}, nil); rec.Code != 404 {
 		t.Fatalf("ownership: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, "POST", base, api.SimulateAutomationRequest{Definition: spec}, map[string]string{"Authorization": ""}); rec.Code != http.StatusUnauthorized {
+	if rec := e.Do(t, "POST", base, api.SimulateAutomationRequest{Definition: spec}, map[string]string{"Authorization": ""}); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("auth: %d %s", rec.Code, rec.Body.String())
 	}
 	key, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "unrelated", []string{api.ScopeRunsWrite}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(context.Background(), (*e.Acct()).ID, hash, "unrelated", []string{api.ScopeRunsWrite}); err != nil {
 		t.Fatal(err)
 	}
-	e.key = key
-	if rec := e.do(t, "POST", base, api.SimulateAutomationRequest{Definition: spec}, nil); rec.Code != 403 {
+	(*e.Key()) = key
+	if rec := e.Do(t, "POST", base, api.SimulateAutomationRequest{Definition: spec}, nil); rec.Code != 403 {
 		t.Fatalf("scope: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestAutomationSimulationChecksOutboundBindingsWithoutCalling(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "simulate-outbound")
 	ctx := context.Background()
 	offer := state.OutboundIntegrationOffer{ID: uuid.NewString(), AccountID: app.AccountID, Name: "crm", Origin: "https://api.example.com", AllowedMethods: []string{"POST"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed", RequestPolicy: api.DefaultOutboundRequestPolicy()}
-	if _, err := e.store.CreateOutboundIntegration(ctx, offer); err != nil {
+	if _, err := (*e.Store()).CreateOutboundIntegration(ctx, offer); err != nil {
 		t.Fatal(err)
 	}
 	request := api.SimulateAutomationRequest{Definition: api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts"}}}}, MockOutputs: map[string]json.RawMessage{"send": json.RawMessage(`{"status_code":200,"body":null}`)}}
 	base := "/v1/apps/" + app.Slug + "/automations:simulate"
-	response := e.do(t, "POST", base, request, nil)
+	response := e.Do(t, "POST", base, request, nil)
 	var got api.SimulateAutomationResponse
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &got) != nil || got.DefinitionValid || len(got.Trace) != 0 || got.Complete {
 		t.Fatalf("unbound: %d %s", response.Code, response.Body.String())
 	}
-	if err := e.store.SetOutboundCredential(ctx, app.AccountID, offer.ID, []byte("sealed-not-opened")); err != nil {
+	if err := (*e.Store()).SetOutboundCredential(ctx, app.AccountID, offer.ID, []byte("sealed-not-opened")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.BindOutboundIntegration(ctx, app.AccountID, app.ID, offer.ID); err != nil {
+	if _, err := (*e.Store()).BindOutboundIntegration(ctx, app.AccountID, app.ID, offer.ID); err != nil {
 		t.Fatal(err)
 	}
-	response = e.do(t, "POST", base, request, nil)
+	response = e.Do(t, "POST", base, request, nil)
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &got) != nil || !got.DefinitionValid || !got.Complete || len(got.Trace) != 1 || got.Trace[0].IntegrationID != offer.ID || strings.Contains(response.Body.String(), "sealed-not-opened") || strings.Contains(response.Body.String(), offer.Origin) {
 		t.Fatalf("bound simulation: %d %s", response.Code, response.Body.String())
 	}

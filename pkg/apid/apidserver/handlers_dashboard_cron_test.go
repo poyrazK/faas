@@ -21,7 +21,7 @@
 // handlers_cron_run_test.go (v1 surface); the dashboard path's
 // own CSRF envelope binding is the new surface that needs its
 // own regression.
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -55,8 +56,8 @@ func TestDashboardCommandCronPolicyUpdateAndHistoryPanel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCronWithOptions: %v", err)
 	}
-	cronPolicyCookie := dashboardCronSchedulePolicyCookie(app.Slug)
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardCronSchedulePolicyAction(app.Slug), acct.ID, cronPolicyCookie)
+	cronPolicyCookie := apidserver.DashboardCronSchedulePolicyCookie(app.Slug)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardCronSchedulePolicyAction(app.Slug), acct.ID, cronPolicyCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestDashboardCommandCronPolicyUpdateAndHistoryPanel(t *testing.T) {
 		middleware.FormFieldName: token, "overlap": "replace", "start_deadline_seconds": "120", "missed_runs": "coalesce_latest",
 		"failure_rules_json": `{"version":1,"rules":[{"outcome_codes":["invalid_record"],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}`,
 	}
-	response := dashboardPOST(t, h, cookie, "/dashboard/apps/policycron/crons/"+cron.ID+"/policy", form,
+	response := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/policycron/crons/"+cron.ID+"/policy", form,
 		&http.Cookie{Name: cronPolicyCookie, Value: token})
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "scheduled_work=updated") || !strings.Contains(response.Header().Get("Location"), "#cron-"+cron.ID) {
 		t.Fatalf("POST cron policy = %d, location %q, body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
@@ -108,15 +109,15 @@ func TestDashboardHTTPCronPolicyUpdateAndHistoryPanel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCronWithOptions: %v", err)
 	}
-	policyCookie := dashboardCronSchedulePolicyCookie(app.Slug)
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardCronSchedulePolicyAction(app.Slug), acct.ID, policyCookie)
+	policyCookie := apidserver.DashboardCronSchedulePolicyCookie(app.Slug)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardCronSchedulePolicyAction(app.Slug), acct.ID, policyCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
 	form := map[string]string{
 		middleware.FormFieldName: token, "overlap": "skip", "start_deadline_seconds": "90", "missed_runs": "coalesce_latest",
 	}
-	response := dashboardPOST(t, h, cookie, "/dashboard/apps/httppolicy/crons/"+cron.ID+"/policy", form,
+	response := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/httppolicy/crons/"+cron.ID+"/policy", form,
 		&http.Cookie{Name: policyCookie, Value: token})
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "scheduled_work=updated") {
 		t.Fatalf("POST HTTP Cron policy = %d, location %q, body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
@@ -166,7 +167,7 @@ func seedCronFixture(t *testing.T) (
 	hB http.Handler, cookieB *http.Cookie, mgrB *session.Manager,
 ) {
 	t.Helper()
-	hA, cookieA, storeA, mgrA = newAuthedDashboardServerFull(t)
+	hA, cookieA, storeA, mgrA = apidserver.NewAuthedDashboardServerFull(t)
 	acctA, err := storeA.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("seed account A lookup: %v", err)
@@ -225,7 +226,7 @@ func seedCronFixture(t *testing.T) (
 		}
 	}
 
-	hB, cookieB, _, mgrB = newAuthedDashboardServerFull(t)
+	hB, cookieB, _, mgrB = apidserver.NewAuthedDashboardServerFull(t)
 	return hA, cookieA, storeA, mgrA, app.Slug, ce.ID, hB, cookieB, mgrB
 }
 
@@ -386,17 +387,17 @@ func newAuthedDashboardServerFullFull(t *testing.T, plan, email string) (http.Ha
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	cookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	cookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
-	log := discardLogger()
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
-	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}, store, mgr
+	log := apidserver.DiscardLogger()
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
+	return srv.Handler(), &http.Cookie{Name: apidserver.SessionCookie, Value: cookie}, store, mgr
 }
 
 // mustAppIDFromSlug resolves an app's id from its slug, failing

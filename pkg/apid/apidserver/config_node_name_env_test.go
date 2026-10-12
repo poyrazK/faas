@@ -6,12 +6,14 @@
 // back-compat). The test is broken into its own file to keep the
 // existing config_test.go focused on TOML round-trip / TLS
 // helpers; the env-overlay surface is its own concern.
-package apidserver
+package apidserver_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
@@ -20,7 +22,7 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_NODE_NAME", "from-env-fsn-1")
-	cfg, err := LoadConfig(tomlPath)
+	cfg, err := apidserver.LoadConfig(tomlPath)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -29,7 +31,7 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 	}
 
 	t.Setenv("FAAS_NODE_NAME", "")
-	cfg, err = LoadConfig(tomlPath)
+	cfg, err = apidserver.LoadConfig(tomlPath)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -38,7 +40,7 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 	}
 
 	t.Setenv("FAAS_NODE_NAME", "")
-	cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	cfg, err = apidserver.LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}

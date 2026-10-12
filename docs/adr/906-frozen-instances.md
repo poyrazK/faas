@@ -129,6 +129,43 @@ zram, and then the 3 GB device was full. zram's `disksize` caps the
 size the pool (`max_pool_percent`) by the compressed bytes the host can
 spare. A node must stop freezing and start parking when the pool is full.
 
+## At density (measured 2026-10-12)
+
+`TestMetalFreezeDensity` (`pkg/fcvm`) froze twelve 1 GiB Node VMs on the
+n2 node through vmmd's Manager, then thawed each and timed first byte and
+a CPU-bound request. Swap was a 4 GB lz4 zram device:
+
+| VMs | swap | VM cgroup per VM, before → after freeze | host memory freed | freeze p50 | thaw first byte p50 / p99 | CPU-bound request p50 |
+|---|---|---|---|---|---|---|
+| cold booted | none | 301 → 299 MB | ~0 | 1.3 ms | 4.7 / 12.6 ms | 14 ms |
+| cold booted | zram | 307 → 1.5 MB | 2,056 MB, 171 MB per VM | 973 ms | 135 / 822 ms | 919 ms |
+| restored from one snapshot | none | 12.1 → 10.8 MB | ~0 | 2.3 ms | 34 / 759 ms | 148 ms |
+| restored from one snapshot | zram | 10.9 → 1.2 MB | ~0 | 50 ms | 83 / 200 ms | 68 ms |
+
+What this changes:
+
+- **Restored instances hold almost nothing of their own.** A VM restored
+  from a snapshot reads its memory from the snapshot file, whose page cache
+  all instances of the app share and the kernel can reclaim (ADR-908's
+  one-memory-file bound: 52 MB per VM at six VMs). Its own cgroup held
+  about 11 MB. A paused restored instance is therefore already cheap in
+  memory, and reclaim adds little. Its real cost is its admission charge:
+  1,032 MB under invariant 2, but the 64 MB floor under measured admission
+  (ADR-909).
+- **Cold-booted instances need swap to give memory back.** Their memory is
+  anonymous. With zram, freezing freed 171 MB per VM after compression
+  (about 2.2×), but thawing then faults the working set back: first byte
+  p50 135 ms, p99 822 ms, and the first CPU-bound request took 919 ms.
+- **Thaw beats restore when little was swapped.** Without swap, thaw
+  reached first byte in 5–34 ms p50, against 130–300 ms for a snapshot
+  wake. With swap, it stays below a restore at p50 but not always at p99.
+
+So the frozen tier should freeze without reclaiming anonymous memory by
+default. Instances restored from a snapshot are the common case, and for
+them that keeps the latency win at almost no memory cost. Swap-backed
+reclaim should be kept for host pressure, as in the ADR-909 overcommit
+prototype, rather than applied to every freeze.
+
 ## Prototype results
 
 `TestMetalFreezeThawCycle`, n2 test node (nested KVM), Firecracker 1.17,

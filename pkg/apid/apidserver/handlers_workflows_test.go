@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
+func seedWorkflowApp(t *testing.T, e apidserver.TestEnv, slug string) state.App {
 	t.Helper()
-	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID,
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID,
 		Slug:      slug,
 		Type:      state.AppTypeFunction,
 		Runtime:   "node22",
@@ -37,7 +38,7 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 	if err != nil {
 		t.Fatalf("marshal workflow definitions: %v", err)
 	}
-	if _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	if _, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "registry.example.com/test@sha256:" + strings.Repeat("a", 64),
 		Status: state.DeployLive, Workflows: raw,
 	}); err != nil {
@@ -47,9 +48,9 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 }
 
 func TestWorkflowCallbacks_AuthenticatedOneTimeCompletion(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "callback-app")
-	create := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r1"}, nil)
+	create := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r1"}, nil)
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create callback workflow = %d: %s", create.Code, create.Body.String())
 	}
@@ -58,7 +59,7 @@ func TestWorkflowCallbacks_AuthenticatedOneTimeCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := fmt.Sprintf("/v1/workflows/runs/%s/callbacks", run.ID)
-	list := e.do(t, "GET", base, nil, nil)
+	list := e.Do(t, "GET", base, nil, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("list callbacks = %d: %s", list.Code, list.Body.String())
 	}
@@ -71,7 +72,7 @@ func TestWorkflowCallbacks_AuthenticatedOneTimeCompletion(t *testing.T) {
 	}
 	callbackID := callbacks.Callbacks[0].ID
 	completeURL := base + "/" + callbackID
-	first := e.do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
+	first := e.Do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first callback = %d: %s", first.Code, first.Body.String())
 	}
@@ -79,48 +80,48 @@ func TestWorkflowCallbacks_AuthenticatedOneTimeCompletion(t *testing.T) {
 	if err := json.Unmarshal(first.Body.Bytes(), &firstReceipt); err != nil || firstReceipt.Duplicate {
 		t.Fatalf("first receipt = %#v, err=%v", firstReceipt, err)
 	}
-	retry := e.do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
+	retry := e.Do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
 	var retryReceipt api.CompleteWorkflowCallbackResponse
 	if err := json.Unmarshal(retry.Body.Bytes(), &retryReceipt); err != nil || retry.Code != http.StatusOK || !retryReceipt.Duplicate {
 		t.Fatalf("retry = %d %#v, err=%v", retry.Code, retryReceipt, err)
 	}
-	conflict := e.do(t, "POST", completeURL, map[string]any{"approved": false}, nil)
-	assertProblem(t, conflict, http.StatusConflict, api.CodeWorkflowCallbackPayloadConflict)
-	unknown := e.do(t, "POST", base+"/00000000-0000-0000-0000-000000000000", map[string]any{"approved": true}, nil)
-	assertProblem(t, unknown, http.StatusNotFound, api.CodeWorkflowStepNotFound)
-	reserved := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
+	conflict := e.Do(t, "POST", completeURL, map[string]any{"approved": false}, nil)
+	apidserver.AssertProblem(t, conflict, http.StatusConflict, api.CodeWorkflowCallbackPayloadConflict)
+	unknown := e.Do(t, "POST", base+"/00000000-0000-0000-0000-000000000000", map[string]any{"approved": true}, nil)
+	apidserver.AssertProblem(t, unknown, http.StatusNotFound, api.CodeWorkflowStepNotFound)
+	reserved := e.Do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
 		EventName: api.WorkflowCallbackEventName(run.ID, "await"), Payload: json.RawMessage("{\"approved\":true}"),
 	}, nil)
-	assertProblem(t, reserved, http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, reserved, http.StatusBadRequest, api.CodeValidation)
 
-	secondCreate := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r2"}, nil)
+	secondCreate := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r2"}, nil)
 	var second api.WorkflowRunResponse
 	if err := json.Unmarshal(secondCreate.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.CreateWorkflowSteps(context.Background(), second.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+	if err := (*e.Store()).CreateWorkflowSteps(context.Background(), second.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.store.ParkWorkflowEvent(context.Background(), second.ID, "await", api.WorkflowCallbackEventName(second.ID, "await"), time.Hour); err != nil {
+	if _, _, err := (*e.Store()).ParkWorkflowEvent(context.Background(), second.ID, "await", api.WorkflowCallbackEventName(second.ID, "await"), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	parkedList := e.do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s/callbacks", second.ID), nil, nil)
+	parkedList := e.Do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s/callbacks", second.ID), nil, nil)
 	var parked api.ListWorkflowCallbacksResponse
 	if err := json.Unmarshal(parkedList.Body.Bytes(), &parked); err != nil || len(parked.Callbacks) != 1 || parked.Callbacks[0].ExpiresAt == nil {
 		t.Fatalf("parked callbacks = %#v, err=%v", parked.Callbacks, err)
 	}
-	if _, err := e.store.CancelWorkflowRun(context.Background(), second.ID, "test"); err != nil {
+	if _, err := (*e.Store()).CancelWorkflowRun(context.Background(), second.ID, "test"); err != nil {
 		t.Fatal(err)
 	}
-	closed := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/callbacks/%s", second.ID, parked.Callbacks[0].ID), map[string]any{"approved": true}, nil)
-	assertProblem(t, closed, http.StatusConflict, api.CodeWorkflowCallbackClosed)
+	closed := e.Do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/callbacks/%s", second.ID, parked.Callbacks[0].ID), map[string]any{"approved": true}, nil)
+	apidserver.AssertProblem(t, closed, http.StatusConflict, api.CodeWorkflowCallbackClosed)
 }
 
 func TestCreateWorkflowRun_FreePlan_PaymentRequired(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	app := seedWorkflowApp(t, e, "free-app")
 
-	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/signup/runs", app.Slug), map[string]any{
+	rec := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/signup/runs", app.Slug), map[string]any{
 		"user_id": "u123",
 	}, nil)
 
@@ -133,10 +134,10 @@ func TestCreateWorkflowRun_FreePlan_PaymentRequired(t *testing.T) {
 }
 
 func TestCreateWorkflowRun_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "hobby-app")
 
-	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
+	rec := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
 		"order_id": "ord_999",
 	}, nil)
 
@@ -154,11 +155,11 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 	if resp.Status != state.WorkflowRunStatusPending {
 		t.Fatalf("expected pending status, got %s", resp.Status)
 	}
-	stored, err := e.store.GetWorkflowRun(context.Background(), resp.ID)
+	stored, err := (*e.Store()).GetWorkflowRun(context.Background(), resp.ID)
 	if err != nil {
 		t.Fatalf("GetWorkflowRun: %v", err)
 	}
-	dep, err := e.store.LiveDeploymentForScope(t.Context(), app.ID, "default")
+	dep, err := (*e.Store()).LiveDeploymentForScope(t.Context(), app.ID, "default")
 	if err != nil || resp.DeploymentID != dep.ID || stored.DeploymentID != dep.ID {
 		t.Fatalf("response=%+v stored=%+v deployment=%+v err=%v", resp, stored, dep, err)
 	}
@@ -168,11 +169,11 @@ func TestCreateWorkflowRun_HappyPath(t *testing.T) {
 }
 
 func TestCreateWorkflowRun_IdempotencyKeyReplaysAndRejectsChangedInput(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "idempotent-run-app")
 	path := fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug)
 	headers := map[string]string{"Idempotency-Key": "invoice-paid-event-42"}
-	first := e.do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_42","currency":"usd"}`), headers)
+	first := e.Do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_42","currency":"usd"}`), headers)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first create = %d: %s", first.Code, first.Body.String())
 	}
@@ -180,11 +181,12 @@ func TestCreateWorkflowRun_IdempotencyKeyReplaysAndRejectsChangedInput(t *testin
 	if err := json.Unmarshal(first.Body.Bytes(), &firstRun); err != nil {
 		t.Fatal(err)
 	}
+	(*
 
 	// JSON object ordering and insignificant whitespace do not change the
 	// request fingerprint, and replay survives a runtime outage.
-	e.s.WithWorkflowRuntimeEnabled(false)
-	replay := e.do(t, http.MethodPost, path, json.RawMessage("{ \"currency\": \"usd\", \"order_id\": \"ord_42\" }"), headers)
+	e.S()).WithWorkflowRuntimeEnabled(false)
+	replay := e.Do(t, http.MethodPost, path, json.RawMessage("{ \"currency\": \"usd\", \"order_id\": \"ord_42\" }"), headers)
 	if replay.Code != http.StatusCreated || replay.Header().Get("Idempotent-Replayed") != "true" {
 		t.Fatalf("replay = %d headers=%v: %s", replay.Code, replay.Header(), replay.Body.String())
 	}
@@ -193,31 +195,31 @@ func TestCreateWorkflowRun_IdempotencyKeyReplaysAndRejectsChangedInput(t *testin
 		t.Fatalf("replayed run = %+v, err=%v; want original %s", replayedRun, err, firstRun.ID)
 	}
 
-	conflict := e.do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_43","currency":"usd"}`), headers)
-	assertProblem(t, conflict, http.StatusConflict, api.CodeConflict)
-	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	conflict := e.Do(t, http.MethodPost, path, json.RawMessage(`{"order_id":"ord_43","currency":"usd"}`), headers)
+	apidserver.AssertProblem(t, conflict, http.StatusConflict, api.CodeConflict)
+	active, err := (*e.Store()).CountActiveRunsByApp(context.Background(), app.ID)
 	if err != nil || active != 1 {
 		t.Fatalf("active runs after replay/conflict = %d, err=%v; want 1", active, err)
 	}
 }
 
 func TestCreateWorkflowRun_RejectsInvalidIdempotencyKey(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "invalid-idempotency-key-app")
-	rec := e.do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{}, map[string]string{"Idempotency-Key": "   "})
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
-	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	rec := e.Do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{}, map[string]string{"Idempotency-Key": "   "})
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	active, err := (*e.Store()).CountActiveRunsByApp(context.Background(), app.ID)
 	if err != nil || active != 0 {
 		t.Fatalf("active runs after invalid key = %d, err=%v; want 0", active, err)
 	}
 }
 
 func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "runtime-disabled-app")
-	e.s.WithWorkflowRuntimeEnabled(false)
+	(*e.S()).WithWorkflowRuntimeEnabled(false)
 
-	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
+	rec := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
 		"order_id": "ord_disabled",
 	}, nil)
 
@@ -227,7 +229,7 @@ func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T)
 	if !strings.Contains(rec.Body.String(), api.CodeWorkflowDeploymentUnavailable) {
 		t.Fatalf("expected error code %s in body: %s", api.CodeWorkflowDeploymentUnavailable, rec.Body.String())
 	}
-	active, err := e.store.CountActiveRunsByApp(context.Background(), app.ID)
+	active, err := (*e.Store()).CountActiveRunsByApp(context.Background(), app.ID)
 	if err != nil {
 		t.Fatalf("CountActiveRunsByApp: %v", err)
 	}
@@ -237,22 +239,22 @@ func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T)
 }
 
 func TestCreateWorkflowRun_TenantRequiredAppRejectsBeforePersistence(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "tenant-workflow-app")
 	required := true
-	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+	if _, err := (*e.Store()).UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
 		PlatformTenantRequired:    &required,
 		SetPlatformTenantRequired: true,
 	}); err != nil {
 		t.Fatalf("mark app as tenant-required: %v", err)
 	}
 
-	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
+	rec := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
 		"order_id": "ord_tenant",
 	}, nil)
-	assertProblem(t, rec, http.StatusConflict, api.CodeWorkflowTenantIdentityUnavailable)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeWorkflowTenantIdentityUnavailable)
 
-	_, total, err := e.store.ListWorkflowRuns(context.Background(), app.ID, state.ListWorkflowRunsOpts{})
+	_, total, err := (*e.Store()).ListWorkflowRuns(context.Background(), app.ID, state.ListWorkflowRunsOpts{})
 	if err != nil {
 		t.Fatalf("ListWorkflowRuns: %v", err)
 	}
@@ -262,21 +264,21 @@ func TestCreateWorkflowRun_TenantRequiredAppRejectsBeforePersistence(t *testing.
 }
 
 func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "tenant-scoped-workflow-app")
 	required := true
-	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+	if _, err := (*e.Store()).UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
 		PlatformTenantRequired: &required, SetPlatformTenantRequired: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "workflow-customer", "Workflow customer", 10)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "workflow-customer", "Workflow customer", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seedPlatformTenantConsumer(t, e, app.Slug, tenant.ID)
 
-	issued := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	issued := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "workflow starter", Scopes: []string{api.ScopePlatformTenantInvocationsManage, api.ScopePlatformTenantInvocationsRead},
 	}, nil)
 	if issued.Code != http.StatusCreated {
@@ -288,7 +290,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	}
 	tenantHeaders := map[string]string{"Authorization": "Bearer " + token.Token}
 
-	started := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_42"}, map[string]string{
+	started := e.Do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_42"}, map[string]string{
 		"Authorization": "Bearer " + token.Token,
 	})
 	if started.Code != http.StatusCreated {
@@ -301,11 +303,11 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	if response.PlatformTenantID != tenant.ID {
 		t.Fatalf("response tenant_id=%q, want %q", response.PlatformTenantID, tenant.ID)
 	}
-	stored, err := e.store.GetWorkflowRun(context.Background(), response.ID)
+	stored, err := (*e.Store()).GetWorkflowRun(context.Background(), response.ID)
 	if err != nil || stored.PlatformTenantID != tenant.ID {
 		t.Fatalf("stored tenant run=%+v err=%v", stored, err)
 	}
-	managedStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/fulfill-transaction/runs", map[string]any{"order_id": "ord_44"}, map[string]string{
+	managedStarted := e.Do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/fulfill-transaction/runs", map[string]any{"order_id": "ord_44"}, map[string]string{
 		"Authorization": "Bearer " + token.Token,
 	})
 	if managedStarted.Code != http.StatusCreated {
@@ -315,12 +317,12 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	if err := json.Unmarshal(managedStarted.Body.Bytes(), &managedRun); err != nil || managedRun.PlatformTenantID != tenant.ID {
 		t.Fatalf("tenant managed-operation response=%+v err=%v", managedRun, err)
 	}
-	managedSnapshot, err := e.store.GetWorkflowRun(context.Background(), managedRun.ID)
+	managedSnapshot, err := (*e.Store()).GetWorkflowRun(context.Background(), managedRun.ID)
 	if err != nil || !strings.Contains(string(managedSnapshot.DefinitionSnapshot), `"managed_operation":true`) {
 		t.Fatalf("tenant managed-operation snapshot=%s err=%v", managedSnapshot.DefinitionSnapshot, err)
 	}
 	selfPath := "/v1/platform-tenant-self/workflows/runs/" + response.ID
-	status := e.do(t, http.MethodGet, selfPath, nil, map[string]string{"Authorization": "Bearer " + token.Token})
+	status := e.Do(t, http.MethodGet, selfPath, nil, map[string]string{"Authorization": "Bearer " + token.Token})
 	if status.Code != http.StatusOK || status.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("tenant workflow status: %d %s", status.Code, status.Body)
 	}
@@ -329,7 +331,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 		t.Fatalf("tenant workflow status response=%+v err=%v", selfRun, err)
 	}
 
-	eventStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/approval/runs", map[string]any{}, tenantHeaders)
+	eventStarted := e.Do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/approval/runs", map[string]any{}, tenantHeaders)
 	if eventStarted.Code != http.StatusCreated {
 		t.Fatalf("tenant event-wait start: %d %s", eventStarted.Code, eventStarted.Body)
 	}
@@ -340,20 +342,20 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	eventPath := "/v1/platform-tenant-self/workflows/runs/" + eventRun.ID + "/events"
 	eventRequest := api.InjectWorkflowEventRequest{EventName: "manager.approved", Payload: json.RawMessage(`{"approved":true}`)}
 	eventHeaders := map[string]string{"Authorization": tenantHeaders["Authorization"], "Idempotency-Key": "tenant-approval-1"}
-	firstEvent := e.do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
+	firstEvent := e.Do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
 	if firstEvent.Code != http.StatusOK {
 		t.Fatalf("tenant event continuation: %d %s", firstEvent.Code, firstEvent.Body)
 	}
-	retriedEvent := e.do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
+	retriedEvent := e.Do(t, http.MethodPost, eventPath, eventRequest, eventHeaders)
 	if retriedEvent.Code != http.StatusOK {
 		t.Fatalf("tenant event continuation retry: %d %s", retriedEvent.Code, retriedEvent.Body)
 	}
-	storedEvents, err := e.store.GetWorkflowEventsForRun(context.Background(), eventRun.ID)
+	storedEvents, err := (*e.Store()).GetWorkflowEventsForRun(context.Background(), eventRun.ID)
 	if err != nil || len(storedEvents) != 1 {
 		t.Fatalf("tenant event retry stored %d events, err=%v", len(storedEvents), err)
 	}
 
-	callbackStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/callback/runs", map[string]any{}, tenantHeaders)
+	callbackStarted := e.Do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/callback/runs", map[string]any{}, tenantHeaders)
 	if callbackStarted.Code != http.StatusCreated {
 		t.Fatalf("tenant callback-wait start: %d %s", callbackStarted.Code, callbackStarted.Body)
 	}
@@ -362,7 +364,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 		t.Fatalf("tenant callback-wait run=%+v err=%v", callbackRun, err)
 	}
 	callbackBase := "/v1/platform-tenant-self/workflows/runs/" + callbackRun.ID + "/callbacks"
-	callbackList := e.do(t, http.MethodGet, callbackBase, nil, tenantHeaders)
+	callbackList := e.Do(t, http.MethodGet, callbackBase, nil, tenantHeaders)
 	if callbackList.Code != http.StatusOK {
 		t.Fatalf("tenant callback list: %d %s", callbackList.Code, callbackList.Body)
 	}
@@ -373,7 +375,7 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	callbackID := callbacks.Callbacks[0].ID
 	callbackPath := callbackBase + "/" + callbackID
 	callbackPayload := map[string]any{"approved": true}
-	firstCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
+	firstCallback := e.Do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
 	if firstCallback.Code != http.StatusOK {
 		t.Fatalf("tenant callback completion: %d %s", firstCallback.Code, firstCallback.Body)
 	}
@@ -381,13 +383,13 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	if err := json.Unmarshal(firstCallback.Body.Bytes(), &firstCallbackReceipt); err != nil || firstCallbackReceipt.Duplicate {
 		t.Fatalf("tenant callback first receipt=%+v err=%v", firstCallbackReceipt, err)
 	}
-	retriedCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
+	retriedCallback := e.Do(t, http.MethodPost, callbackPath, callbackPayload, tenantHeaders)
 	var retriedCallbackReceipt api.CompleteWorkflowCallbackResponse
 	if err := json.Unmarshal(retriedCallback.Body.Bytes(), &retriedCallbackReceipt); err != nil || retriedCallback.Code != http.StatusOK || !retriedCallbackReceipt.Duplicate {
 		t.Fatalf("tenant callback retry=%d receipt=%+v err=%v body=%s", retriedCallback.Code, retriedCallbackReceipt, err, retriedCallback.Body)
 	}
 
-	accountStarted := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_43"}, nil)
+	accountStarted := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_43"}, nil)
 	if accountStarted.Code != http.StatusCreated {
 		t.Fatalf("account tenant start: %d %s", accountStarted.Code, accountStarted.Body)
 	}
@@ -395,17 +397,17 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 	if err := json.Unmarshal(accountStarted.Body.Bytes(), &accountRun); err != nil || accountRun.PlatformTenantID != tenant.ID {
 		t.Fatalf("account tenant response=%+v err=%v", accountRun, err)
 	}
-	cancelled := e.do(t, http.MethodPost, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID+"/cancel", nil, tenantHeaders)
+	cancelled := e.Do(t, http.MethodPost, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID+"/cancel", nil, tenantHeaders)
 	var cancelledRun api.WorkflowRunResponse
 	if err := json.Unmarshal(cancelled.Body.Bytes(), &cancelledRun); err != nil || cancelled.Code != http.StatusOK || cancelledRun.Status != state.WorkflowRunStatusFailed {
 		t.Fatalf("tenant cancel: status=%d run=%+v err=%v body=%s", cancelled.Code, cancelledRun, err, cancelled.Body)
 	}
 
-	other, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "unlinked-workflow-customer", "Unlinked workflow customer", 10)
+	other, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "unlinked-workflow-customer", "Unlinked workflow customer", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherIssued := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	otherIssued := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "other workflow starter", Scopes: []string{api.ScopePlatformTenantInvocationsManage, api.ScopePlatformTenantInvocationsRead},
 	}, nil)
 	if otherIssued.Code != http.StatusCreated {
@@ -416,33 +418,33 @@ func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndSupportsContinuations(
 		t.Fatal(err)
 	}
 	foreignHeaders := map[string]string{"Authorization": "Bearer " + otherToken.Token}
-	foreignRead := e.do(t, http.MethodGet, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID, nil, map[string]string{
+	foreignRead := e.Do(t, http.MethodGet, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID, nil, map[string]string{
 		"Authorization": "Bearer " + otherToken.Token,
 	})
-	assertProblem(t, foreignRead, http.StatusNotFound, api.CodeWorkflowRunNotFound)
-	foreignEvent := e.do(t, http.MethodPost, eventPath, eventRequest, foreignHeaders)
-	assertProblem(t, foreignEvent, http.StatusNotFound, api.CodeWorkflowRunNotFound)
-	foreignCallbacks := e.do(t, http.MethodGet, callbackBase, nil, foreignHeaders)
-	assertProblem(t, foreignCallbacks, http.StatusNotFound, api.CodeWorkflowRunNotFound)
-	foreignCallback := e.do(t, http.MethodPost, callbackPath, callbackPayload, foreignHeaders)
-	assertProblem(t, foreignCallback, http.StatusNotFound, api.CodeWorkflowRunNotFound)
-	foreign := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{}, nil)
-	assertProblem(t, foreign, http.StatusNotFound, api.CodeWorkflowDefinitionNotFound)
+	apidserver.AssertProblem(t, foreignRead, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignEvent := e.Do(t, http.MethodPost, eventPath, eventRequest, foreignHeaders)
+	apidserver.AssertProblem(t, foreignEvent, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignCallbacks := e.Do(t, http.MethodGet, callbackBase, nil, foreignHeaders)
+	apidserver.AssertProblem(t, foreignCallbacks, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreignCallback := e.Do(t, http.MethodPost, callbackPath, callbackPayload, foreignHeaders)
+	apidserver.AssertProblem(t, foreignCallback, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreign := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{}, nil)
+	apidserver.AssertProblem(t, foreign, http.StatusNotFound, api.CodeWorkflowDefinitionNotFound)
 }
 
 func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "list-app")
 
 	// Create 2 runs
-	_ = e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/w1/runs", app.Slug), map[string]any{"i": 1}, nil)
-	rec2 := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/w1/runs", app.Slug), map[string]any{"i": 2}, nil)
+	_ = e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/w1/runs", app.Slug), map[string]any{"i": 1}, nil)
+	rec2 := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/w1/runs", app.Slug), map[string]any{"i": 2}, nil)
 
 	var run2 api.WorkflowRunResponse
 	_ = json.Unmarshal(rec2.Body.Bytes(), &run2)
 
 	// List
-	listRec := e.do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs", app.Slug), nil, nil)
+	listRec := e.Do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs", app.Slug), nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list expected 200, got %d; body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -454,7 +456,7 @@ func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {
 	}
 
 	// Get specific run
-	getRec := e.do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s", run2.ID), nil, nil)
+	getRec := e.Do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s", run2.ID), nil, nil)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("get expected 200, got %d; body=%s", getRec.Code, getRec.Body.String())
 	}
@@ -466,23 +468,23 @@ func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {
 }
 
 func TestListWorkflowRuns_RejectsInvalidStatus(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "list-status-app")
-	rec := e.do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs?status=nonsense", app.Slug), nil, nil)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	rec := e.Do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs?status=nonsense", app.Slug), nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestListWorkflowRuns_FiltersAndValidatesCreatedRange(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "list-filters-app")
 	for _, workflow := range []string{"w1", "approval", "w1"} {
-		created := e.do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", app.Slug, workflow), map[string]any{}, nil)
+		created := e.Do(t, http.MethodPost, fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", app.Slug, workflow), map[string]any{}, nil)
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create %s run = %d: %s", workflow, created.Code, created.Body.String())
 		}
 	}
 
-	filtered := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=w1&created_after=1970-01-01T00:00:00Z&created_before=9999-12-31T23:59:59Z", app.Slug), nil, nil)
+	filtered := e.Do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=w1&created_after=1970-01-01T00:00:00Z&created_before=9999-12-31T23:59:59Z", app.Slug), nil, nil)
 	if filtered.Code != http.StatusOK {
 		t.Fatalf("filtered list = %d: %s", filtered.Code, filtered.Body.String())
 	}
@@ -494,30 +496,30 @@ func TestListWorkflowRuns_FiltersAndValidatesCreatedRange(t *testing.T) {
 		t.Fatalf("filtered workflow run response = %#v", response)
 	}
 
-	invalidTimestamp := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=yesterday", app.Slug), nil, nil)
-	assertProblem(t, invalidTimestamp, http.StatusBadRequest, api.CodeValidation)
-	reversedRange := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=2026-10-02T00:00:00Z&created_before=2026-10-01T00:00:00Z", app.Slug), nil, nil)
-	assertProblem(t, reversedRange, http.StatusBadRequest, api.CodeValidation)
-	emptyName := e.do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=", app.Slug), nil, nil)
-	assertProblem(t, emptyName, http.StatusBadRequest, api.CodeValidation)
+	invalidTimestamp := e.Do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=yesterday", app.Slug), nil, nil)
+	apidserver.AssertProblem(t, invalidTimestamp, http.StatusBadRequest, api.CodeValidation)
+	reversedRange := e.Do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?created_after=2026-10-02T00:00:00Z&created_before=2026-10-01T00:00:00Z", app.Slug), nil, nil)
+	apidserver.AssertProblem(t, reversedRange, http.StatusBadRequest, api.CodeValidation)
+	emptyName := e.Do(t, http.MethodGet, fmt.Sprintf("/v1/apps/%s/workflows/runs?workflow_name=", app.Slug), nil, nil)
+	apidserver.AssertProblem(t, emptyName, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "steps-app")
 
-	createRec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/approval/runs", app.Slug), map[string]any{"req": true}, nil)
+	createRec := e.Do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/approval/runs", app.Slug), map[string]any{"req": true}, nil)
 	var run api.WorkflowRunResponse
 	_ = json.Unmarshal(createRec.Body.Bytes(), &run)
 
 	// Add steps to store
-	_ = e.store.CreateWorkflowSteps(context.Background(), run.ID, []*state.WorkflowStep{
+	_ = (*e.Store()).CreateWorkflowSteps(context.Background(), run.ID, []*state.WorkflowStep{
 		{StepName: "step_one", Status: state.WorkflowStepStatusAwaitingEvent, Attempt: 1},
 	})
-	_ = e.store.MarkWorkflowRunStatus(context.Background(), run.ID, state.WorkflowRunStatusAwaitingEvent, nil, nil)
+	_ = (*e.Store()).MarkWorkflowRunStatus(context.Background(), run.ID, state.WorkflowRunStatusAwaitingEvent, nil, nil)
 
 	// List steps
-	stepsRec := e.do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s/steps", run.ID), nil, nil)
+	stepsRec := e.Do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s/steps", run.ID), nil, nil)
 	if stepsRec.Code != http.StatusOK {
 		t.Fatalf("steps expected 200, got %d; body=%s", stepsRec.Code, stepsRec.Body.String())
 	}
@@ -528,20 +530,20 @@ func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {
 	}
 
 	// An unrelated event is recorded but must not complete the parked step.
-	unrelatedRec := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
+	unrelatedRec := e.Do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
 		EventName: "manager.rejected",
 		Payload:   json.RawMessage(`{"approved":false}`),
 	}, nil)
 	if unrelatedRec.Code != http.StatusOK {
 		t.Fatalf("unrelated event expected 200, got %d; body=%s", unrelatedRec.Code, unrelatedRec.Body.String())
 	}
-	parkedSteps, _ := e.store.GetWorkflowSteps(context.Background(), run.ID)
+	parkedSteps, _ := (*e.Store()).GetWorkflowSteps(context.Background(), run.ID)
 	if parkedSteps[0].Status != state.WorkflowStepStatusAwaitingEvent {
 		t.Fatalf("unrelated event changed step status to %s", parkedSteps[0].Status)
 	}
 
 	// Inject the event the step actually waits for.
-	eventRec := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
+	eventRec := e.Do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
 		EventName: "manager.approved",
 		Payload:   json.RawMessage(`{"approved":true}`),
 	}, nil)
@@ -550,7 +552,7 @@ func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {
 	}
 
 	// Cancel run
-	cancelRec := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/cancel", run.ID), nil, nil)
+	cancelRec := e.Do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/cancel", run.ID), nil, nil)
 	if cancelRec.Code != http.StatusOK {
 		t.Fatalf("cancel expected 200, got %d; body=%s", cancelRec.Code, cancelRec.Body.String())
 	}
