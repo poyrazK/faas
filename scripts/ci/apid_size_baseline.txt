@@ -1,5 +1,5 @@
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-982).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-# ADR-1037 interactive app-task admission (gate, one-time attach token, create
-# response) adds 45 lines of handler wiring.
+# ADR-1037 wires pkg/apid/apptaskattach into apidserver (gate field, setter and
+# calls): 45 lines over main's baseline.
 156012
