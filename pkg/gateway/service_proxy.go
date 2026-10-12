@@ -1598,8 +1598,14 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	if maxAttempts > 1 {
 		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
+	// ADR-1133: a request the bridge proved never reached a guest earns one
+	// extra attempt on top of the policy's, for any method and outside the
+	// aggregate retry budget, provided its body can be replayed.
+	bodyReplayable := !hasBody || request.GetBody != nil
+	undeliveredGranted := false
+	limit := maxAttempts
 	rerouted := false
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < limit; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok && !rerouted {
 			// Every endpoint in the lease is benched. When an instance
@@ -1661,7 +1667,8 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commitTrailers()
 			return
 		}
-		if attempt+1 >= maxAttempts {
+		undelivered := signal.undelivered.Load() && !undeliveredGranted && bodyReplayable
+		if !undelivered && attempt+1 >= limit {
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1678,6 +1685,14 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commit()
 			buffer.commitTrailers()
 			return
+		}
+		if undelivered {
+			// No guest saw the request, so replaying it cannot duplicate a
+			// side effect and adds no load to a struggling target: it is a
+			// re-route, not a retry. Skip the aggregate budget and backoff.
+			undeliveredGranted = true
+			limit++
+			continue
 		}
 		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)

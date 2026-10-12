@@ -13,9 +13,12 @@ import (
 // signal deliberately lives in context rather than in an HTTP header so the
 // internal decision can never leak to a customer response.
 type staleTargetSignal struct {
-	stale   atomic.Bool
-	claimed sync.Once
-	onStale func()
+	stale atomic.Bool
+	// undelivered is set with stale when the bridge proved the request never
+	// reached any guest (ADR-1133), so a re-route is safe for any method.
+	undelivered atomic.Bool
+	claimed     sync.Once
+	onStale     func()
 }
 
 type staleTargetSignalKey struct{}
@@ -46,6 +49,17 @@ func markStaleTarget(ctx context.Context) {
 			}
 		})
 	}
+}
+
+// markUndeliveredTarget is markStaleTarget for failures that prove the request
+// never reached any guest: no client for the target's node, the forward stream
+// could not be opened, or vmmd answered NotFound for the instance before any
+// response (it checks the instance before dialing the guest bridge).
+func markUndeliveredTarget(ctx context.Context) {
+	if signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal); ok && signal != nil {
+		signal.undelivered.Store(true)
+	}
+	markStaleTarget(ctx)
 }
 
 func staleTargetDetected(ctx context.Context) bool {

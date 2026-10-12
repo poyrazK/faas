@@ -97,12 +97,12 @@ func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
 	const cycles = 3
 	informative := 0
 	for i := 0; i < cycles; i++ {
-		// Let any previous lease expire, and start a fresh 10 s retry-budget
-		// bucket (ADR-201): the re-route spends the call's one retry, and two
-		// stale events inside one bucket would exhaust a quiet app's
-		// allowance. Then refresh the lease with a call that reaches the
-		// running instance: the proxy now holds that instance.
-		time.Sleep(11 * time.Second)
+		// Let any previous lease expire, then refresh it with a call that
+		// reaches the running instance: the proxy now holds that instance.
+		// Cycles are deliberately closer together than the 10 s ADR-201
+		// retry-budget bucket: the re-route after vmmd's NotFound is
+		// undelivered (ADR-1133) and must not spend a quiet app's allowance.
+		time.Sleep(5500 * time.Millisecond)
 		if status, _, body := pollServiceCall(t, h, edgeID, "target", "/", http.StatusOK, time.Minute); status != http.StatusOK {
 			t.Fatalf("cycle %d: lease-refreshing call: status=%d body=%s", i, status, body)
 		}
