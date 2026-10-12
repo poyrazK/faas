@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_outcome_deadline_policy import (
         OperationWorkflowPlaybookOutcomeDeadlinePolicy,
     )
+    from ..models.operation_workflow_playbook_step_assignment_reference import (
+        OperationWorkflowPlaybookStepAssignmentReference,
+    )
     from ..models.operation_workflow_readiness_outcome_escalation_reference import (
         OperationWorkflowReadinessOutcomeEscalationReference,
     )
@@ -75,6 +78,9 @@ class OperationWorkflowPlaybookEvidenceWatch:
     items: list[OperationWorkflowPlaybookEvidenceCheck]
     """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
     checklist reviews."""
+    step_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and
+    re-enable preserve deduplication even after inbox retention."""
     outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
     expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an
@@ -141,6 +147,13 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        step_assignments: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.step_assignments, Unset):
+            step_assignments = []
+            for step_assignments_item_data in self.step_assignments:
+                step_assignments_item = step_assignments_item_data.to_dict()
+                step_assignments.append(step_assignments_item)
+
         outcome_deadline: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_deadline, Unset):
             outcome_deadline = self.outcome_deadline.to_dict()
@@ -192,6 +205,8 @@ class OperationWorkflowPlaybookEvidenceWatch:
                 "items": items,
             }
         )
+        if step_assignments is not UNSET:
+            field_dict["step_assignments"] = step_assignments
         if outcome_deadline is not UNSET:
             field_dict["outcome_deadline"] = outcome_deadline
         if deadline_at is not UNSET:
@@ -218,6 +233,9 @@ class OperationWorkflowPlaybookEvidenceWatch:
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
         from ..models.operation_workflow_playbook_outcome_deadline_policy import (
             OperationWorkflowPlaybookOutcomeDeadlinePolicy,
+        )
+        from ..models.operation_workflow_playbook_step_assignment_reference import (
+            OperationWorkflowPlaybookStepAssignmentReference,
         )
         from ..models.operation_workflow_readiness_outcome_escalation_reference import (
             OperationWorkflowReadinessOutcomeEscalationReference,
@@ -262,6 +280,17 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = OperationWorkflowPlaybookEvidenceCheck.from_dict(items_item_data)
 
             items.append(items_item)
+
+        _step_assignments = d.pop("step_assignments", UNSET)
+        step_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
+        if _step_assignments is not UNSET:
+            step_assignments = []
+            for step_assignments_item_data in _step_assignments:
+                step_assignments_item = OperationWorkflowPlaybookStepAssignmentReference.from_dict(
+                    step_assignments_item_data
+                )
+
+                step_assignments.append(step_assignments_item)
 
         _outcome_deadline = d.pop("outcome_deadline", UNSET)
         outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset
@@ -327,6 +356,7 @@ class OperationWorkflowPlaybookEvidenceWatch:
             updated_by=updated_by,
             evaluated_at=evaluated_at,
             items=items,
+            step_assignments=step_assignments,
             outcome_deadline=outcome_deadline,
             deadline_at=deadline_at,
             deadline_checked_at=deadline_checked_at,

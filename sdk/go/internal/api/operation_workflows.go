@@ -120,6 +120,7 @@ type OperationWorkflowPlaybookEvidence struct {
 
 // OperationWorkflowPlaybookProgressUpdateRequest replaces one checklist item under a revision fence.
 type OperationWorkflowPlaybookProgressUpdateRequest struct {
+	Owner       *string                             `json:"owner,omitempty"`
 	OutcomeCode string                              `json:"outcome_code,omitempty"`
 	Revision    int64                               `json:"revision"`
 	ItemIndex   int                                 `json:"item_index"`
@@ -128,6 +129,8 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
+	Owner         string                                  `json:"owner,omitempty"`
+	DueAt         *time.Time                              `json:"due_at,omitempty"`
 	EvidenceCheck *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
 	Label         string                                  `json:"label"`
 	Status        string                                  `json:"status"`
@@ -219,6 +222,7 @@ type OperationWorkflowPlaybookEvidenceWatchRequest struct {
 
 // Watch revisions fence configuration changes; polling does not advance them.
 type OperationWorkflowPlaybookEvidenceWatch struct {
+	StepAssignments      []OperationWorkflowPlaybookStepAssignmentReference    `json:"step_assignments,omitempty"`
 	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy       `json:"outcome_deadline,omitempty"`
 	DeadlineAt           *time.Time                                            `json:"deadline_at,omitempty"`
 	DeadlineCheckedAt    *time.Time                                            `json:"deadline_checked_at,omitempty"`
@@ -340,10 +344,11 @@ type OperationWorkflowPlaybookOutcomeAcceptancePolicy struct {
 
 // Plain-text application guidance conveys meaning and suggested human follow-up, never execution authority.
 type OperationWorkflowPlaybookOutcomeGuidance struct {
-	FollowUpSteps     []string `json:"follow_up_steps,omitempty" yaml:"follow_up_steps,omitempty" toml:"follow_up_steps"`
-	OutcomeCode       string   `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
-	Description       string   `json:"description" yaml:"description" toml:"description"`
-	SuggestedFollowUp string   `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
+	FollowUpAssignments []OperationWorkflowPlaybookStepAssignmentPolicy `json:"follow_up_assignments,omitempty" yaml:"follow_up_assignments,omitempty" toml:"follow_up_assignments"`
+	FollowUpSteps       []string                                        `json:"follow_up_steps,omitempty" yaml:"follow_up_steps,omitempty" toml:"follow_up_steps"`
+	OutcomeCode         string                                          `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
+	Description         string                                          `json:"description" yaml:"description" toml:"description"`
+	SuggestedFollowUp   string                                          `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
 }
 
 // Outcome follow-up tracks human work against the immutable reported outcome captured on first review.
@@ -353,4 +358,27 @@ type OperationWorkflowPlaybookOutcomeFollowUp struct {
 	Items             []OperationWorkflowPlaybookProgressItem  `json:"items"`
 	CompletedCount    int                                      `json:"completed_count"`
 	ChecklistComplete bool                                     `json:"checklist_complete"`
+}
+
+type OperationWorkflowPlaybookStepAssignmentPolicy struct {
+	Label                string `json:"label" yaml:"label" toml:"label"`
+	Owner                string `json:"owner" yaml:"owner" toml:"owner"`
+	CompleteAfterSeconds int64  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
+}
+type OperationWorkflowPlaybookStepAssignmentReference struct {
+	OutcomeCode  string                                               `json:"outcome_code"`
+	ItemIndex    int                                                  `json:"item_index"`
+	Notification OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
+}
+type OperationWorkflowPlaybookStepAssignment struct {
+	ProgressID       string                                       `json:"progress_id"`
+	OutcomeCode      string                                       `json:"outcome_code"`
+	ItemIndex        int                                          `json:"item_index"`
+	Label            string                                       `json:"label"`
+	Status           string                                       `json:"status"`
+	DueAt            time.Time                                    `json:"due_at"`
+	LastStepOwner    string                                       `json:"last_step_owner"`
+	ManualOwner      bool                                         `json:"manual_owner"`
+	History          []OperationWorkflowReadinessAssignmentChange `json:"history"`
+	HistoryTruncated bool                                         `json:"history_truncated"`
 }

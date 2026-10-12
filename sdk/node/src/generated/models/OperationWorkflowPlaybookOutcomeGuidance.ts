@@ -2,10 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookStepAssignmentPolicy } from './OperationWorkflowPlaybookStepAssignmentPolicy.js';
 /**
  * OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
  */
 export type OperationWorkflowPlaybookOutcomeGuidance = {
+  /**
+   * OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for declared steps; at most 16 assignments across the entire playbook.
+   */
+  follow_up_assignments?: Array<OperationWorkflowPlaybookStepAssignmentPolicy>;
   /**
    * OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique and at most 256 bytes each; tracked separately from original playbook evidence items.
    */

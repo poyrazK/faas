@@ -92,6 +92,12 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if n.Reminder != nil && (c.FollowUpAt == nil || !n.Reminder.DueAt.Equal(*c.FollowUpAt)) {
 		n.Reminder = nil
 	}
+	if n.PlaybookStep != nil && n.Coordination != nil && n.Coordination.Owner != c.Owner {
+		step := *n.PlaybookStep
+		step.ManualOwner = true
+		appendPlaybookStepAssignmentHistory(&step, api.OperationWorkflowReadinessAssignmentChange{FromOwner: n.Coordination.Owner, ToOwner: c.Owner, At: now, Actor: actor, Reason: "manual_assignment"})
+		n.PlaybookStep = &step
+	}
 	n = readinessEscalationCoordination(n, c, actor, now)
 	n.Coordination = c
 	return n, nil

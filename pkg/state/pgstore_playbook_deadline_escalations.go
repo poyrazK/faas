@@ -37,3 +37,31 @@ func syncPlaybookOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Que
 	_, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: id, Sequence: w.Escalation.Sequence, Payload: payload})
 	return mapErr(err)
 }
+
+func syncPlaybookStepAssignmentsTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, id pgtype.UUID, w api.OperationWorkflowPlaybookEvidenceWatch, p api.OperationWorkflowPlaybookProgress) error {
+	for _, ref := range w.StepAssignments {
+		raw, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: id, Sequence: ref.Notification.Sequence})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return mapErr(err)
+		}
+		var n api.OperationWorkflowReadinessNotification
+		if err = json.Unmarshal(raw, &n); err != nil {
+			return err
+		}
+		updated, ok := syncPlaybookStepAssignment(n, p, ref)
+		if !ok {
+			continue
+		}
+		raw, err = json.Marshal(updated)
+		if err != nil {
+			return err
+		}
+		if _, err = q.UpdateReadinessNotification(ctx, tx, sqlc.UpdateReadinessNotificationParams{SubscriptionID: id, Sequence: ref.Notification.Sequence, Payload: raw}); err != nil {
+			return mapErr(err)
+		}
+	}
+	return nil
+}

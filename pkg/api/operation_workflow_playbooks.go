@@ -63,6 +63,7 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 		slices.SortFunc(r.OutcomeGuidance, func(a, b OperationWorkflowPlaybookOutcomeGuidance) int {
 			return strings.Compare(a.OutcomeCode, b.OutcomeCode)
 		})
+		assignmentCount := 0
 		for j, guidance := range r.OutcomeGuidance {
 			if len(guidance.FollowUpSteps) > OperationWorkflowPlaybookEvidenceMax {
 				return nil, fmt.Errorf("workflow playbook outcome follow-up steps exceed their limit")
@@ -76,6 +77,19 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 				labels[label] = true
 			}
 
+			assignmentCount += len(guidance.FollowUpAssignments)
+			if assignmentCount > OperationWorkflowPlaybookEvidenceMax {
+				return nil, fmt.Errorf("workflow playbook step assignments exceed their limit")
+			}
+			r.OutcomeGuidance[j].FollowUpAssignments = slices.Clone(guidance.FollowUpAssignments)
+			slices.SortFunc(r.OutcomeGuidance[j].FollowUpAssignments, func(a, b OperationWorkflowPlaybookStepAssignmentPolicy) int { return strings.Compare(a.Label, b.Label) })
+			assigned := map[string]bool{}
+			for _, policy := range guidance.FollowUpAssignments {
+				if !slices.Contains(guidance.FollowUpSteps, policy.Label) || assigned[policy.Label] || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || policy.CompleteAfterSeconds < 1 || policy.CompleteAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds {
+					return nil, fmt.Errorf("workflow playbook step assignment is invalid or duplicated")
+				}
+				assigned[policy.Label] = true
+			}
 			allowed := guidance.OutcomeCode == r.ExpectedOutcomeCode || (r.OutcomeAcceptance != nil && slices.Contains(r.OutcomeAcceptance.AlternativeOutcomeCodes, guidance.OutcomeCode))
 			if !allowed || (j > 0 && r.OutcomeGuidance[j-1].OutcomeCode == guidance.OutcomeCode) || !text(guidance.Description, OperationWorkflowReadinessFollowUpNoteMaxBytes, true) || !text(guidance.SuggestedFollowUp, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
 				return nil, fmt.Errorf("workflow playbook outcome guidance code or text is invalid or duplicated")

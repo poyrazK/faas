@@ -6,11 +6,16 @@ import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
 import type { OperationWorkflowPlaybookOutcomeDeadlinePolicy } from './OperationWorkflowPlaybookOutcomeDeadlinePolicy.js';
+import type { OperationWorkflowPlaybookStepAssignmentReference } from './OperationWorkflowPlaybookStepAssignmentReference.js';
 import type { OperationWorkflowReadinessOutcomeEscalationReference } from './OperationWorkflowReadinessOutcomeEscalationReference.js';
 /**
  * OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceWatch = {
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and re-enable preserve deduplication even after inbox retention.
+   */
+  step_assignments?: Array<OperationWorkflowPlaybookStepAssignmentReference>;
   /**
    * OperationWorkflowPlaybookEvidenceWatch.outcome_deadline. Frozen application assignment policy, independent of the ordinary notification owner.
    */

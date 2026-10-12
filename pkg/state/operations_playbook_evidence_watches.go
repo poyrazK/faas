@@ -104,6 +104,7 @@ func configurePlaybookEvidenceWatchRecord(r *readinessSubscriptionRecord, identi
 		w.ID = old.ID
 		w.CreatedAt = old.CreatedAt
 		w.Escalation = old.Escalation
+		w.StepAssignments = old.StepAssignments
 		if old.DeadlineCheckedAt != nil {
 			w.DeadlineCheckedAt = old.DeadlineCheckedAt
 		}
@@ -257,10 +258,11 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 		return nil, false
 	}
 	r.Subscription.PlaybookEvidenceWatches[index] = u.Watch
+	assigned := publishPlaybookStepAssignments(r, index, *p)
 	if len(u.Changes) == 0 && u.OutcomeChange == nil && !u.DeadlineUnmet {
-		return nil, true
+		return assigned, true
 	}
-	w := u.Watch
+	w := r.Subscription.PlaybookEvidenceWatches[index]
 	n := readinessSubscriptionNotify(r, "playbook_evidence_changed", "Watched checklist evidence changed. Review the reported requirements; original human reviews and application state are preserved.", nil)
 	if u.OutcomeChange != nil {
 		n.Kind = "playbook_outcome_changed"
@@ -282,7 +284,7 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 		}
 		r.Subscription.PlaybookEvidenceWatches[index].Escalation = &api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: n.ID, Sequence: n.Sequence, CreatedAt: n.CreatedAt}
 	}
-	return []api.OperationWorkflowReadinessNotification{n}, true
+	return append(assigned, n), true
 }
 func playbookEvidenceWatchIdentity(r readinessSubscriptionRecord, w api.OperationWorkflowPlaybookEvidenceWatch) workflowPlaybookProgressRecord {
 	tenant := r.Tenant

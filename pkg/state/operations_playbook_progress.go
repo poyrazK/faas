@@ -121,6 +121,9 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	if actor == "" || req.Revision < 1 || req.Revision >= api.OperationWorkflowReadinessCoordinationRevisionMax || req.ItemIndex < 0 || (req.Status != "pending" && req.Status != "completed") || strings.TrimSpace(req.Note) == "" || len(req.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(req.Note) || strings.IndexFunc(req.Note, unicode.IsControl) >= 0 || req.Evidence == nil || len(req.Evidence) > api.OperationWorkflowReadinessCompletionEvidenceMax {
 		return r.Progress, ErrInvalidArgument
 	}
+	if req.Owner != nil && (req.OutcomeCode == "" || len(*req.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(*req.Owner) || strings.TrimSpace(*req.Owner) != *req.Owner || strings.IndexFunc(*req.Owner, unicode.IsControl) >= 0) {
+		return r.Progress, ErrInvalidArgument
+	}
 	rows, err := store.readPlaybookProgress(ctx, r)
 	if err != nil {
 		return r.Progress, err
@@ -142,6 +145,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	}
 	items := &p.Items
 	followUpIndex := -1
+	newFollowUp := false
 	if req.OutcomeCode != "" {
 		if api.ValidateOperationWorkflowStateName(req.OutcomeCode) != nil {
 			return *p, ErrInvalidArgument
@@ -185,6 +189,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 			}
 			p.OutcomeFollowUps = append(p.OutcomeFollowUps, follow)
 			followUpIndex = len(p.OutcomeFollowUps) - 1
+			newFollowUp = true
 		}
 		items = &p.OutcomeFollowUps[followUpIndex].Items
 	}
@@ -199,7 +204,27 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		return *p, ErrInvalidArgument
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	item := api.OperationWorkflowPlaybookProgressItem{Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
+	if newFollowUp {
+		for _, guidance := range p.Playbook.OutcomeGuidance {
+			if guidance.OutcomeCode != req.OutcomeCode {
+				continue
+			}
+			for _, policy := range guidance.FollowUpAssignments {
+				for i := range *items {
+					if (*items)[i].Label == policy.Label {
+						due := now.Add(time.Duration(policy.CompleteAfterSeconds) * time.Second)
+						(*items)[i].Owner = policy.Owner
+						(*items)[i].DueAt = &due
+					}
+				}
+			}
+		}
+	}
+	owner := (*items)[req.ItemIndex].Owner
+	if req.Owner != nil {
+		owner = *req.Owner
+	}
+	item := api.OperationWorkflowPlaybookProgressItem{Owner: owner, DueAt: (*items)[req.ItemIndex].DueAt, Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
 	(*items)[req.ItemIndex] = item
 	p.Revision++
 	p.UpdatedAt = now

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_step_assignment_policy import (
+        OperationWorkflowPlaybookStepAssignmentPolicy,
+    )
+
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookOutcomeGuidance")
 
@@ -24,6 +30,9 @@ class OperationWorkflowPlaybookOutcomeGuidance:
     description: str
     """OperationWorkflowPlaybookOutcomeGuidance.description. Required trimmed UTF-8 plain-text business meaning, at
     most 1024 bytes and no control characters."""
+    follow_up_assignments: list[OperationWorkflowPlaybookStepAssignmentPolicy] | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for
+    declared steps; at most 16 assignments across the entire playbook."""
     follow_up_steps: list[str] | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique
     and at most 256 bytes each; tracked separately from original playbook evidence items."""
@@ -35,6 +44,13 @@ class OperationWorkflowPlaybookOutcomeGuidance:
         outcome_code = self.outcome_code
 
         description = self.description
+
+        follow_up_assignments: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.follow_up_assignments, Unset):
+            follow_up_assignments = []
+            for follow_up_assignments_item_data in self.follow_up_assignments:
+                follow_up_assignments_item = follow_up_assignments_item_data.to_dict()
+                follow_up_assignments.append(follow_up_assignments_item)
 
         follow_up_steps: list[str] | Unset = UNSET
         if not isinstance(self.follow_up_steps, Unset):
@@ -50,6 +66,8 @@ class OperationWorkflowPlaybookOutcomeGuidance:
                 "description": description,
             }
         )
+        if follow_up_assignments is not UNSET:
+            field_dict["follow_up_assignments"] = follow_up_assignments
         if follow_up_steps is not UNSET:
             field_dict["follow_up_steps"] = follow_up_steps
         if suggested_follow_up is not UNSET:
@@ -59,10 +77,25 @@ class OperationWorkflowPlaybookOutcomeGuidance:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_step_assignment_policy import (
+            OperationWorkflowPlaybookStepAssignmentPolicy,
+        )
+
         d = dict(src_dict)
         outcome_code = d.pop("outcome_code")
 
         description = d.pop("description")
+
+        _follow_up_assignments = d.pop("follow_up_assignments", UNSET)
+        follow_up_assignments: list[OperationWorkflowPlaybookStepAssignmentPolicy] | Unset = UNSET
+        if _follow_up_assignments is not UNSET:
+            follow_up_assignments = []
+            for follow_up_assignments_item_data in _follow_up_assignments:
+                follow_up_assignments_item = OperationWorkflowPlaybookStepAssignmentPolicy.from_dict(
+                    follow_up_assignments_item_data
+                )
+
+                follow_up_assignments.append(follow_up_assignments_item)
 
         follow_up_steps = cast(list[str], d.pop("follow_up_steps", UNSET))
 
@@ -71,6 +104,7 @@ class OperationWorkflowPlaybookOutcomeGuidance:
         operation_workflow_playbook_outcome_guidance = cls(
             outcome_code=outcome_code,
             description=description,
+            follow_up_assignments=follow_up_assignments,
             follow_up_steps=follow_up_steps,
             suggested_follow_up=suggested_follow_up,
         )

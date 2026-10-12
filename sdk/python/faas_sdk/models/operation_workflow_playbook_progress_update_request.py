@@ -40,6 +40,9 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressUpdateRequest.evidence. Replacement evidence references for this item;
     empty allowed only for pending."""
+    owner: str | Unset = UNSET
+    """OperationWorkflowPlaybookProgressUpdateRequest.owner. Optional manual outcome-step reassignment; omission
+    preserves the current owner and an empty value clears it. Requires outcome_code."""
     outcome_code: str | Unset = UNSET
     """OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector;
     item_index addresses that pinned step list. First review captures fresh comparable evidence of this exact
@@ -59,6 +62,8 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        owner = self.owner
+
         outcome_code = self.outcome_code
 
         field_dict: dict[str, Any] = {}
@@ -72,6 +77,8 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
                 "evidence": evidence,
             }
         )
+        if owner is not UNSET:
+            field_dict["owner"] = owner
         if outcome_code is not UNSET:
             field_dict["outcome_code"] = outcome_code
 
@@ -97,6 +104,8 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
 
             evidence.append(evidence_item)
 
+        owner = d.pop("owner", UNSET)
+
         outcome_code = d.pop("outcome_code", UNSET)
 
         operation_workflow_playbook_progress_update_request = cls(
@@ -105,6 +114,7 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
             status=status,
             note=note,
             evidence=evidence,
+            owner=owner,
             outcome_code=outcome_code,
         )
 

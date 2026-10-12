@@ -36,6 +36,12 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    owner: str | Unset = UNSET
+    """OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded
+    with the step review."""
+    due_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookProgressItem.due_at. Pinned completion deadline from first list review, independent
+    of business success."""
     evidence_check: OperationWorkflowPlaybookEvidenceCheck | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
     from human review and attachment validity. Contract or guidance changes, missing declarations and incomplete
@@ -58,6 +64,12 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        owner = self.owner
+
+        due_at: str | Unset = UNSET
+        if not isinstance(self.due_at, Unset):
+            due_at = self.due_at.isoformat()
+
         evidence_check: dict[str, Any] | Unset = UNSET
         if not isinstance(self.evidence_check, Unset):
             evidence_check = self.evidence_check.to_dict()
@@ -78,6 +90,10 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if owner is not UNSET:
+            field_dict["owner"] = owner
+        if due_at is not UNSET:
+            field_dict["due_at"] = due_at
         if evidence_check is not UNSET:
             field_dict["evidence_check"] = evidence_check
         if reviewed_by is not UNSET:
@@ -106,6 +122,15 @@ class OperationWorkflowPlaybookProgressItem:
 
             evidence.append(evidence_item)
 
+        owner = d.pop("owner", UNSET)
+
+        _due_at = d.pop("due_at", UNSET)
+        due_at: datetime.datetime | Unset
+        if isinstance(_due_at, Unset):
+            due_at = UNSET
+        else:
+            due_at = datetime.datetime.fromisoformat(_due_at)
+
         _evidence_check = d.pop("evidence_check", UNSET)
         evidence_check: OperationWorkflowPlaybookEvidenceCheck | Unset
         if isinstance(_evidence_check, Unset):
@@ -127,6 +152,8 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            owner=owner,
+            due_at=due_at,
             evidence_check=evidence_check,
             reviewed_by=reviewed_by,
             reviewed_at=reviewed_at,

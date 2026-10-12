@@ -199,6 +199,9 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 					if watch.ID != u.Playbook.Watch.ID {
 						continue
 					}
+					if err = syncPlaybookStepAssignmentsTx(ctx, tx, q, id, watch, *progress); err != nil {
+						return err
+					}
 					if err = syncPlaybookOutcomeEscalationTx(ctx, tx, q, id, watch); err != nil {
 						return err
 					}

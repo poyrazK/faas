@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlaybookOutcomeEscalation } from './OperationWorkflowPlaybookOutcomeEscalation.js';
+import type { OperationWorkflowPlaybookStepAssignment } from './OperationWorkflowPlaybookStepAssignment.js';
 import type { OperationWorkflowReadinessCoordination } from './OperationWorkflowReadinessCoordination.js';
 import type { OperationWorkflowReadinessDueReminder } from './OperationWorkflowReadinessDueReminder.js';
 import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWorkflowReadinessOutcomeEscalation.js';
@@ -11,6 +12,7 @@ import type { OperationWorkflowReadinessOutcomeEscalation } from './OperationWor
  * Compact pending follow-up with original inbox references; no application readiness is inferred.
  */
 export type OperationWorkflowReadinessFollowUp = {
+  playbook_step?: OperationWorkflowPlaybookStepAssignment;
   /**
    * OperationWorkflowReadinessFollowUp.playbook_escalation. Live evidence of an assigned playbook deadline follow-up, separate from human coordination and immutable delivery evidence.
    */

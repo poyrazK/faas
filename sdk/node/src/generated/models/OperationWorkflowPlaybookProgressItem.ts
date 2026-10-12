@@ -9,6 +9,14 @@ import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflow
  */
 export type OperationWorkflowPlaybookProgressItem = {
   /**
+   * OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded with the step review.
+   */
+  owner?: string;
+  /**
+   * OperationWorkflowPlaybookProgressItem.due_at. Pinned completion deadline from first list review, independent of business success.
+   */
+  due_at?: string;
+  /**
    * OperationWorkflowPlaybookProgressItem.evidence_check. Optional live requirement check in case overviews only; never stored in reviews, history or mutation responses.
    */
   evidence_check?: OperationWorkflowPlaybookEvidenceCheck;

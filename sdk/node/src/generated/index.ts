@@ -1236,6 +1236,9 @@ export type { OperationWorkflowPlaybookProgressStartRequest } from './models/Ope
 export type { OperationWorkflowPlaybookProgressUpdateRequest } from './models/OperationWorkflowPlaybookProgressUpdateRequest.js';
 export type { OperationWorkflowPlaybookReview } from './models/OperationWorkflowPlaybookReview.js';
 export type { OperationWorkflowPlaybookReviewRequest } from './models/OperationWorkflowPlaybookReviewRequest.js';
+export type { OperationWorkflowPlaybookStepAssignment } from './models/OperationWorkflowPlaybookStepAssignment.js';
+export type { OperationWorkflowPlaybookStepAssignmentPolicy } from './models/OperationWorkflowPlaybookStepAssignmentPolicy.js';
+export type { OperationWorkflowPlaybookStepAssignmentReference } from './models/OperationWorkflowPlaybookStepAssignmentReference.js';
 export type { OperationWorkflowPolicyRequirement } from './models/OperationWorkflowPolicyRequirement.js';
 export type { OperationWorkflowPrerequisiteRecovery } from './models/OperationWorkflowPrerequisiteRecovery.js';
 export type { OperationWorkflowReadinessAssignmentChange } from './models/OperationWorkflowReadinessAssignmentChange.js';

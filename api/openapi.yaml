@@ -79243,6 +79243,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        playbook_step:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignment'
         playbook_review:
           $ref: '#/components/schemas/OperationWorkflowPlaybookCompletionReview'
         playbook_review_event:
@@ -79295,6 +79297,7 @@ components:
           - playbook_evidence_changed
           - playbook_outcome_changed
           - playbook_outcome_deadline_reached
+          - playbook_outcome_step_assigned
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -79809,6 +79812,7 @@ components:
           enum:
           - manual_assignment
           - response_deadline_fallback
+          - step_assignment
       required:
       - from_owner
       - to_owner
@@ -80357,6 +80361,8 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        playbook_step:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignment'
         playbook_escalation:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeEscalation'
           description: OperationWorkflowReadinessFollowUp.playbook_escalation. Live evidence of an assigned playbook deadline follow-up, separate from human coordination and immutable delivery evidence.
@@ -81005,6 +81011,12 @@ components:
         - evaluated_at
         - items
       properties:
+        step_assignments:
+          type: array
+          maxItems: 16
+          description: OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and re-enable preserve deduplication even after inbox retention.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignmentReference'
         outcome_deadline:
           $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeDeadlinePolicy'
           description: OperationWorkflowPlaybookEvidenceWatch.outcome_deadline. Frozen application assignment policy, independent of the ordinary notification owner.
@@ -81378,12 +81390,98 @@ components:
         checklist_complete:
           type: boolean
           description: OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never proves application state or execution.
+    OperationWorkflowPlaybookStepAssignmentPolicy:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookStepAssignmentPolicy. Pinned team and completion window for one declared outcome follow-up step; coordination only.
+      required: [label, owner, complete_after_seconds]
+      properties:
+        label:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.label. Exact unique declared follow-up label.
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.owner. Required trimmed control-free UTF-8 team label.
+        complete_after_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 604800
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list review; bounded to seven days.
+    OperationWorkflowPlaybookStepAssignmentReference:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookStepAssignmentReference. One retained queue delivery identity per outcome step and watch.
+      required: [outcome_code, item_index, notification]
+      properties:
+        outcome_code:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignmentReference.outcome_code. Pinned outcome selector.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowPlaybookStepAssignmentReference.item_index. Exact local step index.
+        notification:
+          $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationReference'
+    OperationWorkflowPlaybookStepAssignment:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
+      required: [progress_id, outcome_code, item_index, label, status, due_at, last_step_owner, manual_owner, history, history_truncated]
+      properties:
+        progress_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookStepAssignment.progress_id. Exact pinned checklist identity.
+        outcome_code:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignment.outcome_code. Exact outcome follow-up selector.
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: OperationWorkflowPlaybookStepAssignment.item_index. Local step index.
+        label:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignment.label. Pinned human follow-up label.
+        status:
+          type: string
+          enum: [pending, completed]
+          description: OperationWorkflowPlaybookStepAssignment.status. Latest accepted human step review; independent of inbox completion.
+        due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookStepAssignment.due_at. Original immutable completion deadline.
+        last_step_owner:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignment.last_step_owner. Latest synchronized checklist assignment, distinct from a manual queue override.
+        manual_owner:
+          type: boolean
+          description: OperationWorkflowPlaybookStepAssignment.manual_owner. Any manual inbox ownership change prevents later checklist synchronization from overwriting it.
+        history:
+          type: array
+          maxItems: 16
+          description: OperationWorkflowPlaybookStepAssignment.history. Bounded retained checklist and inbox assignment changes.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReadinessAssignmentChange'
+        history_truncated:
+          type: boolean
+          description: OperationWorkflowPlaybookStepAssignment.history_truncated. Older ownership changes are no longer retained.
     OperationWorkflowPlaybookOutcomeGuidance:
       type: object
       additionalProperties: false
       description: OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
       required: [outcome_code, description]
       properties:
+        follow_up_assignments:
+          type: array
+          maxItems: 16
+          description: OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for declared steps; at most 16 assignments across the entire playbook.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignmentPolicy'
         follow_up_steps:
           type: array
           maxItems: 16
@@ -81701,6 +81799,10 @@ components:
       - note
       - evidence
       properties:
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookProgressUpdateRequest.owner. Optional manual outcome-step reassignment; omission preserves the current owner and an empty value clears it. Requires outcome_code.
         outcome_code:
           type: string
           maxLength: 64
@@ -81748,6 +81850,14 @@ components:
       - note
       - evidence
       properties:
+        owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded with the step review.
+        due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookProgressItem.due_at. Pinned completion deadline from first list review, independent of business success.
         evidence_check:
           $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceCheck'
           description: OperationWorkflowPlaybookProgressItem.evidence_check. Optional live requirement check in case overviews only; never stored in reviews, history or mutation responses.

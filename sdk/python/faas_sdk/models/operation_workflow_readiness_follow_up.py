@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+    from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
@@ -49,6 +50,9 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
+    Polling preserves manual coordination and bounded ownership history."""
     playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
     current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
@@ -104,6 +108,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        playbook_step: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_step, Unset):
+            playbook_step = self.playbook_step.to_dict()
+
         playbook_escalation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_escalation, Unset):
             playbook_escalation = self.playbook_escalation.to_dict()
@@ -153,6 +161,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if playbook_step is not UNSET:
+            field_dict["playbook_step"] = playbook_step
         if playbook_escalation is not UNSET:
             field_dict["playbook_escalation"] = playbook_escalation
         if outcome_escalation is not UNSET:
@@ -182,6 +192,7 @@ class OperationWorkflowReadinessFollowUp:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+        from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
@@ -204,6 +215,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _playbook_step = d.pop("playbook_step", UNSET)
+        playbook_step: OperationWorkflowPlaybookStepAssignment | Unset
+        if isinstance(_playbook_step, Unset):
+            playbook_step = UNSET
+        else:
+            playbook_step = OperationWorkflowPlaybookStepAssignment.from_dict(_playbook_step)
 
         _playbook_escalation = d.pop("playbook_escalation", UNSET)
         playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset
@@ -267,6 +285,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            playbook_step=playbook_step,
             playbook_escalation=playbook_escalation,
             outcome_escalation=outcome_escalation,
             subscription_tenant_id=subscription_tenant_id,

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     )
     from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
     from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+    from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
     from ..models.operation_workflow_readiness_business_outcome_event import (
         OperationWorkflowReadinessBusinessOutcomeEvent,
     )
@@ -55,6 +56,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
+    Polling preserves manual coordination and bounded ownership history."""
     playbook_review: OperationWorkflowPlaybookCompletionReview | Unset = UNSET
     """OperationWorkflowPlaybookCompletionReview. Bounded retained post-completion monitoring; updates never reopen
     or rewrite the original closure."""
@@ -108,6 +112,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        playbook_step: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_step, Unset):
+            playbook_step = self.playbook_step.to_dict()
 
         playbook_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_review, Unset):
@@ -172,6 +180,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if playbook_step is not UNSET:
+            field_dict["playbook_step"] = playbook_step
         if playbook_review is not UNSET:
             field_dict["playbook_review"] = playbook_review
         if playbook_review_event is not UNSET:
@@ -209,6 +219,7 @@ class OperationWorkflowReadinessNotification:
         )
         from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
         from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+        from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
         from ..models.operation_workflow_readiness_business_outcome_event import (
             OperationWorkflowReadinessBusinessOutcomeEvent,
         )
@@ -235,6 +246,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _playbook_step = d.pop("playbook_step", UNSET)
+        playbook_step: OperationWorkflowPlaybookStepAssignment | Unset
+        if isinstance(_playbook_step, Unset):
+            playbook_step = UNSET
+        else:
+            playbook_step = OperationWorkflowPlaybookStepAssignment.from_dict(_playbook_step)
 
         _playbook_review = d.pop("playbook_review", UNSET)
         playbook_review: OperationWorkflowPlaybookCompletionReview | Unset
@@ -333,6 +351,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            playbook_step=playbook_step,
             playbook_review=playbook_review,
             playbook_review_event=playbook_review_event,
             playbook_escalation=playbook_escalation,

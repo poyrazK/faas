@@ -309,6 +309,13 @@
   text(parent,'Application meaning · '+guidance.outcome_code+': '+guidance.description);
   if(guidance.suggested_follow_up)text(parent,'Suggested follow-up (application guidance): '+guidance.suggested_follow_up);
  };
+ window.renderPlaybookStepAssignment = (parent,step) => {
+  if(!step)return;
+  text(parent,'Assigned outcome step · '+step.outcome_code+' · '+step.label+' · '+step.status+' · original deadline '+new Date(step.due_at).toLocaleString());
+  if(step.manual_owner)text(parent,'Manual inbox assignment is preserved; checklist owner updates do not overwrite it.');
+  for(const change of step.history || [])text(parent,'Assignment: '+(change.from_owner||'unassigned')+' → '+(change.to_owner||'unassigned')+' · '+new Date(change.at).toLocaleString()+' · '+change.actor+' · '+change.reason);
+  if(step.history_truncated)text(parent,'Older assignment changes are no longer retained.');
+ };
  window.renderPlaybookEscalation = (parent,escalation,scope) => {
   if(!escalation)return;const result=escalation.current;
   window.renderEscalationResponse(parent,escalation.response);
@@ -332,6 +339,7 @@
  window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
+  window.renderPlaybookStepAssignment(parent,notification.playbook_step);
   const missed=notification.escalation_response;
   if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));const source=missed.source || missed.playbook;if(source)text(parent,source.workflow+' / '+source.instance_id+' · '+source.subject.type+': '+source.subject.id);}
   if(notification.playbook_review){const review=notification.playbook_review;window.renderPlaybookOutcomeGuidance(parent,review.current);if(review.current.acceptance)text(parent,'Post-completion application acceptance: '+review.current.acceptance.replace(/_/g,' '));text(parent,'Post-completion review: '+review.status+' · until '+new Date(review.expires_at).toLocaleString()+' · owner '+(review.owner||'unassigned'));window.renderReadinessBusinessOutcome(parent,review.current.evidence,scope,'Latest post-completion business evidence');}
@@ -576,6 +584,7 @@
   const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
   if(window.renderReadinessEscalation)window.renderReadinessEscalation(li,row.outcome_escalation,row.scope);
   if(window.renderPlaybookEscalation)window.renderPlaybookEscalation(li,row.playbook_escalation,row.scope);
+  if(window.renderPlaybookStepAssignment)window.renderPlaybookStepAssignment(li,row.playbook_step);
   if(row.reminder)text(li,'Due reminder published '+new Date(row.reminder.created_at).toLocaleString());
   text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
   text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));
@@ -760,7 +769,7 @@
     const saved=p.outcome_follow_ups?.find(f=>f.outcome_code===guidance.outcome_code);
     const current=p.business_outcome;
     const canStart=current && ['achieved','different_outcome'].includes(current.status) && current.evidence.reported_outcome_code===guidance.outcome_code;
-    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[]})),not_started:true,can_start:canStart});
+    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[],owner:guidance.follow_up_assignments?.find(a=>a.label===label)?.owner||''})),not_started:true,can_start:canStart});
    }
    for(const list of lists){
     if(list.outcome_code){section.append(node('h5','Outcome follow-up · '+list.outcome_code));section.append(node('p',list.not_started ? (list.can_start ? 'First review will capture this current reported outcome.' : 'A fresh report of this outcome is required before the first review.') : list.completed_count+'/'+list.items.length+' steps reviewed complete'+(list.checklist_complete?' · Follow-up checklist complete':'')));if(list.observation){const evidence=list.observation.evidence;section.append(node('p','Original outcome report '+evidence.report_id+' · Revision '+evidence.state_revision+' · Captured '+clock(evidence.checked_at)+'. Later application changes do not rewrite this record.'));} }
@@ -776,6 +785,7 @@
     if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}
     const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
     for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;status.append(option);}status.value=item.status;
+    const owner=list.outcome_code ? node('input','') : null;if(owner){owner.value=item.owner||'';owner.maxLength=256;owner.setAttribute('aria-label','Assigned team for '+item.label);edit.append(node('p','Step owner'+(item.due_at?' · Due '+clock(item.due_at):' · Deadline starts on first list review')),owner);}
     const note=node('textarea','');note.required=true;note.maxLength=1024;note.value=item.note;note.setAttribute('aria-label','Review note for '+item.label);
     const evidence=node('textarea','');evidence.value=(item.evidence||[]).map(e=>e.operation_id+(e.milestone_id?'/'+e.milestone_id:'')).join('\n');evidence.setAttribute('aria-label','Evidence references for '+item.label);
     edit.append(node('p','Evidence: one operation UUID per line, optionally followed by /milestone-ID. Completed items require evidence.'),status,note,evidence);
@@ -783,7 +793,7 @@
     edit.addEventListener('submit',event=>{event.preventDefault();if(!edit.reportValidity())return;
      const refs=evidence.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const separator=line.indexOf('/');return separator<0?{operation_id:line}:{operation_id:line.slice(0,separator),milestone_id:line.slice(separator+1)};});
      if(status.value==='completed'&&!refs.length){message.textContent='Completed items require operation or milestone evidence.';return;}
-     void savePlaybookProgress(p.id,{revision:p.revision,outcome_code:list.outcome_code || undefined,item_index:index,status:status.value,note:note.value,evidence:refs},button);
+     void savePlaybookProgress(p.id,{revision:p.revision,outcome_code:list.outcome_code || undefined,owner:owner ? owner.value : undefined,item_index:index,status:status.value,note:note.value,evidence:refs},button);
     });section.append(edit);
    });}
    caseView.append(section);
