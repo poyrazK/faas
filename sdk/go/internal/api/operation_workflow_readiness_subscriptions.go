@@ -552,4 +552,5 @@ type OperationWorkflowReviewResponseBlockageEvent struct {
 	SourceSequence       int64     `json:"source_sequence"`
 	CheckedAt            time.Time `json:"checked_at"`
 	AddedBlockers        []string  `json:"added_blockers"`
+	ClearedBlockers      []string  `json:"cleared_blockers,omitempty"`
 }

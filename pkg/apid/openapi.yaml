@@ -79307,7 +79307,7 @@ components:
       properties:
         review_blockage:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseBlockageEvent'
-          description: OperationWorkflowReadinessNotification.review_blockage. Newly observed blockers for an active response plan.
+          description: OperationWorkflowReadinessNotification.review_blockage. Newly observed blockers or positively verified recoveries for an active response plan.
         review_check_in:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseCheckInEvent'
           description: OperationWorkflowReadinessNotification.review_check_in. One-time missed response check-in with immutable plan/link/ownership context; source resolution and rescheduling fence stale publication.
@@ -79360,6 +79360,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_recovered
           - review_response_blocked
           - review_response_check_in_overdue
           - business_impact_changed
@@ -80563,7 +80564,7 @@ components:
       - overdue
     OperationWorkflowReviewResponseBlockageEvent:
       type: object
-      description: Sampled newly added prerequisites, declared checklist evidence issues or unavailable progress for a linked response plan. No business result is inferred.
+      description: Sampled blocker changes and positively verified recoveries for a linked response plan. Recovery does not resolve the response or establish a business result.
       additionalProperties: false
       properties:
         source_notification_id:
@@ -80579,6 +80580,11 @@ components:
           type: string
           format: date-time
           description: OperationWorkflowReviewResponseBlockageEvent.checked_at. Case observation time.
+        cleared_blockers:
+          type: array
+          description: OperationWorkflowReviewResponseBlockageEvent.cleared_blockers. Previously observed blockers positively verified as cleared; unavailable sources and changed failure reasons cannot establish recovery.
+          items:
+            type: string
         added_blockers:
           type: array
           description: OperationWorkflowReviewResponseBlockageEvent.added_blockers. Newly observed blockers labeled by fixed linked review position; first observations are silent.

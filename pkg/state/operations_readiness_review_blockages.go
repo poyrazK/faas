@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type reviewResponseBlockageUpdate struct {
-	ResponseUpdatedAt time.Time
-	Blockers          []string
-	CheckedAt         time.Time
+	ResponseUpdatedAt     time.Time
+	Blockers              []string
+	VerifiedClearPrefixes []string
+	CheckedAt             time.Time
 }
 
 // Separate timeout and cursor keep case observation from starving other watch types.
@@ -59,6 +61,7 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 	for _, n := range candidates {
 		r.ReviewBlockageCursor = n.Sequence
 		blockers := []string{}
+		clearPrefixes := []string{}
 		failed := false
 		cache := map[string]api.OperationWorkflowCase{}
 		for i, link := range n.ReviewResponse.Reviews {
@@ -106,6 +109,7 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 						continue
 					}
 					stepFound = true
+					clearPrefixes = append(clearPrefixes, prefix+"waiting for prerequisite ", prefix+"source progress unavailable", prefix+"source revision unavailable", prefix+"linked review step unavailable")
 					ready := playbookStepReadiness(p, follow.OutcomeCode, follow.Items, link.ItemIndex)
 					for _, label := range reviewResponsePrerequisiteBlockers(p, follow.OutcomeCode, follow.Items, link.ItemIndex, ready.WaitingFor) {
 						blockers = append(blockers, prefix+"waiting for prerequisite "+label)
@@ -116,6 +120,9 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 				}
 				// Only declared live requirements are observed; human attachments are not revalidated.
 				for _, item := range p.Items {
+					if item.EvidenceCheck != nil && item.EvidenceCheck.Status == "satisfied" {
+						clearPrefixes = append(clearPrefixes, prefix+"checklist evidence "+item.Label+": ")
+					}
 					if item.EvidenceCheck != nil && item.EvidenceCheck.Status != "satisfied" {
 						blockers = append(blockers, prefix+"checklist evidence "+item.Label+": "+item.EvidenceCheck.Status+" ("+item.EvidenceCheck.Reason+")")
 					}
@@ -130,7 +137,7 @@ func evaluateReviewResponseBlockages(ctx context.Context, store readinessSubscri
 		}
 		slices.Sort(blockers)
 		blockers = slices.Compact(blockers)
-		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ReviewBlockage: &reviewResponseBlockageUpdate{ResponseUpdatedAt: n.ReviewResponse.UpdatedAt, Blockers: blockers, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}})
+		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ReviewBlockage: &reviewResponseBlockageUpdate{ResponseUpdatedAt: n.ReviewResponse.UpdatedAt, Blockers: blockers, VerifiedClearPrefixes: clearPrefixes, CheckedAt: time.Now().UTC().Truncate(time.Microsecond)}})
 	}
 	return updates, firstErr
 }
@@ -154,16 +161,47 @@ func applyReviewResponseBlockage(r *readinessSubscriptionRecord, n api.Operation
 			}
 		}
 	}
-	if len(added) == 0 {
-		return n, nil, true
+
+	cleared := []string{}
+	for _, blocker := range previous {
+		if slices.Contains(observation.Blockers, blocker) {
+			continue
+		}
+		if slices.ContainsFunc(observation.VerifiedClearPrefixes, func(prefix string) bool {
+			if !strings.HasPrefix(blocker, prefix) {
+				return false
+			}
+			// Match the complete checklist label, including labels containing ": ".
+			return !strings.HasSuffix(prefix, ": ") || strings.LastIndex(blocker, ": ") == len(prefix)-2
+		}) {
+			cleared = append(cleared, blocker)
+		}
 	}
-	notice := readinessSubscriptionNotify(r, "review_response_blocked", "New blockers were observed for the active response plan. Review the linked sources and revise the plan before its check-in. These observations do not determine application business success.", nil)
-	impact := *n.BusinessImpact
-	impact.Response = nil
-	notice.BusinessImpact = &impact
-	notice.ReviewBlockage = &api.OperationWorkflowReviewResponseBlockageEvent{SourceNotificationID: n.ID, SourceSequence: n.Sequence, CheckedAt: observation.CheckedAt, AddedBlockers: added}
-	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: n.ReviewResponse.Owner, UpdatedAt: observation.CheckedAt, UpdatedBy: "system:review-response-blockage"}
-	return n, []api.OperationWorkflowReadinessNotification{notice}, true
+	// Preserve unverified disappearances so a later positive observation can report recovery.
+	for _, blocker := range previous {
+		if !slices.Contains(observation.Blockers, blocker) && !slices.Contains(cleared, blocker) {
+			r.ReviewBlockages[n.ID] = append(r.ReviewBlockages[n.ID], blocker)
+		}
+	}
+	slices.Sort(r.ReviewBlockages[n.ID])
+	slices.Sort(cleared)
+	notices := []api.OperationWorkflowReadinessNotification{}
+	publish := func(kind, explanation string, added, cleared []string) {
+		notice := readinessSubscriptionNotify(r, kind, explanation, nil)
+		impact := *n.BusinessImpact
+		impact.Response = nil
+		notice.BusinessImpact = &impact
+		notice.ReviewBlockage = &api.OperationWorkflowReviewResponseBlockageEvent{SourceNotificationID: n.ID, SourceSequence: n.Sequence, CheckedAt: observation.CheckedAt, AddedBlockers: added, ClearedBlockers: cleared}
+		notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: n.ReviewResponse.Owner, UpdatedAt: observation.CheckedAt, UpdatedBy: "system:review-response-blockage"}
+		notices = append(notices, notice)
+	}
+	if len(added) > 0 {
+		publish("review_response_blocked", "New blockers were observed for the active response plan. Review the linked sources and revise the plan before its check-in. These observations do not determine application business success.", added, nil)
+	}
+	if len(cleared) > 0 {
+		publish("review_response_recovered", "The listed response-plan blockers have cleared in a fresh source observation; other blockers may remain. Inspect the linked reviews before resuming work; the response still requires an explicit decision to resolve.", []string{}, cleared)
+	}
+	return n, notices, true
 }
 
 // Include reopened transitive ancestors even when the immediate prerequisite was already blocked.
