@@ -1,3 +1,5 @@
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
+# Main's merged workflow coordination code (#4492) added 1,080 lines; the
+# PostgreSQL rollout-readiness change adds no apidserver production code.
 155431
