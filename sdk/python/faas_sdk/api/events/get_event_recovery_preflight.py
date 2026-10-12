@@ -9,18 +9,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.event_recovery_preflight import EventRecoveryPreflight
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     job_id: UUID,
+    *,
+    retry: bool | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["retry"] = retry
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/event-recoveries/{job_id}/preflight".format(
             job_id=quote(str(job_id), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -54,6 +63,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 504:
         response_504 = Problem.from_dict(response.json())
 
@@ -80,6 +94,7 @@ def sync_detailed(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    retry: bool | Unset = UNSET,
 ) -> Response[EventRecoveryPreflight | Problem]:
     """Assess a frozen recovery selection without admitting work.
 
@@ -87,10 +102,15 @@ def sync_detailed(
     sample positions. Current per-item eligibility and capacity are not reservations. Conditions can
     change before admission. The optimistic rate-window estimate includes all pending admissions/skips
     and spent permits, assumes immediate resume, and excludes future contention, worker delays and
-    handler execution. No query parameters are accepted.
+    handler execution. With retry=true, review every saved item of a terminal native workflow recovery
+    using one consistent snapshot. Only saved failures matching the retained run generation can be
+    retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be
+    selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not
+    a prospective child.
 
     Args:
         job_id (UUID):
+        retry (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -102,6 +122,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         job_id=job_id,
+        retry=retry,
     )
 
     response = client.get_httpx_client().request(
@@ -115,6 +136,7 @@ def sync(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    retry: bool | Unset = UNSET,
 ) -> EventRecoveryPreflight | Problem | None:
     """Assess a frozen recovery selection without admitting work.
 
@@ -122,10 +144,15 @@ def sync(
     sample positions. Current per-item eligibility and capacity are not reservations. Conditions can
     change before admission. The optimistic rate-window estimate includes all pending admissions/skips
     and spent permits, assumes immediate resume, and excludes future contention, worker delays and
-    handler execution. No query parameters are accepted.
+    handler execution. With retry=true, review every saved item of a terminal native workflow recovery
+    using one consistent snapshot. Only saved failures matching the retained run generation can be
+    retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be
+    selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not
+    a prospective child.
 
     Args:
         job_id (UUID):
+        retry (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +165,7 @@ def sync(
     return sync_detailed(
         job_id=job_id,
         client=client,
+        retry=retry,
     ).parsed
 
 
@@ -145,6 +173,7 @@ async def asyncio_detailed(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    retry: bool | Unset = UNSET,
 ) -> Response[EventRecoveryPreflight | Problem]:
     """Assess a frozen recovery selection without admitting work.
 
@@ -152,10 +181,15 @@ async def asyncio_detailed(
     sample positions. Current per-item eligibility and capacity are not reservations. Conditions can
     change before admission. The optimistic rate-window estimate includes all pending admissions/skips
     and spent permits, assumes immediate resume, and excludes future contention, worker delays and
-    handler execution. No query parameters are accepted.
+    handler execution. With retry=true, review every saved item of a terminal native workflow recovery
+    using one consistent snapshot. Only saved failures matching the retained run generation can be
+    retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be
+    selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not
+    a prospective child.
 
     Args:
         job_id (UUID):
+        retry (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,6 +201,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         job_id=job_id,
+        retry=retry,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -178,6 +213,7 @@ async def asyncio(
     job_id: UUID,
     *,
     client: AuthenticatedClient,
+    retry: bool | Unset = UNSET,
 ) -> EventRecoveryPreflight | Problem | None:
     """Assess a frozen recovery selection without admitting work.
 
@@ -185,10 +221,15 @@ async def asyncio(
     sample positions. Current per-item eligibility and capacity are not reservations. Conditions can
     change before admission. The optimistic rate-window estimate includes all pending admissions/skips
     and spent permits, assumes immediate resume, and excludes future contention, worker delays and
-    handler execution. No query parameters are accepted.
+    handler execution. With retry=true, review every saved item of a terminal native workflow recovery
+    using one consistent snapshot. Only saved failures matching the retained run generation can be
+    retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be
+    selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not
+    a prospective child.
 
     Args:
         job_id (UUID):
+        retry (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -202,5 +243,6 @@ async def asyncio(
         await asyncio_detailed(
             job_id=job_id,
             client=client,
+            retry=retry,
         )
     ).parsed

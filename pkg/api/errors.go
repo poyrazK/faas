@@ -1864,6 +1864,7 @@ const (
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
 	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
 	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
 	CodeWorkflowResumeLimit               = "workflow_resume_limit"
@@ -1991,7 +1992,7 @@ func StatusForCode(code string) int {
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,

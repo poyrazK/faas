@@ -21,6 +21,7 @@ import (
 type Host interface {
 	httpkit.AppLoader
 	Store() state.Store
+	WorkflowRuntimeEnabled() bool
 	Logger() *slog.Logger
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Notify sends a pg_notify wake-up.

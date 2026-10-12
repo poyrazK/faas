@@ -1,10 +1,11 @@
 from typing import Literal
 
-ListEventRecoveriesMode = Literal["execution", "routing"]
+ListEventRecoveriesMode = Literal["execution", "routing", "workflow"]
 
 LIST_EVENT_RECOVERIES_MODE_VALUES: set[ListEventRecoveriesMode] = {
     "execution",
     "routing",
+    "workflow",
 }
 
 

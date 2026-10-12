@@ -2911,23 +2911,26 @@ type EventRecoveryExecutionResult struct {
 }
 
 type EventRecoveryHistory struct {
-	ID            int64
-	JobID         pgtype.UUID
-	OccurredAt    pgtype.Timestamptz
-	Action        string
-	ActorKind     string
-	ActorID       string
-	Reason        string
-	PreviousState string
-	State         string
-	PreviousRate  int32
-	Rate          int32
+	ID                int64
+	JobID             pgtype.UUID
+	OccurredAt        pgtype.Timestamptz
+	Action            string
+	ActorKind         string
+	ActorID           string
+	Reason            string
+	PreviousState     string
+	State             string
+	PreviousRate      int32
+	Rate              int32
+	TargetPosition    pgtype.Int8
+	TargetRunID       pgtype.UUID
+	TargetResumeCount pgtype.Int4
 }
 
 type EventRecoveryItem struct {
 	JobID              pgtype.UUID
 	Position           int64
-	OutboxID           int64
+	OutboxID           pgtype.Int8
 	SubscriptionID     string
 	EventSource        string
 	EventID            string
@@ -2969,6 +2972,18 @@ type EventRecoveryJob struct {
 	RequestID                     pgtype.UUID
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
+	ExecutionAttentionNextAt      pgtype.Timestamptz
+}
+
+type EventRecoveryWorkflowResult struct {
+	JobID        pgtype.UUID
+	Position     int64
+	RunID        pgtype.UUID
+	ResumeNumber int32
+	AdmittedAt   pgtype.Timestamptz
+	State        string
+	CompletedAt  pgtype.Timestamptz
+	RecordedAt   pgtype.Timestamptz
 }
 
 type EventReplayJob struct {
@@ -8290,6 +8305,131 @@ type WorkflowOperationEffect struct {
 	WebhookID   pgtype.UUID
 	EventType   string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type WorkflowRecoveryActionReceipt struct {
+	JobID      pgtype.UUID
+	RequestID  pgtype.UUID
+	Request    []byte
+	Response   []byte
+	CapturedAt pgtype.Timestamptz
+	ActorKind  string
+	ActorID    string
+}
+
+type WorkflowRecoveryFailureCapture struct {
+	Singleton        bool
+	StartedAt        pgtype.Timestamptz
+	MaxEntries       int32
+	RetentionSeconds int64
+}
+
+type WorkflowRecoveryFailureEvidence struct {
+	ID                    pgtype.UUID
+	Sequence              int64
+	AppID                 pgtype.UUID
+	RunID                 pgtype.UUID
+	Workflow              string
+	ResumeCount           int32
+	FailureStatus         string
+	ObservedAt            pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+	EligibilityObservedAt pgtype.Timestamptz
+	Eligibility           []byte
+}
+
+type WorkflowRecoveryHealthIncident struct {
+	AppID    pgtype.UUID
+	Incident []byte
+}
+
+type WorkflowRecoveryHistoryEvent struct {
+	ID         pgtype.UUID
+	Sequence   int64
+	AppID      pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+	Entry      []byte
+}
+
+type WorkflowRecoveryPolicy struct {
+	AppID                pgtype.UUID
+	Version              int64
+	Enabled              bool
+	Policy               []byte
+	UpdatedAt            pgtype.Timestamptz
+	ActorKind            string
+	ActorID              string
+	NextEvaluateAt       pgtype.Timestamptz
+	LastEvaluatedAt      pgtype.Timestamptz
+	JobCursor            pgtype.UUID
+	Status               string
+	NextExecuteAt        pgtype.Timestamptz
+	AutomaticFailures    int32
+	AutomaticPausedAt    pgtype.Timestamptz
+	AutomaticPauseReason string
+	NextHealthAt         pgtype.Timestamptz
+}
+
+type WorkflowRecoveryPolicyControl struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	PolicyVersion int64
+	Operation     string
+	Reason        string
+	ActorKind     string
+	ActorID       string
+	ControlledAt  pgtype.Timestamptz
+}
+
+type WorkflowRecoveryPolicyExecution struct {
+	ActionID            pgtype.UUID
+	AppID               pgtype.UUID
+	ReviewID            pgtype.UUID
+	PolicyVersion       int64
+	Position            int64
+	Status              string
+	Reason              string
+	ChildJobID          pgtype.UUID
+	AppliedAt           pgtype.Timestamptz
+	Result              []byte
+	Suppression         []byte
+	BlockedNotification []byte
+	NextBlockedAt       pgtype.Timestamptz
+	LastEvaluation      []byte
+}
+
+type WorkflowRecoveryPolicyExecutionCharge struct {
+	ActionID  pgtype.UUID
+	AppID     pgtype.UUID
+	AppliedAt pgtype.Timestamptz
+}
+
+type WorkflowRecoveryPolicyReview struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	JobID          pgtype.UUID
+	Fingerprint    string
+	Review         []byte
+	ObservedAt     pgtype.Timestamptz
+	ReviewDecision []byte
+}
+
+type WorkflowRecoveryPolicyTarget struct {
+	AppID       pgtype.UUID
+	ReviewID    pgtype.UUID
+	RunID       pgtype.UUID
+	ResumeCount int32
+	Action      string
+	PreparedAt  pgtype.Timestamptz
+}
+
+type WorkflowRecoveryReviewNotification struct {
+	ReviewID         pgtype.UUID
+	NextAt           pgtype.Timestamptz
+	Receipt          []byte
+	NextCompletionAt pgtype.Timestamptz
+	Completion       []byte
 }
 
 type WorkflowRetainedDeploymentRef struct {

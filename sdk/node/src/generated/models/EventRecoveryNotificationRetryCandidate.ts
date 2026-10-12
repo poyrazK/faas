@@ -6,7 +6,7 @@
  * One observed receiver with its current generation and eligibility. Missing delivery identity prevents selecting this receiver for retry.
  */
 export type EventRecoveryNotificationRetryCandidate = {
-  kind: 'admission' | 'execution';
+  kind: 'admission' | 'execution' | 'attention';
   webhook_id: string;
   delivery_id?: string;
   replay_generation: number;
