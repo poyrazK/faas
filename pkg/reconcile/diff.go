@@ -288,7 +288,7 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
 	}
-	if w.Image != "" && a.Manifest.ExecutionMode == "" && projectImageExecutionMode(w) != "" {
+	if a.Manifest.ExecutionMode == "" && scanExecutionMode(w) != "" {
 		changed = append(changed, "image_execution_mode")
 	}
 	var serviceNames map[string]struct{}

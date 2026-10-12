@@ -29,15 +29,17 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 	return nil
 }
 
-// ProjectImageLifecycleAdmissionReasons keeps background image workloads on
-// their worker/job lifecycle and applies the same plan gate as standalone apps.
+// ProjectImageLifecycleAdmissionReasons keeps background image workloads, and
+// built workers, on their worker/job lifecycle and applies the same plan gate
+// as standalone apps.
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
-		if workload.Image == "" {
+		mode := scanExecutionMode(workload)
+		if workload.Image == "" && mode == "" {
 			continue
 		}
-		manifest := api.AppManifest{ExecutionMode: projectImageExecutionMode(workload)}
+		manifest := api.AppManifest{ExecutionMode: mode}
 		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
 		}

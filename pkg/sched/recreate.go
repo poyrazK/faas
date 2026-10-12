@@ -183,6 +183,8 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 	if e.ledger != nil {
 		e.ledger.Release(ins.ID)
 	}
+	// The node may only have been slow to answer, so the VM may still run.
+	e.noteLostVM(ins.NodeID, ins.ID)
 	if e.ops != nil {
 		e.ops.RecreateDecisions("succeeded").Inc()
 	}

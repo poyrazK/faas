@@ -1532,7 +1532,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithNodeRegistry(nodeRegistry).
-		WithEvents(eventsPlatform)
+		WithEvents(eventsPlatform).
+		WithReachableHook(engine.DestroyLostVMs)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	if deps.heartbeatInterval > 0 {
