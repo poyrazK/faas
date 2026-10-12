@@ -52,6 +52,15 @@ streams, report generation and large exports all run past 30 s.
    them. Lengthening those means extending invocation leases; it is a
    follow-up.
 
+6. **A request in flight keeps its instance.** A function's idle timeout
+   (30 s by default, ADR-974) can now be shorter than its requests. The
+   idle reaper already skips an instance with an in-flight request, but
+   on a single-box install schedd's stats poller read only the
+   vmmd→schedd capacity stream. vmmd publishes that stream only when it
+   has a node name, so the poller saw no in-flight requests at all and
+   the reaper parked instances mid-request. A poller with no owner node
+   now reads vmmd `Stats` directly, as it did before the stream existed.
+
 ## Consequences
 
 - A Scale function can answer, or stream, for up to 15 minutes with
