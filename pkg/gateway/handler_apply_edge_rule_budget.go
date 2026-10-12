@@ -192,6 +192,7 @@ func (h *Handler) stampRequestBudget(w http.ResponseWriter, r *http.Request, app
 	if cancel != nil {
 		ctx = context.WithValue(ctx, requestBudgetCancelKey{}, cancel)
 	}
+	ctx = context.WithValue(ctx, requestBudgetSourceKey{}, source)
 	*r = *r.WithContext(ctx)
 	if h.log != nil {
 		h.log.Debug("budget_stamped",
