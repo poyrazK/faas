@@ -34,7 +34,6 @@ func parseEntityVisibility(args []string) (entityVisibilityCommand, error) {
 	}
 	c.verb = args[0]
 	fs := newFlagSet("entities "+c.verb, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	fs.StringVar(&c.app, "app", "", "owned app slug")
 	fs.StringVar(&c.selectors.Namespace, "namespace", "", "entity namespace")
 	fs.StringVar(&c.selectors.Key, "key", "", "entity key")
@@ -117,7 +116,7 @@ func runEntityVisibility(ctx context.Context, client entityInspectionClient, c e
 		}
 		pollErr := wait(ctx, c.interval)
 		if errors.Is(pollErr, context.DeadlineExceeded) && ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // Reaching the requested watch duration completes a successful observation window.
 		}
 		if pollErr != nil {
 			return pollErr

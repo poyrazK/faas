@@ -89,13 +89,20 @@ func TestDurableEntitySocketTenantQuotaSharedBrowserAndServiceConnections(t *tes
 	defer server.Close()
 	base := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/apps/" + app.Slug
 	d := websocket.Dialer{Subprotocols: []string{entitysocket.BrowserProtocol, entitysocket.CredentialProtocol + grant.Credential}}
-	conn, _, err := d.Dial(base+"/entities/session-connect", http.Header{"Origin": []string{"https://example.com"}})
+	conn, handshake, err := d.Dial(base+"/entities/session-connect", http.Header{"Origin": []string{"https://example.com"}})
+	if handshake != nil {
+		handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 	for _, key := range []string{"a", "different-object"} {
-		if c, r, err := websocket.DefaultDialer.Dial(base+"/entities/connect?namespace=counters&key="+key, http.Header{"Authorization": []string{"Bearer " + e.key}}); err == nil {
+		c, r, err := websocket.DefaultDialer.Dial(base+"/entities/connect?namespace=counters&key="+key, http.Header{"Authorization": []string{"Bearer " + e.key}})
+		if r != nil {
+			r.Body.Close()
+		}
+		if err == nil {
 			c.Close()
 			t.Fatal("service socket bypassed shared tenant capacity")
 		} else if r == nil || r.StatusCode != 429 {

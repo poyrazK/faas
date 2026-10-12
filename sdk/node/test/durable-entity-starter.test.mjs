@@ -17,8 +17,9 @@ test('durable entity starter installs, typechecks, prepares its validator and ex
   const manifest = JSON.parse(readFileSync(join(dest, 'package.json'), 'utf8'));
   delete manifest.devDependencies;
   writeFileSync(join(dest, 'package.json'), JSON.stringify(manifest));
-  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
-  cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
+  // Request only the archive filename; the full generated SDK file inventory can exceed spawnSync's output buffer.
+  const packedFilename = execFileSync('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
+  cpSync(join(temp, packedFilename), join(dest, 'packages/gregale-sdk.tgz'));
   const env = {...process.env}; delete env.NODE_TEST_CONTEXT;
   const run = args => execFileSync('npm', args, {cwd: dest, env, encoding: 'utf8', timeout: 60000});
   run(['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund']);

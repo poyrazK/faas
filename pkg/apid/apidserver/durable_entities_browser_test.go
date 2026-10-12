@@ -199,7 +199,10 @@ func TestDurableEntitySocketBrowserIssuerRevocation(t *testing.T) {
 	server := httptest.NewServer(e.h)
 	defer server.Close()
 	d := websocket.Dialer{Subprotocols: []string{entitysocket.BrowserProtocol, entitysocket.CredentialProtocol + token}}
-	conn, _, err := d.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/session-connect", http.Header{"Origin": []string{"https://example.com"}})
+	conn, handshake, err := d.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/session-connect", http.Header{"Origin": []string{"https://example.com"}})
+	if handshake != nil {
+		handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
