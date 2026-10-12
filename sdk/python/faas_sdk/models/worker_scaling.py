@@ -26,6 +26,9 @@ class WorkerScaling:
     """Target backlog per worker instance. Custom metric targets use the custom gauge's units."""
     name: str | Unset = UNSET
     """Required when metric is custom; the app-scoped custom gauge name."""
+    observer_app_slug: str | Unset = UNSET
+    """Separate always-on worker app publishing MCP task metrics; required when mcp_tasks_outstanding scales this
+    worker to zero."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,8 @@ class WorkerScaling:
 
         name = self.name
 
+        observer_app_slug = self.observer_app_slug
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -51,6 +56,8 @@ class WorkerScaling:
         )
         if name is not UNSET:
             field_dict["name"] = name
+        if observer_app_slug is not UNSET:
+            field_dict["observer_app_slug"] = observer_app_slug
 
         return field_dict
 
@@ -67,12 +74,15 @@ class WorkerScaling:
 
         name = d.pop("name", UNSET)
 
+        observer_app_slug = d.pop("observer_app_slug", UNSET)
+
         worker_scaling = cls(
             min_=min_,
             max_=max_,
             metric=metric,
             target=target,
             name=name,
+            observer_app_slug=observer_app_slug,
         )
 
         worker_scaling.additional_properties = d

@@ -1,3 +1,6 @@
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
+# PR #4489: synchronize main growth and allow 415 lines of authenticated durable
+# WebSocket/browser transport adapters, route wiring and template catalog integration.
+# Durable management handlers and cleanup workers remain in pkg/apid/durable.
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-153557
+155245

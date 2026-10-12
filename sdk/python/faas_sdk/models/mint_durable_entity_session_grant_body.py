@@ -13,26 +13,38 @@ T = TypeVar("T", bound="MintDurableEntitySessionGrantBody")
 
 @_attrs_define
 class MintDurableEntitySessionGrantBody:
-    """Preview mutation input with server-side size, scope and revision validation."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema: Preview mutation input with
+    server-side size, scope and revision validation.
+
+    """
 
     namespace: str
-    """Exact entity namespace."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties /
+    namespace: Exact entity namespace."""
     key: str
-    """Exact logical entity key."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties / key:
+    Exact logical entity key."""
     session_id: str
-    """Existing logical session identity."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties / session
+    id: Existing logical session identity."""
     generation: int
-    """Current session generation."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties /
+    generation: Current session generation."""
     origin: str
-    """Exact browser origin without a path, query or fragment."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties / origin:
+    Exact browser origin without a path, query or fragment."""
     commands: list[str]
-    """Allowed command names; delegation does not grant other commands."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties /
+    commands: Allowed command names; delegation does not grant other commands."""
     ttl_seconds: int
-    """Credential lifetime in seconds."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties / ttl
+    seconds: Credential lifetime in seconds."""
     env: str | Unset = UNSET
-    """Registered environment; defaults to production."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties / env:
+    Registered environment; defaults to production."""
     platform_tenant_id: str | Unset = UNSET
-    """Optional same-account platform tenant."""
+    """Mint durable entity session grant — requestBody / content / application/json / schema / properties /
+    platform tenant id: Optional same-account platform tenant."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

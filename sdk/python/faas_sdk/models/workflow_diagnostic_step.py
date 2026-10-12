@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,6 +23,11 @@ class WorkflowDiagnosticStep:
     kind: WorkflowDiagnosticStepKind
     attempt: int
     retry_base: int
+    retry_eligible: bool | Unset = UNSET
+    """Advisory manual HTTP step retry eligibility using the captured graph and current quota. Absent means
+    unavailable or ineligible. Actual retry rechecks state and quota."""
+    retry_reopened_steps: list[str] | Unset = UNSET
+    """Skipped dependency descendants that would reopen with this manual retry. Omitted when empty or ineligible."""
     next_retry_at: datetime.datetime | Unset = UNSET
     next_check_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -37,6 +42,12 @@ class WorkflowDiagnosticStep:
         attempt = self.attempt
 
         retry_base = self.retry_base
+
+        retry_eligible = self.retry_eligible
+
+        retry_reopened_steps: list[str] | Unset = UNSET
+        if not isinstance(self.retry_reopened_steps, Unset):
+            retry_reopened_steps = self.retry_reopened_steps
 
         next_retry_at: str | Unset = UNSET
         if not isinstance(self.next_retry_at, Unset):
@@ -57,6 +68,10 @@ class WorkflowDiagnosticStep:
                 "retry_base": retry_base,
             }
         )
+        if retry_eligible is not UNSET:
+            field_dict["retry_eligible"] = retry_eligible
+        if retry_reopened_steps is not UNSET:
+            field_dict["retry_reopened_steps"] = retry_reopened_steps
         if next_retry_at is not UNSET:
             field_dict["next_retry_at"] = next_retry_at
         if next_check_at is not UNSET:
@@ -76,6 +91,10 @@ class WorkflowDiagnosticStep:
         attempt = d.pop("attempt")
 
         retry_base = d.pop("retry_base")
+
+        retry_eligible = d.pop("retry_eligible", UNSET)
+
+        retry_reopened_steps = cast(list[str], d.pop("retry_reopened_steps", UNSET))
 
         _next_retry_at = d.pop("next_retry_at", UNSET)
         next_retry_at: datetime.datetime | Unset
@@ -97,6 +116,8 @@ class WorkflowDiagnosticStep:
             kind=kind,
             attempt=attempt,
             retry_base=retry_base,
+            retry_eligible=retry_eligible,
+            retry_reopened_steps=retry_reopened_steps,
             next_retry_at=next_retry_at,
             next_check_at=next_check_at,
         )

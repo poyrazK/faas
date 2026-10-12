@@ -13,7 +13,6 @@ import (
 
 type policyScanner struct {
 	migrationScan
-	cap int64
 }
 
 func (s *policyScanner) RaiseQuotaEntityLimit(context.Context, durableentity.ID, int64) error {

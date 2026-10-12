@@ -150,6 +150,7 @@ func (s *server) connectEntityBrowserSession(w http.ResponseWriter, r *http.Requ
 	}
 	defer release()
 	identity, _ := json.Marshal(grant.Entity)
+	//nolint:contextcheck // Each frame inherits r.Context() through Authenticate and grantPrincipal; the request lives for the WebSocket lifetime.
 	s.durable.Sockets.ServeBrowser(w, r, acct.ID, string(identity), grant.Origin, func(frame entitysocket.Frame) entitysocket.Reply {
 		current, err := s.durable.SessionGrants.Authenticate(r.Context(), token, r.Header.Get("Origin"))
 		if err != nil {

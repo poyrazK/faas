@@ -112,16 +112,18 @@ def sync_detailed(
 ) -> Response[MintDurableEntitySessionGrantResponse201 | Problem]:
     """Mint Durable Entity Session Grant.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Mint durable entity session grant: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
-        body (MintDurableEntitySessionGrantBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (MintDurableEntitySessionGrantBody): Mint durable entity session grant — requestBody
+            / content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,16 +153,18 @@ def sync(
 ) -> MintDurableEntitySessionGrantResponse201 | Problem | None:
     """Mint Durable Entity Session Grant.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Mint durable entity session grant: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
-        body (MintDurableEntitySessionGrantBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (MintDurableEntitySessionGrantBody): Mint durable entity session grant — requestBody
+            / content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,16 +189,18 @@ async def asyncio_detailed(
 ) -> Response[MintDurableEntitySessionGrantResponse201 | Problem]:
     """Mint Durable Entity Session Grant.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Mint durable entity session grant: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
-        body (MintDurableEntitySessionGrantBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (MintDurableEntitySessionGrantBody): Mint durable entity session grant — requestBody
+            / content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -222,16 +228,18 @@ async def asyncio(
 ) -> MintDurableEntitySessionGrantResponse201 | Problem | None:
     """Mint Durable Entity Session Grant.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Mint durable entity session grant: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
-        body (MintDurableEntitySessionGrantBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (MintDurableEntitySessionGrantBody): Mint durable entity session grant — requestBody
+            / content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

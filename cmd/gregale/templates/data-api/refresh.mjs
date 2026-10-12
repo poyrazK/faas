@@ -117,16 +117,60 @@ export function refreshStatusReader(connection) {
   }
 }
 
+const setupFailures = {
+  control_access: 'Owner connection needs installed control-schema usage and control-table SELECT/UPDATE privileges',
+  serving_role: 'Serving role must remain restricted and cannot manage refresh state',
+  barrier_state: 'Install a valid refresh barrier for this binding role before enabling coordination',
+  assume_binding_role: 'Owner connection must be permitted to SET ROLE to the binding login',
+  hook_access: 'Serving role needs refresh hook and status-function execution privileges, protected ownership, SECURITY DEFINER and a pg_catalog search path',
+  schema_inspection: 'Check exposed schemas and role-filtered inspection permissions',
+}
+class RefreshSetupError extends Error {
+  constructor(stage) { super(`Refresh setup ${stage}: ${setupFailures[stage]}`) }
+}
+
+// Inspect with a read-only transaction. Never install, pause, resume or adopt a gate.
+export async function checkRefreshSetup(client, role, schemas = ['api']) {
+  const identifier = roleIdentifier(role)
+  await client.query('BEGIN READ ONLY')
+  let stage = 'control_access'
+  try {
+    const authority = await client.query(`SELECT has_schema_privilege(current_user,'gregale_data_api','USAGE') AND has_table_privilege(current_user,'gregale_data_api.refresh_gate','SELECT') AND has_table_privilege(current_user,'gregale_data_api.refresh_gate','UPDATE') AS allowed`)
+    if (authority.rows[0]?.allowed !== true) throw new Error('Owner connection needs control-schema usage and control-table SELECT/UPDATE privileges')
+    stage = 'serving_role'
+    const safety = await client.query(`SELECT r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR pg_has_role(r.oid,c.relowner,'MEMBER') OR has_schema_privilege(r.oid,n.oid,'CREATE') OR has_table_privilege(r.oid,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS unsafe FROM pg_roles r JOIN pg_namespace n ON n.nspname='gregale_data_api' JOIN pg_class c ON c.relnamespace=n.oid AND c.relname='refresh_gate' WHERE r.rolname=$1`, [role])
+    if (safety.rows[0]?.unsafe !== false) throw new Error('Serving role must remain restricted and cannot manage refresh state')
+    stage = 'barrier_state'
+    const gate = await client.query('SELECT paused, fingerprint FROM gregale_data_api.refresh_gate WHERE role_name=$1', [role])
+    if (gate.rowCount !== 1 || typeof gate.rows[0].paused !== 'boolean' || !hash.test(gate.rows[0].fingerprint ?? '')) throw new Error('Install the refresh barrier for this binding role before enabling coordination')
+    stage = 'assume_binding_role'
+    await client.query('SET LOCAL ROLE ' + identifier)
+    stage = 'hook_access'
+    const hooks = await client.query(`SELECT has_schema_privilege(current_user,'gregale_data_api','USAGE') AND has_function_privilege(current_user,'gregale_data_api.check_request()','EXECUTE') AND has_function_privilege(current_user,'gregale_data_api.refresh_status(text)','EXECUTE') AS allowed`)
+    if (hooks.rows[0]?.allowed !== true) throw new Error('Serving role needs refresh hook and status-function execution privileges')
+    const protectedHooks = await client.query(`SELECT count(*)=2 AND bool_and(p.prosecdef AND coalesce(p.proconfig @> ARRAY['search_path=pg_catalog'],false) AND NOT pg_has_role(current_user,p.proowner,'MEMBER')) AS valid FROM pg_proc p WHERE p.oid IN (to_regprocedure('gregale_data_api.check_request()'),to_regprocedure('gregale_data_api.refresh_status(text)'))`)
+    if (protectedHooks.rows[0]?.valid !== true) throw new Error('Refresh hooks must have protected ownership and SECURITY DEFINER with a fixed search path')
+    stage = 'schema_inspection'
+    const live = schemaFingerprint(await inspectClient(client, schemas))
+    return { version: 1, ready: true, paused: gate.rows[0].paused, fingerprint: gate.rows[0].fingerprint, live_fingerprint: live }
+  } catch { throw new RefreshSetupError(stage) } finally { await client.query('ROLLBACK') }
+}
+
 export async function main(env = process.env, args = process.argv.slice(2)) {
   const [action, role] = args
-  if (args.length !== 2 || !['install', 'pause', 'resume'].includes(action)) throw new Error('Use refresh.mjs install|pause|resume BINDING_ROLE')
+  if (args.length !== 2 || !['install', 'pause', 'resume', 'check'].includes(action)) throw new Error('Use refresh.mjs install|pause|resume|check BINDING_ROLE')
   const client = new pg.Client({ connectionString: databaseURL(env.MIGRATION_DATABASE_URL), connectionTimeoutMillis: 3000, query_timeout: 30000 })
   if (!env.MIGRATION_DATABASE_URL) throw new Error('MIGRATION_DATABASE_URL is required')
   await client.connect()
   try {
+    if (action === 'check') {
+      const result = await checkRefreshSetup(client, role, schemaNames(env.DATA_API_SCHEMAS))
+      process.stdout.write(JSON.stringify(result) + '\n')
+      return
+    }
     if (action === 'install') await installRefreshBarrier(client, role, schemaNames(env.DATA_API_SCHEMAS))
     else await changeRefreshBarrier(client, action, role, env.GREGALE_DATA_API_REFRESH_TOKEN, env.GREGALE_DATA_API_REFRESH_FINGERPRINT, schemaNames(env.DATA_API_SCHEMAS))
     process.stdout.write(JSON.stringify({ action, status: 'completed' }) + '\n')
   } finally { await client.end() }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { process.stderr.write('Data API refresh control failed; inspect barrier state with owner credentials.\n'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write((error instanceof RefreshSetupError ? error.message : 'Data API refresh control failed; verify barrier installation, owner SET ROLE and control-table privileges, and serving hook grants. Use data-api status before recovery.') + '\n'); process.exitCode = 1 })

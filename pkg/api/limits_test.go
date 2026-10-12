@@ -3446,3 +3446,25 @@ func TestEgressFloodLimitsBelowVMRate(t *testing.T) {
 		}
 	}
 }
+
+// spec: §4.3 — the reaper and the surfaces that explain it resolve an app's
+// idle timeout the same way.
+func TestEffectiveIdleTimeoutSClampsTheConfiguredValue(t *testing.T) {
+	pro := MustLimitsFor(PlanPro)
+	floor, ceiling := pro.IdleTimeoutBounds()
+	for _, tc := range []struct {
+		appType    string
+		configured int
+		want       int
+	}{
+		{appType: "app", configured: 0, want: pro.IdleTimeoutS},
+		{appType: "function", configured: 0, want: pro.DefaultIdleTimeoutS("function")},
+		{appType: "app", configured: 120, want: 120},
+		{appType: "app", configured: 1, want: floor},
+		{appType: "app", configured: ceiling + 1, want: ceiling},
+	} {
+		if got := pro.EffectiveIdleTimeoutS(tc.appType, tc.configured); got != tc.want {
+			t.Errorf("EffectiveIdleTimeoutS(%q, %d) = %d, want %d", tc.appType, tc.configured, got, tc.want)
+		}
+	}
+}

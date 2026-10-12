@@ -83,10 +83,11 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Upgrade a scoped durable entity session to WebSocket.
 
-     Service transport requires Bearer authentication, MFA, deploy write access and exact entity
-    selectors. Origin headers are rejected. Every frame re-enters authentication and immutable-scope
-    admission. Feature gates and the application allowlist must be enabled; native acceptance remains
-    pending. The Node durable-session helper handles framing, replay and generation fences.
+     Upgrade a scoped durable entity session to websocket: Service transport requires Bearer
+    authentication, MFA, deploy write access and exact entity selectors. Origin headers are rejected.
+    Every frame re-enters authentication and immutable-scope admission. Feature gates and the
+    application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+    helper handles framing, replay and generation fences.
 
     Args:
         slug (str):
@@ -129,10 +130,11 @@ def sync(
 ) -> Any | Problem | None:
     """Upgrade a scoped durable entity session to WebSocket.
 
-     Service transport requires Bearer authentication, MFA, deploy write access and exact entity
-    selectors. Origin headers are rejected. Every frame re-enters authentication and immutable-scope
-    admission. Feature gates and the application allowlist must be enabled; native acceptance remains
-    pending. The Node durable-session helper handles framing, replay and generation fences.
+     Upgrade a scoped durable entity session to websocket: Service transport requires Bearer
+    authentication, MFA, deploy write access and exact entity selectors. Origin headers are rejected.
+    Every frame re-enters authentication and immutable-scope admission. Feature gates and the
+    application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+    helper handles framing, replay and generation fences.
 
     Args:
         slug (str):
@@ -170,10 +172,11 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Upgrade a scoped durable entity session to WebSocket.
 
-     Service transport requires Bearer authentication, MFA, deploy write access and exact entity
-    selectors. Origin headers are rejected. Every frame re-enters authentication and immutable-scope
-    admission. Feature gates and the application allowlist must be enabled; native acceptance remains
-    pending. The Node durable-session helper handles framing, replay and generation fences.
+     Upgrade a scoped durable entity session to websocket: Service transport requires Bearer
+    authentication, MFA, deploy write access and exact entity selectors. Origin headers are rejected.
+    Every frame re-enters authentication and immutable-scope admission. Feature gates and the
+    application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+    helper handles framing, replay and generation fences.
 
     Args:
         slug (str):
@@ -214,10 +217,11 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Upgrade a scoped durable entity session to WebSocket.
 
-     Service transport requires Bearer authentication, MFA, deploy write access and exact entity
-    selectors. Origin headers are rejected. Every frame re-enters authentication and immutable-scope
-    admission. Feature gates and the application allowlist must be enabled; native acceptance remains
-    pending. The Node durable-session helper handles framing, replay and generation fences.
+     Upgrade a scoped durable entity session to websocket: Service transport requires Bearer
+    authentication, MFA, deploy write access and exact entity selectors. Origin headers are rejected.
+    Every frame re-enters authentication and immutable-scope admission. Feature gates and the
+    application allowlist must be enabled; native acceptance remains pending. The Node durable-session
+    helper handles framing, replay and generation fences.
 
     Args:
         slug (str):

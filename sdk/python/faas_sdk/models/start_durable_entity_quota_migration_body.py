@@ -14,14 +14,20 @@ T = TypeVar("T", bound="StartDurableEntityQuotaMigrationBody")
 
 @_attrs_define
 class StartDurableEntityQuotaMigrationBody:
-    """Preview mutation input with server-side size, scope and revision validation."""
+    """Start durable entity quota migration — requestBody / content / application/json / schema: Preview mutation input
+    with server-side size, scope and revision validation.
+
+    """
 
     migration_id: UUID
-    """Fresh operation identity; replay must retain this identity and the exact request."""
+    """Start durable entity quota migration — requestBody / content / application/json / schema / properties /
+    migration id: Fresh operation identity; replay must retain this identity and the exact request."""
     expected_revision: int
-    """Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
+    """Start durable entity quota migration — requestBody / content / application/json / schema / properties /
+    expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
     expected_migration_id: str | Unset = UNSET
-    """Prior migration identity, or empty for an initial migration."""
+    """Start durable entity quota migration — requestBody / content / application/json / schema / properties /
+    expected migration id: Prior migration identity, or empty for an initial migration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -29,6 +29,43 @@ type Config struct {
 	Integrations             map[string]IntegrationConfig `toml:"integrations"`
 	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
 	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
+	// RelayListen enables the app relay listener for vmmd (ADR-989):
+	// "unix:///run/faas/outboundd-relay.sock" on a single box, or
+	// "tcp://host:port" with the relay_tls_* mTLS material on a split box.
+	RelayListen      string `toml:"relay_listen"`
+	RelayTLSCertPath string `toml:"relay_tls_cert_path"`
+	RelayTLSKeyPath  string `toml:"relay_tls_key_path"`
+	RelayTLSCAPath   string `toml:"relay_tls_ca_path"`
+	// AIGatewayEnabled is the AI gateway release gate (ADR-991). While it is
+	// off, AI integrations and routes are refused. FAAS_AI_GATEWAY_ENABLED
+	// overrides it: "1" turns it on, any other value turns it off.
+	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+}
+
+// AIGateway resolves the release gate from the TOML setting and the
+// environment override.
+func (c *Config) AIGateway(getenv func(string) string) bool {
+	if getenv != nil {
+		if value := getenv("FAAS_AI_GATEWAY_ENABLED"); value != "" {
+			return value == "1"
+		}
+	}
+	return c.AIGatewayEnabled
+}
+
+// ValidateAIGateway refuses an operator integration that declares an AI
+// provider while the AI gateway is off, so a configuration mistake fails at
+// startup instead of refusing that integration's traffic.
+func ValidateAIGateway(items []configuredIntegration, enabled bool) error {
+	if enabled {
+		return nil
+	}
+	for _, item := range items {
+		if item.Record.Policy.AIProvider != "" {
+			return fmt.Errorf("outboundd: integration %q sets ai_provider but the AI gateway is disabled; set ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1", item.Record.Policy.ID)
+		}
+	}
+	return nil
 }
 
 func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {
@@ -81,6 +118,8 @@ type IntegrationConfig struct {
 	CircuitBreakerFailureThreshold int           `toml:"circuit_breaker_failure_threshold"`
 	CircuitBreakerOpenSeconds      int           `toml:"circuit_breaker_open_seconds"`
 	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
+	AIProvider                     string        `toml:"ai_provider"`
+	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
 	Enabled                        *bool         `toml:"enabled"`
 }
 
@@ -201,6 +240,11 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if raw.DailyRequestLimit != 0 {
 			limit := raw.DailyRequestLimit
 			policy.DailyRequestLimit = &limit
+		}
+		policy.AIProvider = raw.AIProvider
+		if raw.AIDailyTokenLimit != 0 {
+			limit := raw.AIDailyTokenLimit
+			policy.DailyAITokenLimit = &limit
 		}
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes

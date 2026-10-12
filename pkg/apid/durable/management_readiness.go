@@ -51,14 +51,12 @@ func (s *Service) DurableEntityReadinessForApp(appID string) DurableEntityReadin
 	configuration("maintenance", s.MaintenanceEnabled, false, "Optional bounded retained-history maintenance.")
 	configuration("isolated_restore", s.RestoreValidationEnabled && s.RestoreIsolationEnabled && s.executionAPIEnabled(), false, "Optional disposable application restore validation.")
 	configuration("validator_release_gate", s.ValidatorReleaseGateEnabled, false, "Optional validator binding checks before increasing deployment traffic.")
-	for _, check := range []DurableEntityReadinessCheck{
+	report.Checks = append(report.Checks, []DurableEntityReadinessCheck{
 		{"source_ci", "unverified", "Review green CI for the exact candidate source commit; this endpoint has no trusted CI evidence."},
 		{"native_acceptance", "unverified", "Require independent private-bucket/KVM failure, takeover, restart and multi-node acceptance for the candidate and deployment configuration."},
 		{"quota_migration", "unverified", "Inventory and backfill existing entity reservations, or establish a fresh scope, before quota enablement."},
 		{"fleet_configuration", "unverified", "Verify consistent quota mode, backend placement, bucket, limits and clocks across serving nodes; drain older connections."},
-	} {
-		report.Checks = append(report.Checks, check)
-	}
+	}...)
 	return report
 }
 

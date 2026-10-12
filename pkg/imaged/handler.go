@@ -1425,6 +1425,9 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			return fmt.Errorf("decode snapshot_written payload: %w", err)
 		}
 		if err := h.handleSnapshotWritten(ctx, p); err != nil {
+			if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+				return nil
+			}
 			return fmt.Errorf("handle snapshot written %s: %w", p.DeploymentID, err)
 		}
 		return nil
@@ -1434,6 +1437,9 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			return fmt.Errorf("decode deployment_ready payload: %w", err)
 		}
 		if err := h.handleDeploymentReady(ctx, p); err != nil {
+			if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+				return nil
+			}
 			return fmt.Errorf("handle deployment ready %s: %w", p.DeploymentID, err)
 		}
 		return nil
@@ -3560,7 +3566,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if !checkedRollback && dep.Kind.RequiresLatestRevision() {
+	recovering, _ := ctx.Value(mcpTaskRecoveryContextKey{}).(bool)
+	if !recovering {
+		hold, err := h.store.MCPTaskPromotionHold(ctx, dep.ID)
+		if err != nil {
+			return fmt.Errorf("imaged: inspect MCP promotion hold: %w", err)
+		}
+		recovering = hold != nil
+	}
+	if recovering {
+		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
+	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
@@ -3568,6 +3584,23 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
 		return nil
+	}
+	if errors.Is(promoteErr, state.ErrMCPTaskCompatibilityGate) {
+		problem := api.ErrMCPTaskCompatibilityGate(promoteErr.Error())
+		recovery := state.MCPTaskPromotionRecovery{DeploymentID: dep.ID, NodeID: h.nodeName, Channel: db.NotifySnapshotWritten}
+		var payloadErr error
+		if ready != nil {
+			recovery.Channel = db.NotifyDeploymentReady
+			recovery.Payload, payloadErr = json.Marshal(ready)
+		} else {
+			recovery.Payload, payloadErr = json.Marshal(snapshot)
+		}
+		if payloadErr != nil {
+			return fmt.Errorf("imaged: encode MCP task promotion recovery: %w", payloadErr)
+		}
+		if err := h.store.RecordMCPTaskPromotionHold(ctx, dep.ID, problem.Detail, recovery); err != nil {
+			return fmt.Errorf("imaged: persist MCP task promotion hold: %w", err)
+		}
 	}
 	if promoteErr != nil {
 		var routeRemovalBlocker *state.RouteRemovalBlockedError

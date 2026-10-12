@@ -33,7 +33,7 @@ func parseEntityVisibility(args []string) (entityVisibilityCommand, error) {
 		return c, errors.New("use entities inspect or watch")
 	}
 	c.verb = args[0]
-	fs := flag.NewFlagSet("entities "+c.verb, flag.ContinueOnError)
+	fs := newFlagSet("entities "+c.verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&c.app, "app", "", "owned app slug")
 	fs.StringVar(&c.selectors.Namespace, "namespace", "", "entity namespace")
@@ -61,6 +61,7 @@ func parseEntityVisibility(args []string) (entityVisibilityCommand, error) {
 func cmdEntities(args []string) int {
 	c, err := parseEntityVisibility(args)
 	if err != nil {
+		PrintUsage(os.Stderr, "usage: gregale entities <inspect|watch> --app SLUG --namespace NAME --key KEY [--environment NAME] [--tenant UUID]", "entities")
 		return printErr("Invalid entities command", err)
 	}
 	client, err := authedClient()
@@ -114,11 +115,12 @@ func runEntityVisibility(ctx context.Context, client entityInspectionClient, c e
 		if c.verb == "inspect" {
 			return nil
 		}
-		if err := wait(ctx, c.interval); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
-				return nil
-			}
-			return err
+		pollErr := wait(ctx, c.interval)
+		if errors.Is(pollErr, context.DeadlineExceeded) && ctx.Err() != nil {
+			return nil
+		}
+		if pollErr != nil {
+			return pollErr
 		}
 	}
 }

@@ -133,11 +133,12 @@ def sync_detailed(
 ) -> Response[Problem | StartDurableEntityRegistryCleanupResponse200]:
     """Start Durable Entity Registry Cleanup.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -145,7 +146,8 @@ def sync_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StartDurableEntityRegistryCleanupBody): Preview mutation input with server-side
+        body (StartDurableEntityRegistryCleanupBody): Start durable entity registry cleanup —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
             size, scope and revision validation.
 
     Raises:
@@ -184,11 +186,12 @@ def sync(
 ) -> Problem | StartDurableEntityRegistryCleanupResponse200 | None:
     """Start Durable Entity Registry Cleanup.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -196,7 +199,8 @@ def sync(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StartDurableEntityRegistryCleanupBody): Preview mutation input with server-side
+        body (StartDurableEntityRegistryCleanupBody): Start durable entity registry cleanup —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
             size, scope and revision validation.
 
     Raises:
@@ -230,11 +234,12 @@ async def asyncio_detailed(
 ) -> Response[Problem | StartDurableEntityRegistryCleanupResponse200]:
     """Start Durable Entity Registry Cleanup.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -242,7 +247,8 @@ async def asyncio_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StartDurableEntityRegistryCleanupBody): Preview mutation input with server-side
+        body (StartDurableEntityRegistryCleanupBody): Start durable entity registry cleanup —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
             size, scope and revision validation.
 
     Raises:
@@ -279,11 +285,12 @@ async def asyncio(
 ) -> Problem | StartDurableEntityRegistryCleanupResponse200 | None:
     """Start Durable Entity Registry Cleanup.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -291,7 +298,8 @@ async def asyncio(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StartDurableEntityRegistryCleanupBody): Preview mutation input with server-side
+        body (StartDurableEntityRegistryCleanupBody): Start durable entity registry cleanup —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
             size, scope and revision validation.
 
     Raises:

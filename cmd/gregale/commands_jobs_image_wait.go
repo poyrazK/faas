@@ -17,13 +17,34 @@ import (
 func cmdJobsInfoWaitArgs(args []string) int {
 	fs := newFlagSet("jobs info", flag.ContinueOnError)
 	wait := fs.Bool("wait-ready", false, "wait for image preparation")
+	check := fs.Bool("check", false, "exit successfully only for an active Job with a ready image")
 	timeout := fs.Duration("timeout", 5*time.Minute, "maximum wait duration")
 	interval := fs.Duration("poll-interval", 2*time.Second, "polling interval")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if !*wait || fs.NArg() != 1 || !jobSlugPattern.MatchString(fs.Arg(0)) || *timeout <= 0 || *interval <= 0 {
-		return printErr("Invalid image wait arguments", errors.New("use jobs info NAME --wait-ready with positive --timeout and --poll-interval"))
+	waitOptions := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" || f.Name == "poll-interval" {
+			waitOptions = true
+		}
+	})
+	if fs.NArg() > 1 || (*wait && *check) || (waitOptions && !*wait) || *timeout <= 0 || *interval <= 0 {
+		return printErr("Invalid Job info arguments", errors.New("use jobs info [NAME] [--check | --wait-ready]; positive --timeout and --poll-interval require --wait-ready"))
+	}
+	name := fs.Arg(0)
+	if name == "" {
+		defaults, path, err := readJobDefaults()
+		if err != nil {
+			return printErr("Could not read Job defaults", err)
+		}
+		name = defaults.Job
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "Using Job defaults from %s: job=%s\n", path, name)
+		}
+	}
+	if !jobSlugPattern.MatchString(name) {
+		return printErr("Invalid Job name", errors.New("provide a valid Job name"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -32,15 +53,28 @@ func cmdJobsInfoWaitArgs(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	job, err := client.GetJob(readCtx, fs.Arg(0))
+	job, err := client.GetJob(readCtx, name)
 	cancel()
 	if err != nil {
 		return printErr("Could not read Job", err)
 	}
-	if job.Name != fs.Arg(0) || !jobRunIDPattern.MatchString(job.ID) {
+	if job.Name != name || ((*wait || *check) && !jobRunIDPattern.MatchString(job.ID)) {
 		return printErr("Invalid Job", errors.New("server returned another Job"))
 	}
-	return outputJobImageWait(ctx, client, job, *timeout, *interval)
+	if *wait {
+		return outputJobImageWait(ctx, client, job, *timeout, *interval)
+	}
+	if jsonOutput {
+		if code := jsonOut(writeJSONSingle(job)); code != 0 {
+			return code
+		}
+	} else {
+		renderJobState(osStdout, job)
+	}
+	if *check && (job.Status != "active" || job.ImageMaterializationStatus != "ready") {
+		return printJobReadinessCheckFailure("Job readiness check failed", fmt.Sprintf("Job %s has state %s and image preparation %s; --check requires active and ready", name, oneLine(job.Status), oneLine(job.ImageMaterializationStatus)), jobReadinessRecoveryCommands(name, job.Status, job.ImageMaterializationStatus, nil, false, nil))
+	}
+	return 0
 }
 
 func outputJobImageWait(ctx context.Context, client *api.Client, job api.JobResponse, timeout, interval time.Duration) int {

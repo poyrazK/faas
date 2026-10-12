@@ -39,11 +39,15 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 		d := websocket.Dialer{Subprotocols: []string{entitysocket.BrowserProtocol, entitysocket.CredentialProtocol + issued.Credential}}
 		return d.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/session-connect", http.Header{"Origin": []string{origin}})
 	}
-	if c, r, err := dial("https://attacker.example"); err == nil {
+	c, rejected, err := dial("https://attacker.example")
+	if rejected != nil {
+		rejected.Body.Close()
+	}
+	if err == nil {
 		c.Close()
 		t.Fatal("foreign origin accepted")
-	} else if r == nil || r.StatusCode != 403 {
-		t.Fatalf("foreign origin: %v %v", r, err)
+	} else if rejected == nil || rejected.StatusCode != 403 {
+		t.Fatalf("foreign origin: %v %v", rejected, err)
 	}
 	otherSession := uuid.NewString()
 	for _, frame := range []entitysocket.Frame{
@@ -51,7 +55,10 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 		{ProtocolVersion: 1, RequestID: "session/g0/" + otherSession + "/open", Payload: json.RawMessage(`{"kind":"open","session_id":"` + otherSession + `","generation":0}`)},
 		{ProtocolVersion: 1, RequestID: "session/g0/reclaim/" + uuid.NewString(), Payload: json.RawMessage(`{"kind":"reclaim","generation":0,"operation_id":"` + uuid.NewString() + `"}`)},
 	} {
-		c, _, err := dial("https://example.com")
+		c, response, err := dial("https://example.com")
+		if response != nil {
+			response.Body.Close()
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +74,10 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 			t.Fatal("scope escape dispatched", denied)
 		}
 	}
-	conn, _, err := dial("https://example.com")
+	conn, handshake, err := dial("https://example.com")
+	if handshake != nil {
+		handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +111,11 @@ func TestDurableEntitySocketBrowserGrantScopeAndRevocation(t *testing.T) {
 	if reply.Status != 403 || dispatch.calls.Load() != 1 {
 		t.Fatal("revocation did not fence next dispatch", reply)
 	}
-	if c, _, err := dial("https://example.com"); err == nil {
+	c, deniedResponse, err := dial("https://example.com")
+	if deniedResponse != nil {
+		deniedResponse.Body.Close()
+	}
+	if err == nil {
 		c.Close()
 		t.Fatal("revoked grant reconnected")
 	}

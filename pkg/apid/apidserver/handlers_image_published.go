@@ -80,7 +80,7 @@ func (s *server) replyPublishedImageReplay(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("published image delivery identity mismatch"))
 		return true
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), d, app))
 	return true
 }
 

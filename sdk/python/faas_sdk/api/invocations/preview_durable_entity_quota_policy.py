@@ -133,11 +133,12 @@ def sync_detailed(
 ) -> Response[PreviewDurableEntityQuotaPolicyResponse200 | Problem]:
     """Preview Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -145,8 +146,9 @@ def sync_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (PreviewDurableEntityQuotaPolicyBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (PreviewDurableEntityQuotaPolicyBody): Preview durable entity quota policy —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
+            size, scope and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,11 +186,12 @@ def sync(
 ) -> PreviewDurableEntityQuotaPolicyResponse200 | Problem | None:
     """Preview Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -196,8 +199,9 @@ def sync(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (PreviewDurableEntityQuotaPolicyBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (PreviewDurableEntityQuotaPolicyBody): Preview durable entity quota policy —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
+            size, scope and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,11 +234,12 @@ async def asyncio_detailed(
 ) -> Response[PreviewDurableEntityQuotaPolicyResponse200 | Problem]:
     """Preview Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -242,8 +247,9 @@ async def asyncio_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (PreviewDurableEntityQuotaPolicyBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (PreviewDurableEntityQuotaPolicyBody): Preview durable entity quota policy —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
+            size, scope and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -279,11 +285,12 @@ async def asyncio(
 ) -> PreviewDurableEntityQuotaPolicyResponse200 | Problem | None:
     """Preview Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -291,8 +298,9 @@ async def asyncio(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (PreviewDurableEntityQuotaPolicyBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (PreviewDurableEntityQuotaPolicyBody): Preview durable entity quota policy —
+            requestBody / content / application/json / schema: Preview mutation input with server-side
+            size, scope and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

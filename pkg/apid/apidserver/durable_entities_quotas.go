@@ -21,6 +21,7 @@ func (s *server) reserveEntityTenantConnection(w http.ResponseWriter, r *http.Re
 		durable.WriteTenantQuotaProblem(w, err)
 		return "", nil, false
 	}
+	//nolint:contextcheck // Release retains the request values via WithoutCancel and has a bounded timeout after disconnect.
 	return lease, func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 		defer cancel()

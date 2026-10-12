@@ -11,7 +11,10 @@ T = TypeVar("T", bound="StepDurableEntityQuotaMigrationResponse200")
 
 @_attrs_define
 class StepDurableEntityQuotaMigrationResponse200:
-    """Operator preview metadata, including nullable checkpoints and advisory observations. No business state is returned."""
+    """Step durable entity quota migration — responses / 200 / content / application/json / schema: Operator preview
+    metadata, including nullable checkpoints and advisory observations. No business state is returned.
+
+    """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

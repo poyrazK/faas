@@ -1552,8 +1552,8 @@ export class InvocationsService {
     });
   }
   /**
-   * Upgrade a scoped durable entity session to WebSocket.
-   * Upgrade a scoped durable entity session to websocket: Browser transport authenticates the short-lived grant through Sec-WebSocket-Protocol and requires the exact Origin bound at issuance. Authorization headers and query parameters are rejected. Issuer revocation, scope and generation are rechecked for commands. Feature gates and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session helper handles framing, replay and generation fences.
+   * Upgrade a scoped browser session to WebSocket.
+   * Upgrade a scoped browser session to websocket: Browser transport authenticates the short-lived grant through Sec-WebSocket-Protocol and requires the exact Origin bound at issuance. Authorization headers and query parameters are rejected. Issuer revocation, scope and generation are rechecked for commands. Feature gates and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session helper handles framing, replay and generation fences.
    * @returns void
    * @throws ApiError
    */

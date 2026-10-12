@@ -334,8 +334,8 @@ func cmdApps() int {
 		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No apps yet.")
-		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --template hello-node` (or `gregale deploy --tarball path/to/source.tar.gz`).")
+		_, _ = fmt.Fprintf(osStdout, "No apps yet. No apps returned for the selected account (connection profile=%s).\n", oneLine(currentProfile()))
+		_, _ = fmt.Fprintf(osStdout, "Deploy from source (POSIX shells):\n  %s deploy --template hello-node --help\n", recoveryCLI())
 		return 0
 	}
 	// Header row + data rows. Deployment availability is separate from app
@@ -738,6 +738,13 @@ func renderAPIError(w io.Writer, e *APIError) {
 			}
 			_, _ = fmt.Fprintln(w)
 		}
+	}
+	// A server-side secret scan names what matched; without these rows the
+	// customer saw only "Secret-shaped values found" and could not tell which
+	// file or line to fix (production-us hunt #9). Same `file:line [provider]
+	// snippet` shape as the client-side strict scan.
+	for _, f := range p.SecretFindings {
+		_, _ = fmt.Fprintf(w, "  %s:%d [%s] %s\n", f.File, f.Line, f.Provider, f.Snippet)
 	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second

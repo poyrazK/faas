@@ -79,6 +79,9 @@ func TestEntityVisibilityValidatesBeforeAuth(t *testing.T) {
 	}
 }
 func TestEntityInspectionUsesReadOnlyExactScope(t *testing.T) {
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++

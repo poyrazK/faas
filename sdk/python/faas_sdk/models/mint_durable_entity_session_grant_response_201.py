@@ -11,7 +11,10 @@ T = TypeVar("T", bound="MintDurableEntitySessionGrantResponse201")
 
 @_attrs_define
 class MintDurableEntitySessionGrantResponse201:
-    """Operator preview metadata, including nullable checkpoints and advisory observations. No business state is returned."""
+    """Mint durable entity session grant — responses / 201 / content / application/json / schema: Operator preview
+    metadata, including nullable checkpoints and advisory observations. No business state is returned.
+
+    """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

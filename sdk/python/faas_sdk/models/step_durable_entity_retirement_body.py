@@ -14,14 +14,20 @@ T = TypeVar("T", bound="StepDurableEntityRetirementBody")
 
 @_attrs_define
 class StepDurableEntityRetirementBody:
-    """Preview mutation input with server-side size, scope and revision validation."""
+    """Step durable entity retirement — requestBody / content / application/json / schema: Preview mutation input with
+    server-side size, scope and revision validation.
+
+    """
 
     operation_id: UUID
-    """Fresh operation identity; replay must retain this identity and the exact request."""
+    """Step durable entity retirement — requestBody / content / application/json / schema / properties / operation
+    id: Fresh operation identity; replay must retain this identity and the exact request."""
     expected_revision: int
-    """Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
+    """Step durable entity retirement — requestBody / content / application/json / schema / properties / expected
+    revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
     restart_cleanup: bool | Unset = False
-    """Restart verified retirement cleanup after an uncertain outcome."""
+    """Step durable entity retirement — requestBody / content / application/json / schema / properties / restart
+    cleanup: Restart verified retirement cleanup after an uncertain outcome."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

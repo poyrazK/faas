@@ -20,10 +20,14 @@ func TestSocketRoutesFramesInOrderAndReleasesCapacity(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	conn, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if response != nil {
+		response.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer conn.Close()
 	for _, id := range []string{"one", "two"} {
 		if err := conn.WriteJSON(Frame{ProtocolVersion: 1, RequestID: id, Payload: json.RawMessage(`{"delta":1}`)}); err != nil {
 			t.Fatal(err)

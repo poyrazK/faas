@@ -124,11 +124,12 @@ def sync_detailed(
 ) -> Response[InspectDurableEntityQuotaPolicyResponse200 | Problem]:
     """Inspect Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -171,11 +172,12 @@ def sync(
 ) -> InspectDurableEntityQuotaPolicyResponse200 | Problem | None:
     """Inspect Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -213,11 +215,12 @@ async def asyncio_detailed(
 ) -> Response[InspectDurableEntityQuotaPolicyResponse200 | Problem]:
     """Inspect Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):
@@ -258,11 +261,12 @@ async def asyncio(
 ) -> InspectDurableEntityQuotaPolicyResponse200 | Problem | None:
     """Inspect Durable Entity Quota Policy.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured
+    application allowlist and applicable feature gates; production enablement awaits native GCS/KVM
+    acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy
+    write access for mutation. Reader grace, claims and unknown acknowledgements must be respected.
+    Responses are not cacheable. See the durable entity operator guides for the bounded recovery
+    contract.
 
     Args:
         slug (str):

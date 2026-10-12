@@ -14,26 +14,20 @@ import (
 	"strings"
 )
 
-var endpointPath = regexp.MustCompile(`^/(?:[A-Za-z0-9._~-]+/?)*$`)
 var uriTemplateExpression = regexp.MustCompile(`\{(?:[+#./;?&])?[A-Za-z0-9_.%~-]+(?:\*|:[1-9][0-9]*)?(?:,(?:[A-Za-z0-9_.%~-]+(?:\*|:[1-9][0-9]*)?))*\}`)
 var taskEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func validateEndpoint(value string) error {
-	if !endpointPath.MatchString(value) || len(value) > 1024 {
+	if !api.ValidMCPProbeEndpointPath(value) {
 		return fmt.Errorf("MCP endpoint must be a literal absolute path without escapes, query, fragment or route patterns")
-	}
-	for _, segment := range strings.Split(value, "/") {
-		if segment == "." || segment == ".." {
-			return fmt.Errorf("MCP endpoint must not contain dot segments")
-		}
 	}
 	return nil
 }
 
 const (
 	ConfigFile            = "gregale-mcp.json"
-	ProtocolVersion       = "2026-07-28"
-	LegacyProtocolVersion = "2025-11-25"
+	ProtocolVersion       = api.MCPProtocolVersion
+	LegacyProtocolVersion = api.MCPLegacyProtocolVersion
 )
 
 // Config is deliberately separate from the guest and deployment manifests:
@@ -51,23 +45,30 @@ type Config struct {
 
 // TasksConfig describes optional starter-owned durable task processing. The
 // CLI validates the contract but the starter owns the worker implementation.
+type TaskOwnerKeyReference struct {
+	ID  string `json:"id"`
+	Env string `json:"env"`
+}
 type TasksConfig struct {
-	Enabled                *bool  `json:"enabled"`
-	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
-	EncryptionKeysEnv      string `json:"encryption_keys_env,omitempty"`
-	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
-	NamespaceEnv           string `json:"namespace_env,omitempty"`
-	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
-	ShutdownTimeoutMS      int    `json:"shutdown_timeout_ms,omitempty"`
-	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
-	MaxAttempts            int    `json:"max_attempts,omitempty"`
-	RetryBaseDelayMS       int    `json:"retry_base_delay_ms,omitempty"`
-	RetryMaxDelayMS        int    `json:"retry_max_delay_ms,omitempty"`
-	WorkerConcurrency      int    `json:"worker_concurrency,omitempty"`
-	MaxRunning             int    `json:"max_running,omitempty"`
-	MaxRunningPerOwner     int    `json:"max_running_per_owner,omitempty"`
-	MaxOutstanding         int    `json:"max_outstanding,omitempty"`
-	MaxOutstandingPerOwner int    `json:"max_outstanding_per_owner,omitempty"`
+	OwnerKeyID               string                  `json:"owner_key_id,omitempty"`
+	PreviousOwnerKeys        []TaskOwnerKeyReference `json:"previous_owner_keys,omitempty"`
+	PayloadEncryptionVersion int                     `json:"payload_encryption_version,omitempty"`
+	Enabled                  *bool                   `json:"enabled"`
+	DatabaseURLEnv           string                  `json:"database_url_env,omitempty"`
+	EncryptionKeysEnv        string                  `json:"encryption_keys_env,omitempty"`
+	OwnerKeyEnv              string                  `json:"owner_key_env,omitempty"`
+	NamespaceEnv             string                  `json:"namespace_env,omitempty"`
+	TTLSeconds               int                     `json:"ttl_seconds,omitempty"`
+	ShutdownTimeoutMS        int                     `json:"shutdown_timeout_ms,omitempty"`
+	PollIntervalMS           int                     `json:"poll_interval_ms,omitempty"`
+	MaxAttempts              int                     `json:"max_attempts,omitempty"`
+	RetryBaseDelayMS         int                     `json:"retry_base_delay_ms,omitempty"`
+	RetryMaxDelayMS          int                     `json:"retry_max_delay_ms,omitempty"`
+	WorkerConcurrency        int                     `json:"worker_concurrency,omitempty"`
+	MaxRunning               int                     `json:"max_running,omitempty"`
+	MaxRunningPerOwner       int                     `json:"max_running_per_owner,omitempty"`
+	MaxOutstanding           int                     `json:"max_outstanding,omitempty"`
+	MaxOutstandingPerOwner   int                     `json:"max_outstanding_per_owner,omitempty"`
 }
 
 type AuthConfig struct {
@@ -250,6 +251,25 @@ func (c Config) Validate() error {
 }
 
 func (c *TasksConfig) validate() error {
+	if c != nil {
+		if c.OwnerKeyID != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`).MatchString(c.OwnerKeyID) {
+			return fmt.Errorf("invalid tasks.owner_key_id")
+		}
+		if len(c.PreviousOwnerKeys) > 16 || c.PayloadEncryptionVersion < 0 || c.PayloadEncryptionVersion > 2 {
+			return fmt.Errorf("invalid task encryption settings")
+		}
+		seen := map[string]bool{}
+		if c.OwnerKeyID != "" {
+			seen[c.OwnerKeyID] = true
+		}
+		for _, key := range c.PreviousOwnerKeys {
+			if !regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`).MatchString(key.ID) || !regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`).MatchString(key.Env) || seen[key.ID] {
+				return fmt.Errorf("invalid tasks.previous_owner_keys")
+			}
+			seen[key.ID] = true
+		}
+	}
+
 	if c == nil {
 		return nil
 	}

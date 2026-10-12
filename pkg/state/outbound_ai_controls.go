@@ -1,0 +1,91 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// ErrOutboundCredentialKeyLimit reports an integration at its key pool
+// ceiling (ADR-991).
+var ErrOutboundCredentialKeyLimit = errors.New("state: outbound credential key limit reached")
+
+// OutboundAIGuardrails are one app binding's per-minute limits, model
+// allow-list and output ceiling (ADR-991). Nil fields are unset.
+type OutboundAIGuardrails struct {
+	RequestsPerMinute *int64
+	TokensPerMinute   *int64
+	AllowedModels     []string
+	MaxOutputTokens   *int64
+}
+
+func (g OutboundAIGuardrails) valid() bool {
+	return api.PutOutboundBindingAIGuardrailsRequest{
+		RequestsPerMinute: g.RequestsPerMinute, TokensPerMinute: g.TokensPerMinute,
+		AllowedModels: g.AllowedModels, MaxOutputTokens: g.MaxOutputTokens,
+	}.Valid()
+}
+
+// OutboundCredentialKey is one extra sealed provider key. Only apid writes
+// it and only outboundd opens AuthorizationSealed.
+type OutboundCredentialKey struct {
+	ID                  string
+	AccountID           string
+	IntegrationID       string
+	Label               string
+	AuthorizationSealed []byte
+	CreatedAt           time.Time
+}
+
+// OutboundAIBudgetAlert is one budget threshold outboundd recorded at
+// settlement. AppID is set only for an app budget.
+type OutboundAIBudgetAlert struct {
+	ID               string
+	IntegrationID    string
+	Budget           string
+	AppID            string
+	PeriodStart      time.Time
+	ThresholdPercent int32
+	Limit            int64
+	Used             int64
+	CrossedAt        time.Time
+}
+
+// OutboundAIRequestLogEntry is one AI call's metadata outboundd logged.
+type OutboundAIRequestLogEntry struct {
+	ID                string
+	CreatedAt         time.Time
+	Caller            string
+	RouteID           string
+	Model             string
+	Status            int
+	Outcome           string
+	InputTokens       int64
+	CachedInputTokens int64
+	CacheWriteTokens  int64
+	OutputTokens      int64
+	CostMillicents    int64
+	DurationMS        int64
+	TTFBMS            *int64
+	Attempts          int
+}
+
+// OutboundAIControlStore owns the ADR-991 customer settings (guardrails and
+// key pools) and reads what outboundd records (alerts and the request log).
+type OutboundAIControlStore interface {
+	SetOutboundBindingAIGuardrails(ctx context.Context, accountID, appID, integrationID string, guard OutboundAIGuardrails) error
+	ListOutboundCredentialKeys(ctx context.Context, accountID, integrationID string) ([]OutboundCredentialKey, error)
+	CreateOutboundCredentialKey(ctx context.Context, key OutboundCredentialKey) (OutboundCredentialKey, error)
+	DeleteOutboundCredentialKey(ctx context.Context, accountID, integrationID, keyID string) error
+	ListOutboundAIBudgetAlerts(ctx context.Context, accountID, integrationID string, limit int) ([]OutboundAIBudgetAlert, error)
+	ListOutboundAIRequestLog(ctx context.Context, accountID, integrationID string, before *time.Time, limit int) ([]OutboundAIRequestLogEntry, error)
+}
+
+func boundedPage(limit, maximum int) int {
+	if limit <= 0 || limit > maximum {
+		return maximum
+	}
+	return limit
+}

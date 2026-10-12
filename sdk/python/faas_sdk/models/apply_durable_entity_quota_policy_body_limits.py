@@ -11,18 +11,28 @@ T = TypeVar("T", bound="ApplyDurableEntityQuotaPolicyBodyLimits")
 
 @_attrs_define
 class ApplyDurableEntityQuotaPolicyBodyLimits:
-    """Proposed tenant admission caps; all fields are required."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits:
+    Proposed tenant admission caps; all fields are required.
+
+    """
 
     connections: int
-    """Approved connections cap; server validates bounds and monotonic increases."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits
+    / properties / connections: Approved connections cap; server validates bounds and monotonic increases."""
     grants_per_minute: int
-    """Approved grants per minute cap; server validates bounds and monotonic increases."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits
+    / properties / grants per minute: Approved grants per minute cap; server validates bounds and monotonic
+    increases."""
     invocations_per_minute: int
-    """Approved invocations per minute cap; server validates bounds and monotonic increases."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits
+    / properties / invocations per minute: Approved invocations per minute cap; server validates bounds and
+    monotonic increases."""
     retained_bytes: int
-    """Approved retained bytes cap; server validates bounds and monotonic increases."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits
+    / properties / retained bytes: Approved retained bytes cap; server validates bounds and monotonic increases."""
     entity_bytes: int
-    """Approved entity bytes cap; server validates bounds and monotonic increases."""
+    """Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits
+    / properties / entity bytes: Approved entity bytes cap; server validates bounds and monotonic increases."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

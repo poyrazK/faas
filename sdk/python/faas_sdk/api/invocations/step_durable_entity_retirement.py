@@ -133,11 +133,11 @@ def sync_detailed(
 ) -> Response[Problem | StepDurableEntityRetirementResponse200]:
     """Step Durable Entity Retirement.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Step durable entity retirement: Opt-in durable-object preview. Requires the configured application
+    allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+    Account-owner HTTP operations require MFA and app read access for inspection or deploy write access
+    for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not
+    cacheable. See the durable entity operator guides for the bounded recovery contract.
 
     Args:
         slug (str):
@@ -145,8 +145,9 @@ def sync_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StepDurableEntityRetirementBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (StepDurableEntityRetirementBody): Step durable entity retirement — requestBody /
+            content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,11 +185,11 @@ def sync(
 ) -> Problem | StepDurableEntityRetirementResponse200 | None:
     """Step Durable Entity Retirement.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Step durable entity retirement: Opt-in durable-object preview. Requires the configured application
+    allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+    Account-owner HTTP operations require MFA and app read access for inspection or deploy write access
+    for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not
+    cacheable. See the durable entity operator guides for the bounded recovery contract.
 
     Args:
         slug (str):
@@ -196,8 +197,9 @@ def sync(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StepDurableEntityRetirementBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (StepDurableEntityRetirementBody): Step durable entity retirement — requestBody /
+            content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,11 +232,11 @@ async def asyncio_detailed(
 ) -> Response[Problem | StepDurableEntityRetirementResponse200]:
     """Step Durable Entity Retirement.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Step durable entity retirement: Opt-in durable-object preview. Requires the configured application
+    allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+    Account-owner HTTP operations require MFA and app read access for inspection or deploy write access
+    for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not
+    cacheable. See the durable entity operator guides for the bounded recovery contract.
 
     Args:
         slug (str):
@@ -242,8 +244,9 @@ async def asyncio_detailed(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StepDurableEntityRetirementBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (StepDurableEntityRetirementBody): Step durable entity retirement — requestBody /
+            content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -279,11 +282,11 @@ async def asyncio(
 ) -> Problem | StepDurableEntityRetirementResponse200 | None:
     """Step Durable Entity Retirement.
 
-     Opt-in durable-object preview. Requires the configured application allowlist and applicable feature
-    gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require
-    MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and
-    unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity
-    operator guides for the bounded recovery contract.
+     Step durable entity retirement: Opt-in durable-object preview. Requires the configured application
+    allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance.
+    Account-owner HTTP operations require MFA and app read access for inspection or deploy write access
+    for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not
+    cacheable. See the durable entity operator guides for the bounded recovery contract.
 
     Args:
         slug (str):
@@ -291,8 +294,9 @@ async def asyncio(
         key (str):
         environment (str | Unset):
         platform_tenant_id (str | Unset):
-        body (StepDurableEntityRetirementBody): Preview mutation input with server-side size,
-            scope and revision validation.
+        body (StepDurableEntityRetirementBody): Step durable entity retirement — requestBody /
+            content / application/json / schema: Preview mutation input with server-side size, scope
+            and revision validation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

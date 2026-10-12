@@ -2088,8 +2088,11 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 			"reason": "missing_or_malformed_bearer",
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
+		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`"))
+			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2118,7 +2121,8 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "the presented API key is not valid for this app"))
+			"Unauthorized", "the presented API key is not valid for this app").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -5944,7 +5948,8 @@ haveApp:
 	// Consumer-attributed traffic always carries a bounded billing route so
 	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
+	routeCarrier := ObservedRouteCarrierFrom(r.Context())
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5952,6 +5957,7 @@ haveApp:
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
+		routeCarrier.set(preLabel)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
@@ -6880,6 +6886,7 @@ haveApp:
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
 			h.logFleetCapacityRefusal(app.ID, err)
+			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -7634,6 +7641,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
+		if platformFailureUnbillable(r, status) {
+			h.metrics.ObservePlatformError(appID, plan)
+		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -9061,10 +9071,48 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				writeFleetCapacityRefusal(w)
 				return
 			}
+			if public, ok := publicWakeFailure(prob); ok {
+				w.Header().Set("Cache-Control", "no-store")
+				api.WriteProblem(w, public)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
+	}
+}
+
+// publicWakeFailure is what an app's visitor sees when its instance could
+// not be started. The wake error's detail is written for the app owner and
+// operators: platform wake/instance ids, component names ("cold boot: vmm:
+// readiness"), and for a crashed workload its last output lines, which
+// routinely include connection strings and other secrets. A public caller gets
+// the stable code and a generic detail; logWakeFailure keeps the original
+// (production-us hunt #9: a crashing app answered every visitor with
+// "500 vmmd operation failed" and the internal wake detail). 503 rather than
+// 502: Cloudflare replaces 502 bodies.
+func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
+	switch p.Code {
+	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
+			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
+	case "internal", api.CodeInternal:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App temporarily unavailable",
+			"the platform could not start this app; retry shortly"), true
+	}
+	return nil, false
+}
+
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+func (h *Handler) logWakeFailure(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) {
+		return
+	}
+	if _, hidden := publicWakeFailure(prob); hidden {
+		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
 }
 

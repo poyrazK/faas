@@ -38,6 +38,9 @@ class CreateAlertRuleRequest:
 
     name: str
     metric: CreateAlertRuleRequestMetric
+    """MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1
+    when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat
+    with value 1."""
     comparison: CreateAlertRuleRequestComparison
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
@@ -55,6 +58,8 @@ class CreateAlertRuleRequest:
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
+    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and MCP task metrics support
+    webhook only."""
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
     metrics support webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

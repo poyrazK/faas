@@ -270,6 +270,8 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
+	case "durable-entity-node":
+		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node", "mcp-go", "mcp-python":
@@ -342,8 +344,15 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 	if tpl == "ai-chat" {
 		openAI := strings.TrimSpace(values["OPENAI_API_KEY"]) != ""
 		anthropic := strings.TrimSpace(values["ANTHROPIC_API_KEY"]) != ""
-		if openAI == anthropic {
-			return errors.New("ai-chat requires exactly one of OPENAI_API_KEY or ANTHROPIC_API_KEY")
+		gateway := strings.TrimSpace(values["GREGALE_AI_INTEGRATION_ID"]) != ""
+		gatewayProvider := strings.TrimSpace(values["GREGALE_AI_PROVIDER"])
+		switch {
+		case gateway && (openAI || anthropic):
+			return errors.New("ai-chat gateway mode (GREGALE_AI_INTEGRATION_ID) must not also set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+		case gateway && gatewayProvider != "openai" && gatewayProvider != "anthropic":
+			return errors.New("ai-chat gateway mode requires GREGALE_AI_PROVIDER=openai or anthropic")
+		case !gateway && openAI == anthropic:
+			return errors.New("ai-chat requires exactly one of OPENAI_API_KEY or ANTHROPIC_API_KEY, or GREGALE_AI_INTEGRATION_ID with GREGALE_AI_PROVIDER for the Gregale AI gateway")
 		}
 	}
 	if len(missing) > 0 {
@@ -504,6 +513,8 @@ func nextStepsFor(tpl string) []string {
 		return []string{
 			"Create a 0600 secrets file outside this directory (set exactly one provider key):",
 			"  OPENAI_API_KEY=sk-...  (or ANTHROPIC_API_KEY=sk-ant-...)",
+			"  (or, for the Gregale AI gateway with no key in the app:",
+			"   GREGALE_AI_INTEGRATION_ID=<integration-uuid> and GREGALE_AI_PROVIDER=openai|anthropic)",
 			"  (optional OPENAI_MODEL=... and SYSTEM_PROMPT=...)",
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",

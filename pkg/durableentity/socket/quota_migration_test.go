@@ -185,8 +185,8 @@ func TestQuotaMigrationUncertainStartAndConcurrentReplacement(t *testing.T) {
 		t.Fatal(m, err)
 	}
 	now = m.NotBefore
-	scanner := migrationScan(func(context.Context, string, durableentity.ID) (durableentity.QuotaInventoryPage, error) {
-		if _, err := q.StartMigration(t.Context(), id, uuid.NewString(), m.ID, m.Revision); err != nil {
+	scanner := migrationScan(func(ctx context.Context, _ string, _ durableentity.ID) (durableentity.QuotaInventoryPage, error) {
+		if _, err := q.StartMigration(ctx, id, uuid.NewString(), m.ID, m.Revision); err != nil {
 			t.Fatal(err)
 		}
 		return durableentity.QuotaInventoryPage{Entities: []durableentity.QuotaInventoryEntity{migrationEntity(id, 10)}}, nil

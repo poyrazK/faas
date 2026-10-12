@@ -12,12 +12,17 @@ T = TypeVar("T", bound="EnableDurableEntityRegistryBody")
 
 @_attrs_define
 class EnableDurableEntityRegistryBody:
-    """Preview mutation input with server-side size, scope and revision validation."""
+    """Enable durable entity registry — requestBody / content / application/json / schema: Preview mutation input with
+    server-side size, scope and revision validation.
+
+    """
 
     operation_id: UUID
-    """Fresh operation identity; replay must retain this identity and the exact request."""
+    """Enable durable entity registry — requestBody / content / application/json / schema / properties / operation
+    id: Fresh operation identity; replay must retain this identity and the exact request."""
     expected_revision: str
-    """Exact opaque revision returned by inspection; never convert it to a number."""
+    """Enable durable entity registry — requestBody / content / application/json / schema / properties / expected
+    revision: Exact opaque revision returned by inspection; never convert it to a number."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

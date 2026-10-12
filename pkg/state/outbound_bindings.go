@@ -33,6 +33,92 @@ type OutboundIntegrationOffer struct {
 	CredentialConfigured bool
 	OwnerKind            string
 	RequestPolicy        api.OutboundRequestPolicy
+	AIProvider           string
+	AIDailyTokenLimit    *int64
+	AIDailyCostLimit     *int64
+	AIMonthlyCostLimit   *int64
+	// AIRequestLogEnabled records per-call metadata (ADR-991).
+	AIRequestLogEnabled bool
+}
+
+// OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
+// for a caller (an app ID or "runs") and model (ADR-988).
+type OutboundAIUsageItem struct {
+	Caller               string
+	Model                string
+	Requests             int64
+	ErrorRequests        int64
+	UsageUnknownRequests int64
+	InputTokens          int64
+	CachedInputTokens    int64
+	CacheWriteTokens     int64
+	OutputTokens         int64
+	CostMillicents       int64
+}
+
+// OutboundAIUsage is one UTC day of AI usage for an integration.
+// DailyTokenCount is the live admission counter for today and the sum of
+// rollup tokens for an earlier day. Costs are settled rollup sums for the
+// day and for its calendar month through that day (ADR-990).
+type OutboundAIUsage struct {
+	UsageDate             string
+	AIProvider            string
+	DailyTokenCount       int64
+	DailyTokenLimit       *int64
+	ResetsAt              time.Time
+	Items                 []OutboundAIUsageItem
+	DailyCostMillicents   int64
+	DailyCostLimit        *int64
+	Month                 string
+	MonthlyCostMillicents int64
+	MonthlyCostLimit      *int64
+}
+
+// OutboundAIPolicy is the complete customer AI gateway setting (ADR-988,
+// ADR-990). An empty Provider turns AI handling off and requires no limits.
+type OutboundAIPolicy struct {
+	Provider          string
+	DailyTokenLimit   *int64
+	DailyCostLimit    *int64
+	MonthlyCostLimit  *int64
+	RequestLogEnabled bool
+}
+
+func (p OutboundAIPolicy) valid() bool {
+	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
+		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
+		(!p.RequestLogEnabled || p.Provider != "")
+}
+
+// OutboundAIPriceList is the current price list; EffectiveFrom is nil when
+// the integration has never had one.
+type OutboundAIPriceList struct {
+	EffectiveFrom *time.Time
+	Entries       []api.OutboundAIPriceEntry
+}
+
+// OutboundAIStore owns customer AI gateway settings and reads the usage
+// rollups that outboundd writes. It is separate from OutboundBindingStore so
+// existing binding implementations do not change.
+type OutboundAIStore interface {
+	SetOutboundAIPolicy(ctx context.Context, accountID, integrationID string, policy OutboundAIPolicy) error
+	GetOutboundAIUsage(ctx context.Context, accountID, integrationID, usageDate string) (OutboundAIUsage, error)
+	SetOutboundBindingAITokenLimit(ctx context.Context, accountID, appID, integrationID string, limit *int64) error
+	GetOutboundAIPrices(ctx context.Context, accountID, integrationID string) (OutboundAIPriceList, error)
+	SetOutboundAIPrices(ctx context.Context, accountID, integrationID string, entries []api.OutboundAIPriceEntry) error
+}
+
+// validOutboundAIUsageDate accepts a YYYY-MM-DD UTC date inside the rollup
+// retention window, so reads cannot scan beyond what outboundd keeps.
+func validOutboundAIUsageDate(usageDate string, now time.Time) (time.Time, bool) {
+	day, err := time.Parse("2006-01-02", usageDate)
+	if err != nil {
+		return time.Time{}, false
+	}
+	utcNow := now.UTC()
+	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+	oldest := today.AddDate(0, 0, -api.OutboundAIUsageRetentionDays)
+	return day, !day.Before(oldest) && !day.After(today)
 }
 
 // OutboundIntegrationUsage is the durable UTC-day counter for one managed
@@ -58,9 +144,16 @@ type OutboundAppBinding struct {
 	OutboundIntegrationOffer
 	AppID                    string
 	BindingDailyRequestLimit *int64
-	RouteMethods             []string
-	RoutePathPrefixes        []string
-	CreatedAt                time.Time
+	// BindingAIDailyTokenLimit is this app's own AI token limit (ADR-990).
+	BindingAIDailyTokenLimit *int64
+	// Per-app AI guardrails (ADR-991); nil means unrestricted.
+	BindingAIRequestsPerMinute *int64
+	BindingAITokensPerMinute   *int64
+	BindingAIAllowedModels     []string
+	BindingAIMaxOutputTokens   *int64
+	RouteMethods               []string
+	RoutePathPrefixes          []string
+	CreatedAt                  time.Time
 }
 
 // OutboundBindingStore owns customer-created integration lifecycle, app
@@ -101,6 +194,9 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 		return ErrInvalidArgument
 	}
 	if offer.DailyRequestLimit != nil && (*offer.DailyRequestLimit < 1 || *offer.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return ErrInvalidArgument
+	}
+	if !api.ValidOutboundAIPolicy(offer.AIProvider, offer.AIDailyTokenLimit) {
 		return ErrInvalidArgument
 	}
 	policy := offer.RequestPolicy

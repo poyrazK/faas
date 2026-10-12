@@ -18,20 +18,29 @@ T = TypeVar("T", bound="PreviewDurableEntityQuotaPolicyBody")
 
 @_attrs_define
 class PreviewDurableEntityQuotaPolicyBody:
-    """Preview mutation input with server-side size, scope and revision validation."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema: Preview mutation input with
+    server-side size, scope and revision validation.
+
+    """
 
     operation_id: UUID
-    """Fresh operation identity; replay must retain this identity and the exact request."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    operation id: Fresh operation identity; replay must retain this identity and the exact request."""
     expected_revision: int
-    """Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
     expected_migration_revision: int
-    """Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    expected migration revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes."""
     migration_id: UUID
-    """Fresh operation identity; replay must retain this identity and the exact request."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    migration id: Fresh operation identity; replay must retain this identity and the exact request."""
     limits: PreviewDurableEntityQuotaPolicyBodyLimits
-    """Proposed tenant admission caps; all fields are required."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    limits: Proposed tenant admission caps; all fields are required."""
     expected_migration_id: str | Unset = UNSET
-    """Observed completed migration identity."""
+    """Preview durable entity quota policy — requestBody / content / application/json / schema / properties /
+    expected migration id: Observed completed migration identity."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
