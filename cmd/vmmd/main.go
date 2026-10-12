@@ -917,6 +917,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeImageStagingRoot != "" {
+		jailer.WithNativeImageStagingRoot(cfg.NativeImageStagingRoot)
+	}
 	if cfg.NativeSnapshotPublicationRoot != "" {
 		jailer.WithNativeSnapshotPublicationRoot(cfg.NativeSnapshotPublicationRoot)
 	}
@@ -946,6 +949,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// Native recovery owns the physical inventory, but must also exclude a
+	// concurrent legacy daemon and refuse any outstanding legacy leases. Hold
+	// the legacy journal lock for this daemon's entire lifetime before native
+	// recovery starts. Its records never become native cleanup authority.
+	var resourceJournal *fcvm.ResourceJournal
+	if cfg.NativeProcessRecovery {
+		resourceJournal, err = fcvm.OpenResourceJournal(cfg.ResourceJournalDir)
+		if err != nil {
+			return fmt.Errorf("vmmd: lock legacy resources before native recovery: %w", err)
+		}
+		defer func() { _ = resourceJournal.Close() }()
+		if err := resourceJournal.RequireEmptyForNativeRecovery(); err != nil {
+			return fmt.Errorf("vmmd: native recovery mode transition: %w", err)
+		}
+	}
 	recoverNative := func(ctx context.Context, manager *fcvm.Manager) error { return manager.RecoverNativeProcesses(ctx) }
 	if cfg.NativeProcessRecovery && deps.recoverNativeProcesses != nil {
 		recoverNative = deps.recoverNativeProcesses
@@ -983,19 +1001,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
-	recoverResources := deps.recoverResources
-	if recoverResources == nil {
-		recoverResources = recoverRestartResources
-	}
-	resourceJournal, err := recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
-	if err != nil {
-		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
-			return nil
+	if !cfg.NativeProcessRecovery {
+		recoverResources := deps.recoverResources
+		if recoverResources == nil {
+			recoverResources = recoverRestartResources
 		}
-		return err
-	}
-	if resourceJournal != nil {
-		defer func() { _ = resourceJournal.Close() }()
+		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+		if err != nil {
+			if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		if resourceJournal != nil {
+			defer func() { _ = resourceJournal.Close() }()
+		}
 	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
