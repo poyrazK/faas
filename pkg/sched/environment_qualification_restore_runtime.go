@@ -207,7 +207,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	}
 	release()
 	locked = false
-	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
+	bootCtx, bootCancel := qualificationBootBudgetContext(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
 	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(bootCtx, claimed, frame); err != nil {
 		return err

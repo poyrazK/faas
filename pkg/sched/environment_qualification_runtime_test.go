@@ -197,6 +197,9 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 			if vmm.lastColdBootSpec.Port != 8087 || vmm.lastColdBootSpec.HealthcheckPath != "/reviewed-ready" || vmm.lastColdBootSpec.StartupDeadlineS != 25 || vmm.lastColdBootSpec.ExecutionMode != mode || vmm.coldBoots != 1 || vmm.snapshots != 0 {
 				t.Fatalf("frozen boot: %+v boots=%d snapshots=%d", vmm.lastColdBootSpec, vmm.coldBoots, vmm.snapshots)
 			}
+			if vmm.createDeadline != *request.LeaseUntil {
+				t.Fatalf("native capture inherited boot deadline %v instead of claim deadline %v", vmm.createDeadline, *request.LeaseUntil)
+			}
 			if notif.count(db.NotifyDeploymentReady) != 0 {
 				t.Fatal("qualification emitted ordinary activation handoff")
 			}
@@ -298,6 +301,25 @@ func TestEngineEnvironmentQualificationRuntimeLeaseDeadlineCancelsBlockedBoot(t 
 	assertQualificationRetired(t, store, e, request, vmm, 1)
 	if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "recovery", time.Minute); err != nil {
 		t.Fatal("confirmed retirement prevented attempt recovery", err)
+	}
+}
+
+func TestQualificationBootBudgetCancelsWithoutShorteningClaimDeadline(t *testing.T) {
+	claimDeadline := time.Now().Add(time.Minute)
+	claimCtx, cancel := context.WithDeadline(t.Context(), claimDeadline)
+	defer cancel()
+	bootCtx, stop := qualificationBootBudgetContext(claimCtx, 20*time.Millisecond)
+	defer stop()
+	if deadline, ok := bootCtx.Deadline(); !ok || !deadline.Equal(claimDeadline) {
+		t.Fatalf("boot passed deadline %v instead of qualification lease %v", deadline, claimDeadline)
+	}
+	select {
+	case <-bootCtx.Done():
+		if !errors.Is(bootCtx.Err(), context.Canceled) || claimCtx.Err() != nil {
+			t.Fatalf("boot budget canceled the claim: boot=%v claim=%v", bootCtx.Err(), claimCtx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("boot exceeded its cancellation budget")
 	}
 }
 

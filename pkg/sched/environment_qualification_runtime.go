@@ -190,7 +190,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	// the attempt and reserved instance are fenced at every publication.
 	release()
 	locked = false
-	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
+	bootCtx, bootCancel := qualificationBootBudgetContext(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
 	if err := executor.MarkEnvironmentQualificationDispatched(bootCtx, claimed, frame); err != nil {
 		return fmt.Errorf("mark qualification dispatched: %w", err)
@@ -235,6 +235,18 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return fmt.Errorf("validate qualification owner after visitor: %w", err)
 	}
 	return nil
+}
+
+// vmmd records the incoming qualification deadline as the attempt's native
+// lifetime. Bound boot by cancellation while retaining the full claim deadline
+// for capture, restore and retirement after the guest becomes ready.
+func qualificationBootBudgetContext(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	bootCtx, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(budget, cancel)
+	return bootCtx, func() {
+		timer.Stop()
+		cancel()
+	}
 }
 
 // A private attempt remains observable without asking the ordinary service or
