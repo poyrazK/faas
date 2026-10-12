@@ -122,13 +122,16 @@ jobs:
       # vet type-checks every changed package and direct importer, test files
       # included, so an API change that breaks a caller fails here. The mega
       # tier builds every binary and runs the importers' tests.
+      # Match the proven API test compiler bounds: standard runners cannot
+      # sustain a 10GiB heap target across concurrent package compilations.
       - name: vet (changed packages and direct importers)
         if: steps.select.outputs.vet != ''
         env:
           PKGS: ${{ steps.select.outputs.vet }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 10GiB
-          GOMAXPROCS: 4
+          GOFLAGS: '-p=2 "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           # shellcheck disable=SC2086 # space-separated package list
           go vet $PKGS
@@ -151,10 +154,10 @@ jobs:
         if: steps.select.outputs.changed != ''
         env:
           PKGS: ${{ steps.select.outputs.changed }}
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 10GiB
-          GOGC: 100
-          GOMAXPROCS: 4
+          GOFLAGS: '-p=2 "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           failed=()
           for pkg in $PKGS; do
