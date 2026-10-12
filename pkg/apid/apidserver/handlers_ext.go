@@ -2989,6 +2989,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
+	// A rename moves the app's public hostname and frees the old one for any
+	// tenant; it belongs in the account's audit trail, not only the daemon
+	// log (production-us hunt #9: four renames left no audit event).
+	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
 }
