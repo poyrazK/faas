@@ -131,11 +131,12 @@ used 4 KiB blocks on reflink XFS, with guest-init from this change.
 `TestMetalParkWakeCycle` (100 cycles over virtio-blk with the new
 guest-init) passed at p50 266 ms, p95 302 ms.
 
-Not done yet:
+Follow-ups:
 
-- **Base images:** `rootfs.MkfsCommand` sizes images in whole MiB and leaves
-  the block size to mke2fs. Bases must be built with `-b 4096` and an
-  even-MiB size before production nodes can use pmem.
+- **Base images:** bases are now built by `rootfs.BaseMkfsCommand`, with
+  `-b 4096` and the size rounded up to an even MiB. Bases built before this
+  change keep virtio-blk until the next runtime refresh rebuilds them; app
+  layers keep `MkfsCommand`.
 - **Garbage collection:** clones of bases that are no longer cached are not
   collected. Each clone shares its extents, so it costs metadata only until
   the base is deleted.
