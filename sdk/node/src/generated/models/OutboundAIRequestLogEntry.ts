@@ -25,7 +25,7 @@ export type OutboundAIRequestLogEntry = {
   ttfb_ms: number | null;
   attempts: number;
   /**
-   * The call's X-Gregale-AI-User value (ADR-992).
+   * The call's X-Gregale-AI-User value (ADR-994).
    */
   end_user: string | null;
 };

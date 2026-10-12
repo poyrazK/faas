@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate pkg/outbound/aiprices/catalog.json (ADR-992).
+"""Generate pkg/outbound/aiprices/catalog.json (ADR-994).
 
 Input is LiteLLM's model_prices_and_context_window.json (MIT, Copyright (c)
 2023 Berri AI; see pkg/outbound/aiprices/NOTICE) at a pinned commit. The

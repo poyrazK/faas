@@ -82,7 +82,7 @@ type OutboundAIPriceListResponse struct {
 }
 
 // OutboundAIPriceCatalogResponse is the built-in price catalog of one
-// provider (ADR-992): list prices converted from USD at USDPerEUR and
+// provider (ADR-994): list prices converted from USD at USDPerEUR and
 // rounded up. It prices the models an integration's own list does not name;
 // a "*" entry in that list turns the catalog off for the integration.
 type OutboundAIPriceCatalogResponse struct {
@@ -157,14 +157,14 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 
 // Route formats (ADR-991). A native route sends the caller's request to
 // targets of one provider. An openai route accepts OpenAI chat completions
-// and embeddings and translates them for each target's provider (ADR-993).
+// and embeddings and translates them for each target's provider (ADR-995).
 const (
 	OutboundAIRouteFormatNative = "native"
 	OutboundAIRouteFormatOpenAI = "openai"
 )
 
 // OutboundVertexAnthropicVersion is the anthropic_version a translated
-// Claude request on Vertex AI carries (ADR-993).
+// Claude request on Vertex AI carries (ADR-995).
 const OutboundVertexAnthropicVersion = "vertex-2023-10-16"
 
 var outboundVertexBasePattern = regexp.MustCompile(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
@@ -307,7 +307,7 @@ const (
 	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
 	OutboundAIBudgetDailyCost      = "daily_cost"
 	OutboundAIBudgetMonthlyCost    = "monthly_cost"
-	// Per-end-user UTC-day budgets (ADR-993); their alerts name EndUser.
+	// Per-end-user UTC-day budgets (ADR-995); their alerts name EndUser.
 	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
 	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
 )
@@ -371,11 +371,11 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64     `json:"duration_ms"`
 	TimeToFirstByteMS *int64    `json:"ttfb_ms"`
 	Attempts          int       `json:"attempts"`
-	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-992).
+	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
 	EndUser *string `json:"end_user"`
 }
 
-// Per-end-user attribution and key affinity headers (ADR-992). An app sets
+// Per-end-user attribution and key affinity headers (ADR-994). An app sets
 // them on calls through the gateway; they never reach the provider.
 const (
 	OutboundAIUserHeader    = "X-Gregale-AI-User"
@@ -403,7 +403,7 @@ func ValidOutboundAIUserID(id string) bool {
 }
 
 // ValidOutboundAIUserLimits accepts optional per-end-user daily token and
-// cost limits; either requires an AI provider (ADR-992).
+// cost limits; either requires an AI provider (ADR-994).
 func ValidOutboundAIUserLimits(provider string, tokens, cost *int64) bool {
 	if tokens != nil && (provider == "" || *tokens < 1 || *tokens > MaxOutboundAITokensPerDay) {
 		return false
@@ -425,7 +425,7 @@ type OutboundAIUserUsageItem struct {
 }
 
 // OutboundAIUserUsageResponse lists one UTC day's end users by cost, then
-// tokens (ADR-992). TrackedUsers counts the day's distinct end users,
+// tokens (ADR-994). TrackedUsers counts the day's distinct end users,
 // including the "~other" overflow row.
 type OutboundAIUserUsageResponse struct {
 	UsageDate                    string                    `json:"usage_date"`
@@ -436,7 +436,7 @@ type OutboundAIUserUsageResponse struct {
 }
 
 // OutboundAIUserUsageExportRow is one NDJSON line of a per-end-user usage
-// export (ADR-993); the CSV export has the same columns in this order.
+// export (ADR-995); the CSV export has the same columns in this order.
 type OutboundAIUserUsageExportRow struct {
 	UsageDate string `json:"usage_date"`
 	OutboundAIUserUsageItem

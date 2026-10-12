@@ -15,7 +15,7 @@ type AIBudgetAlert struct {
 	IntegrationID string
 	Budget        string
 	AppID         string
-	// EndUser names the end user of a per-user budget (ADR-993).
+	// EndUser names the end user of a per-user budget (ADR-995).
 	EndUser          string
 	PeriodStart      time.Time
 	ThresholdPercent int
@@ -62,7 +62,7 @@ type aiBudgetCrossing struct {
 	limit       *int64
 	before      int64
 	after       int64
-	// endUser names the end user of a per-user budget (ADR-993).
+	// endUser names the end user of a per-user budget (ADR-995).
 	endUser string
 }
 
@@ -81,7 +81,7 @@ func aiBudgetAlertsFor(integrationID string, crossings []aiBudgetCrossing, now t
 }
 
 // userBudgetCrossings lists one end user's token and cost budget changes
-// for a settlement (ADR-993): before and after are the user's UTC-day
+// for a settlement (ADR-995): before and after are the user's UTC-day
 // totals. The overflow row has no per-user limits, so it never alerts.
 func userBudgetCrossings(endUser string, day time.Time, tokenLimit, costLimit *int64, tokensAfter, costAfter, tokens, cost int64) []aiBudgetCrossing {
 	if endUser == "" || endUser == api.OutboundAIUserOverflow {

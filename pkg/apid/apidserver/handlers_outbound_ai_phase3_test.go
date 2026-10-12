@@ -194,7 +194,7 @@ func TestOutboundAIRouteFormats(t *testing.T) {
 		"unknown format":      {Name: "x", Format: "grpc", Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}}},
 		"claude needs model":  {Name: "y", Format: api.OutboundAIRouteFormatOpenAI, Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: claude}}},
 		"bedrock needs model": {Name: "z", Format: api.OutboundAIRouteFormatOpenAI, Targets: []api.OutboundAIRouteTarget{{IntegrationID: bedrock}}},
-		// ADR-993: a Vertex target needs one project and location in its prefixes.
+		// ADR-995: a Vertex target needs one project and location in its prefixes.
 		"vertex without location": {Name: "v", Format: api.OutboundAIRouteFormatOpenAI,
 			Targets: []api.OutboundAIRouteTarget{{IntegrationID: vertex, Model: "gemini-2.5-pro"}}},
 	} {
@@ -202,7 +202,7 @@ func TestOutboundAIRouteFormats(t *testing.T) {
 			t.Errorf("%s: %d %s", name, resp.Code, resp.Body.String())
 		}
 	}
-	// ADR-993: openai routes reach Bedrock through Converse.
+	// ADR-995: openai routes reach Bedrock through Converse.
 	if resp := e.Do(t, http.MethodPost, "/v1/outbound/ai-routes", api.CreateOutboundAIRouteRequest{Name: "bedrock-chat", Format: api.OutboundAIRouteFormatOpenAI,
 		Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: bedrock, Model: "amazon.nova-pro-v1:0"}}}, nil); resp.Code != http.StatusCreated {
 		t.Fatalf("bedrock openai route = %d %s", resp.Code, resp.Body.String())

@@ -37,7 +37,7 @@ const (
 	// Per-app per-minute AI limits (ADR-991).
 	ReasonRequestsPerMinute = "requests_per_minute_limit"
 	ReasonTokensPerMinute   = "tokens_per_minute_limit"
-	// Per-end-user UTC-day AI limits (ADR-992).
+	// Per-end-user UTC-day AI limits (ADR-994).
 	ReasonUserDailyTokenLimit = "user_daily_token_limit"
 	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
 
@@ -104,7 +104,7 @@ type Integration struct {
 	// AIRequestLogEnabled records per-call metadata at settlement.
 	AIRequestLogEnabled bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
-	// call names with X-Gregale-AI-User per UTC day (ADR-992).
+	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
 	AIUserDailyCostLimit  *int64
 }
@@ -309,7 +309,7 @@ type AdmissionSpec struct {
 	// per-minute limits; the Postgres backend reads the stored values.
 	BindingRequestsPerMinute *int64
 	BindingTokensPerMinute   *int64
-	// AIEndUser is the call's X-Gregale-AI-User value (ADR-992). With it,
+	// AIEndUser is the call's X-Gregale-AI-User value (ADR-994). With it,
 	// UserDailyAITokenLimit and UserDailyAICostLimit cap that end user's UTC
 	// day; the Postgres backend reads the stored limits.
 	AIEndUser             string

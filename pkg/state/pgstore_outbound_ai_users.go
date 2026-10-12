@@ -64,7 +64,7 @@ func (s *PgStore) ExportOutboundAIUserUsage(ctx context.Context, accountID, inte
 	}
 }
 
-// GetOutboundAIUserUsage reads one UTC day of per-end-user rollups (ADR-992),
+// GetOutboundAIUserUsage reads one UTC day of per-end-user rollups (ADR-994),
 // ordered by cost, then tokens, then end user.
 func (s *PgStore) GetOutboundAIUserUsage(ctx context.Context, accountID, integrationID, usageDate, endUser string, limit int) (OutboundAIUserUsage, error) {
 	usageDate, ok := outboundAIUserUsageQuery(usageDate, endUser, time.Now())

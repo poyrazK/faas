@@ -709,7 +709,7 @@ are still read from each provider's native response.
 
 ## Built-in price catalog
 
-See [ADR-992](../adr/992-ai-gateway-price-catalog-end-users-affinity.md).
+See [ADR-994](../adr/994-ai-gateway-price-catalog-end-users-affinity.md).
 outboundd and apid embed `pkg/outbound/aiprices/catalog.json`: list prices for
 about 700 models across the six providers, in EUR millicents per million
 tokens. A call's model is priced from the integration's price list first, then

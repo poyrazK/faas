@@ -55,11 +55,11 @@ export type OutboundIntegrationOffer = {
    */
   ai_request_log_enabled?: boolean;
   /**
-   * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-992).
+   * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_token_limit?: number | null;
   /**
-   * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-992).
+   * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_cost_limit_millicents?: number | null;
 };

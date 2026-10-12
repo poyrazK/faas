@@ -1,5 +1,5 @@
 -- filename: 20261012080904121_outbound_ai_end_users.sql
--- ADR-992: per-end-user AI attribution and daily limits. An app names the
+-- ADR-994: per-end-user AI attribution and daily limits. An app names the
 -- end user of a call with X-Gregale-AI-User; outboundd rolls usage up per
 -- integration, UTC day and end user, and a lease carries its end user so
 -- live reservations count against that user's hard caps. Additive and

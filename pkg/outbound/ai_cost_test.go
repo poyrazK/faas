@@ -51,7 +51,7 @@ func TestAICostMillicentsPricesByLongestPrefix(t *testing.T) {
 	}
 }
 
-// adr: 992 — models missing from the customer's list price from the
+// adr: 994 — models missing from the customer's list price from the
 // built-in catalog; the customer's list, including "*", always wins.
 func TestAICallCostFallsBackToCatalog(t *testing.T) {
 	integration := Integration{AIProvider: api.OutboundAIProviderOpenAI}

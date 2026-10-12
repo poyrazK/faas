@@ -49,7 +49,7 @@ type AIUsageRecord struct {
 	CostMillicents int64
 	// Log, when set, adds one metadata row to the AI request log (ADR-991).
 	Log *AIRequestLog
-	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-992).
+	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
 	EndUser string
 }
 
@@ -175,7 +175,7 @@ type aiEnvelope struct {
 	Message       *aiEnvelopeInner `json:"message"`
 	Response      *aiEnvelopeInner `json:"response"`
 	Bytes         []byte           `json:"bytes"`
-	// Predictions carries Vertex AI text-embedding token counts (ADR-993).
+	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
 	Predictions []struct {
 		Embeddings *struct {
 			Statistics *struct {

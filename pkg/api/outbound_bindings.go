@@ -62,7 +62,7 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool `json:"ai_request_log_enabled"`
-	// Per-end-user UTC-day limits (ADR-992).
+	// Per-end-user UTC-day limits (ADR-994).
 	AIUserDailyTokenLimit          *int64 `json:"ai_user_daily_token_limit"`
 	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
 }
@@ -112,7 +112,7 @@ type PutOutboundAIPolicyRequest struct {
 	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
 	RequestLogEnabled bool `json:"request_log_enabled"`
 	// UserDailyTokenLimit and UserDailyCostLimitMillicents cap each end
-	// user named by X-Gregale-AI-User per UTC day (ADR-992).
+	// user named by X-Gregale-AI-User per UTC day (ADR-994).
 	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
 	UserDailyCostLimitMillicents *int64 `json:"user_daily_cost_limit_millicents,omitempty"`
 }

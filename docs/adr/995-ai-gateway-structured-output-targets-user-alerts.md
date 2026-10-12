@@ -1,8 +1,8 @@
-# ADR-993 · AI gateway phase 5: structured output, Bedrock and Vertex route targets, embeddings routes, end-user alerts and export, app helpers
+# ADR-995 · AI gateway phase 5: structured output, Bedrock and Vertex route targets, embeddings routes, end-user alerts and export, app helpers
 
 - **Status:** accepted
 - **Date:** 2026-10-12
-- **Relates to:** ADR-991 (translation, alerts), ADR-992 (end users, key affinity), ADR-988 (AI gateway)
+- **Relates to:** ADR-991 (translation, alerts), ADR-994 (end users, key affinity), ADR-988 (AI gateway)
 - **Decision:** Close the gaps phase 4 left in translation and per-end-user budgets:
   - translate OpenAI `response_format` to each target's structured output instead of dropping it;
   - let openai-format routes target Bedrock (Converse) and Vertex AI (Claude and Gemini);
@@ -15,7 +15,7 @@
   - ADR-991 dropped `response_format` for translated targets. A caller asking for JSON got free text from Anthropic or Gemini with a 200, so its parser failed far from the cause.
   - Customers on AWS or Google Cloud could use Bedrock and Vertex only on native routes, so they could not fall back across providers.
   - Embeddings had no route, so retrieval traffic could not use a route at all.
-  - ADR-992 limits end users but tells nobody when one approaches a limit. Apps that bill their own users had to page the users endpoint one day and at most 1,000 rows at a time.
+  - ADR-994 limits end users but tells nobody when one approaches a limit. Apps that bill their own users had to page the users endpoint one day and at most 1,000 rows at a time.
   - Apps had to hand-build `$GREGALE_OUTBOUND_URL/r/{id}` and the headers, and often sent raw e-mail addresses as user IDs.
   - A native route to a Bedrock ARN model (`%2F` in the path) reached the provider escaped twice and failed.
 - **Consequences:**

@@ -28,7 +28,7 @@ class CreateOutboundAIRouteRequest:
     format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET
     """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic,
     gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's
-    integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-993)."""
+    integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

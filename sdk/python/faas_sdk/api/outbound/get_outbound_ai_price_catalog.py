@@ -80,7 +80,7 @@ def sync_detailed(
 ) -> Response[OutboundAIPriceCatalogResponse | Problem]:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-992). The catalog prices the models an integration's own price list
+     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
     does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
 
     Args:
@@ -115,7 +115,7 @@ def sync(
 ) -> OutboundAIPriceCatalogResponse | Problem | None:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-992). The catalog prices the models an integration's own price list
+     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
     does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
 
     Args:
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIPriceCatalogResponse | Problem]:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-992). The catalog prices the models an integration's own price list
+     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
     does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
 
     Args:
@@ -178,7 +178,7 @@ async def asyncio(
 ) -> OutboundAIPriceCatalogResponse | Problem | None:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-992). The catalog prices the models an integration's own price list
+     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
     does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
 
     Args:

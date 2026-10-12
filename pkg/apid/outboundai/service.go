@@ -1,7 +1,7 @@
 // Package outboundai is apid's AI gateway surface: integration AI policy,
 // usage and price lists, the built-in price catalog, per-end-user usage, app
 // guardrails, extra provider keys, budget alerts, the request log and AI
-// fallback routes (ADR-988, ADR-990, ADR-991, ADR-992). It was lifted out of
+// fallback routes (ADR-988, ADR-990, ADR-991, ADR-994). It was lifted out of
 // pkg/apid/apidserver by ADR-982; the server keeps the route table and the
 // ai_gateway_enabled release gate.
 //

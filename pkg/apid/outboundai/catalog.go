@@ -10,7 +10,7 @@ import (
 )
 
 // GetPriceCatalog returns one provider's built-in price catalog, or with
-// ?model= the catalog entry that would price that model (ADR-992).
+// ?model= the catalog entry that would price that model (ADR-994).
 func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ state.Account) {
 	query := r.URL.Query()
 	provider, model := query.Get("provider"), query.Get("model")

@@ -16,7 +16,7 @@ T = TypeVar("T", bound="OutboundAIPriceCatalogResponse")
 
 @_attrs_define
 class OutboundAIPriceCatalogResponse:
-    """One provider's built-in AI price catalog (ADR-992), generated from LiteLLM's MIT-licensed price data. model_prefix
+    """One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's MIT-licensed price data. model_prefix
     holds the catalog model name.
 
     """

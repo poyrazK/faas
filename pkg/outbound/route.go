@@ -220,7 +220,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // openAIRoutePath reports whether an openai-format route can translate the
-// provider path: chat completions (ADR-991) or embeddings (ADR-993).
+// provider path: chat completions (ADR-991) or embeddings (ADR-995).
 func openAIRoutePath(providerPath string) bool {
 	return strings.HasSuffix(providerPath, "/chat/completions") || strings.HasSuffix(providerPath, "/embeddings")
 }

@@ -116,7 +116,7 @@ func TestCmdAIJSONOutput(t *testing.T) {
 	}
 }
 
-// adr: 993 — `gregale ai users export` writes the server's CSV unchanged
+// adr: 995 — `gregale ai users export` writes the server's CSV unchanged
 // and asks for the requested range.
 func TestCmdAIUsersExport(t *testing.T) {
 	var query string

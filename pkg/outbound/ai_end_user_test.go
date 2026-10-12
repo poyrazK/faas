@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 992 — X-Gregale-AI-User attributes calls to an end user, caps that
+// adr: 994 — X-Gregale-AI-User attributes calls to an end user, caps that
 // user's day without touching other users, and never reaches the provider.
 
 import (
@@ -80,7 +80,7 @@ func TestEndUserDailyLimitsAndAttribution(t *testing.T) {
 	if len(log) != 3 || log[0].EndUser != "user:alice@example.com" || log[1].EndUser != "user:bob" || log[2].EndUser != "" {
 		t.Fatalf("request log end users = %+v", log)
 	}
-	// ADR-993: 50 of each user's 60 tokens crosses that user's 80% alert.
+	// ADR-995: 50 of each user's 60 tokens crosses that user's 80% alert.
 	userAlerts := map[string]int{}
 	for _, alert := range backend.AIBudgetAlerts("integration-1") {
 		if alert.Budget == api.OutboundAIBudgetUserDailyTokens {

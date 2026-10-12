@@ -57,7 +57,7 @@ func matchAIPrice(prices []AIPrice, model string) (AIPrice, bool) {
 	return best, found
 }
 
-// aiPriceFor resolves one model's price (ADR-992): the integration's own
+// aiPriceFor resolves one model's price (ADR-994): the integration's own
 // list first, where "*" catches every model, then the built-in catalog for
 // the integration's provider.
 func aiPriceFor(integration Integration, model string) (AIPrice, bool) {

@@ -133,7 +133,7 @@ func TestKeyPoolOrderKeepsCoolingKeysLast(t *testing.T) {
 	}
 }
 
-// adr: 992 — an affinity key keeps a session on one key, skips a cooling
+// adr: 994 — an affinity key keeps a session on one key, skips a cooling
 // key, and removing a key moves only the sessions that were on it.
 func TestKeyPoolAffinityIsStable(t *testing.T) {
 	var pools keyPoolState

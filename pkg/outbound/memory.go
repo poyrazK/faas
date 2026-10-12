@@ -50,7 +50,7 @@ type memoryState struct {
 	usageMonth               string
 	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
-	// userUsage is today's per-end-user rollup (ADR-992).
+	// userUsage is today's per-end-user rollup (ADR-994).
 	userUsage      map[string]AIUserUsageTotals
 	bindingMinutes map[string]memoryMinute
 	// The limits of the latest admission, used to detect budget alerts at
@@ -74,7 +74,7 @@ type AIUsageTotals struct {
 	CostMillicents                                                 int64
 }
 
-// AIUserUsageTotals is one end user's UTC-day rollup (ADR-992).
+// AIUserUsageTotals is one end user's UTC-day rollup (ADR-994).
 type AIUserUsageTotals struct {
 	Requests, ErrorRequests, InputTokens, OutputTokens, CostMillicents int64
 }

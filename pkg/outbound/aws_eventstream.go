@@ -26,7 +26,7 @@ type awsEventStreamReader struct {
 	// onPayload receives the payload of each event message.
 	onPayload func([]byte)
 	// onMessage receives every message with its :message-type and its
-	// :event-type (or :exception-type) header, for translation (ADR-993).
+	// :event-type (or :exception-type) header, for translation (ADR-995).
 	onMessage func(messageType, eventType string, payload []byte)
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 // Bedrock targets of openai-format routes use the Converse API, which
-// serves every Bedrock chat model with one request shape (ADR-993).
+// serves every Bedrock chat model with one request shape (ADR-995).
 
 type converseBlock = map[string]any
 

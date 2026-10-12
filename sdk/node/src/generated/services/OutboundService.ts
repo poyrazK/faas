@@ -369,7 +369,7 @@ export class OutboundService {
   }
   /**
    * Read one UTC day of AI gateway usage by end user.
-   * Requires MFA and read scope (ADR-992). End users are the X-Gregale-AI-User values apps send; rows are kept for 31 days and listed by cost, then tokens.
+   * Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows are kept for 31 days and listed by cost, then tokens.
    * @returns OutboundAIUserUsageResponse Per-end-user AI usage for the selected day.
    * @throws ApiError
    */
@@ -420,7 +420,7 @@ export class OutboundService {
   }
   /**
    * Export per-end-user AI gateway usage for a range of UTC days.
-   * Requires MFA and read scope (ADR-993). Streams every per-end-user row of the days from through to, ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+   * Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to, ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
    * @returns binary Per-end-user usage rows.
    * @throws ApiError
    */
@@ -472,7 +472,7 @@ export class OutboundService {
   }
   /**
    * Read the built-in AI price catalog of one provider.
-   * Requires MFA and read scope (ADR-992). The catalog prices the models an integration's own price list does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+   * Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
    * @returns OutboundAIPriceCatalogResponse The provider's catalog, or the one entry that prices the model.
    * @throws ApiError
    */

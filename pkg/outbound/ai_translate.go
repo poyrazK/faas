@@ -16,7 +16,7 @@ import (
 var errTranslationUnsupported = errors.New("outbound AI translation: unsupported request")
 
 // translationRefusal is an unsupported request with a reason the caller
-// sees in the problem detail (ADR-993).
+// sees in the problem detail (ADR-995).
 type translationRefusal struct{ reason string }
 
 func (e translationRefusal) Error() string        { return "outbound AI translation: " + e.reason }
@@ -53,7 +53,7 @@ type openAIChatRequest struct {
 	ResponseFormat      json.RawMessage    `json:"response_format"`
 }
 
-// openAIResponseFormat is a chat request's response_format (ADR-993):
+// openAIResponseFormat is a chat request's response_format (ADR-995):
 // kind is "" or "text" for plain text, "json_object" or "json_schema".
 type openAIResponseFormat struct {
 	kind, name, description string
@@ -150,7 +150,7 @@ type routeTranslation struct {
 }
 
 // translateRouteRequest rewrites an openai-format route's request for one
-// target: chat completions (ADR-991) or embeddings (ADR-993). providerPath
+// target: chat completions (ADR-991) or embeddings (ADR-995). providerPath
 // and the returned path are escaped paths.
 func translateRouteRequest(integration Integration, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
 	if strings.HasSuffix(providerPath, "/embeddings") {
@@ -235,7 +235,7 @@ func vertexPublisherModel(model string) (publisher, name string) {
 
 // translateVertexChat sends chat completions to Claude (rawPredict) or
 // Gemini (generateContent) on Vertex AI under the integration's one
-// project and location (ADR-993).
+// project and location (ADR-995).
 func translateVertexChat(integration Integration, request openAIChatRequest, format openAIResponseFormat, model string,
 	includeUsage bool) (routeTranslation, error) {
 	base, ok := api.OutboundVertexBasePath(integration.AllowedPathPrefixes)
@@ -459,7 +459,7 @@ func openAIToAnthropic(request openAIChatRequest, model string, format openAIRes
 	if choice := anthropicToolChoice(request); choice != nil {
 		out["tool_choice"] = choice
 	}
-	// ADR-993: structured output always takes a schema.
+	// ADR-995: structured output always takes a schema.
 	switch format.kind {
 	case "json_schema":
 		out["output_config"] = map[string]any{"format": map[string]any{"type": "json_schema", "schema": format.schema}}
@@ -596,7 +596,7 @@ func openAIToGemini(request openAIChatRequest, format openAIResponseFormat) ([]b
 	if stops := openAIStopSequences(request.Stop); len(stops) > 0 {
 		generation["stopSequences"] = stops
 	}
-	// ADR-993: JSON mode, with the caller's JSON Schema when it has one.
+	// ADR-995: JSON mode, with the caller's JSON Schema when it has one.
 	switch format.kind {
 	case "json_object":
 		generation["responseMimeType"] = "application/json"

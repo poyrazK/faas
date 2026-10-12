@@ -1,4 +1,4 @@
-# ADR-992 · AI gateway phase 4: built-in price catalog, per-end-user limits and key affinity
+# ADR-994 · AI gateway phase 4: built-in price catalog, per-end-user limits and key affinity
 
 - **Status:** accepted
 - **Date:** 2026-10-12

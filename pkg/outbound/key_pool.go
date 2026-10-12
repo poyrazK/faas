@@ -41,7 +41,7 @@ func keyPoolKey(integrationID, keyID string) string { return integrationID + "/"
 
 // order returns the keys to try for one call: available keys in round-robin
 // order, then cooling keys by soonest expiry, so a call still goes out when
-// every key is cooling. A call with an affinity key (ADR-992) instead ranks
+// every key is cooling. A call with an affinity key (ADR-994) instead ranks
 // the keys by rendezvous hash, so one session or end user keeps landing on
 // the same key and the provider prompt cache of that key's account; a pool
 // change moves only the sessions of the keys added or removed.

@@ -99,7 +99,7 @@ type aiSettlement struct {
 	attempts int
 	started  time.Time
 	routeID  string
-	// endUser is the call's X-Gregale-AI-User value (ADR-992).
+	// endUser is the call's X-Gregale-AI-User value (ADR-994).
 	endUser string
 }
 

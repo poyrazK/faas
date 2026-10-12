@@ -15,11 +15,11 @@ export type PutOutboundAIPolicyRequest = {
    */
   request_log_enabled?: boolean;
   /**
-   * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider.
+   * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;
   /**
-   * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider.
+   * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_cost_limit_millicents?: number | null;
 };

@@ -38,7 +38,7 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 type aiBudgetState struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost  int64
 	inflightTokens, inflightBindingTokens, inflightCost int64
-	// The call's end user today and its live reservations (ADR-992).
+	// The call's end user today and its live reservations (ADR-994).
 	userTokens, userCost, inflightUserTokens, inflightUserCost int64
 }
 

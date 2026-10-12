@@ -16,7 +16,7 @@ import (
 const userUsageInvalidDetail = "date must be a YYYY-MM-DD UTC day within the last 31 days, end_user 1 to 64 letters, digits or . _ : @ + = / | -, and limit 1 to 1,000"
 
 // GetUserUsage lists one UTC day of AI usage by end user, most expensive
-// first (ADR-992). ?end_user= reads one user; ?date= and ?limit= page.
+// first (ADR-994). ?end_user= reads one user; ?date= and ?limit= page.
 func (s *Service) GetUserUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {
@@ -51,7 +51,7 @@ const userExportInvalidDetail = "from and to must be YYYY-MM-DD UTC days within 
 
 // ExportUserUsage streams the per-end-user rows of the UTC days ?from=
 // through ?to= (both default to today) as NDJSON (the default) or CSV
-// (ADR-993). Rows are ordered by day and end user.
+// (ADR-995). Rows are ordered by day and end user.
 func (s *Service) ExportUserUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	integrationID, ok := integrationPathID(w, r)
 	if !ok {

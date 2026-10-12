@@ -27,7 +27,7 @@ type aiSettlementLimits struct {
 	accountID                           uuid.UUID
 	name                                string
 	dailyTokens, dailyCost, monthlyCost int64
-	// Per-end-user UTC-day limits (ADR-993).
+	// Per-end-user UTC-day limits (ADR-995).
 	userTokens, userCost int64
 }
 
@@ -205,7 +205,7 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
 // outbound.ai_budget.threshold webhook per affected app: the app itself for
 // an app budget, every bound app for an integration budget, and the calling
-// app for an end user's budget (ADR-993).
+// app for an end user's budget (ADR-995).
 func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, limits aiSettlementLimits, caller string,
 	alerts []AIBudgetAlert) ([]AIBudgetAlert, error) {
 	var recorded []AIBudgetAlert
@@ -326,7 +326,7 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
-		// ADR-993: end users' alerts follow the per-user rollup retention.
+		// ADR-995: end users' alerts follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.days)

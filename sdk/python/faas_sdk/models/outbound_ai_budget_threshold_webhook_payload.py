@@ -24,7 +24,7 @@ T = TypeVar("T", bound="OutboundAIBudgetThresholdWebhookPayload")
 class OutboundAIBudgetThresholdWebhookPayload:
     """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991).
     alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end
-    user's budget only the app whose call crossed it (ADR-993).
+    user's budget only the app whose call crossed it (ADR-995).
 
     """
 
@@ -34,7 +34,7 @@ class OutboundAIBudgetThresholdWebhookPayload:
     budget: OutboundAIBudgetThresholdWebhookPayloadBudget
     app_id: None | UUID
     end_user: None | str
-    """The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-993)."""
+    """The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995)."""
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetThresholdWebhookPayloadThresholdPercent
     limit: int

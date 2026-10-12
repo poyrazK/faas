@@ -182,7 +182,7 @@ export {
   type VerifyWebhookOptions,
 } from './webhook.js';
 
-// AI gateway helpers for apps: relay URLs, end-user and session headers (ADR-993).
+// AI gateway helpers for apps: relay URLs, end-user and session headers (ADR-995).
 export {
   AI_SESSION_HEADER,
   AI_USER_HEADER,

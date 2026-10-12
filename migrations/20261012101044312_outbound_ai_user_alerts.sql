@@ -1,6 +1,6 @@
 -- filename: 20261012101044312_outbound_ai_user_alerts.sql
--- ADR-993: per-end-user budget alerts. An end user's UTC-day token and cost
--- limits (ADR-992) alert at 80% and 100% like the other AI budgets; the
+-- ADR-995: per-end-user budget alerts. An end user's UTC-day token and cost
+-- limits (ADR-994) alert at 80% and 100% like the other AI budgets; the
 -- alert names the end user, and the once-per-period key gains it. Replay-safe.
 
 -- +goose Up

@@ -30,9 +30,9 @@ class PutOutboundAIPolicyRequest:
     """Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires
     ai_provider."""
     user_daily_token_limit: int | None | Unset = UNSET
-    """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider."""
+    """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
-    """Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider."""
+    """Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

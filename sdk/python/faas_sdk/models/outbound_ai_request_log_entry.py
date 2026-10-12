@@ -37,7 +37,7 @@ class OutboundAIRequestLogEntry:
     ttfb_ms: int | None
     attempts: int
     end_user: None | str
-    """The call's X-Gregale-AI-User value (ADR-992)."""
+    """The call's X-Gregale-AI-User value (ADR-994)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

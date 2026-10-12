@@ -290,7 +290,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	var userLimits aiBudgetLimits
 	var user aiBudgetState
 	if spec.AIEndUser != "" && (storedUserTokenLimit > 0 || storedUserCostLimit > 0) {
-		// ADR-992: the end user's settled day and live reservations.
+		// ADR-994: the end user's settled day and live reservations.
 		userLimits.userTokens, userLimits.userCost = positiveLimit(storedUserTokenLimit), positiveLimit(storedUserCostLimit)
 		if user, err = postgresAIUserState(ctx, tx, integrationID, today, spec.AIEndUser); err != nil {
 			return Decision{}, err

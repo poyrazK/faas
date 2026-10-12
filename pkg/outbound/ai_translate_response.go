@@ -22,7 +22,7 @@ type aiResponseTranslator interface {
 }
 
 // awsEventTranslator converts the messages of a binary AWS event stream
-// (Bedrock converse-stream, ADR-993) into OpenAI SSE bytes.
+// (Bedrock converse-stream, ADR-995) into OpenAI SSE bytes.
 type awsEventTranslator interface {
 	awsEvent(messageType, eventType string, payload []byte) []byte
 }
@@ -114,7 +114,7 @@ func openAIErrorBody(status int, body []byte) []byte {
 			Status  string `json:"status"`
 		} `json:"error"`
 	}
-	// Bedrock errors carry a top-level message instead (ADR-993).
+	// Bedrock errors carry a top-level message instead (ADR-995).
 	var topLevel struct {
 		Message string `json:"message"`
 	}

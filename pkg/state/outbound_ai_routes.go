@@ -72,7 +72,7 @@ type outboundAIRouteTarget struct {
 // integration the route format can serve. A native route needs one wire
 // format; an openai route accepts translatable providers and needs a model
 // for every non-OpenAI target (ADR-991), and a Vertex target whose prefixes
-// name one project and location (ADR-993). integrations maps integration ID
+// name one project and location (ADR-995). integrations maps integration ID
 // to its details.
 func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarget, integrations map[string]outboundAIRouteTarget) bool {
 	first := ""

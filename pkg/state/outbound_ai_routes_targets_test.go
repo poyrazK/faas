@@ -1,6 +1,6 @@
 package state
 
-// adr: 993 — openai routes accept Bedrock and Vertex targets with a model;
+// adr: 995 — openai routes accept Bedrock and Vertex targets with a model;
 // a Vertex target needs one project and location in its path prefixes.
 
 import (

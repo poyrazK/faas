@@ -1,9 +1,9 @@
 import { createHash, createHmac } from 'node:crypto';
 
-/** Header naming the end user of an AI gateway call; it attributes and limits the call (ADR-992). */
+/** Header naming the end user of an AI gateway call; it attributes and limits the call (ADR-994). */
 export const AI_USER_HEADER = 'X-Gregale-AI-User';
 
-/** Header naming the conversation of an AI gateway call; pooled provider keys stick to it (ADR-992). */
+/** Header naming the conversation of an AI gateway call; pooled provider keys stick to it (ADR-994). */
 export const AI_SESSION_HEADER = 'X-Gregale-AI-Session';
 
 const AI_ID_PATTERN = /^[A-Za-z0-9._:@+=/|-]{1,64}$/;

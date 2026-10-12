@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// openai-format routes also accept OpenAI embeddings requests (ADR-993).
+// openai-format routes also accept OpenAI embeddings requests (ADR-995).
 // OpenAI and Azure OpenAI targets get them unchanged; Gemini and Vertex AI
 // Google models are translated. Anthropic and Bedrock have no translated
 // embeddings.

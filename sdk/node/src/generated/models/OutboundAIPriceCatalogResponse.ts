@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIPriceEntry } from './OutboundAIPriceEntry.js';
 /**
- * One provider's built-in AI price catalog (ADR-992), generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
+ * One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
  */
 export type OutboundAIPriceCatalogResponse = {
   ai_provider: string;

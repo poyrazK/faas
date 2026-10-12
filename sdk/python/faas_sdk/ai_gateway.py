@@ -1,4 +1,4 @@
-"""AI gateway helpers for Gregale apps (ADR-993).
+"""AI gateway helpers for Gregale apps (ADR-995).
 
 Inside an app, ``GREGALE_OUTBOUND_URL`` reaches managed AI integrations and
 routes through the outbound relay. These helpers build that base URL and

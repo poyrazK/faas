@@ -116,7 +116,7 @@ func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID str
 }
 
 // GetOutboundAIPriceCatalog lists a provider's built-in prices, or with a
-// model the entry that would price it (ADR-992).
+// model the entry that would price it (ADR-994).
 func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model string) (OutboundAIPriceCatalogResponse, error) {
 	query := url.Values{"provider": {provider}}
 	if model != "" {
@@ -127,7 +127,7 @@ func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model 
 }
 
 // GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
-// date is today and an empty endUser lists the top users (ADR-992).
+// date is today and an empty endUser lists the top users (ADR-994).
 func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date, endUser string, limit int) (OutboundAIUserUsageResponse, error) {
 	query := url.Values{}
 	if date != "" {
@@ -149,7 +149,7 @@ func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date
 
 // ExportOutboundAIUserUsage downloads the per-end-user usage of the UTC
 // days from through to (empty means today) as "csv" or "ndjson" (the
-// server default) (ADR-993).
+// server default) (ADR-995).
 func (c *Client) ExportOutboundAIUserUsage(ctx context.Context, integrationID, from, to, format string) ([]byte, error) {
 	query := url.Values{}
 	for name, value := range map[string]string{"from": from, "to": to, "format": format} {

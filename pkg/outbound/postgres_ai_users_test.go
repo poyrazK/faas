@@ -1,6 +1,6 @@
 package outbound_test
 
-// adr: 992 — Postgres admission caps one end user's UTC day with settled
+// adr: 994 — Postgres admission caps one end user's UTC day with settled
 // usage plus live reservations, and settlement writes the per-user rollup
 // and the request log's end user.
 
@@ -123,7 +123,7 @@ func TestPostgresEndUserDailyTokenLimit(t *testing.T) {
 	if err != nil || len(offers) != 1 || offers[0].AIUserDailyTokenLimit == nil || *offers[0].AIUserDailyTokenLimit != userLimit {
 		t.Fatalf("offers = %+v, %v", offers, err)
 	}
-	// ADR-993: 50 of alice's 60 tokens records her 80% alert once.
+	// ADR-995: 50 of alice's 60 tokens records her 80% alert once.
 	alerts, err := store.ListOutboundAIBudgetAlerts(ctx, account.ID, offer.ID, 10)
 	if err != nil || len(alerts) != 1 || alerts[0].Budget != api.OutboundAIBudgetUserDailyTokens || alerts[0].EndUser != "alice" ||
 		alerts[0].ThresholdPercent != 80 || alerts[0].AppID != "" || alerts[0].Used != 50 {

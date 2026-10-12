@@ -21,7 +21,7 @@ T = TypeVar("T", bound="OutboundAIRoute")
 class OutboundAIRoute:
     """An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An
     openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider
-    (ADR-991, ADR-993).
+    (ADR-991, ADR-995).
 
     """
 

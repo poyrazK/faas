@@ -11,7 +11,7 @@ import (
 )
 
 // postgresAIUserState reads one end user's settled UTC day and the
-// reservations of its live leases (ADR-992). Admission holds the
+// reservations of its live leases (ADR-994). Admission holds the
 // integration's admission-state row lock, so admissions for the same end
 // user are serialized.
 func postgresAIUserState(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, today time.Time, endUser string) (aiBudgetState, error) {
@@ -33,7 +33,7 @@ func postgresAIUserState(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 // the capped number of distinct users; later ones aggregate under the
 // overflow row, so a caller cannot grow the table without bound. It returns
 // the row the call landed in, with its day totals, for budget alerts
-// (ADR-993).
+// (ADR-995).
 func insertAIUserUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, record AIUsageRecord) (aiUserDay, error) {
 	if record.EndUser == "" {
 		return aiUserDay{}, nil

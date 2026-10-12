@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 992 — the catalog endpoint lists or resolves a provider's prices,
+// adr: 994 — the catalog endpoint lists or resolves a provider's prices,
 // the AI policy stores per-end-user limits and the users endpoint pages one
 // day's end users, most expensive first.
 

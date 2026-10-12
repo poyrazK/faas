@@ -1,6 +1,6 @@
 package aiprices
 
-// adr: 992 — the embedded catalog parses, covers every gateway provider and
+// adr: 994 — the embedded catalog parses, covers every gateway provider and
 // resolves dated, versioned and region-prefixed model names to a family.
 
 import (

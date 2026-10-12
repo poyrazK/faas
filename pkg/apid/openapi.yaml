@@ -571,7 +571,7 @@ paths:
       operationId: getOutboundIntegrationAIUserUsage
       summary: Read one UTC day of AI gateway usage by end user.
       description: >-
-        Requires MFA and read scope (ADR-992). End users are the X-Gregale-AI-User
+        Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User
         values apps send; rows are kept for 31 days and listed by cost, then tokens.
       parameters:
         - name: date
@@ -612,7 +612,7 @@ paths:
       operationId: exportOutboundIntegrationAIUserUsage
       summary: Export per-end-user AI gateway usage for a range of UTC days.
       description: >-
-        Requires MFA and read scope (ADR-993). Streams every per-end-user row of the
+        Requires MFA and read scope (ADR-995). Streams every per-end-user row of the
         days from through to, ordered by day and end user. CSV columns are usage_date,
         end_user, requests, error_requests, input_tokens, output_tokens, tokens and
         cost_millicents; NDJSON lines carry the same fields.
@@ -651,7 +651,7 @@ paths:
       operationId: getOutboundAIPriceCatalog
       summary: Read the built-in AI price catalog of one provider.
       description: >-
-        Requires MFA and read scope (ADR-992). The catalog prices the models an
+        Requires MFA and read scope (ADR-994). The catalog prices the models an
         integration's own price list does not name. Prices are list prices
         converted to EUR at usd_per_eur and rounded up.
       parameters:
@@ -49303,13 +49303,13 @@ components:
           format: int64
           minimum: 1
           maximum: 100000000000
-          description: UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-992).
+          description: UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
         ai_user_daily_cost_limit_millicents:
           type: [integer, 'null']
           format: int64
           minimum: 1
           maximum: 1000000000000
-          description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-992).
+          description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -49379,13 +49379,13 @@ components:
           format: int64
           minimum: 1
           maximum: 100000000000
-          description: Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider.
+          description: Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
         user_daily_cost_limit_millicents:
           type: [integer, 'null']
           format: int64
           minimum: 1
           maximum: 1000000000000
-          description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-992). Requires ai_provider.
+          description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
@@ -49607,7 +49607,7 @@ components:
     OutboundAIPriceCatalogResponse:
       type: object
       description: >-
-        One provider's built-in AI price catalog (ADR-992), generated from LiteLLM's
+        One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's
         MIT-licensed price data. model_prefix holds the catalog model name.
       required: [ai_provider, source, generated, usd_per_eur, fx_source, entries]
       properties:
@@ -49633,7 +49633,7 @@ components:
         cost_millicents: { type: integer, format: int64, minimum: 0 }
     OutboundAIUserUsageResponse:
       type: object
-      description: One UTC day of per-end-user AI usage, most expensive first (ADR-992).
+      description: One UTC day of per-end-user AI usage, most expensive first (ADR-994).
       required: [usage_date, user_daily_token_limit, user_daily_cost_limit_millicents, tracked_users, items]
       properties:
         usage_date: { type: string, format: date }
@@ -49644,7 +49644,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIUserUsageItem' }
     OutboundAIUserUsageExportRow:
-      description: One NDJSON line of a per-end-user usage export (ADR-993); CSV rows carry the same fields in this order.
+      description: One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order.
       allOf:
         - type: object
           required: [usage_date]
@@ -49660,7 +49660,7 @@ components:
         model: { type: string, maxLength: 128 }
     OutboundAIRoute:
       type: object
-      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-993).
+      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
       required: [id, name, format, targets, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -49688,7 +49688,7 @@ components:
         format:
           type: string
           enum: [native, openai]
-          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic, gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-993).
+          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic, gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995).
         targets:
           type: array
           minItems: 1
@@ -49749,7 +49749,7 @@ components:
         integration_id: { type: string, format: uuid }
         budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
-        end_user: { type: [string, 'null'], maxLength: 64, description: The end user of a user_daily_tokens or user_daily_cost alert (ADR-993). }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The end user of a user_daily_tokens or user_daily_cost alert (ADR-995). }
         period_start: { type: string, format: date }
         threshold_percent: { type: integer, format: int32, enum: [80, 100] }
         limit: { type: integer, format: int64, minimum: 1 }
@@ -49783,7 +49783,7 @@ components:
         duration_ms: { type: integer, format: int64, minimum: 0 }
         ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
         attempts: { type: integer, minimum: 0 }
-        end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-992). }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.
@@ -76032,7 +76032,7 @@ components:
 
     OutboundAIBudgetThresholdWebhookPayload:
       type: object
-      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's budget only the app whose call crossed it (ADR-993).
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's budget only the app whose call crossed it (ADR-995).
       required: [alert_id, integration_id, integration_name, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at]
       properties:
         alert_id: { type: string, format: uuid }
@@ -76040,7 +76040,7 @@ components:
         integration_name: { type: string }
         budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
-        end_user: { type: [string, 'null'], maxLength: 64, description: The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-993). }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995). }
         period_start: { type: string, format: date }
         threshold_percent: { type: integer, format: int32, enum: [80, 100] }
         limit: { type: integer, format: int64, minimum: 1 }

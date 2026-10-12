@@ -64,9 +64,9 @@ class OutboundIntegrationOffer:
     ai_request_log_enabled: bool | Unset = UNSET
     """Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content."""
     ai_user_daily_token_limit: int | None | Unset = UNSET
-    """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-992)."""
+    """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
-    """UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-992)."""
+    """UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

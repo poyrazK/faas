@@ -1,5 +1,5 @@
 // commands_ai_users.go — `gregale ai catalog` and `gregale ai users`: the
-// built-in price catalog and one UTC day of AI usage by end user (ADR-992).
+// built-in price catalog and one UTC day of AI usage by end user (ADR-994).
 
 package main
 
@@ -90,7 +90,7 @@ func cmdAIUsers(args []string) int {
 }
 
 // cmdAIUsersExport writes a day range of per-end-user usage to stdout, CSV
-// by default, for billing an app's own users (ADR-993).
+// by default, for billing an app's own users (ADR-995).
 func cmdAIUsersExport(args []string) int {
 	fs := newFlagSet("ai users export", flag.ContinueOnError)
 	from := fs.String("from", "", "first UTC day within the last 31 days (default today)")

@@ -1,6 +1,6 @@
 package outbound
 
-// adr: 993 — response_format maps to each provider's structured output,
+// adr: 995 — response_format maps to each provider's structured output,
 // Bedrock and Vertex serve openai-format routes, and those routes accept
 // embeddings.
 

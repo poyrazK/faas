@@ -8,7 +8,7 @@ import (
 )
 
 // OutboundAIUserUsageItem is one end user's UTC-day AI usage on an
-// integration, written by outboundd (ADR-992).
+// integration, written by outboundd (ADR-994).
 type OutboundAIUserUsageItem struct {
 	EndUser        string
 	Requests       int64
@@ -28,7 +28,7 @@ type OutboundAIUserUsage struct {
 	Items               []OutboundAIUserUsageItem
 }
 
-// OutboundAIUserUsageRow is one end user's UTC day in an export (ADR-993).
+// OutboundAIUserUsageRow is one end user's UTC day in an export (ADR-995).
 type OutboundAIUserUsageRow struct {
 	UsageDate string
 	OutboundAIUserUsageItem
@@ -39,7 +39,7 @@ type OutboundAIUserUsageRow struct {
 type OutboundAIUserStore interface {
 	GetOutboundAIUserUsage(ctx context.Context, accountID, integrationID, usageDate, endUser string, limit int) (OutboundAIUserUsage, error)
 	// ExportOutboundAIUserUsage visits every per-user row of the UTC days
-	// from through to, ordered by day and end user (ADR-993). It returns
+	// from through to, ordered by day and end user (ADR-995). It returns
 	// ErrNotFound or ErrInvalidArgument before visiting any row.
 	ExportOutboundAIUserUsage(ctx context.Context, accountID, integrationID, from, to string, visit func(OutboundAIUserUsageRow) error) error
 }

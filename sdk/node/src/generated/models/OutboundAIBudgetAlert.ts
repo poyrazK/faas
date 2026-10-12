@@ -11,7 +11,7 @@ export type OutboundAIBudgetAlert = {
   budget: 'daily_tokens' | 'app_daily_tokens' | 'daily_cost' | 'monthly_cost' | 'user_daily_tokens' | 'user_daily_cost';
   app_id: string | null;
   /**
-   * The end user of a user_daily_tokens or user_daily_cost alert (ADR-993).
+   * The end user of a user_daily_tokens or user_daily_cost alert (ADR-995).
    */
   end_user: string | null;
   period_start: string;

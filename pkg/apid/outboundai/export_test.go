@@ -1,6 +1,6 @@
 package outboundai
 
-// adr: 993 — the per-end-user export streams a day range as NDJSON or CSV,
+// adr: 995 — the per-end-user export streams a day range as NDJSON or CSV,
 // and listed alerts name the end user of a per-user budget.
 
 import (
