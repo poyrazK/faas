@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +86,9 @@ func cmdPostgresAttach(args []string) int {
 		resolvedScope = api.DefaultEnvScope
 	}
 	*scope = resolvedScope
+	if invalidPostgresChoice("postgres attach", "access", *access) {
+		return 1
+	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
 		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
@@ -236,6 +240,9 @@ func cmdPostgresCreate(args []string) int {
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if invalidPostgresChoice("postgres create", "class", *serviceClass, "availability", *availability) {
 		return 1
 	}
 	if fs.NArg() != 1 || *region == "" {
@@ -406,6 +413,9 @@ func cmdPostgresBindingsCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if invalidPostgresChoice("postgres bindings create", "access", *access) {
+		return 1
+	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
 		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api]", "postgres")
 		return 1
@@ -531,21 +541,37 @@ func normalizePostgresArgs(args []string) []string {
 	return append(append([]string(nil), args[1:]...), args[0])
 }
 
+// postgresFlagVocab is the closed vocabulary of each enumerated postgres flag.
+var postgresFlagVocab = map[string][]string{
+	"class":        {"development", "burstable", "production"},
+	"availability": {"single_zone", "high_availability"},
+	"access":       {"read_write", "read_only", "migration", "data_api"},
+}
+
 func postgresServiceClassOK(value string) bool {
-	switch value {
-	case "development", "burstable", "production":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(postgresFlagVocab["class"], value)
 }
 
 func postgresAvailabilityOK(value string) bool {
-	return value == "single_zone" || value == "high_availability"
+	return slices.Contains(postgresFlagVocab["availability"], value)
 }
 
 func postgresAccessOK(value string) bool {
-	return value == "read_write" || value == "read_only" || value == "migration" || value == "data_api"
+	return slices.Contains(postgresFlagVocab["access"], value)
+}
+
+// invalidPostgresChoice names the first enumerated flag whose value is outside
+// its vocabulary and reports whether it found one. Pairs are flag name then
+// value. A bare usage line left `--class prod` looking like a syntax error.
+func invalidPostgresChoice(command string, flagValues ...string) bool {
+	for i := 0; i+1 < len(flagValues); i += 2 {
+		name, value := flagValues[i], flagValues[i+1]
+		if vocab := postgresFlagVocab[name]; !slices.Contains(vocab, value) {
+			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
+			return true
+		}
+	}
+	return false
 }
 
 func formatPostgresStorage(bytes int64) string {
