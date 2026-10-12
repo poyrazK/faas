@@ -3951,6 +3951,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
+		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
+			return printErr("Template needs secrets", err)
+		}
 		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp); err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
