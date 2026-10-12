@@ -60,7 +60,8 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Vet plus the per-package lint passes need their full existing deadlines.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -135,8 +136,10 @@ jobs:
           GOMEMLIMIT: 10GiB
           GOMAXPROCS: 4
         run: |
+          # Serialize large test-unit builds so their compiler heaps do not
+          # overlap on the hosted runner. Every selected package is still vetted.
           # shellcheck disable=SC2086 # space-separated package list
-          go vet $PKGS
+          go vet -p=1 $PKGS
       # Same linter, rules and per-package invocation as the mega tier's
       # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
       # packages this change touches. The complete tree is linted nightly and
