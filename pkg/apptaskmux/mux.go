@@ -1,5 +1,5 @@
 // Package apptaskmux multiplexes TCP connections over the stdin/stdout byte
-// streams of one interactive app-task session (ADR-958). `gregale app
+// streams of one interactive app-task session (ADR-1037). `gregale app
 // port-forward` sends Open/Data/Close frames to the guest's relay built-in,
 // which dials the target from inside the app's network and answers with
 // Data/Close frames.

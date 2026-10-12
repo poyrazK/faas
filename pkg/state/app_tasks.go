@@ -111,7 +111,7 @@ type CreateAppTaskParams struct {
 	RequireLiveDeployment bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
 	BindingVerification   *BindingVerificationPin // Internal admission metadata, never caller-selected.
 	FailureRules          *workpolicy.FailureRules
-	Interactive           *AppTaskInteractive // ADR-958; nil for batch tasks.
+	Interactive           *AppTaskInteractive // ADR-1037; nil for batch tasks.
 	OccurrenceID          string
 	StartDeadlineAt       *time.Time
 	AccountID             string

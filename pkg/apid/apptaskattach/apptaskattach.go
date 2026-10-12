@@ -1,5 +1,5 @@
 // Package apptaskattach holds apid's half of interactive app tasks
-// (ADR-958): the boot-time gate, the one-time attach credential and the
+// (ADR-1037): the boot-time gate, the one-time attach credential and the
 // response that hands it to the client. apid stores only the credential's
 // SHA-256 digest; vmmd matches the digest when the client attaches.
 package apptaskattach

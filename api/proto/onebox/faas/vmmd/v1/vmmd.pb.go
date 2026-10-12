@@ -9696,7 +9696,7 @@ type ExecuteAppTaskRequest struct {
 	CommandShell   bool                   `protobuf:"varint,5,opt,name=command_shell,json=commandShell,proto3" json:"command_shell,omitempty"`
 	TimeoutSeconds int32                  `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	MaxOutputBytes int32                  `protobuf:"varint,7,opt,name=max_output_bytes,json=maxOutputBytes,proto3" json:"max_output_bytes,omitempty"`
-	// interactive sessions (ADR-958) wait for an AttachAppTask client whose
+	// interactive sessions (ADR-1037) wait for an AttachAppTask client whose
 	// token hashes to attach_token_sha256; output streams to that client only.
 	Interactive          bool   `protobuf:"varint,8,opt,name=interactive,proto3" json:"interactive,omitempty"`
 	Tty                  bool   `protobuf:"varint,9,opt,name=tty,proto3" json:"tty,omitempty"`

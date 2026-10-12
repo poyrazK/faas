@@ -1,6 +1,6 @@
 package apptaskproto
 
-// Interactive sessions (ADR-958). After the version-2 request frame the host
+// Interactive sessions (ADR-1037). After the version-2 request frame the host
 // may send any number of stdin, resize, and stdin-close frames while the guest
 // streams output. The session ends with exactly one result or error frame.
 // Output is never budgeted or retained: it belongs to the attached client.

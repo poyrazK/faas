@@ -1,6 +1,6 @@
 package main
 
-// `gregale app <slug> cp` and `gregale app <slug> port-forward` (ADR-958):
+// `gregale app <slug> cp` and `gregale app <slug> port-forward` (ADR-1037):
 // both run a guest-init built-in in a fresh task VM over a non-tty
 // interactive session, using the session's stdin/stdout as byte streams.
 

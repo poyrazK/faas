@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// Interactive app-task attach (ADR-958). schedd's ExecuteAppTaskStream call
+// Interactive app-task attach (ADR-1037). schedd's ExecuteAppTaskStream call
 // registers a single-use rendezvous keyed by the task instance and the SHA-256
 // digest of the client's attach token, then waits for the gateway to attach.
 // The first valid AttachAppTask consumes the rendezvous; its stream supplies

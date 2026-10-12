@@ -73,7 +73,7 @@ func (s Status) Terminal() bool {
 // environment, secrets, and network policy are staged during VM preparation
 // and intentionally cannot be changed through this channel.
 //
-// Interactive requests (ADR-958) use InteractiveVersion so a guest that only
+// Interactive requests (ADR-1037) use InteractiveVersion so a guest that only
 // speaks version 1 rejects them instead of running a shell without stdin.
 type Request struct {
 	Version        uint16   `json:"version"`

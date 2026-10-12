@@ -145,7 +145,7 @@ type VmmdClient interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error)
-	// AttachAppTask connects one client to an interactive app task (ADR-958).
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
 	// The first frame names the instance and presents the single-use attach
 	// token; vmmd matches it against the digest schedd registered through
 	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
@@ -1182,7 +1182,7 @@ type VmmdServer interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error
-	// AttachAppTask connects one client to an interactive app task (ADR-958).
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
 	// The first frame names the instance and presents the single-use attach
 	// token; vmmd matches it against the digest schedd registered through
 	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and

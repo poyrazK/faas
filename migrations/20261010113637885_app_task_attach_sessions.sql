@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-958: interactive app tasks. A row exists exactly for tasks admitted as
+-- ADR-1037: interactive app tasks. A row exists exactly for tasks admitted as
 -- interactive; it is inserted in the same statement as the task, so schedd
 -- never claims an interactive task without seeing it. Only the SHA-256
 -- digest of the one-time attach token is stored. node_id is recorded by

@@ -1,7 +1,7 @@
 package main
 
 // AppTaskAttachHandler owns `GET /v1/apps/{slug}/tasks/{id}/attach`
-// (ADR-958): it authenticates the caller with the shared auth chain, finds
+// (ADR-1037): it authenticates the caller with the shared auth chain, finds
 // the node running the interactive task VM, presents the one-time attach
 // token to that node's vmmd, and relays the session over a WebSocket.
 // apid never sees the path (component ownership: apid must not reach vmmd).

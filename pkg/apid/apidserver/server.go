@@ -371,7 +371,7 @@ type server struct {
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled bool
-	// interactiveAppTasksEnabled additionally admits ADR-958 interactive
+	// interactiveAppTasksEnabled additionally admits ADR-1037 interactive
 	// sessions (`gregale app exec -it`). It requires appTaskAPIEnabled.
 	interactiveAppTasksEnabled bool
 	outboundProbeGatewayURL    string
@@ -760,7 +760,7 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	return s
 }
 
-// WithInteractiveAppTasksEnabled attaches the boot-time gate for ADR-958
+// WithInteractiveAppTasksEnabled attaches the boot-time gate for ADR-1037
 // interactive app-task admission.
 func (s *server) WithInteractiveAppTasksEnabled(enabled bool) *server {
 	s.interactiveAppTasksEnabled = enabled

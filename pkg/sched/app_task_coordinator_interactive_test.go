@@ -1,6 +1,6 @@
 package sched
 
-// adr: 958 — interactive app tasks record their node before dispatch, carry
+// adr: 1037 — interactive app tasks record their node before dispatch, carry
 // the attach rendezvous to vmmd, and never fall back to batch execution.
 
 import (

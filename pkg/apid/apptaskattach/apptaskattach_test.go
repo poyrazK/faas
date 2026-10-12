@@ -1,4 +1,4 @@
-// adr: 958 — interactive admission is separately gated and persists only the
+// adr: 1037 — interactive admission is separately gated and persists only the
 // attach token's digest.
 
 package apptaskattach

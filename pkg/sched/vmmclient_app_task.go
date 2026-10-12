@@ -123,7 +123,7 @@ func (c *VMMClient) ExecuteAppTaskWithOutput(ctx context.Context, instance strin
 }
 
 // AppTaskAttachSpec is the attach rendezvous of an interactive app task
-// (ADR-958): the digest of the client's one-time token and how long vmmd
+// (ADR-1037): the digest of the client's one-time token and how long vmmd
 // waits for the client.
 type AppTaskAttachSpec struct {
 	TTY                  bool

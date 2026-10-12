@@ -88,7 +88,7 @@ service Vmmd {
   // metadata-only because stdout/stderr have already arrived as chunks.
   rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
 
-  // AttachAppTask connects one client to an interactive app task (ADR-958).
+  // AttachAppTask connects one client to an interactive app task (ADR-1037).
   // The first frame names the instance and presents the single-use attach
   // token; vmmd matches it against the digest schedd registered through
   // ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
@@ -2478,7 +2478,7 @@ message ExecuteAppTaskRequest {
   bool command_shell = 5;
   int32 timeout_seconds = 6;
   int32 max_output_bytes = 7;
-  // interactive sessions (ADR-958) wait for an AttachAppTask client whose
+  // interactive sessions (ADR-1037) wait for an AttachAppTask client whose
   // token hashes to attach_token_sha256; output streams to that client only.
   bool interactive = 8;
   bool tty = 9;

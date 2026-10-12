@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// testAppTaskAttachSession pins ADR-958: the interactive record is created
+// testAppTaskAttachSession pins ADR-1037: the interactive record is created
 // with its task, only running tasks under the current lease can record a
 // node, and the routing view is scoped to the owning account and app.
 func testAppTaskAttachSession(t *testing.T, fx *Fixture) {

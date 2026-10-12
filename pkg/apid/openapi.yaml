@@ -5064,7 +5064,7 @@ paths:
       operationId: attachAppTask
       summary: Attach to an interactive app task (WebSocket).
       description: |
-        ADR-958. Served by the compute gateway, not apid. Requires the account
+        ADR-1037. Served by the compute gateway, not apid. Requires the account
         credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
         task's create response, and the `gregale-app-task-attach-v1`
         WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -73678,7 +73678,7 @@ components:
         Gregale HTTPS service-binding canary and is handled by guest-init.
         `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
         configured outbound probe; the server supplies immutable gateway routing metadata.
-        `interactive=true` admits an ADR-958 session (operator-gated): the
+        `interactive=true` admits an ADR-1037 session (operator-gated): the
         command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
         and bounds the session, no output is retained, and the create
         response carries a one-time `attach` credential for
@@ -73697,11 +73697,11 @@ components:
         command_shell: { type: boolean, default: false }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
         max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive sessions." }
-        interactive: { type: boolean, default: false, description: "Admit an interactive session (ADR-958). The command is required unless interactive." }
+        interactive: { type: boolean, default: false, description: "Admit an interactive session (ADR-1037). The command is required unless interactive." }
         tty: { type: boolean, default: false, description: "Allocate a pseudo-terminal; requires interactive." }
 
     AppTaskAttachInfo:
-      description: One-time attach credential for an interactive app task (ADR-958). Returned only in the create response.
+      description: One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response.
       type: object
       required: [token, path, subprotocol]
       properties:

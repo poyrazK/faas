@@ -2,7 +2,7 @@
 
 package main
 
-// Interactive session built-ins (ADR-958): copy-out and port-forward run
+// Interactive session built-ins (ADR-1037): copy-out and port-forward run
 // without a tty over the session's stdin/stdout.
 
 import (

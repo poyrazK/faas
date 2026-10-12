@@ -8,7 +8,7 @@ import (
 )
 
 // AppTaskInteractive is the interactive-session intent admitted with a manual
-// app task (ADR-958). Only the SHA-256 digest of the one-time attach token is
+// app task (ADR-1037). Only the SHA-256 digest of the one-time attach token is
 // ever stored.
 type AppTaskInteractive struct {
 	TTY         bool

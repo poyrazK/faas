@@ -68,7 +68,7 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
-	// A re-executed copy-out child (ADR-958) never boots.
+	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}

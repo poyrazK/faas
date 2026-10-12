@@ -1,6 +1,6 @@
 package state
 
-// ADR-958 interactive-session records (see app_task_attach.go).
+// ADR-1037 interactive-session records (see app_task_attach.go).
 
 import (
 	"context"

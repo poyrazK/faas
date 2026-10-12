@@ -11,7 +11,7 @@ import (
 	"unsafe"
 )
 
-// runEchoSession is the interactive app-task fixture (ADR-958): it reports
+// runEchoSession is the interactive app-task fixture (ADR-1037): it reports
 // whether stdin is a terminal and its size, then echoes lines. "size"
 // reprints the size, "exit" exits 7.
 func runEchoSession() {

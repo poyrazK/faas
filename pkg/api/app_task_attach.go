@@ -1,6 +1,6 @@
 package api
 
-// Interactive app-task attach wire contract (ADR-958), shared by the gateway
+// Interactive app-task attach wire contract (ADR-1037), shared by the gateway
 // endpoint and the CLI. The WebSocket carries binary messages whose first
 // byte is the message type.
 
@@ -37,7 +37,7 @@ const (
 	AppTaskAttachMaxMessageBytes = 64*1024 + 1
 )
 
-// Reserved guest-init built-ins for interactive sessions (ADR-958). Both run
+// Reserved guest-init built-ins for interactive sessions (ADR-1037). Both run
 // without a tty: copy-out streams a tar of one path read as the app user;
 // port-forward relays apptaskmux streams to one host:port dialed from inside
 // the app's network.

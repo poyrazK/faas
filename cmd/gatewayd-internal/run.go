@@ -3467,7 +3467,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
 	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log))
-	// ADR-958: interactive app-task attach is compute-owned too. The
+	// ADR-1037: interactive app-task attach is compute-owned too. The
 	// handler dials the task node's vmmd, which apid must never do.
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
 		attachMux := http.NewServeMux()

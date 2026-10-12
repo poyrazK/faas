@@ -1,4 +1,4 @@
-// adr: 958 — interactive app-task admission is separately gated, returns a
+// adr: 1037 — interactive app-task admission is separately gated, returns a
 // one-time attach credential, and stores only its digest.
 
 package apidserver_test

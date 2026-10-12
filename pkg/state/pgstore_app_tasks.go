@@ -136,7 +136,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.RequireLiveDeployment {
 		return s.createServiceBindingSmokeTask(ctx, resolved)
 	}
-	// ADR-958: an interactive task's attach record is inserted by the same
+	// ADR-1037: an interactive task's attach record is inserted by the same
 	// statement, so no claim can observe the task without it.
 	var interactiveTTY bool
 	var attachDigest []byte

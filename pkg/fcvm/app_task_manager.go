@@ -36,7 +36,7 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 	})
 }
 
-// ExecuteInteractiveAppTask runs one interactive session (ADR-958) against an
+// ExecuteInteractiveAppTask runs one interactive session (ADR-1037) against an
 // already-booted task guest with the same AppTaskOnly fence and unconditional
 // teardown as ExecuteAppTaskWithOutput.
 func (m *Manager) ExecuteInteractiveAppTask(ctx context.Context, instance string, req apptaskproto.Request, input <-chan apptaskproto.InputEvent, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {

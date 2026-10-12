@@ -246,7 +246,7 @@ The session ends when the process exits, after `--timeout-seconds` (default
 Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
-Interactive sessions are an operator-gated preview (ADR-958). A deployment
+Interactive sessions are an operator-gated preview (ADR-1037). A deployment
 whose guest predates interactive sessions reports `interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
 supported yet.

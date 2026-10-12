@@ -66,7 +66,7 @@ type AppTaskExecuteRequest struct {
 	CommandShell   bool
 	Timeout        time.Duration
 	MaxOutputBytes int
-	// Interactive is set for ADR-958 sessions; output then goes to the
+	// Interactive is set for ADR-1037 sessions; output then goes to the
 	// attached client and the outcome carries no output tails.
 	Interactive *AppTaskAttachSpec
 }
@@ -114,7 +114,7 @@ type AppTaskBackend interface {
 // teardown, and terminal acknowledgement for deployment-attached commands.
 type AppTaskCoordinator struct {
 	store state.AppTaskStore
-	// attach reads ADR-958 interactive records; nil when the store cannot
+	// attach reads ADR-1037 interactive records; nil when the store cannot
 	// hold them, in which case no task is interactive.
 	attach  state.AppTaskAttachStore
 	backend AppTaskBackend

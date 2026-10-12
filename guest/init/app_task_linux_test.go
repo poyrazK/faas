@@ -225,7 +225,7 @@ func TestAppTaskHostCloseWaitIsBounded(t *testing.T) {
 	}
 }
 
-// adr: 958 — stdin still in flight from an interactive host must not cut the
+// adr: 1037 — stdin still in flight from an interactive host must not cut the
 // result-delivery wait short.
 func TestAppTaskHostCloseWaitDiscardsTrailingInput(t *testing.T) {
 	host, guest := net.Pipe()

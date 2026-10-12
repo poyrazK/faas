@@ -87,7 +87,7 @@ type CreateAppTaskRequest struct {
 	CommandShell             bool     `json:"command_shell,omitempty"`
 	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
 	MaxOutputBytes           int      `json:"max_output_bytes,omitempty"`
-	// Interactive admits an ADR-958 session: one client attaches to the
+	// Interactive admits an ADR-1037 session: one client attaches to the
 	// process's stdin and output. TTY allocates a pseudo-terminal.
 	Interactive bool `json:"interactive,omitempty"`
 	TTY         bool `json:"tty,omitempty"`
@@ -285,7 +285,7 @@ type AppTaskResponse struct {
 	FinishedAt          *string              `json:"finished_at,omitempty"`
 	CreatedAt           string               `json:"created_at"`
 	UpdatedAt           string               `json:"updated_at"`
-	// Interactive and Attach describe an ADR-958 session. Attach is present
+	// Interactive and Attach describe an ADR-1037 session. Attach is present
 	// only in the create response: its token is shown once.
 	Interactive bool               `json:"interactive,omitempty"`
 	Attach      *AppTaskAttachInfo `json:"attach,omitempty"`

@@ -1,6 +1,6 @@
 package main
 
-// copy-out (ADR-958): `gregale app cp` streams one path out of a fresh task
+// copy-out (ADR-1037): `gregale app cp` streams one path out of a fresh task
 // VM as a tar archive. guest-init re-executes itself as the app user to
 // produce it, so the copy can read exactly what the app user can.
 

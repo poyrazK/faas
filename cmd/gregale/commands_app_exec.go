@@ -39,7 +39,7 @@ func cmdAppExec(slug string, args []string) int {
 	idempotencyKey := fs.String("idempotency-key", "", "stable retry identity for this submission")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while attached")
 	waitTimeout := fs.Duration("wait-timeout", appTaskWaitTimeoutDefault, "maximum time for the CLI to remain attached")
-	interactive := fs.Bool("interactive", false, "attach stdin and stream output live, -i (ADR-958)")
+	interactive := fs.Bool("interactive", false, "attach stdin and stream output live, -i (ADR-1037)")
 	tty := fs.Bool("tty", false, "allocate a remote terminal, -t (requires --interactive)")
 	flags, positionals := splitArgsForFlags(expandShortExecFlags(args), "shell", "detach", "interactive", "tty")
 	if err := fs.Parse(flags); err != nil {

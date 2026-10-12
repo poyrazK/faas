@@ -2,7 +2,7 @@
 
 package e2e_test
 
-// adr: 958 — interactive app tasks on real Firecracker VMs: a TTY session
+// adr: 1037 — interactive app tasks on real Firecracker VMs: a TTY session
 // through the public gateway, copy-out, and port-forward.
 
 import (

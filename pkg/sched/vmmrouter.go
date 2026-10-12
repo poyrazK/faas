@@ -573,7 +573,7 @@ func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instan
 	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
 }
 
-// ExecuteInteractiveAppTask routes an interactive app task (ADR-958) to the
+// ExecuteInteractiveAppTask routes an interactive app task (ADR-1037) to the
 // node owning its VM; vmmd waits there for the attached client.
 func (r *VMMRouter) ExecuteInteractiveAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request, attach AppTaskAttachSpec) (apptaskproto.Result, error) {
 	cli, err := r.resolveFor(ctx, nodeID)

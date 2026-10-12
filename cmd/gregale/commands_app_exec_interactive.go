@@ -1,6 +1,6 @@
 package main
 
-// Interactive app commands (ADR-958): `gregale app <slug> exec -it -- sh`
+// Interactive app commands (ADR-1037): `gregale app <slug> exec -it -- sh`
 // queues an interactive task, waits for its VM, and attaches the local
 // terminal to the remote process through the gateway's WebSocket endpoint.
 

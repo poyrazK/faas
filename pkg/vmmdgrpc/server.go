@@ -217,7 +217,7 @@ type AppTaskOutputVMMAPI interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
-// AppTaskInteractiveVMMAPI runs an interactive app-task session (ADR-958)
+// AppTaskInteractiveVMMAPI runs an interactive app-task session (ADR-1037)
 // whose input and output belong to one attached client.
 type AppTaskInteractiveVMMAPI interface {
 	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
@@ -256,7 +256,7 @@ type Server struct {
 	vmmdpb.UnimplementedVmmdServer
 
 	// appTaskAttach pairs interactive app tasks with their attached client
-	// (ADR-958). The zero value is ready to use.
+	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
 
 	vmm   VmmdAPI

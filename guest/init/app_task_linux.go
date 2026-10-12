@@ -82,7 +82,7 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 // can discard it before the host reads it. The one-shot host closes its session
 // after consuming the result; wait for that close before halting the guest.
 // A missing or stalled host must still leave this disposable VM bounded.
-// An interactive (ADR-958) host may still have stdin frames in flight when the
+// An interactive (ADR-1037) host may still have stdin frames in flight when the
 // result is written, so trailing bytes are discarded rather than treated as a
 // reason to halt before the host has read the result.
 func awaitAppTaskHostClose(ctx context.Context, conn net.Conn) error {

@@ -2,7 +2,7 @@
 
 package main
 
-// Interactive app tasks (ADR-958): one process attached to the host client's
+// Interactive app tasks (ADR-1037): one process attached to the host client's
 // stdin, output, and window size, either through a pseudo-terminal or plain
 // pipes. The process gets the same environment, identity, and loopback
 // bindings as a batch task.

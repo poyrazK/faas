@@ -1,4 +1,4 @@
-# ADR-958 · Interactive app-task attach (`gregale app exec -it`)
+# ADR-1037 · Interactive app-task attach (`gregale app exec -it`)
 
 - **Status:** accepted for an operator-gated preview
 - **Date:** 2026-10-10
