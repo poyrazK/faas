@@ -81,6 +81,23 @@ var Names = []string{
 	"durable-entity-node",
 }
 
+// unlisted templates stay embedded and materializable by name but are left
+// out of customer discovery: `gregale init --list`, completions and
+// unknown-template hints. durable-entity-node scaffolds the operator-only
+// durable entity preview (ADR-712).
+var unlisted = map[string]bool{"durable-entity-node": true}
+
+// ListedNames returns Names without unlisted templates, in catalog order.
+func ListedNames() []string {
+	names := make([]string, 0, len(Names))
+	for _, name := range Names {
+		if !unlisted[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // generatedDotfiles are files a template needs whose names start with '.'.
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.

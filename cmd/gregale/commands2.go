@@ -2738,7 +2738,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployRuntime, deployHandler := *runtime, *handler
 	if *templateName != "" {
 		if !templates.Exists(*templateName) {
-			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.Names, ", ")))
+			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
 		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
 			if deployApp {
