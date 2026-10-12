@@ -896,3 +896,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)

@@ -315,6 +315,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAY_STREAMING", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143)"},
 	{Name: "FAAS_GATEWAY_SYNTH_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_SYNTH_TARGET", Owners: []string{"schedd"}, Source: EnvSourceDropin},
+	{Name: "FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-1132 optional override for the node-local wake-ahead learner snapshot directory; defaults to /var/lib/faas/wake-ahead, which the unit allows writing"},
 	{Name: "FAAS_GCS_BUCKET", Owners: []string{"builderd", "imaged", "vmmd", "shared"}, Source: EnvSourceEnvFile, Note: "private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC"},
 	{Name: "FAAS_GC_INTERVAL", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GEOIP_ASN_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it"},

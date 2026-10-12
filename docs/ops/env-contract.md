@@ -236,6 +236,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_STREAMING` | gatewayd-internal | `default` |  |  | `` | emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143) |
 | `FAAS_GATEWAY_SYNTH_SOCKET` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR` | gatewayd-internal | `default` |  |  | `` | ADR-1132 optional override for the node-local wake-ahead learner snapshot directory; defaults to /var/lib/faas/wake-ahead, which the unit allows writing |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
 | `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |

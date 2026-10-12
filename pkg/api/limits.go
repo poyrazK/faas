@@ -9604,6 +9604,13 @@ const (
 	ServiceWakeAheadWakeTimeout = 30 * time.Second
 	// The opt-in setting and fleet residency are cached this long.
 	ServiceWakeAheadCacheTTL = 30 * time.Second
+	// Measured edge statistics survive a gateway restart through a node-local
+	// snapshot (ADR-1132): written at most this often when they changed and
+	// on shutdown, and restored at start unless older than the max age (an
+	// idle weekend must not erase what a caller's traffic taught).
+	ServiceWakeAheadSnapshotInterval = time.Minute
+	ServiceWakeAheadSnapshotMaxAge   = 7 * 24 * time.Hour
+	ServiceWakeAheadSnapshotMaxBytes = 16 << 20
 )
 
 // RoutePriority bounds per-app route priorities for the warm-capacity queue

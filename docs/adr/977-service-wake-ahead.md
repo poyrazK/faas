@@ -60,7 +60,8 @@ refused prediction never becomes a wake error a real request could join, and
 - A woken-ahead service runs, and is billed (plan RAM + 8 MB per second, §4.7),
   from the moment it is woken. An unused one parks after its idle timeout. The
   customer opts in knowing this.
-- Evidence is per gateway process and starts empty after a restart; in a
+- Evidence is per gateway process and starts empty after a restart (ADR-1132
+  later persists it in a node-local snapshot); in a
   multi-node fleet each gateway learns from the wakes and calls it sees.
 - No scheduler change: the trigger is attribution only.
 

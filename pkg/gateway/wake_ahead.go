@@ -41,6 +41,9 @@ type WakeAheadLearner struct {
 	outcome     func(string)
 	callers     map[string]*wakeAheadCaller
 	speculative map[string]*wakeAheadSpeculation
+	// changed is set whenever the learned statistics move, so the snapshot
+	// writer (ADR-1132) skips unchanged intervals.
+	changed bool
 }
 
 type wakeAheadCaller struct {
@@ -87,7 +90,7 @@ func (l *WakeAheadLearner) ObserveWake(app string) bool {
 	if c.open && now.Sub(c.windowStart) <= api.ServiceWakeAheadFollowWindow {
 		return false
 	}
-	c.finishLocked()
+	l.changed = c.finishLocked() || l.changed
 	c.open, c.windowStart = true, now
 	return true
 }
@@ -128,7 +131,7 @@ func (l *WakeAheadLearner) Predict(app string) []string {
 		return nil
 	}
 	if c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow {
-		c.finishLocked()
+		l.changed = c.finishLocked() || l.changed
 	}
 	if c.wakes < api.ServiceWakeAheadMinWakes {
 		return nil
@@ -175,10 +178,11 @@ func (l *WakeAheadLearner) ReleaseSpeculation(target string) {
 	delete(l.speculative, target)
 }
 
-// finishLocked folds an expired follow window into the edge statistics.
-func (c *wakeAheadCaller) finishLocked() {
+// finishLocked folds an expired follow window into the edge statistics and
+// reports whether it did.
+func (c *wakeAheadCaller) finishLocked() bool {
 	if !c.open {
-		return
+		return false
 	}
 	c.open = false
 	c.wakes++
@@ -204,6 +208,7 @@ func (c *wakeAheadCaller) finishLocked() {
 			e.cold /= 2
 		}
 	}
+	return true
 }
 
 func (c *wakeAheadCaller) dropWeakestEdge() {
