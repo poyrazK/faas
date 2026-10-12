@@ -1435,6 +1435,7 @@ from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperatio
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -2522,6 +2523,7 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
@@ -2533,6 +2535,8 @@ from .outbound_ai_route_list import OutboundAIRouteList
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
+from .outbound_ai_user_usage_item import OutboundAIUserUsageItem
+from .outbound_ai_user_usage_response import OutboundAIUserUsageResponse
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
@@ -5273,6 +5277,7 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GetOutboundAIPriceCatalogProvider",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -6268,6 +6273,7 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
     "OutboundAIRequestLogEntry",
@@ -6279,6 +6285,8 @@ __all__ = (
     "OutboundAIRouteTarget",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
+    "OutboundAIUserUsageItem",
+    "OutboundAIUserUsageResponse",
     "OutboundAppBinding",
     "OutboundAppBindingList",
     "OutboundBindingProbePolicy",

@@ -51,6 +51,9 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	if err := insertAIUsageRollup(ctx, tx, integrationID, record); err != nil {
 		return nil, err
 	}
+	if err := insertAIUserUsageRollup(ctx, tx, integrationID, record); err != nil {
+		return nil, err
+	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return nil, err
@@ -278,11 +281,11 @@ func insertAIRequestLog(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID,
 	_, err := tx.Exec(ctx, `
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
-		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''))`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts)
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser)
 	return err
 }
 
@@ -298,6 +301,7 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.days)
 		if err != nil {

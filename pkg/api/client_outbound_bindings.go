@@ -115,6 +115,38 @@ func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID str
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetOutboundAIPriceCatalog lists a provider's built-in prices, or with a
+// model the entry that would price it (ADR-992).
+func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model string) (OutboundAIPriceCatalogResponse, error) {
+	query := url.Values{"provider": {provider}}
+	if model != "" {
+		query.Set("model", model)
+	}
+	var out OutboundAIPriceCatalogResponse
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-price-catalog?"+query.Encode(), nil, &out)
+}
+
+// GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
+// date is today and an empty endUser lists the top users (ADR-992).
+func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date, endUser string, limit int) (OutboundAIUserUsageResponse, error) {
+	query := url.Values{}
+	if date != "" {
+		query.Set("date", date)
+	}
+	if endUser != "" {
+		query.Set("end_user", endUser)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/users"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAIUserUsageResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func (c *Client) ListOutboundAIRoutes(ctx context.Context) (OutboundAIRouteList, error) {
 	var out OutboundAIRouteList
 	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes", nil, &out)

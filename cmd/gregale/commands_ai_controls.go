@@ -264,10 +264,14 @@ func cmdAILogs(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "TIME\tCALLER\tMODEL\tSTATUS\tIN\tOUT\tCOST\tMS\tTTFB\tATTEMPTS")
+	_, _ = fmt.Fprintln(tw, "TIME\tCALLER\tEND USER\tMODEL\tSTATUS\tIN\tOUT\tCOST\tMS\tTTFB\tATTEMPTS")
 	for _, entry := range page.Items {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\t%d\n", entry.CreatedAt.UTC().Format(time.RFC3339), entry.Caller, entry.Model,
-			entry.Status, entry.InputTokens, entry.OutputTokens, financialMoney(entry.CostMillicents), entry.DurationMS,
+		endUser := "-"
+		if entry.EndUser != nil {
+			endUser = *entry.EndUser
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\t%d\n", entry.CreatedAt.UTC().Format(time.RFC3339), entry.Caller, endUser,
+			entry.Model, entry.Status, entry.InputTokens, entry.OutputTokens, financialMoney(entry.CostMillicents), entry.DurationMS,
 			formatOptionalCount(entry.TimeToFirstByteMS), entry.Attempts)
 	}
 	_ = tw.Flush()

@@ -16,6 +16,7 @@ type memoryLease struct {
 	// bindingApp and the reservation count against AI hard caps while the
 	// lease lives (ADR-991).
 	bindingApp     string
+	endUser        string
 	reservedTokens int64
 	reservedCost   int64
 }
@@ -49,7 +50,9 @@ type memoryState struct {
 	usageMonth               string
 	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
-	bindingMinutes           map[string]memoryMinute
+	// userUsage is today's per-end-user rollup (ADR-992).
+	userUsage      map[string]AIUserUsageTotals
+	bindingMinutes map[string]memoryMinute
 	// The limits of the latest admission, used to detect budget alerts at
 	// settlement (ADR-991), and the alerts and request log recorded.
 	aiLimits           aiBudgetLimits
@@ -69,6 +72,11 @@ type AIUsageTotals struct {
 	Requests, ErrorRequests, UsageUnknownRequests                  int64
 	InputTokens, CachedInputTokens, CacheWriteTokens, OutputTokens int64
 	CostMillicents                                                 int64
+}
+
+// AIUserUsageTotals is one end user's UTC-day rollup (ADR-992).
+type AIUserUsageTotals struct {
+	Requests, ErrorRequests, InputTokens, OutputTokens, CostMillicents int64
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -211,12 +219,15 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		}
 		state.bindingTokenLimits[spec.BindingAppID] = copyInt64Pointer(spec.BindingDailyAITokenLimit)
 	}
-	inflight := state.inflightReservations(spec.BindingAppID)
+	inflight := state.inflightReservations(spec.BindingAppID, spec.AIEndUser)
 	reserve := aiReservationFromSpec(spec)
+	user := state.userUsage[spec.AIEndUser]
 	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
 		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCounts[spec.BindingAppID],
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
 		inflightTokens: inflight.tokens, inflightBindingTokens: inflight.bindingTokens, inflightCost: inflight.cost,
+		userTokens: user.InputTokens + user.OutputTokens, userCost: user.CostMillicents,
+		inflightUserTokens: inflight.userTokens, inflightUserCost: inflight.userCost,
 	}, aiBudgetLimitsFromSpec(spec), reserve); limited {
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
 	}
@@ -236,7 +247,8 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		state.bindingMinutes[spec.BindingAppID] = minute
 	}
 	id := uuid.NewString()
-	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, reservedTokens: reserve.tokens, reservedCost: reserve.cost}
+	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, endUser: spec.AIEndUser,
+		reservedTokens: reserve.tokens, reservedCost: reserve.cost}
 	return Decision{
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
@@ -434,17 +446,21 @@ func validUUID(value string) bool {
 	return err == nil
 }
 
-type memoryInflight struct{ tokens, bindingTokens, cost int64 }
+type memoryInflight struct{ tokens, bindingTokens, cost, userTokens, userCost int64 }
 
 // inflightReservations sums live leases' reservations; expired leases were
 // already removed by the caller.
-func (s *memoryState) inflightReservations(bindingApp string) memoryInflight {
+func (s *memoryState) inflightReservations(bindingApp, endUser string) memoryInflight {
 	var out memoryInflight
 	for _, lease := range s.leases {
 		out.tokens += lease.reservedTokens
 		out.cost += lease.reservedCost
 		if bindingApp != "" && lease.bindingApp == bindingApp {
 			out.bindingTokens += lease.reservedTokens
+		}
+		if endUser != "" && lease.endUser == endUser {
+			out.userTokens += lease.reservedTokens
+			out.userCost += lease.reservedCost
 		}
 	}
 	return out
@@ -477,7 +493,11 @@ func (s *memoryState) rollDay(today string) {
 		s.bindingDailyCounts = make(map[string]int64)
 		s.bindingAITokenCounts = make(map[string]int64)
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
+		s.userUsage = make(map[string]AIUserUsageTotals)
 		return
+	}
+	if s.userUsage == nil {
+		s.userUsage = make(map[string]AIUserUsageTotals)
 	}
 	if s.bindingDailyCounts == nil {
 		s.bindingDailyCounts = make(map[string]int64)
@@ -544,6 +564,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.OutputTokens += record.Usage.OutputTokens
 	row.CostMillicents += record.CostMillicents
 	state.aiUsage[key] = row
+	if record.EndUser != "" {
+		state.recordUserUsage(record)
+	}
 	crossings := []aiBudgetCrossing{
 		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount},
 		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost},
@@ -569,6 +592,36 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		}
 	}
 	return recorded, nil
+}
+
+// recordUserUsage adds a call to its end user's rollup. Beyond the per-day
+// cap of distinct users, calls aggregate under the overflow row.
+func (s *memoryState) recordUserUsage(record AIUsageRecord) {
+	endUser := record.EndUser
+	if _, exists := s.userUsage[endUser]; !exists && len(s.userUsage) >= api.OutboundAIUsersPerDay {
+		endUser = api.OutboundAIUserOverflow
+	}
+	row := s.userUsage[endUser]
+	row.Requests++
+	if record.Outcome == AIUsageOutcomeError {
+		row.ErrorRequests++
+	}
+	row.InputTokens += record.Usage.InputTokens
+	row.OutputTokens += record.Usage.OutputTokens
+	row.CostMillicents += record.CostMillicents
+	s.userUsage[endUser] = row
+}
+
+// AIUserUsage reports one end user's UTC-day rollup for tests.
+func (b *MemoryBackend) AIUserUsage(integrationID, endUser string) (AIUserUsageTotals, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.dailyUsageDate != b.now().UTC().Format("2006-01-02") {
+		return AIUserUsageTotals{}, false
+	}
+	row, ok := state.userUsage[endUser]
+	return row, ok
 }
 
 func memoryAlertSeen(alerts []AIBudgetAlert, alert AIBudgetAlert) bool {

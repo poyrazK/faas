@@ -537,6 +537,8 @@ list:
 - A new list applies to calls settled from then on. Earlier lists stay, so
   recorded costs never change.
 - Each call's cost is rounded up to a whole millicent.
+- A model the list does not name is priced from the built-in catalog (see
+  below). Add a `*` entry, even at zero, to price only the models you list.
 
 **Cost limits.** `PUT /v1/outbound/integrations/{id}/ai` also takes
 `daily_cost_limit_millicents` and `monthly_cost_limit_millicents` (UTC day
@@ -672,13 +674,63 @@ Point any OpenAI SDK at `$GREGALE_OUTBOUND_URL/r/<route-id>/v1`. Usage and cost
 are still read from each provider's native response.
 `outbound_ai_translations_total` counts translated attempts.
 
+## Built-in price catalog
+
+See [ADR-992](../adr/992-ai-gateway-price-catalog-end-users-affinity.md).
+outboundd and apid embed `pkg/outbound/aiprices/catalog.json`: list prices for
+about 700 models across the six providers, in EUR millicents per million
+tokens. A call's model is priced from the integration's price list first, then
+from the catalog for the integration's provider. Reservations and settlement
+use the same price.
+
+- The file records its LiteLLM source commit, generation date and USD-to-EUR
+  rate. Prices are base-tier list prices; batch, priority, long-context tiers
+  and negotiated discounts are not modelled.
+- A dated or versioned model the catalog lacks is priced as its family
+  (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
+  `claude-sonnet-4-5`). Bedrock cross-region prefixes and ARNs are stripped.
+- `gregale ai catalog <provider> [--model NAME]` (or
+  `GET /v1/outbound/ai-price-catalog?provider=&model=`) shows the prices.
+- To refresh the catalog, download LiteLLM's
+  `model_prices_and_context_window.json` at a pinned commit into its own
+  directory, run `python3 -I scripts/gen_ai_price_catalog.py` with that
+  commit and the current ECB rate, and review the diff in a PR.
+
+## Per-end-user limits
+
+Apps that serve their own users can name each call's end user with
+`X-Gregale-AI-User`:
+
+- The value is 1 to 64 letters, digits or `. _ : @ + = / | -`.
+- An invalid or repeated header gets `400 outbound_ai_user_invalid`.
+- The gateway never forwards it to the provider.
+- Send an opaque ID or a hash, not an e-mail address. The value is stored in
+  the per-user rollup for 31 days and, with the request log on, in the log for
+  7 days.
+
+`gregale ai policy <id> --user-daily-tokens 200000 --user-daily-cost 2` sets
+`user_daily_token_limit` and `user_daily_cost_limit_millicents`. They cap
+every named end user's UTC day as hard caps: settled usage, plus that user's
+in-flight reservations, plus the call's own reservation. A call over a cap
+gets `429` with `X-Gregale-Outbound-Rejection: user_daily_token_limit` or
+`user_daily_cost_limit`. Calls without the header are limited only by the
+integration and app budgets.
+
+`gregale ai users <id> [--date D] [--user ID]` (or
+`GET .../ai-usage/users`) lists a day's end users by cost. Each integration
+tracks up to 10,000 distinct end users per UTC day. Later ones are counted
+under `~other`, and per-user caps do not apply to them.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed
 key. Pipe the value in; the CLI never accepts it as a flag. An integration may
 hold up to 8 extra keys in addition to its primary credential.
 
-- outboundd picks keys round-robin.
+- outboundd picks keys round-robin. A call with `X-Gregale-AI-Session`, or
+  else `X-Gregale-AI-User`, picks its key by rendezvous hash instead, so one
+  conversation keeps using the same key and that provider account's prompt
+  cache. Removing a key moves only the sessions that were on it.
 - A key that returns `429` cools down for its `Retry-After`, or 30 seconds,
   and the call moves at once to the next key. This costs neither a retry nor
   the retry budget.
@@ -710,7 +762,7 @@ for 90 days. `outbound_ai_budget_alerts_total` counts them.
 **Request log.** `gregale ai policy <id> --request-log on` makes every settled
 AI call write one metadata row:
 
-- caller, route, model and status;
+- caller, end user, route, model and status;
 - usage outcome, tokens and cost;
 - duration, time to first byte and attempts.
 

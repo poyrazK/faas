@@ -6484,6 +6484,7 @@
   {
     "table": "outbound_admission_leases",
     "columns": [
+      "ai_end_user",
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
       "binding_app_id",
@@ -6567,6 +6568,7 @@
       "cost_millicents",
       "created_at",
       "duration_ms",
+      "end_user",
       "id",
       "input_tokens",
       "integration_id",
@@ -6617,6 +6619,21 @@
       "updated_at",
       "usage_date",
       "usage_unknown_requests"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_user_usage_daily",
+    "columns": [
+      "cost_millicents",
+      "end_user",
+      "error_requests",
+      "input_tokens",
+      "integration_id",
+      "output_tokens",
+      "requests",
+      "updated_at",
+      "usage_date"
     ],
     "kind": "operational"
   },
@@ -6703,6 +6720,8 @@
       "ai_monthly_cost_limit_millicents",
       "ai_provider",
       "ai_request_log_enabled",
+      "ai_user_daily_cost_limit_millicents",
+      "ai_user_daily_token_limit",
       "allowed_methods",
       "allowed_path_prefixes",
       "burst",

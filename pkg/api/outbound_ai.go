@@ -81,6 +81,19 @@ type OutboundAIPriceListResponse struct {
 	Entries       []OutboundAIPriceEntry `json:"entries"`
 }
 
+// OutboundAIPriceCatalogResponse is the built-in price catalog of one
+// provider (ADR-992): list prices converted from USD at USDPerEUR and
+// rounded up. It prices the models an integration's own list does not name;
+// a "*" entry in that list turns the catalog off for the integration.
+type OutboundAIPriceCatalogResponse struct {
+	AIProvider string                 `json:"ai_provider"`
+	Source     string                 `json:"source"`
+	Generated  string                 `json:"generated"`
+	USDPerEUR  string                 `json:"usd_per_eur"`
+	FXSource   string                 `json:"fx_source"`
+	Entries    []OutboundAIPriceEntry `json:"entries"`
+}
+
 // PutOutboundBindingAIBudgetRequest sets or clears an app's daily AI token
 // limit on one integration binding.
 type PutOutboundBindingAIBudgetRequest struct {
@@ -322,6 +335,68 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64     `json:"duration_ms"`
 	TimeToFirstByteMS *int64    `json:"ttfb_ms"`
 	Attempts          int       `json:"attempts"`
+	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-992).
+	EndUser *string `json:"end_user"`
+}
+
+// Per-end-user attribution and key affinity headers (ADR-992). An app sets
+// them on calls through the gateway; they never reach the provider.
+const (
+	OutboundAIUserHeader    = "X-Gregale-AI-User"
+	OutboundAISessionHeader = "X-Gregale-AI-Session"
+	// OutboundAIUserOverflow aggregates end users beyond the per-day cap.
+	// No header value can name it.
+	OutboundAIUserOverflow = "~other"
+)
+
+// ValidOutboundAIUserID accepts 1 to 64 letters, digits and . _ : @ + = / |
+// -, enough for opaque IDs, UUIDs, hashes and e-mail-like keys. The same
+// rule bounds the session header.
+func ValidOutboundAIUserID(id string) bool {
+	if id == "" || len(id) > OutboundAIUserIDMaxBytes {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("._:@+=/|-", c) >= 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidOutboundAIUserLimits accepts optional per-end-user daily token and
+// cost limits; either requires an AI provider (ADR-992).
+func ValidOutboundAIUserLimits(provider string, tokens, cost *int64) bool {
+	if tokens != nil && (provider == "" || *tokens < 1 || *tokens > MaxOutboundAITokensPerDay) {
+		return false
+	}
+	return cost == nil || (provider != "" && *cost >= 1 && *cost <= MaxOutboundAICostMillicents)
+}
+
+// OutboundAIUserUsageItem is one end user's UTC-day usage on an
+// integration. Tokens are input plus output, the amount the per-user token
+// limit counts.
+type OutboundAIUserUsageItem struct {
+	EndUser        string `json:"end_user"`
+	Requests       int64  `json:"requests"`
+	ErrorRequests  int64  `json:"error_requests"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	Tokens         int64  `json:"tokens"`
+	CostMillicents int64  `json:"cost_millicents"`
+}
+
+// OutboundAIUserUsageResponse lists one UTC day's end users by cost, then
+// tokens (ADR-992). TrackedUsers counts the day's distinct end users,
+// including the "~other" overflow row.
+type OutboundAIUserUsageResponse struct {
+	UsageDate                    string                    `json:"usage_date"`
+	UserDailyTokenLimit          *int64                    `json:"user_daily_token_limit"`
+	UserDailyCostLimitMillicents *int64                    `json:"user_daily_cost_limit_millicents"`
+	TrackedUsers                 int64                     `json:"tracked_users"`
+	Items                        []OutboundAIUserUsageItem `json:"items"`
 }
 
 // OutboundAIRequestLogList is one newest-first page. NextBefore, when set,
