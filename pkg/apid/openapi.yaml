@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        review_blockage:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseBlockageEvent'
+          description: OperationWorkflowReadinessNotification.review_blockage. Newly observed blockers for an active response plan.
         review_check_in:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseCheckInEvent'
           description: OperationWorkflowReadinessNotification.review_check_in. One-time missed response check-in with immutable plan/link/ownership context; source resolution and rescheduling fence stale publication.
@@ -79357,6 +79360,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_blocked
           - review_response_check_in_overdue
           - business_impact_changed
           - newly_ready
@@ -80557,6 +80561,34 @@ components:
       - created_at
       - coordination
       - overdue
+    OperationWorkflowReviewResponseBlockageEvent:
+      type: object
+      description: Sampled newly added prerequisites, declared checklist evidence issues or unavailable progress for a linked response plan. No business result is inferred.
+      additionalProperties: false
+      properties:
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseBlockageEvent.source_notification_id. Original response alert identity.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseBlockageEvent.source_sequence. Original response alert sequence within this inbox.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseBlockageEvent.checked_at. Case observation time.
+        added_blockers:
+          type: array
+          description: OperationWorkflowReviewResponseBlockageEvent.added_blockers. Newly observed blockers labeled by fixed linked review position; first observations are silent.
+          items:
+            type: string
+      required:
+      - source_notification_id
+      - source_sequence
+      - checked_at
+      - added_blockers
     OperationWorkflowReviewResponseCheckInEvent:
       type: object
       additionalProperties: false

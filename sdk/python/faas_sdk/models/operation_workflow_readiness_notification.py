@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
     from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
     from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
+    from ..models.operation_workflow_review_response_blockage_event import OperationWorkflowReviewResponseBlockageEvent
     from ..models.operation_workflow_review_response_check_in_event import OperationWorkflowReviewResponseCheckInEvent
 
 
@@ -61,6 +62,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    review_blockage: OperationWorkflowReviewResponseBlockageEvent | Unset = UNSET
+    """Sampled newly added prerequisites, declared checklist evidence issues or unavailable progress for a linked
+    response plan. No business result is inferred."""
     review_check_in: OperationWorkflowReviewResponseCheckInEvent | Unset = UNSET
     """OperationWorkflowReviewResponseCheckInEvent. Frozen response plan, linked reviews and routing at one missed
     check-in, separate from business outcome and alert acknowledgment."""
@@ -133,6 +137,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        review_blockage: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_blockage, Unset):
+            review_blockage = self.review_blockage.to_dict()
 
         review_check_in: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review_check_in, Unset):
@@ -221,6 +229,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if review_blockage is not UNSET:
+            field_dict["review_blockage"] = review_blockage
         if review_check_in is not UNSET:
             field_dict["review_check_in"] = review_check_in
         if review_response is not UNSET:
@@ -292,6 +302,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
         from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
         from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
+        from ..models.operation_workflow_review_response_blockage_event import (
+            OperationWorkflowReviewResponseBlockageEvent,
+        )
         from ..models.operation_workflow_review_response_check_in_event import (
             OperationWorkflowReviewResponseCheckInEvent,
         )
@@ -306,6 +319,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _review_blockage = d.pop("review_blockage", UNSET)
+        review_blockage: OperationWorkflowReviewResponseBlockageEvent | Unset
+        if isinstance(_review_blockage, Unset):
+            review_blockage = UNSET
+        else:
+            review_blockage = OperationWorkflowReviewResponseBlockageEvent.from_dict(_review_blockage)
 
         _review_check_in = d.pop("review_check_in", UNSET)
         review_check_in: OperationWorkflowReviewResponseCheckInEvent | Unset
@@ -446,6 +466,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            review_blockage=review_blockage,
             review_check_in=review_check_in,
             review_response=review_response,
             business_impact=business_impact,

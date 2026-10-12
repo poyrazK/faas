@@ -354,3 +354,5 @@ export type { OperationWorkflowReadinessImpactWatchRequest, OperationWorkflowRea
 export type { OperationWorkflowReviewResponseRequest, OperationWorkflowReviewResponseLinkRequest, OperationWorkflowReviewResponseLink, OperationWorkflowReviewResponse, OperationWorkflowReviewResponseChange } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseCheckInEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseBlockageEvent } from './customer-operations.js';

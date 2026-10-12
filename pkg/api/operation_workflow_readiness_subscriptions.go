@@ -40,6 +40,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	ReviewBlockage       *OperationWorkflowReviewResponseBlockageEvent      `json:"review_blockage,omitempty"`
 	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent       `json:"review_check_in,omitempty"`
 	ReviewResponse       *OperationWorkflowReviewResponse                   `json:"review_response,omitempty"`
 	BusinessImpact       *OperationWorkflowReadinessImpactEvent             `json:"business_impact,omitempty"`
@@ -543,4 +544,12 @@ type OperationWorkflowReviewResponseCheckInEvent struct {
 	Owner                string                          `json:"owner"`
 	Reassigned           bool                            `json:"reassigned"`
 	Response             OperationWorkflowReviewResponse `json:"response"`
+}
+
+// Blockage events report sampled changes, without deciding business success.
+type OperationWorkflowReviewResponseBlockageEvent struct {
+	SourceNotificationID string    `json:"source_notification_id"`
+	SourceSequence       int64     `json:"source_sequence"`
+	CheckedAt            time.Time `json:"checked_at"`
+	AddedBlockers        []string  `json:"added_blockers"`
 }
