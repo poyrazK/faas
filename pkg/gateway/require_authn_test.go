@@ -181,6 +181,10 @@ func TestRequireAuthn_MissingHeader_401(t *testing.T) {
 	if got := authn.calls.Load(); got != 0 {
 		t.Errorf("AuthenticateKey called %d times, want 0 (missing header → fail-fast before verify)", got)
 	}
+	// Hunt #9 H9-82: RFC 9110 §15.5.2 requires the challenge on a 401.
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="apps"` {
+		t.Errorf("WWW-Authenticate = %q, want the Bearer challenge", got)
+	}
 }
 
 // TestRequireAuthn_InvalidToken_401 — gated app + garbage
@@ -206,6 +210,9 @@ func TestRequireAuthn_InvalidToken_401(t *testing.T) {
 	}
 	if got := authn.calls.Load(); got != 1 {
 		t.Errorf("AuthenticateKey called %d times, want 1", got)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="apps", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want the invalid_token challenge", got)
 	}
 }
 
