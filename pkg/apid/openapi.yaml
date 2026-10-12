@@ -16991,10 +16991,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Deployment UUID containing the exact replica selected for the MCP health probe.
         in: path
         required: true
         schema: { type: string, format: uuid }
       - name: instance
+        description: Running instance UUID targeted by the MCP health probe.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -17015,7 +17017,7 @@ paths:
           in: query
           required: true
           schema: { type: string, maxLength: 255 }
-          description: Deployment preview hostname and optional port.
+          description: Virtual-host authority used for this replica health request, including an optional port.
       responses:
         '200':
           description: Exact instance response and platform-selected identity.
@@ -17033,10 +17035,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Deployment UUID containing the exact replica selected for the MCP protocol probe.
         in: path
         required: true
         schema: { type: string, format: uuid }
       - name: instance
+        description: Running instance UUID targeted by the MCP protocol probe.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -17066,7 +17070,7 @@ paths:
             schema: { $ref: '#/components/schemas/MCPInstanceProtocolProbeRequest' }
       responses:
         '200':
-          description: Exact instance response and platform-selected identity.
+          description: Bounded MCP protocol response from the verified running replica.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MCPInstanceProtocolProbeResponse' }
@@ -51836,6 +51840,7 @@ components:
           example: 5
 
     MCPTaskHandlerCompatibility:
+      description: Outstanding task counts and live worker coverage for one tool and handler version.
       type: object
       additionalProperties: false
       required: [tool_name, handler_version, waiting_tasks, live_compatible_workers]
@@ -51851,6 +51856,7 @@ components:
           description: "Per-deployment worker counts. A report contains at most 768 deployment entries overall; larger snapshots set truncated=true."
           items: { $ref: '#/components/schemas/MCPTaskHandlerDeploymentWorkers' }
     MCPTaskHandlerDeploymentWorkers:
+      description: Compatible workers attributed to a specific serving deployment.
       type: object
       additionalProperties: false
       required: [deployment_id, workers]
@@ -51858,6 +51864,7 @@ components:
         deployment_id: { type: string, format: uuid }
         workers: { type: integer, minimum: 1, maximum: 1000000000000 }
     MCPTaskCompatibilityReportRequest:
+      description: Bounded aggregate handler inventory published by the task observer.
       type: object
       additionalProperties: false
       required: [handlers]
@@ -51868,6 +51875,7 @@ components:
           items: { $ref: '#/components/schemas/MCPTaskHandlerCompatibility' }
         truncated: { type: boolean, default: false }
     MCPTaskCompatibilityReportResponse:
+      description: Latest observer inventory with platform timestamps and freshness state.
       type: object
       required: [published, handlers, truncated, freshness_seconds, stale]
       properties:
@@ -52581,6 +52589,7 @@ components:
         deployment_id: { type: [string, "null"] }
 
     DeploymentPromotionHold:
+      description: Compatibility hold and durable recovery progress for a deployment awaiting promotion.
       type: object
       required: [code, detail, observed_at, held_at, recovery_attempts, recovery_in_progress]
       properties:
@@ -61285,7 +61294,7 @@ components:
           description: "Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
         mcp_task_migration_override:
           type: boolean
-          description: "One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide."
+          description: "Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -62038,7 +62047,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          description: 'MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when a required task gauge is missing, stale, or invalid. Required gauges include outstanding tasks, oldest task age, and tasks without a compatible worker. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
+          description: 'MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
           enum:
             - error_rate_pct
             - latency_p50_ms
@@ -62153,7 +62162,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          description: 'MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when a required task gauge is missing, stale, or invalid. Required gauges include outstanding tasks, oldest task age, and tasks without a compatible worker. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
+          description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
           enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }

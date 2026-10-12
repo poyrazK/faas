@@ -82,7 +82,7 @@ export type SourceRefDeployRequest = {
    */
   rollback_on_5xx?: boolean | null;
   /**
-   * One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide.
+   * Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions.
    */
   mcp_task_migration_override?: boolean;
   /**

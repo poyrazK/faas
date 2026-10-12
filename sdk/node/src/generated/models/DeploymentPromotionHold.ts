@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Compatibility hold and durable recovery progress for a deployment awaiting promotion.
+ */
 export type DeploymentPromotionHold = {
   code: string;
   detail: string;

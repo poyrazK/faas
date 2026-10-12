@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { MCPTaskHandlerDeploymentWorkers } from './MCPTaskHandlerDeploymentWorkers.js';
+/**
+ * Outstanding task counts and live worker coverage for one tool and handler version.
+ */
 export type MCPTaskHandlerCompatibility = {
   tool_name: string;
   handler_version: string;

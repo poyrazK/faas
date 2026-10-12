@@ -92,10 +92,16 @@ export class McpService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID containing the exact replica selected for the MCP health probe.
+     */
     deployment: string,
+    /**
+     * Running instance UUID targeted by the MCP health probe.
+     */
     instance: string,
     /**
-     * Deployment preview hostname and optional port.
+     * Virtual-host authority used for this replica health request, including an optional port.
      */
     host: string,
   }): CancelablePromise<MCPInstanceHealthProbeResponse> {
@@ -138,7 +144,7 @@ export class McpService {
    * The optional MCP-Probe-Authorization header carries a workload bearer
    * token for this request only; it is not logged or stored.
    *
-   * @returns MCPInstanceProtocolProbeResponse Exact instance response and platform-selected identity.
+   * @returns MCPInstanceProtocolProbeResponse Bounded MCP protocol response from the verified running replica.
    * @throws ApiError
    */
   public static probeMcpInstanceProtocol({
@@ -152,7 +158,13 @@ export class McpService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID containing the exact replica selected for the MCP protocol probe.
+     */
     deployment: string,
+    /**
+     * Running instance UUID targeted by the MCP protocol probe.
+     */
     instance: string,
     requestBody: MCPInstanceProtocolProbeRequest,
     /**

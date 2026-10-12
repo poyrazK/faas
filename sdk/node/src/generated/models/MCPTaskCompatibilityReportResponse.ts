@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { MCPTaskHandlerCompatibility } from './MCPTaskHandlerCompatibility.js';
+/**
+ * Latest observer inventory with platform timestamps and freshness state.
+ */
 export type MCPTaskCompatibilityReportResponse = {
   published: boolean;
   handlers: Array<MCPTaskHandlerCompatibility>;
