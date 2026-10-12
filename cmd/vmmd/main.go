@@ -1162,6 +1162,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
 		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
+		// ADR-191 amendment (H9-171): VMs that outlived their instance row.
+		go runLiveVMReap(ctx, log, mgr, store)
 	}
 
 	// §11: restore any per-VM cgroup fence reset outside vmmd.

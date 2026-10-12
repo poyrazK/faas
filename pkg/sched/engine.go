@@ -590,6 +590,9 @@ type Engine struct {
 	// fall back to their legacy in-method decisions when the
 	// arbiter isn't wired (unit-test fixtures; bootstrap window).
 	recoveryArbiter *Arbiter
+	// lostVMs holds the VMs RecreateInstance parked while their node looked
+	// dead; DestroyLostVMs reclaims them when the node answers (H9-171).
+	lostVMs lostVMSet
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -9457,6 +9460,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	// desired-count notification here.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
+	// A worker pool has no periodic floor unless it scales on a queue
+	// signal, so a worker parked here never came back: h8-worker sat at
+	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
+	// H9-171).
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
+		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
 	}
 	return true, nil
 }
