@@ -4,13 +4,17 @@
 /* eslint-disable */
 import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+import type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowStateSLA } from './OperationWorkflowStateSLA.js';
 /**
  * Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
  */
 export type OperationWorkflowState = {
+  change_reason?: OperationWorkflowChangeReason;
+  selected_paths?: Array<OperationWorkflowPathSelection>;
   sla?: OperationWorkflowStateSLA;
   /**
    * In the latest retained state, full replacement snapshot of direct prerequisite references.

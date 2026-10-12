@@ -4,13 +4,25 @@
 /* eslint-disable */
 import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+import type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowOutcomeLink } from './OperationWorkflowOutcomeLink.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowResolutionVerification } from './OperationWorkflowResolutionVerification.js';
+import type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+  outcome_link?: OperationWorkflowOutcomeLink;
+  change_reason?: OperationWorkflowChangeReason;
+  comparison?: OperationWorkflowRevisionComparison;
+  selected_paths?: Array<OperationWorkflowPathSelection>;
+  /**
+   * Current retained-evidence status for verification obligations in this history report.
+   */
+  resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
   /**
    * At this retained historical revision, full replacement snapshot of direct prerequisite references.
    */
@@ -63,9 +75,5 @@ export type OperationWorkflowStateHistoryEntry = {
    * Account-owner tenant identifier attached to this report in operator feeds.
    */
   platform_tenant_id?: string;
-  /**
-   * Current retained-evidence status for verification obligations in this history report.
-   */
-  resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
 };
 

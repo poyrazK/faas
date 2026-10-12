@@ -45,22 +45,29 @@ func (s *PgStore) projectResolutionVerifications(ctx context.Context, page *api.
 	attachResolutionHistoryVerifications(page.WorkflowStateHistory, all)
 	attachResolutionHistoryVerifications(page.WorkflowInstance.Transitions, all)
 	noteResolutionVerificationAttention(page.WorkflowInstance)
+	page.WorkflowInstance.ReadinessVerifications = all
+	rows, err := sqlc.New().GetCustomerOperationWorkflowBottleneckHistory(ctx, s.pool, sqlc.GetCustomerOperationWorkflowBottleneckHistoryParams{
+		AccountID: accountID, AppID: appID, TenantID: tenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID, WorkflowName: opts.Workflow, InstanceID: opts.WorkflowInstanceID,
+		EvaluatedAt: pgtype.Timestamptz{Time: now, Valid: true}, Now: pgtype.Timestamptz{Time: now, Valid: true}, WindowLimit: int32(api.OperationWorkflowBottleneckHistoryMax + 1),
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	observations := make([]workflowBottleneckObservation, 0, len(rows))
+	for _, row := range rows {
+		var observation workflowBottleneckObservation
+		if err := json.Unmarshal(row, &observation); err != nil {
+			return err
+		}
+		observations = append(observations, observation)
+	}
+	definitions, err := s.workflowProgressDefinitions(ctx, account, tenant, api.OperationWorkflowPerformanceOptions{AppID: opts.AppID, TenantID: tenant, Scope: opts.Scope, Workflow: opts.Workflow}, true, []string{page.WorkflowInstance.State.OperationID})
+	if err != nil {
+		return err
+	}
+	steps, available := definitions[page.WorkflowInstance.State.OperationID]
+	page.WorkflowInstance.ConditionReporting = workflowTransitionReporting(*page.WorkflowInstance.State, observations, steps, available, now)
 	if !opts.ReadinessOnly {
-		rows, err := sqlc.New().GetCustomerOperationWorkflowBottleneckHistory(ctx, s.pool, sqlc.GetCustomerOperationWorkflowBottleneckHistoryParams{
-			AccountID: accountID, AppID: appID, TenantID: tenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID, WorkflowName: opts.Workflow, InstanceID: opts.WorkflowInstanceID,
-			EvaluatedAt: pgtype.Timestamptz{Time: now, Valid: true}, Now: pgtype.Timestamptz{Time: now, Valid: true}, WindowLimit: int32(api.OperationWorkflowBottleneckHistoryMax + 1),
-		})
-		if err != nil {
-			return mapErr(err)
-		}
-		observations := make([]workflowBottleneckObservation, 0, len(rows))
-		for _, row := range rows {
-			var observation workflowBottleneckObservation
-			if err := json.Unmarshal(row, &observation); err != nil {
-				return err
-			}
-			observations = append(observations, observation)
-		}
 		operationID, err := operationUUID(page.WorkflowInstance.State.OperationID)
 		if err != nil {
 			return err
