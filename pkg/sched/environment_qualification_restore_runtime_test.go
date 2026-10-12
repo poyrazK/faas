@@ -214,6 +214,9 @@ func TestEnvironmentQualificationRestoreRuntimeOwnsDistinctTargetAndRetiresIt(t 
 	}); err != nil {
 		t.Fatal("capture fixture:", err)
 	}
+	// Snapshot backing materialization can outlast an ordinary cold boot.
+	// Restore must retain the lease deadline while vmmd bounds guest readiness.
+	engine.bootBudget = func(state.State) time.Duration { return 20 * time.Millisecond }
 	var restored state.Instance
 	err := engine.WithEnvironmentWorkloadQualificationRestoreRuntime(t.Context(), request, func(_ context.Context, ins state.Instance) error {
 		restored = ins

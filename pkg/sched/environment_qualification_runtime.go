@@ -238,8 +238,8 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 }
 
 // vmmd records the incoming qualification deadline as the attempt's native
-// lifetime. Bound boot by cancellation while retaining the full claim deadline
-// for capture, restore and retirement after the guest becomes ready.
+// lifetime. Bound the original boot by cancellation while retaining the full
+// claim deadline for capture and retirement after the guest becomes ready.
 func qualificationBootBudgetContext(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
 	bootCtx, cancel := context.WithCancelCause(ctx)
 	timer := time.AfterFunc(budget, func() { cancel(context.DeadlineExceeded) })
