@@ -22,11 +22,13 @@ func newMWWith(t *testing.T, a authmw.Authenticator, sess *fakeSessions, lk *fak
 // deployTokenAuthn adds the optional deploy-token branch to fakeAuthn.
 type deployTokenAuthn struct {
 	*fakeAuthn
-	err error
+	acct state.Account
+	key  state.APIKey
+	err  error
 }
 
 func (d deployTokenAuthn) AuthenticateDeployToken(context.Context, []byte) (state.Account, state.APIKey, error) {
-	return state.Account{}, state.APIKey{}, d.err
+	return d.acct, d.key, d.err
 }
 
 // TestRequireSession_StoreFailureIsNotUnauthorized pins H9-160: on
@@ -122,5 +124,45 @@ func TestRequireSession_StoreFailureIsNotUnauthorized(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLoadApp_StoreFailureIsNotNotFound: the same store failure on the app
+// lookup read as "404 no such app", and an app-bound deploy token whose
+// binding could not be checked got the same 404.
+func TestLoadApp_StoreFailureIsNotNotFound(t *testing.T) {
+	acct := mkActiveAccount("acct-1")
+	authn := newFakeAuthn()
+	authn.appErr = context.DeadlineExceeded
+	mw := newMWWith(t, authn, &fakeSessions{err: state.ErrNotFound}, &fakeLookups{getErr: state.ErrNotFound})
+	w := httptest.NewRecorder()
+	if _, ok := mw.LoadApp(w, mkRequest("GET", "/v1/apps/demo", nil, nil), acct, "demo"); ok {
+		t.Fatal("LoadApp succeeded on a store failure")
+	}
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("LoadApp store failure = %d %s, want 503 with Retry-After", w.Code, w.Body.String())
+	}
+
+	authn.appErr = nil
+	w = httptest.NewRecorder()
+	if _, ok := mw.LoadApp(w, mkRequest("GET", "/v1/apps/demo", nil, nil), acct, "demo"); ok || w.Code != http.StatusNotFound {
+		t.Fatalf("missing app = %d ok=%v, want 404", w.Code, ok)
+	}
+
+	plain, _, err := api.GenerateDeployToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenAuthn := deployTokenAuthn{fakeAuthn: newFakeAuthn(), acct: acct, key: state.APIKey{ID: "tok-1", AppID: "app-1"}}
+	tokenAuthn.appErr = context.DeadlineExceeded
+	mw = newMWWith(t, tokenAuthn, &fakeSessions{err: state.ErrNotFound}, &fakeLookups{getErr: state.ErrNotFound})
+	req := mkRequest("GET", "/v1/apps/demo/deployments", map[string]string{"Authorization": "Bearer " + plain}, nil)
+	req.SetPathValue("slug", "demo")
+	w = httptest.NewRecorder()
+	mw.RequireSession(func(http.ResponseWriter, *http.Request, state.Account) {
+		t.Fatal("handler ran although the token binding could not be checked")
+	})(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("deploy token binding store failure = %d %s, want 503", w.Code, w.Body.String())
 	}
 }

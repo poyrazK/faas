@@ -648,7 +648,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
 						return
 					}
-					if !m.deployTokenBoundTo(r, key) {
+					bound, bindErr := m.deployTokenBoundTo(r, key)
+					if bindErr != nil {
+						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
+						return
+					}
+					if !bound {
 						// Same 404 shape LoadApp returns for a cross-app or
 						// cross-account slug probe.
 						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
@@ -1471,6 +1476,10 @@ func (m *Middleware) RequireScope(allowed ...string) func(AccountHandler) Accoun
 // convention never leaks "this slug exists, just not for you".
 func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := m.Authn.AppBySlug(r.Context(), slug)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		m.storeUnavailable(w, r, err, "could not load the app; retry shortly")
+		return state.App{}, false
+	}
 	if err != nil || app.AccountID != acct.ID {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Not found", "no such app"))
@@ -1493,13 +1502,19 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
-func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) bool {
+func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {
-		return false
+		return false, nil
 	}
 	app, err := m.Authn.AppBySlug(r.Context(), slug)
-	return err == nil && app.ID == key.AppID
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return app.ID == key.AppID, nil
 }
 
 // --- scope helpers -------------------------------------------------------
@@ -1677,14 +1692,25 @@ func IsMFAAllowlisted(path string) bool { return isMFAAllowlisted(path) }
 // (so a slow database also produced 429s), and on the session path cleared the
 // cookie as "revoked" (production-us hunt #9, H9-160).
 func (m *Middleware) credentialStoreUnavailable(w http.ResponseWriter, r *http.Request, err error) {
-	if m.Log != nil {
-		m.Log.Warn("auth: credential lookup failed",
-			"path", logsanitize.Field(r.URL.Path), "error", err.Error())
-	}
-	api.WriteProblem(w, credentialStoreUnavailableProblem())
+	m.storeUnavailable(w, r, err, credentialStoreUnavailableDetail)
 }
 
+const credentialStoreUnavailableDetail = "could not verify credentials; retry shortly"
+
 func credentialStoreUnavailableProblem() *api.Problem {
-	return api.ErrCapacity("could not verify credentials; retry shortly").
-		WithHeader("Retry-After", "1")
+	return storeUnavailableProblem(credentialStoreUnavailableDetail)
+}
+
+// storeUnavailable answers a lookup the store could not complete. The app
+// lookup has the same shape: a timeout used to read as "404 no such app".
+func (m *Middleware) storeUnavailable(w http.ResponseWriter, r *http.Request, err error, detail string) {
+	if m.Log != nil {
+		m.Log.Warn("auth: store lookup failed",
+			"path", logsanitize.Field(r.URL.Path), "error", err.Error())
+	}
+	api.WriteProblem(w, storeUnavailableProblem(detail))
+}
+
+func storeUnavailableProblem(detail string) *api.Problem {
+	return api.ErrCapacity(detail).WithHeader("Retry-After", "1")
 }

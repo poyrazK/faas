@@ -35,6 +35,7 @@ type fakeAuthn struct {
 	acctByID   map[string]state.Account
 	acctErr    error // when set, AccountByID fails with it
 	appBySlug  map[string]state.App
+	appErr     error // when set, AppBySlug fails with it
 	touchCalls []string
 	mu         sync.Mutex
 }
@@ -95,6 +96,9 @@ func (f *fakeAuthn) AccountByID(_ context.Context, id string) (state.Account, er
 func (f *fakeAuthn) AppBySlug(_ context.Context, slug string) (state.App, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.appErr != nil {
+		return state.App{}, f.appErr
+	}
 	a, ok := f.appBySlug[slug]
 	if !ok {
 		return state.App{}, state.ErrNotFound
