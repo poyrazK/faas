@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-12
-- Related: ADR-005, ADR-225, ADR-983, ADR-984
+- Related: ADR-005, ADR-159, ADR-225, ADR-983, ADR-984
 - Amends: spec §4.4 boot config ("balloon off (v1)")
 
 ## Context
@@ -88,10 +88,14 @@ wall p50/p90 ms), and the raw harness above:
 - **mincore-based diff snapshots** (no dirty tracking): on a file-backed
   restore every mapped page counts as resident, so the "diff" was the full
   1024 MB.
-- **Diff snapshots with dirty tracking** are promising: after a restore and
-  some traffic, the diff took 0.70 s and 94 MB against 8.9 s and 1024 MB for
-  a Full snapshot on the same disk. A merged image (base plus diff) restored
-  and served. They change snapshot publication, so they need their own ADR.
+- **Diff snapshots with dirty tracking** work: after a restore and some
+  traffic, the diff took 0.70 s and 94 MB against 8.9 s and 1024 MB for a
+  Full snapshot on the same disk, and a merged image (base plus diff)
+  restored and served. They are not pursued, because idle park already
+  reuses the existing capture instead of writing a new one (ADR-159). A
+  capture is written only for a new deployment, a stale snapshot or a warm
+  tier, and those start from a cold boot, where no base exists to diff
+  against.
 
 ## Qualification
 
