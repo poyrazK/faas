@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apptaskmux"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type interactiveSessionClient struct {
@@ -293,6 +294,18 @@ func TestInteractiveAppTaskMetal(t *testing.T) {
 		}
 		session.send(api.AppTaskAttachStdinClose, nil)
 	})
+
+	// Task VMs are torn down by vmmd; the app's own serving instance must be
+	// parked so the harness does not leave it running for leakcheck.
+	appID := mustGetAppID(t, h, key, "shell-app")
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/shell-app/park", nil); status != http.StatusNoContent {
+		t.Fatalf("cleanup park: status=%d", status)
+	}
+	parkCtx, parkCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer parkCancel()
+	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
+		t.Fatalf("cleanup park: %v", err)
+	}
 }
 
 // waitInteractiveTaskTerminal polls the stored task until schedd records its
