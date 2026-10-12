@@ -94,6 +94,9 @@ func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testin
 			t.Fatal(err)
 		}
 	}
+	// The copy recovers to one second ago, and no recovery point may precede
+	// the source database's creation.
+	time.Sleep(1100 * time.Millisecond)
 	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
 	srv.createProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusCreated {

@@ -49,6 +49,8 @@ env:
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
+    # Cold race compilation takes about 19 minutes; allow cache finalization
+    # after the complete package suite rather than cancelling a passing run.
     timeout-minutes: 45
     services:
       postgres:

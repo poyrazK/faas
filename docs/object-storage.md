@@ -353,7 +353,10 @@ SHA-256 checksum headers before writing upstream. SigV4 `aws-chunked` PUT and
 UploadPart bodies support signed payload chunks, signed checksum trailers, and
 the unsigned-payload checksum trailer form used by current AWS SDKs. The
 gateway verifies every frame, decoded length, trailer signature, and checksum
-before allowing a complete object or part to reach the provider. Ordinary PUT
+before allowing a complete object or part to reach the provider. Multipart
+initiation accepts `x-amz-checksum-algorithm` (CRC32, CRC32C, CRC64NVME, SHA-1,
+SHA-256), which botocore sends by default; each part's checksum is verified on
+upload, and no composite object checksum is stored. Ordinary PUT
 and multipart initiation accept the standard HTTP metadata fields,
 `x-amz-meta-*`, and URL-encoded `x-amz-tagging`; multipart sessions persist this
 metadata so provider recovery and eventual completion retain it. GET/HEAD

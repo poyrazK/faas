@@ -2,4 +2,5 @@
 # excluding the export_test.go bridge (scripts/ci/check_apid_size.sh, ADR-982). New tests go
 # in package apidserver_test; raise only with a reason in the PR, lower when tests move out.
 # PR #4238 adds application standards admission, lifecycle and rollout coverage.
-77250
+# PR #4489 adds 3 internal test lines alongside durable entity changes.
+77253
