@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,19 +8,20 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 233
 func TestProjectEnvironmentRoutesWriteCloneAndDiff(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 
-	req, rec := projectRequest(http.MethodPut, "/v1/projects/shop/environments/production/workloads/shop-api/routes", "shop",
+	req, rec := apidserver.ProjectRequest(http.MethodPut, "/v1/projects/shop/environments/production/workloads/shop-api/routes", "shop",
 		[]byte(`{"only_allow_declared_routes":true,"declared_routes":[{"path":"/health","methods":["get"]}]}`))
 	req.SetPathValue("environment", "production")
 	req.SetPathValue("workload", app.Slug)
-	srv.updateProjectEnvironmentRoutes(rec, req, acct)
+	srv.UpdateProjectEnvironmentRoutes(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put routes: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -29,8 +30,8 @@ func TestProjectEnvironmentRoutesWriteCloneAndDiff(t *testing.T) {
 		t.Fatalf("written routes=%+v err=%v", written, err)
 	}
 
-	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
-	srv.createProjectEnvironment(rec, req, acct)
+	req, rec = apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.CreateProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("clone: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -43,17 +44,17 @@ func TestProjectEnvironmentRoutesWriteCloneAndDiff(t *testing.T) {
 		t.Fatalf("cloned policy=%+v err=%v", policy, err)
 	}
 
-	req, rec = projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/routes", "shop",
+	req, rec = apidserver.ProjectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/routes", "shop",
 		[]byte(`{"only_allow_declared_routes":true,"declared_routes":[{"path":"/staging","methods":["POST"]}]}`))
 	req.SetPathValue("environment", "staging")
 	req.SetPathValue("workload", app.Slug)
-	srv.updateProjectEnvironmentRoutes(rec, req, acct)
+	srv.UpdateProjectEnvironmentRoutes(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update staging routes: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/diff?from=production", "shop", nil)
+	req, rec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/diff?from=production", "shop", nil)
 	req.SetPathValue("environment", "staging")
-	srv.diffProjectEnvironment(rec, req, acct)
+	srv.DiffProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("diff: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -72,7 +73,7 @@ func TestProjectEnvironmentRoutesWriteCloneAndDiff(t *testing.T) {
 }
 
 func TestProjectEnvironmentRoutesRejectInvalidAndCrossProject(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name, body string
@@ -83,10 +84,10 @@ func TestProjectEnvironmentRoutesRejectInvalidAndCrossProject(t *testing.T) {
 		{"shared OpenAPI fallback", `{"only_allow_declared_routes":true,"declared_routes":[]}`, http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, rec := projectRequest(http.MethodPut, "/v1/projects/shop/environments/production/workloads/shop-api/routes", "shop", []byte(tc.body))
+			req, rec := apidserver.ProjectRequest(http.MethodPut, "/v1/projects/shop/environments/production/workloads/shop-api/routes", "shop", []byte(tc.body))
 			req.SetPathValue("environment", "production")
 			req.SetPathValue("workload", app.Slug)
-			srv.updateProjectEnvironmentRoutes(rec, req, acct)
+			srv.UpdateProjectEnvironmentRoutes(rec, req, acct)
 			if rec.Code != tc.status {
 				t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), tc.status)
 			}
@@ -102,11 +103,11 @@ func TestProjectEnvironmentRoutesRejectInvalidAndCrossProject(t *testing.T) {
 	if other.ID == project.ID {
 		t.Fatal("fixture project IDs collided")
 	}
-	req, rec := projectRequest(http.MethodPut, "/v1/projects/other/environments/production/workloads/shop-api/routes", "other",
+	req, rec := apidserver.ProjectRequest(http.MethodPut, "/v1/projects/other/environments/production/workloads/shop-api/routes", "other",
 		[]byte(`{"only_allow_declared_routes":false,"declared_routes":[]}`))
 	req.SetPathValue("environment", "production")
 	req.SetPathValue("workload", app.Slug)
-	srv.updateProjectEnvironmentRoutes(rec, req, acct)
+	srv.UpdateProjectEnvironmentRoutes(rec, req, acct)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-project write: status=%d body=%s", rec.Code, rec.Body.String())
 	}

@@ -1,14 +1,16 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestDashboardManagedPostgresUnavailableState(t *testing.T) {
-	h, cookie := newAuthedDashboardServer(t)
+	h, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/postgres", nil)
 	req.AddCookie(cookie)

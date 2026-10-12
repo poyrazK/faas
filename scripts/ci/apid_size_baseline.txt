@@ -1,4 +1,4 @@
-# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
+# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-982).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
 156735
 # Realtime release: dashboard forms/inspectors and route/startup wiring add 851 lines over current main.

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,17 +7,18 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 968 — templated header and redirect actions are validated on write
 // and the template flag round-trips.
 func TestEdgeRuleTemplatesAPI(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	slug := mustSeedEdgeRuleApp(t, e, "templates")
+	e := apidserver.Setup(t, api.PlanHobby)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "templates")
 	create := func(kind, action string) (int, string) {
 		t.Helper()
 		req := api.CreateEdgeRuleRequest{MatchHost: "api.example.com", MatchPath: "/*", Kind: kind, Action: json.RawMessage(action)}
-		rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", req, nil)
+		rec := e.Do(t, "POST", "/v1/apps/"+slug+"/edge-rules", req, nil)
 		return rec.Code, rec.Body.String()
 	}
 	if code, body := create("headers", `{"request_headers":[{"name":"X-Client-Country","action":"set","value":"${country}","template":true}]}`); code != http.StatusCreated || !strings.Contains(body, `"template":true`) {

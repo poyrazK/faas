@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 670
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/operations"
 
@@ -45,7 +46,7 @@ type workflowUploadFixture struct {
 	store                    state.Store
 	op                       state.Operation
 	app                      state.App
-	server                   *server
+	server                   *apidserver.Server
 	runtime, owner, customer *api.Client
 	collectCalls             int
 }
@@ -108,7 +109,7 @@ func newWorkflowUploadFixture(t *testing.T, kind string, timeout time.Duration) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	backend, err := storage.NewLocalStorageBackend(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +123,7 @@ func newWorkflowUploadFixture(t *testing.T, kind string, timeout time.Duration) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	(*srv.Operation()).WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func newWorkflowUploadFixture(t *testing.T, kind string, timeout time.Duration) 
 	if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "workflow-files", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	httpServer := httptest.NewServer(srv.handler())
+	httpServer := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpServer.Close)
 	runtime := api.NewClient(httpServer.URL, assertion.AccessToken)
 	owner := api.NewClient(httpServer.URL, key)
@@ -244,7 +245,7 @@ func TestOperationWorkflowDirectUploadResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			var puts int
-			f.server.WithOperationArtifactStorage(&workflowCountStorage{StorageBackend: f.server.operation.ArtifactStorage, put: func() { puts++ }})
+			f.server.WithOperationArtifactStorage(&workflowCountStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage, put: func() { puts++ }})
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				if _, err := f.runtime.ReuseWorkflowOperationUpload(ctx, f.op.ID, first, req); err == nil {
 					t.Fatal("old generation accepted")
@@ -289,7 +290,7 @@ func TestOperationWorkflowDirectUploadConcurrentCopies(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newWorkflowUploadFixture(t, kind, 0)
-			backend := &competingDirectStorage{StorageBackend: f.server.operation.ArtifactStorage, ready: make(chan struct{})}
+			backend := &competingDirectStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage, ready: make(chan struct{})}
 			f.server.WithOperationArtifactStorage(backend)
 			f.dispatch(t, func(proof api.OperationWorkflowRuntimeProof) (int, []byte, error) {
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -405,12 +406,12 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 								time.Sleep(30 * time.Millisecond)
 							}
 						}
-						f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: after})
+						f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: (*f.server.Operation()).ArtifactStorage, after: after})
 					}
 					var err error
 					if stage == "receiving" {
 						a := state.OperationWorkflowAuthority{AccountID: f.op.AccountID, AppID: f.op.AppID, InstanceID: f.instanceID, RunID: proof.RunID, StepName: proof.StepName, Generation: proof.Generation, Attempt: proof.Attempt, Capability: proof.Capability}
-						_, err = f.server.operation.RetainWorkflowOperationUpload(ctx, f.store.(state.OperationWorkflowArtifactStore), f.op.ID, a, directJobDeclaration(), io.NopCloser(&cancelDirectRead{Reader: strings.NewReader(directJobCSV), cancel: cancel}))
+						_, err = (*f.server.Operation()).RetainWorkflowOperationUpload(ctx, f.store.(state.OperationWorkflowArtifactStore), f.op.ID, a, directJobDeclaration(), io.NopCloser(&cancelDirectRead{Reader: strings.NewReader(directJobCSV), cancel: cancel}))
 					} else {
 						_, err = f.runtime.UploadWorkflowOperationArtifact(ctx, f.op.ID, proof, directJobDeclaration(), strings.NewReader(directJobCSV))
 					}
@@ -421,7 +422,7 @@ func TestOperationWorkflowDirectUploadFencedDuringIO(t *testing.T) {
 					if len(after.WorkflowArtifactReceipts) != 0 || len(after.ArtifactStorageKeys) != 0 || len(after.Artifacts) != 0 || after.ReportCount != before.ReportCount {
 						t.Fatal("fenced transfer published a receipt")
 					}
-					transfers, _ := f.server.operation.ArtifactBudgetInUse()
+					transfers, _ := (*f.server.Operation()).ArtifactBudgetInUse()
 					if transfers != 0 {
 						t.Fatal("fenced transfer leaked spool budget")
 					}
@@ -450,7 +451,7 @@ func TestOperationWorkflowDirectUploadBlobLockDeadline(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := f.server.operation.ArtifactStorage.Put(ctx, blob.StorageKey, strings.NewReader(directJobCSV)); err != nil {
+				if err := (*f.server.Operation()).ArtifactStorage.Put(ctx, blob.StorageKey, strings.NewReader(directJobCSV)); err != nil {
 					t.Fatal(err)
 				}
 				if action == "reuse" {

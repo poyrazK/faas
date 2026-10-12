@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -13,7 +14,7 @@ func TestFlagEvidenceQueryFiltersNamedVariant(t *testing.T) {
 	req := httptest.NewRequest("GET", "/?variant=treatment&used=true", nil)
 	req.SetPathValue("key", "checkout")
 	req.SetPathValue("environment", "production")
-	p, _, err := flagEvidenceQuery(req, state.FeatureFlagScope{AccountID: "account", EnvironmentID: "environment"}, 24*time.Hour)
+	p, _, err := apidserver.FlagEvidenceQuery(req, state.FeatureFlagScope{AccountID: "account", EnvironmentID: "environment"}, 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +26,7 @@ func TestFlagEvidenceQueryFiltersNamedVariant(t *testing.T) {
 	for _, query := range []string{"?variant=bad.value", "?variant=treatment&value=true"} {
 		req := httptest.NewRequest("GET", "/"+query, nil)
 		req.SetPathValue("key", "checkout")
-		if _, _, err := flagEvidenceQuery(req, state.FeatureFlagScope{AccountID: "account", EnvironmentID: "environment"}, 24*time.Hour); err == nil {
+		if _, _, err := apidserver.FlagEvidenceQuery(req, state.FeatureFlagScope{AccountID: "account", EnvironmentID: "environment"}, 24*time.Hour); err == nil {
 			t.Errorf("accepted invalid query %s", query)
 		}
 	}

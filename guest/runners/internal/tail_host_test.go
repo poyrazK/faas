@@ -12,7 +12,7 @@ package internal
 // hang forever (and not be silently marked Completed).
 //
 // Why this lives in the internal package, not in any runner's
-// main_test.go: the runner's drainTailHost registers a no-op
+// main_test.go: the runner core's tail drain registers a no-op
 // taskFn (the customer's promise is opaque to the runner; the
 // runner only observes the timeout). The pathological-tail
 // assertion is about the TailHost's goroutine behavior on a

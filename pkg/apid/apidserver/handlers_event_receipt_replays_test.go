@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,20 +9,21 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 608
 func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	work := seedAPIReceipt(t, e)
 	ctx := context.Background()
 	sub := work.RecipientSnapshot[1]
-	root := state.PublishedEventInvocationID(e.acct.ID, "orders", "receipt-1", sub.ID)
+	root := state.PublishedEventInvocationID((*e.Acct()).ID, "orders", "receipt-1", sub.ID)
 	for i, recipient := range work.RecipientSnapshot[:2] {
-		id := state.PublishedEventInvocationID(e.acct.ID, "orders", "receipt-1", recipient.ID)
-		if _, err := e.store.EnqueueInvocation(ctx, state.Invocation{ID: id, AppID: recipient.AppID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke, DueAt: time.Now()}); err != nil {
+		id := state.PublishedEventInvocationID((*e.Acct()).ID, "orders", "receipt-1", recipient.ID)
+		if _, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{ID: id, AppID: recipient.AppID, AccountID: (*e.Acct()).ID, Source: state.InvocationAsyncInvoke, DueAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
 		terminal := "completed"
@@ -35,7 +36,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	}
 	readReceipt := func() api.EventReceiptResponse {
 		t.Helper()
-		rec := e.do(t, "GET", appevents.EventReceiptURL("orders", "receipt-1"), nil, nil)
+		rec := e.Do(t, "GET", appevents.EventReceiptURL("orders", "receipt-1"), nil, nil)
 		var result api.EventReceiptResponse
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &result) != nil {
 			t.Fatalf("receipt: %d %s", rec.Code, rec.Body)
@@ -49,7 +50,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	action := initial.Recipients[1].RecoveryActions[0]
 	var first api.AsyncInvokeResponse
 	for _, key := range []string{"receipt-replay-one", "receipt-replay-other", ""} {
-		rec := e.do(t, "POST", action.URL, nil, map[string]string{"Idempotency-Key": key})
+		rec := e.Do(t, "POST", action.URL, nil, map[string]string{"Idempotency-Key": key})
 		var replay api.AsyncInvokeResponse
 		if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &replay) != nil {
 			t.Fatalf("replay: %d %s", rec.Code, rec.Body)
@@ -70,7 +71,7 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	if len(failed.RecoveryActions) != 1 || failed.RecoveryActions[0].URL != "/v1/invocations/"+first.ID+"/replay" {
 		t.Fatalf("recovery did not target latest replay: %+v", failed)
 	}
-	rec := e.do(t, "POST", failed.RecoveryActions[0].URL, nil, nil)
+	rec := e.Do(t, "POST", failed.RecoveryActions[0].URL, nil, nil)
 	var second api.AsyncInvokeResponse
 	if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &second) != nil {
 		t.Fatalf("second replay: %s", rec.Body)
@@ -85,29 +86,29 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	}
 	historyPath := entry.Recovery.HistoryURL
 	var page api.EventReceiptReplayHistoryResponse
-	rec = e.do(t, "GET", historyPath+"&limit=1", nil, nil)
+	rec = e.Do(t, "GET", historyPath+"&limit=1", nil, nil)
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &page) != nil || page.OriginalInvocationID != root || len(page.Replays) != 1 || page.Replays[0].InvocationID != second.ID || page.NextAfter == "" || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("history: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.do(t, "GET", historyPath+"&after="+url.QueryEscape(page.NextAfter), nil, nil)
+	rec = e.Do(t, "GET", historyPath+"&after="+url.QueryEscape(page.NextAfter), nil, nil)
 	var older api.EventReceiptReplayHistoryResponse
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &older) != nil || len(older.Replays) != 1 || older.Replays[0].InvocationID != first.ID || older.NextAfter != "" {
 		t.Fatalf("older history: %s", rec.Body)
 	}
 	// Pruning both descendants leaves the original failure visible, without
 	// suggesting another child from a parent whose replay was already accepted.
-	if _, err := e.store.DeleteInvocationsByIDs(ctx, []string{first.ID, second.ID}); err != nil {
+	if _, err := (*e.Store()).DeleteInvocationsByIDs(ctx, []string{first.ID, second.ID}); err != nil {
 		t.Fatal(err)
 	}
 	pruned := readReceipt().Recipients[1]
 	if pruned.Execution.State != "failed" || pruned.Recovery != nil || len(pruned.RecoveryActions) != 0 {
 		t.Fatalf("pruning offered redundant recovery: %+v", pruned)
 	}
-	if rec := e.do(t, "POST", action.URL, nil, nil); rec.Code != 409 {
+	if rec := e.Do(t, "POST", action.URL, nil, nil); rec.Code != 409 {
 		t.Fatalf("pruned recovery executed again: %d %s", rec.Code, rec.Body)
 	}
 	for _, path := range []string{appevents.EventReceiptReplayURL("orders", "receipt-1", work.RecipientSnapshot[0].ID) + "&after=" + url.QueryEscape(page.NextAfter), historyPath + "&after=err1.garbage", historyPath + "&limit=201", historyPath + "&after=" + url.QueryEscape(strings.Repeat("x", 8193))} {
-		if rec := e.do(t, "GET", path, nil, nil); rec.Code != 400 {
+		if rec := e.Do(t, "GET", path, nil, nil); rec.Code != 400 {
 			t.Fatalf("invalid history: %d %s", rec.Code, rec.Body)
 		}
 	}
@@ -120,8 +121,8 @@ func TestEventReceiptReplayReadScope(t *testing.T) {
 		status int
 	}{{api.ScopeAppsRead, 404}, {api.ScopeEventsPublish, 403}, {api.ScopeUsageRead, 403}} {
 		t.Run(test.scope, func(t *testing.T) {
-			e := setupWithScopes(t, []string{test.scope})
-			if rec := e.do(t, "GET", appevents.EventReceiptReplayURL("orders", "missing", "sub"), nil, nil); rec.Code != test.status {
+			e := apidserver.SetupWithScopes(t, []string{test.scope})
+			if rec := e.Do(t, "GET", appevents.EventReceiptReplayURL("orders", "missing", "sub"), nil, nil); rec.Code != test.status {
 				t.Fatalf("read scope: %d %s", rec.Code, rec.Body)
 			}
 		})

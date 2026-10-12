@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -17,27 +17,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 582
 func TestVersionProtectionControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var offset atomic.Int64
 	now := time.Now().UTC()
-	e.store.SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-	versionProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func() { offset.Add(int64(20 * time.Minute)) }, false)
+	(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
+	versionProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func() { offset.Add(int64(20 * time.Minute)) }, false)
 }
 func TestVersionProtectionControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	versionProtectionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func() {
-		if _, err := e.pool.Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state IN ('waiting','applying')`); err != nil {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	versionProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func() {
+		if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state IN ('waiting','applying')`); err != nil {
 			t.Fatal(err)
 		}
 	}, false)
 }
-func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(), event bool) {
+func versionProtectionControlE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(), event bool) {
 	var mu sync.Mutex
 	hold := "OFF"
 	days := int32(30)
@@ -120,10 +121,10 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	defer upstream.Close()
 	_, b, _, policy := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{Enabled: true, EventHolds: event}))
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	public := httptest.NewTLSServer(s.handler())
+	public := httptest.NewTLSServer(s.Handler())
 	defer public.Close()
 	client := api.NewClient(public.URL, bearer)
 	client.HTTPClient().Transport = public.Client().Transport
@@ -131,13 +132,13 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 		t.Fatal(err)
 	}
 	for range 3 {
-		if err := s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+		if err := (*s.Object()).ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.object.ReconcileObjectCapacity(t.Context(), nil); err != nil {
+		if err := (*s.Object()).ReconcileObjectCapacity(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+		if err := (*s.Object()).ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 			t.Fatal(err)
 		}
 		advance()
@@ -174,17 +175,17 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	if err != nil || j.State != "waiting" || puts.Load() != 0 {
 		t.Fatal("acceptance was not journaled", j, err)
 	}
-	if err = s.object.ReconcileObjectVersionProtection(t.Context(), nil); err != nil || puts.Load() != 1 {
+	if err = (*s.Object()).ReconcileObjectVersionProtection(t.Context(), nil); err != nil || puts.Load() != 1 {
 		t.Fatal(err, puts.Load())
 	}
 	j, err = client.GetObjectVersionProtection(t.Context(), "encrypted-journal", b.ID, id)
 	if err != nil || j.State != "waiting" || j.LastErrorCode != "provider_uncertain" {
 		t.Fatal(j, err)
 	}
-	registry := s.objectStorage
-	s.objectStorage = nil
+	registry := (*s.ObjectStorage())
+	(*s.ObjectStorage()) = nil
 	inspected, inspectErr := client.GetObjectVersionProtection(t.Context(), "encrypted-journal", b.ID, id)
-	s.objectStorage = registry
+	(*s.ObjectStorage()) = registry
 	if inspectErr != nil || inspected.State != "waiting" {
 		t.Fatal("missing placement blocked receipt inspection", inspected, inspectErr)
 	}
@@ -205,13 +206,13 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	}
 	advance()
 	if pool != nil {
-		s.store = state.NewPgStore(pool)
+		(*s.Store()) = state.NewPgStore(pool)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{}))
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectVersionProtection(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectVersionProtection(t.Context(), nil); err != nil {
 		t.Fatal("disabled recovery", err)
 	}
 	j, err = client.GetObjectVersionProtection(t.Context(), "encrypted-journal", b.ID, id)
@@ -241,18 +242,18 @@ func TestEventHoldProtectionControlE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {
 			if pg {
-				e := setupPGHandler(t, api.PlanPro)
-				versionProtectionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func() {
-					if _, err := e.pool.Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state IN ('waiting','applying')`); err != nil {
+				e := apidserver.SetupPGHandler(t, api.PlanPro)
+				versionProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func() {
+					if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END;UPDATE object_bucket_object_lock SET retry_at=clock_timestamp();UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state IN ('waiting','applying')`); err != nil {
 						t.Fatal(err)
 					}
 				}, true)
 			} else {
-				e := setup(t, api.PlanPro)
+				e := apidserver.Setup(t, api.PlanPro)
 				var offset atomic.Int64
 				now := time.Now().UTC()
-				e.store.SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-				versionProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func() { offset.Add(int64(20 * time.Minute)) }, true)
+				(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
+				versionProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func() { offset.Add(int64(20 * time.Minute)) }, true)
 			}
 		})
 	}

@@ -16,7 +16,7 @@
 // FAAS_SPOOL_ROOT. The post-join predicate was therefore untested prior to
 // this PR.
 
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -26,12 +26,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // safeLim mirrors the limits the production scan path uses when no plan
 // envelope is available. Per-entry and total caps are generous so the
 // tests below don't trip byte-cap races unrelated to the predicate.
-var extractTestSafeLim = extractLimits{
+var extractTestSafeLim = apidserver.ExtractLimits{
 	MaxEntries:    1000,
 	MaxFileBytes:  1 << 20,
 	MaxTotalBytes: 10 << 20,
@@ -39,8 +40,8 @@ var extractTestSafeLim = extractLimits{
 
 func TestExtractTarGz_GitHubPAXMetadata(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv(scanSpoolRootEnv, dir)
-	raw := buildTestTarGz(t,
+	t.Setenv(apidserver.ScanSpoolRootEnv, dir)
+	raw := apidserver.BuildTestTarGz(t,
 		[]tar.Header{
 			{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "github archive"}},
 			{Name: "owner-sha/", Typeflag: tar.TypeDir},
@@ -51,7 +52,7 @@ func TestExtractTarGz_GitHubPAXMetadata(t *testing.T) {
 	if err := os.WriteFile(srcPath, raw, 0o644); err != nil {
 		t.Fatalf("write tar: %v", err)
 	}
-	scanDir, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	scanDir, prob := apidserver.ExtractTarGzToDir(srcPath, extractTestSafeLim)
 	if prob != nil {
 		t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
 	}
@@ -66,8 +67,8 @@ func TestExtractTarGz_GitHubPAXMetadata(t *testing.T) {
 
 func TestExtractTarGz_PAXDoesNotBypassPathGuard(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv(scanSpoolRootEnv, dir)
-	raw := buildTestTarGz(t,
+	t.Setenv(apidserver.ScanSpoolRootEnv, dir)
+	raw := apidserver.BuildTestTarGz(t,
 		[]tar.Header{
 			{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "github archive"}},
 			{Name: "../escape"},
@@ -77,7 +78,7 @@ func TestExtractTarGz_PAXDoesNotBypassPathGuard(t *testing.T) {
 	if err := os.WriteFile(srcPath, raw, 0o644); err != nil {
 		t.Fatalf("write tar: %v", err)
 	}
-	_, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	_, prob := apidserver.ExtractTarGzToDir(srcPath, extractTestSafeLim)
 	if prob == nil || !strings.Contains(prob.Detail, "absolute paths or '..' entries are rejected") {
 		t.Fatalf("expected path rejection after PAX metadata, got %+v", prob)
 	}
@@ -91,7 +92,7 @@ func TestExtractTarGz_AbsoluteSpool_NestedFilePasses(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", dir)
 
-	raw := buildTestTarGz(t,
+	raw := apidserver.BuildTestTarGz(t,
 		[]tar.Header{
 			{Name: "project/"},
 			{Name: "project/src/"},
@@ -109,7 +110,7 @@ func TestExtractTarGz_AbsoluteSpool_NestedFilePasses(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	scanDir, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	scanDir, prob := apidserver.ExtractTarGzToDir(srcPath, extractTestSafeLim)
 	if prob != nil {
 		t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
 	}
@@ -128,7 +129,7 @@ func TestExtractTarGz_AbsoluteSpool_NestedFilePasses(t *testing.T) {
 func TestExtractTarGz_LeadingDotWrapperIsCanonicalised(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", dir)
-	raw := buildTestTarGz(t,
+	raw := apidserver.BuildTestTarGz(t,
 		[]tar.Header{
 			{Name: "./project/compose.yaml"},
 			{Name: "./project/services/api/Dockerfile"},
@@ -142,7 +143,7 @@ func TestExtractTarGz_LeadingDotWrapperIsCanonicalised(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	scanDir, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	scanDir, prob := apidserver.ExtractTarGzToDir(srcPath, extractTestSafeLim)
 	if prob != nil {
 		t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
 	}
@@ -166,14 +167,14 @@ func TestExtractTarGz_RejectsEscapeAndAbsolute(t *testing.T) {
 	}
 
 	t.Run("parent_traversal", func(t *testing.T) {
-		raw := buildTestTarGz(t,
+		raw := apidserver.BuildTestTarGz(t,
 			[]tar.Header{{Name: "../../etc/passwd"}},
 			map[string][]byte{"../../etc/passwd": []byte("owned")})
 		path := filepath.Join(spool, "esc.tar.gz")
 		if err := os.WriteFile(path, raw, 0o644); err != nil {
 			t.Fatalf("write tar: %v", err)
 		}
-		_, prob := extractTarGzToDir(path, extractTestSafeLim)
+		_, prob := apidserver.ExtractTarGzToDir(path, extractTestSafeLim)
 		prob = mustExtractProblem(t, prob, "expected rejection on '../' escape, got nil")
 		if !strings.Contains(prob.Detail, "absolute paths or '..' entries are rejected") {
 			t.Errorf("detail %q does not mention escapesArchiveRoot predicate", prob.Detail)
@@ -181,14 +182,14 @@ func TestExtractTarGz_RejectsEscapeAndAbsolute(t *testing.T) {
 	})
 
 	t.Run("absolute_path", func(t *testing.T) {
-		raw := buildTestTarGz(t,
+		raw := apidserver.BuildTestTarGz(t,
 			[]tar.Header{{Name: "/etc/passwd"}},
 			map[string][]byte{"/etc/passwd": []byte("owned")})
 		path := filepath.Join(spool, "abs.tar.gz")
 		if err := os.WriteFile(path, raw, 0o644); err != nil {
 			t.Fatalf("write tar: %v", err)
 		}
-		_, prob := extractTarGzToDir(path, extractTestSafeLim)
+		_, prob := apidserver.ExtractTarGzToDir(path, extractTestSafeLim)
 		if prob == nil {
 			t.Fatal("expected rejection on absolute path, got nil")
 		}
@@ -219,7 +220,7 @@ func TestPathStaysUnder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := pathStaysUnder(tc.target, tc.root)
+			got := apidserver.PathStaysUnder(tc.target, tc.root)
 			if got != tc.contain {
 				t.Errorf("pathStaysUnder(target=%q, root=%q) = %v, want %v",
 					tc.target, tc.root, got, tc.contain)

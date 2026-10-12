@@ -19,7 +19,7 @@
 //     malformed path id so the route surface is binary — any
 //     non-existing target is a 404.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -76,14 +77,14 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		intentID := seedOperatorIntent(t, store, opsAcct.ID, tenant.ID, "11111111-1111-1111-1111-111111111111")
 
 		ops := wire.NewOpsMetrics("apid_intent_test")
-		srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 			WithOpsMetrics(context.Background(), ops).
 			WithAdminAllowlist("ops@example.com")
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/admin/operator-intents/"+intentID, nil)
 		req.Header.Set("Authorization", "Bearer "+pt)
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -126,7 +127,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 			t.Fatal(err)
 		}
 		ops := wire.NewOpsMetrics("apid_intent_test")
-		srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 			WithOpsMetrics(context.Background(), ops).
 			WithAdminAllowlist("ops@example.com")
 
@@ -137,7 +138,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 			"/v1/admin/operator-intents/00000000-0000-0000-0000-000000000000", nil)
 		req.Header.Set("Authorization", "Bearer "+pt)
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
@@ -168,7 +169,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 			t.Fatal(err)
 		}
 		ops := wire.NewOpsMetrics("apid_intent_test")
-		srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 			WithOpsMetrics(context.Background(), ops).
 			WithAdminAllowlist("ops@example.com")
 
@@ -180,7 +181,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 			"/v1/admin/operator-intents/not-a-uuid", nil)
 		req.Header.Set("Authorization", "Bearer "+pt)
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())

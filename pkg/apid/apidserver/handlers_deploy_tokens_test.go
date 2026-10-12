@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestDeployTokenHandlers_CreateListRotateRevoke(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "tokenized-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "tokenized-app")
 
-	createdRec := e.do(t, http.MethodPost, "/v1/apps/tokenized-app/deploy-tokens", api.CreateDeployTokenRequest{Label: "github-ci"}, nil)
+	createdRec := e.Do(t, http.MethodPost, "/v1/apps/tokenized-app/deploy-tokens", api.CreateDeployTokenRequest{Label: "github-ci"}, nil)
 	if createdRec.Code != http.StatusCreated {
 		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
 	}
@@ -30,7 +31,7 @@ func TestDeployTokenHandlers_CreateListRotateRevoke(t *testing.T) {
 		t.Fatalf("created response = %+v", created)
 	}
 
-	listRec := e.do(t, http.MethodGet, "/v1/apps/tokenized-app/deploy-tokens", nil, nil)
+	listRec := e.Do(t, http.MethodGet, "/v1/apps/tokenized-app/deploy-tokens", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list: code=%d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -44,7 +45,7 @@ func TestDeployTokenHandlers_CreateListRotateRevoke(t *testing.T) {
 		t.Fatalf("list = %+v, want one redacted token", listed)
 	}
 
-	rotatedRec := e.do(t, http.MethodPost, "/v1/apps/tokenized-app/deploy-tokens/"+created.ID+"/rotate", api.RotateDeployTokenRequest{ExpiresAt: time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)}, nil)
+	rotatedRec := e.Do(t, http.MethodPost, "/v1/apps/tokenized-app/deploy-tokens/"+created.ID+"/rotate", api.RotateDeployTokenRequest{ExpiresAt: time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)}, nil)
 	if rotatedRec.Code != http.StatusCreated {
 		t.Fatalf("rotate: code=%d body=%s", rotatedRec.Code, rotatedRec.Body.String())
 	}
@@ -56,29 +57,29 @@ func TestDeployTokenHandlers_CreateListRotateRevoke(t *testing.T) {
 		t.Fatalf("rotate response = %+v", rotated)
 	}
 
-	revokedRec := e.do(t, http.MethodDelete, "/v1/apps/tokenized-app/deploy-tokens/"+rotated.Token.ID, nil, nil)
+	revokedRec := e.Do(t, http.MethodDelete, "/v1/apps/tokenized-app/deploy-tokens/"+rotated.Token.ID, nil, nil)
 	if revokedRec.Code != http.StatusNoContent {
 		t.Fatalf("revoke: code=%d body=%s", revokedRec.Code, revokedRec.Body.String())
 	}
-	if again := e.do(t, http.MethodDelete, "/v1/apps/tokenized-app/deploy-tokens/"+rotated.Token.ID, nil, nil); again.Code != http.StatusNoContent {
+	if again := e.Do(t, http.MethodDelete, "/v1/apps/tokenized-app/deploy-tokens/"+rotated.Token.ID, nil, nil); again.Code != http.StatusNoContent {
 		t.Fatalf("idempotent revoke: code=%d body=%s", again.Code, again.Body.String())
 	}
 }
 
 func TestDeployTokenHandlers_CrossAppIsNotFound(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "token-app-a")
-	mustSeedApp(t, e, "token-app-b")
-	createdRec := e.do(t, http.MethodPost, "/v1/apps/token-app-a/deploy-tokens", api.CreateDeployTokenRequest{}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "token-app-a")
+	apidserver.MustSeedApp(t, e, "token-app-b")
+	createdRec := e.Do(t, http.MethodPost, "/v1/apps/token-app-a/deploy-tokens", api.CreateDeployTokenRequest{}, nil)
 	if createdRec.Code != http.StatusCreated {
 		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
 	}
 	var created api.DeployTokenResponse
 	_ = json.Unmarshal(createdRec.Body.Bytes(), &created)
-	if rec := e.do(t, http.MethodGet, "/v1/apps/token-app-b/deploy-tokens", nil, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, http.MethodGet, "/v1/apps/token-app-b/deploy-tokens", nil, nil); rec.Code != http.StatusOK {
 		t.Fatalf("same-account app B list: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, err := e.store.GetDeployToken(t.Context(), e.acct.ID, "wrong-app", created.ID); err == nil {
+	if _, err := (*e.Store()).GetDeployToken(t.Context(), (*e.Acct()).ID, "wrong-app", created.ID); err == nil {
 		t.Fatal("cross-app store lookup unexpectedly succeeded")
 	}
 }
@@ -88,10 +89,10 @@ func TestDeployTokenHandlers_CrossAppIsNotFound(t *testing.T) {
 // direct store lookup instead of loadApp (createDeployment did, so a CI token
 // for one app could ship code to every app in the account).
 func TestDeployTokenBearer_BoundToItsApp(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "bound-app-a")
-	appB := mustSeedApp(t, e, "bound-app-b")
-	createdRec := e.do(t, http.MethodPost, "/v1/apps/bound-app-a/deploy-tokens", api.CreateDeployTokenRequest{Label: "ci-a"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "bound-app-a")
+	appB := apidserver.MustSeedApp(t, e, "bound-app-b")
+	createdRec := e.Do(t, http.MethodPost, "/v1/apps/bound-app-a/deploy-tokens", api.CreateDeployTokenRequest{Label: "ci-a"}, nil)
 	if createdRec.Code != http.StatusCreated {
 		t.Fatalf("create: code=%d body=%s", createdRec.Code, createdRec.Body.String())
 	}
@@ -110,7 +111,7 @@ func TestDeployTokenBearer_BoundToItsApp(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+created.Plaintext)
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 
@@ -134,7 +135,7 @@ func TestDeployTokenBearer_BoundToItsApp(t *testing.T) {
 			}
 		})
 	}
-	if deps, err := e.store.ListDeploymentsForApp(t.Context(), appB, 10, 0); err != nil || len(deps) != 0 {
+	if deps, err := (*e.Store()).ListDeploymentsForApp(t.Context(), appB, 10, 0); err != nil || len(deps) != 0 {
 		t.Fatalf("app B has %d deployments (err=%v) after requests with app A's token", len(deps), err)
 	}
 }

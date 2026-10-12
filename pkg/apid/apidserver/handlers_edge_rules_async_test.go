@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,9 +23,9 @@ func asyncEdgeRuleRequest() api.CreateEdgeRuleRequest {
 }
 
 func TestCreateEdgeRuleAsyncRoundTrip(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	slug := mustSeedEdgeRuleApp(t, e, "reports")
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", asyncEdgeRuleRequest(), nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "reports")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", asyncEdgeRuleRequest(), nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
 	}
@@ -41,26 +42,26 @@ func TestCreateEdgeRuleAsyncRoundTrip(t *testing.T) {
 }
 
 func TestCreateEdgeRuleRejectsOpenAPITemplatePath(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	slug := mustSeedEdgeRuleApp(t, e, "reports")
+	e := apidserver.Setup(t, api.PlanHobby)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "reports")
 	req := asyncEdgeRuleRequest()
 	req.MatchPath = "/reports/{id}"
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `\"/reports/?*\"`) {
 		t.Fatalf("templated path: status = %d, body = %s; want 400 naming the glob", rec.Code, rec.Body.String())
 	}
 	req.MatchPath = "/reports/?*"
-	if rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil); rec.Code != http.StatusCreated {
+	if rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("suggested glob: status = %d, body = %s; want 201", rec.Code, rec.Body.String())
 	}
 }
 
 func TestCreateEdgeRuleAsyncExecutionPolicyRoundTrip(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	slug := mustSeedEdgeRuleApp(t, e, "reports-policy")
+	e := apidserver.Setup(t, api.PlanHobby)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "reports-policy")
 	req := asyncEdgeRuleRequest()
 	req.Action = json.RawMessage(`{"retry_policy":{"max_attempts":4,"base_seconds":1,"max_seconds":30,"jitter_seconds":0.2},"max_age_seconds":600}`)
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", req, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
 	}
@@ -84,23 +85,23 @@ func TestCreateEdgeRuleAsyncExecutionPolicyRoundTrip(t *testing.T) {
 }
 
 func TestCreateEdgeRuleAsyncRequiresPaidPlan(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	slug := mustSeedEdgeRuleApp(t, e, "free-reports")
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", asyncEdgeRuleRequest(), nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "free-reports")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", asyncEdgeRuleRequest(), nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status = %d, want 402; body = %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestCreateEdgeRuleAsyncRejectsWorker(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	_, err := e.store.CreateApp(t.Context(), state.App{
-		AccountID: e.acct.ID, Slug: "report-worker", WorkloadClass: state.WorkloadClassWorker,
+	e := apidserver.Setup(t, api.PlanHobby)
+	_, err := (*e.Store()).CreateApp(t.Context(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "report-worker", WorkloadClass: state.WorkloadClassWorker,
 	})
 	if err != nil {
 		t.Fatalf("create worker: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/apps/report-worker/edge-rules", asyncEdgeRuleRequest(), nil)
+	rec := e.Do(t, http.MethodPost, "/v1/apps/report-worker/edge-rules", asyncEdgeRuleRequest(), nil)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body = %s", rec.Code, rec.Body.String())
 	}

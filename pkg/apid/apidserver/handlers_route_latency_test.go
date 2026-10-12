@@ -1,23 +1,25 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRouteLatencyAPIConfigurationAndUnavailableEvidence(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "route-latency-api")
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "route-latency-api")
 	path := "/v1/apps/" + slug + "/route-health/gate"
 	req := api.SetRouteHealthGateRequest{Mode: "enforce", ExpectedRevision: new(int64), Routes: []api.RouteHealthRoute{{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}}}
 	save := func() api.RouteHealthGate {
 		t.Helper()
-		rec := e.do(t, "PUT", path, req, nil)
+		rec := e.Do(t, "PUT", path, req, nil)
 		var gate api.RouteHealthGate
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &gate) != nil || !routehealth.RoutesEqual(gate.Routes, req.Routes) || gate.UpdatedAt == nil {
 			t.Fatalf("latency configuration: %d %s", rec.Code, rec.Body)
@@ -44,15 +46,15 @@ func TestRouteLatencyAPIConfigurationAndUnavailableEvidence(t *testing.T) {
 	if changed.Revision != 3 || changed.Routes[0].CheckLatency {
 		t.Fatal("relative check cannot be independently disabled")
 	}
-	app, err := e.store.AppBySlug(t.Context(), slug)
+	app, err := (*e.Store()).AppBySlug(t.Context(), slug)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate"})
+	deployment, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, "GET", "/v1/apps/"+slug+"/route-health/deployments/"+deployment.ID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/"+slug+"/route-health/deployments/"+deployment.ID, nil, nil)
 	var report api.RouteHealthReport
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &report) != nil || report.Status != "unknown" || report.MinimumLatencyRequests != 100 || len(report.Routes) != 1 {
 		t.Fatalf("unavailable report: %d %s", rec.Code, rec.Body)
@@ -64,8 +66,8 @@ func TestRouteLatencyAPIConfigurationAndUnavailableEvidence(t *testing.T) {
 }
 
 func TestRouteLatencyAPIRejectsInvalidIntent(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "route-latency-validation")
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "route-latency-validation")
 	path := "/v1/apps/" + slug + "/route-health/gate"
 	for _, routes := range [][]api.RouteHealthRoute{
 		{{Method: "POST", Path: "/checkout", MaxP95MS: -1}},
@@ -73,11 +75,11 @@ func TestRouteLatencyAPIRejectsInvalidIntent(t *testing.T) {
 		{{Method: "POST", Path: "/checkout", MaxP95MS: 300}, {Method: "POST", Path: "/checkout", MaxP95MS: 500}},
 	} {
 		req := api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: new(int64), Routes: routes}
-		if rec := e.do(t, "PUT", path, req, nil); rec.Code != 400 {
+		if rec := e.Do(t, "PUT", path, req, nil); rec.Code != 400 {
 			t.Fatalf("invalid intent accepted: %d %s", rec.Code, rec.Body)
 		}
 	}
-	if rec := e.do(t, "GET", path, nil, nil); rec.Code != 200 || !json.Valid(rec.Body.Bytes()) {
+	if rec := e.Do(t, "GET", path, nil, nil); rec.Code != 200 || !json.Valid(rec.Body.Bytes()) {
 		t.Fatal("configuration unavailable after invalid intent")
 	} else {
 		var gate api.RouteHealthGate

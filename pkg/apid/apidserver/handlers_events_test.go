@@ -1,6 +1,6 @@
 // Negative + integration tests for the SSE live-update handler
 // (M7.5 slice 6).
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -47,16 +48,16 @@ func (n *recordingNotifier) publish(channel, payload string) {
 // account_id is delivered only to that account's SSE stream; a
 // foreign account_id is dropped.
 func TestEvents_FiltersByAccount(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	notif := newRecordingNotifier()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(e.store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").
-		WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_sse_observe_test")).handler()
+	srv := apidserver.NewServerWithDeps((*e.Store()), log, "gregale.dev", notif, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "").
+		WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_sse_observe_test")).Handler()
 
 	res := make(chan string, 1)
 	go func() {
 		hReq := httptest.NewRequest("GET", "/v1/events", nil)
-		hReq.Header.Set("Authorization", "Bearer "+e.key)
+		hReq.Header.Set("Authorization", "Bearer "+(*e.Key()))
 		hRec := httptest.NewRecorder()
 		srv.ServeHTTP(hRec, hReq)
 		res <- hRec.Body.String()
@@ -65,7 +66,7 @@ func TestEvents_FiltersByAccount(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Owned app — should pass through.
-	notif.publish(db.NotifyAppChanged, `{"kind":"updated","app_id":"my-app","account_id":"`+e.acct.ID+`"}`)
+	notif.publish(db.NotifyAppChanged, `{"kind":"updated","app_id":"my-app","account_id":"`+(*e.Acct()).ID+`"}`)
 	// Foreign account — must be dropped.
 	notif.publish(db.NotifyAppChanged, `{"kind":"updated","app_id":"strangers","account_id":"`+"ffffffff-ffff-ffff-ffff-ffffffffffff"+`"}`)
 	// Unparseable payload — must be dropped (fail-closed).
@@ -85,7 +86,7 @@ func TestEvents_FiltersByAccount(t *testing.T) {
 	if !strings.Contains(body, `event: app_changed`) {
 		t.Errorf("body missing event header\n%s", body)
 	}
-	if !strings.Contains(body, `"account_id":"`+e.acct.ID+`"`) {
+	if !strings.Contains(body, `"account_id":"`+(*e.Acct()).ID+`"`) {
 		t.Errorf("body missing own-account frame\n%s", body)
 	}
 	if strings.Contains(body, "strangers") {
@@ -97,14 +98,14 @@ func TestEvents_NormalizesLegacyAppChangedForOwningAccount(t *testing.T) {
 	const appID = "51f496b9-1c33-4756-8f7d-4153149cbba5"
 	n := db.Notification{Channel: db.NotifyAppChanged, Payload: appID}
 
-	got, ok := normalizedEventsFrameForAccount(n, "acct-1", map[string]struct{}{appID: {}})
+	got, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-1", map[string]struct{}{appID: {}})
 	if !ok {
 		t.Fatal("owned legacy app_changed frame was dropped")
 	}
 	if got.Payload != `{"kind":"updated","app_id":"`+appID+`"}` {
 		t.Fatalf("normalized payload = %q", got.Payload)
 	}
-	if _, ok := normalizedEventsFrameForAccount(n, "acct-2", map[string]struct{}{}); ok {
+	if _, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-2", map[string]struct{}{}); ok {
 		t.Fatal("legacy app_changed frame leaked to a non-owner")
 	}
 }
@@ -113,10 +114,10 @@ func TestEvents_NormalizesLegacyAppChangedForOwningAccount(t *testing.T) {
 // bearer token returns 401 RFC 7807 immediately, never an SSE
 // handshake.
 func TestEvents_RequiresAuth(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	notif := newRecordingNotifier()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(e.store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
+	srv := apidserver.NewServerWithDeps((*e.Store()), log, "gregale.dev", notif, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "").Handler()
 
 	req := httptest.NewRequest("GET", "/v1/events", nil)
 	rec := httptest.NewRecorder()

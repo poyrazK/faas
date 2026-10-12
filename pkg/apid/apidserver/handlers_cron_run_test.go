@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Handler tests for POST /v1/crons/{id}/run (issue #791 PR-C /
 // ADR-090).
@@ -35,26 +35,27 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // fireCronNow POSTs to the endpoint and returns the parsed response.
 // Helper mirrors getRuns in handlers_cron_runs_test.go.
-func fireCronNow(t *testing.T, e testEnv, cronID string, idempotencyKey string) *http.Response {
+func fireCronNow(t *testing.T, e apidserver.TestEnv, cronID string, idempotencyKey string) *http.Response {
 	t.Helper()
 	hdrs := map[string]string{}
 	if idempotencyKey != "" {
 		hdrs["Idempotency-Key"] = idempotencyKey
 	}
-	rec := e.do(t, "POST", "/v1/crons/"+cronID+"/run", nil, hdrs)
+	rec := e.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, hdrs)
 	return rec.Result()
 }
 
 func TestFireCronNow_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "fire-cron-happy", "0 3 * * *")
 
-	rec := e.do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
+	rec := e.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -76,7 +77,7 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 	}
 
 	// The row must exist in the table for schedd to claim it.
-	row, err := e.store.GetFireNowRequest(context.Background(), resp.RequestID)
+	row, err := (*e.Store()).GetFireNowRequest(context.Background(), resp.RequestID)
 	if err != nil {
 		t.Fatalf("GetFireNowRequest: %v", err)
 	}
@@ -90,15 +91,15 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 
 // adr: 099 — scheduled command crons can be fired immediately as a queued task.
 func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := mustSeedApp(t, e, "command-cron-fire-now")
-	cron, err := e.store.CreateCronWithOptions(context.Background(), app, "0 2 * * *", "/", true, state.CronOptions{
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.MustSeedApp(t, e, "command-cron-fire-now")
+	cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), app, "0 2 * * *", "/", true, state.CronOptions{
 		Command: []string{"bin/maintenance"},
 	})
 	if err != nil {
 		t.Fatalf("CreateCronWithOptions: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -109,7 +110,7 @@ func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
 	if resp.CronID != cron.ID || resp.RequestID == "" || resp.Status != "pending" {
 		t.Fatalf("response = %+v; want pending request for command cron %s", resp, cron.ID)
 	}
-	request, err := e.store.GetFireNowRequest(context.Background(), resp.RequestID)
+	request, err := (*e.Store()).GetFireNowRequest(context.Background(), resp.RequestID)
 	if err != nil {
 		t.Fatalf("GetFireNowRequest: %v", err)
 	}
@@ -119,8 +120,8 @@ func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
 }
 
 func TestFireCronNow_BadID(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/crons/not-a-uuid/run", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/crons/not-a-uuid/run", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -141,7 +142,7 @@ func TestFireCronNow_CrossAccountIs404(t *testing.T) {
 	_ = acctB
 
 	// Account A creates the cron under their app.
-	eA := setup(t, api.PlanPro)
+	eA := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, eA, "fire-cron-cross-acct", "0 3 * * *")
 	// Account B: same store, different key. We need a second env,
 	// so build it inline by reusing the testEnv with a different
@@ -149,17 +150,17 @@ func TestFireCronNow_CrossAccountIs404(t *testing.T) {
 	// and acct. Even simpler: re-use setup(t, plan) gives a fresh
 	// account on the same MemStore only if MemStore is shared. It
 	// isn't — setup creates its own. So we re-seed for B.
-	eB := setup(t, api.PlanPro)
+	eB := apidserver.Setup(t, api.PlanPro)
 
 	// Move the cron under account B's ownership to simulate "the
 	// cron was transferred away". Easier: try the cronID that
 	// belongs to A; eB's IDOR must 404.
-	rec := eB.do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
+	rec := eB.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account fire status = %d, want 404; body=%s",
 			rec.Code, rec.Body.String())
 	}
-	missingRec := eB.do(t, "POST", "/v1/crons/"+uuid.NewString()+"/run", nil, nil)
+	missingRec := eB.Do(t, "POST", "/v1/crons/"+uuid.NewString()+"/run", nil, nil)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("missing-cron fire status = %d, want 404", missingRec.Code)
 	}
@@ -173,10 +174,10 @@ func TestFireCronNow_FreePlanBlocks(t *testing.T) {
 	// The plan-tier gate runs BEFORE InsertFireNowRequest — a Free
 	// customer never creates a row that schedd would stamp as
 	// failed. 402 with the canonical plan-crons-not-allowed code.
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	cronID, _ := seedCron(t, e, "fire-cron-free", "0 3 * * *")
 
-	rec := e.do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
+	rec := e.Do(t, "POST", "/v1/crons/"+cronID+"/run", nil, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status = %d, want 402", rec.Code)
 	}
@@ -191,7 +192,7 @@ func TestFireCronNow_FreePlanBlocks(t *testing.T) {
 	// the absence is asserted by the fact that schedd would have
 	// no row to claim. Cheap assertion: ClaimPendingFireNowRequest
 	// must return ErrFireNowRequestNotFound.
-	if _, err := e.store.ClaimPendingFireNowRequest(context.Background()); err == nil {
+	if _, err := (*e.Store()).ClaimPendingFireNowRequest(context.Background()); err == nil {
 		t.Errorf("ClaimPendingFireNowRequest succeeded; want ErrFireNowRequestNotFound (Free plan should have inserted nothing)")
 	}
 }
@@ -199,7 +200,7 @@ func TestFireCronNow_FreePlanBlocks(t *testing.T) {
 func TestFireCronNow_IdempotencyKey(t *testing.T) {
 	// A replay with the same Idempotency-Key returns the stored
 	// 202 without enqueuing a second fire. Exactly one row exists.
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "fire-cron-idem", "0 3 * * *")
 
 	rec1 := fireCronNow(t, e, cronID, "test-key-001")
@@ -219,7 +220,7 @@ func TestFireCronNow_IdempotencyKey(t *testing.T) {
 	}
 
 	// Exactly one row exists for this cron.
-	row, err := e.store.ClaimPendingFireNowRequest(context.Background())
+	row, err := (*e.Store()).ClaimPendingFireNowRequest(context.Background())
 	if err != nil {
 		t.Fatalf("claim after replay: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestFireCronNow_IdempotencyKey(t *testing.T) {
 	}
 	// Subsequent claim returns ErrFireNowRequestNotFound — confirms
 	// the idempotency wrapper prevented a second insert.
-	if _, err := e.store.ClaimPendingFireNowRequest(context.Background()); err == nil {
+	if _, err := (*e.Store()).ClaimPendingFireNowRequest(context.Background()); err == nil {
 		t.Errorf("second claim succeeded; want ErrFireNowRequestNotFound")
 	}
 }

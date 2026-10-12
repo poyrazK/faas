@@ -19,7 +19,7 @@
 // All tests run KVM-free via the in-memory store + a real age.X25519
 // recipient installed per-test (same shape as handlers_secrets_test.go).
 
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -34,15 +34,16 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // setupRegistry wires setup() with a recipient in place. Mirrors
 // setupSecrets in handlers_secrets_test.go.
-func setupRegistry(t *testing.T, plan api.Plan) testEnv {
+func setupRegistry(t *testing.T, plan api.Plan) apidserver.TestEnv {
 	t.Helper()
-	teardown := withTestRecipient(t)
+	teardown := apidserver.WithTestRecipient(t)
 	t.Cleanup(teardown)
-	return setup(t, plan)
+	return apidserver.Setup(t, plan)
 }
 
 const registryAuthMark = "s3cret-AUTH-PWD"
@@ -62,7 +63,7 @@ func decodeRegistryList(t *testing.T, body io.Reader) api.AppRegistryCredentialL
 // surface: PUT seals, GET omits password, DELETE removes the row.
 func TestRegistryAuth_PutGetDeleteRoundTrip(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "auth-app")
+	app := apidserver.CreateApp(t, e, "auth-app")
 	const (
 		host = "https://registry.gregale.dev"
 		user = "alice"
@@ -72,7 +73,7 @@ func TestRegistryAuth_PutGetDeleteRoundTrip(t *testing.T) {
 	putReq := api.PutAppRegistryCredentialRequest{
 		Registry: host, Username: user, Password: registryAuthMark,
 	}
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials", putReq, nil)
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials", putReq, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
 	}
@@ -82,7 +83,7 @@ func TestRegistryAuth_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 
 	// GET — list the credential back; password omitted, quota + count surfaced.
-	rec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
@@ -116,13 +117,13 @@ func TestRegistryAuth_PutGetDeleteRoundTrip(t *testing.T) {
 
 	// DELETE — query param ?registry=<host>.
 	delURL := "/v1/apps/" + app.Slug + "/registry-credentials?registry=" + url.QueryEscape(host)
-	rec = e.do(t, "DELETE", delURL, nil, nil)
+	rec = e.Do(t, "DELETE", delURL, nil, nil)
 	if rec.Code != 204 {
 		t.Fatalf("DELETE: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// GET again — list empty.
-	rec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("GET (after delete): %d %s", rec.Code, rec.Body.String())
 	}
@@ -136,8 +137,8 @@ func TestRegistryAuth_PutGetDeleteRoundTrip(t *testing.T) {
 // Free cannot store creds (RegistryCredentialMax == 0).
 func TestRegistryAuth_FreePlanReturns403(t *testing.T) {
 	e := setupRegistry(t, api.PlanFree)
-	app := createApp(t, e, "free-app")
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+	app := apidserver.CreateApp(t, e, "free-app")
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{
 			Registry: "https://registry.gregale.dev", Username: "alice", Password: registryAuthMark,
 		}, nil)
@@ -153,16 +154,16 @@ func TestRegistryAuth_FreePlanReturns403(t *testing.T) {
 // (Hobby == 2). The 3rd distinct host hits 413.
 func TestRegistryAuth_HobbyQuotaEnforced(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "quota-app")
+	app := apidserver.CreateApp(t, e, "quota-app")
 	hosts := []string{"https://r1.example.com", "https://r2.example.com", "https://r3.example.com"}
 	for i, h := range hosts[:2] {
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 			api.PutAppRegistryCredentialRequest{Registry: h, Username: "u", Password: "p"}, nil)
 		if rec.Code != 200 {
 			t.Fatalf("PUT %d (%s): %d %s", i, h, rec.Code, rec.Body.String())
 		}
 	}
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{Registry: hosts[2], Username: "u", Password: "p"}, nil)
 	if rec.Code != 413 {
 		t.Fatalf("PUT 3rd: %d %s, want 413", rec.Code, rec.Body.String())
@@ -179,10 +180,10 @@ func TestRegistryAuth_HobbyQuotaEnforced(t *testing.T) {
 // same host succeed indefinitely.
 func TestRegistryAuth_UpdateDoesNotConsumeQuota(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "replace-app")
+	app := apidserver.CreateApp(t, e, "replace-app")
 	const host = "https://registry.gregale.dev"
 	for i := 0; i < 5; i++ {
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 			api.PutAppRegistryCredentialRequest{
 				Registry: host, Username: "alice", Password: "p-" + string(rune('0'+i)),
 			}, nil)
@@ -191,7 +192,7 @@ func TestRegistryAuth_UpdateDoesNotConsumeQuota(t *testing.T) {
 		}
 	}
 	// Confirm count == 1 — not 5.
-	rec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
@@ -207,8 +208,8 @@ func TestRegistryAuth_UpdateDoesNotConsumeQuota(t *testing.T) {
 // is also 400 with code secret_not_found).
 func TestRegistryAuth_DeleteNotFoundReturns400(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "del-nf-app")
-	rec := e.do(t, "DELETE",
+	app := apidserver.CreateApp(t, e, "del-nf-app")
+	rec := e.Do(t, "DELETE",
 		"/v1/apps/"+app.Slug+"/registry-credentials?registry=https%3A%2F%2Fmissing.example.com",
 		nil, nil)
 	if rec.Code != 400 {
@@ -226,7 +227,7 @@ func TestRegistryAuth_DeleteNotFoundReturns400(t *testing.T) {
 // empty → 400 invalid_registry_host.
 func TestRegistryAuth_InvalidHostReturns400(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "bad-host-app")
+	app := apidserver.CreateApp(t, e, "bad-host-app")
 	// Bare "registry.example.com" (no scheme) is rejected under
 	// the https-only policy — schemeless inputs are ambiguous and
 	// were the leading failure mode for misconfigured customers
@@ -241,7 +242,7 @@ func TestRegistryAuth_InvalidHostReturns400(t *testing.T) {
 		"https://registry.example.com/../etc/passwd", // path traversal
 	}
 	for _, h := range reject {
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 			api.PutAppRegistryCredentialRequest{
 				Registry: h, Username: "alice", Password: registryAuthMark,
 			}, nil)
@@ -262,7 +263,7 @@ func TestRegistryAuth_InvalidHostReturns400(t *testing.T) {
 		"https://registry.example.com/",
 	}
 	for _, h := range accept {
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 			api.PutAppRegistryCredentialRequest{
 				Registry: h, Username: "alice", Password: registryAuthMark,
 			}, nil)
@@ -277,13 +278,13 @@ func TestRegistryAuth_InvalidHostReturns400(t *testing.T) {
 // account (and against a different account entirely).
 func TestRegistryAuth_AccountIsolation(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	appA := createApp(t, e, "iso-app-a")
+	appA := apidserver.CreateApp(t, e, "iso-app-a")
 	// App B in the same account.
-	appB := createApp(t, e, "iso-app-b")
+	appB := apidserver.CreateApp(t, e, "iso-app-b")
 	const host = "https://registry.gregale.dev"
 
 	// PUT on app A.
-	rec := e.do(t, "PUT", "/v1/apps/"+appA.Slug+"/registry-credentials",
+	rec := e.Do(t, "PUT", "/v1/apps/"+appA.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{
 			Registry: host, Username: "alice", Password: registryAuthMark,
 		}, nil)
@@ -292,7 +293,7 @@ func TestRegistryAuth_AccountIsolation(t *testing.T) {
 	}
 
 	// GET on app B → empty list (not leaked from app A).
-	rec = e.do(t, "GET", "/v1/apps/"+appB.Slug+"/registry-credentials", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+appB.Slug+"/registry-credentials", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("GET on app B: %d %s", rec.Code, rec.Body.String())
 	}
@@ -305,14 +306,14 @@ func TestRegistryAuth_AccountIsolation(t *testing.T) {
 	// (the row belongs to app A; loadApp is account-scoped so app B
 	// sees an empty host → ErrRegistryCredentialNotFound, which is
 	// 400 per the api/errors.go convention).
-	rec = e.do(t, "DELETE",
+	rec = e.Do(t, "DELETE",
 		"/v1/apps/"+appB.Slug+"/registry-credentials?registry="+host, nil, nil)
 	if rec.Code != 400 {
 		t.Errorf("DELETE on app B: %d %s, want 400", rec.Code, rec.Body.String())
 	}
 
 	// App A still owns its row.
-	rec = e.do(t, "GET", "/v1/apps/"+appA.Slug+"/registry-credentials", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+appA.Slug+"/registry-credentials", nil, nil)
 	list = decodeRegistryList(t, rec.Body)
 	if list.Count != 1 {
 		t.Errorf("App A row vanished: Count = %d", list.Count)
@@ -325,9 +326,9 @@ func TestRegistryAuth_AccountIsolation(t *testing.T) {
 // confirms the marker never appears.
 func TestRegistryAuth_PasswordNotInResponse(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "redact-app")
+	app := apidserver.CreateApp(t, e, "redact-app")
 	const pw = "very-secret-MARKER-99X"
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{
 			Registry: "https://registry.gregale.dev", Username: "alice", Password: pw,
 		}, nil)
@@ -338,13 +339,13 @@ func TestRegistryAuth_PasswordNotInResponse(t *testing.T) {
 	if bytes.Contains(putBody, []byte(pw)) {
 		t.Errorf("PUT response leaks password marker: %s", putBody)
 	}
-	rec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 	getBody, _ := io.ReadAll(rec.Body)
 	if bytes.Contains(getBody, []byte(pw)) {
 		t.Errorf("GET response leaks password marker: %s", getBody)
 	}
 	// Ciphertext in the DB is NOT plaintext — defence in depth.
-	row, err := e.store.GetAppRegistryCredential(context.Background(), e.acct.ID, app.ID, "registry.gregale.dev")
+	row, err := (*e.Store()).GetAppRegistryCredential(context.Background(), (*e.Acct()).ID, app.ID, "registry.gregale.dev")
 	if err != nil {
 		t.Fatalf("GetAppRegistryCredential: %v", err)
 	}
@@ -357,14 +358,14 @@ func TestRegistryAuth_PasswordNotInResponse(t *testing.T) {
 // without host.age.pub" path: PUT returns 503 (capacity), no
 // plaintext is accepted.
 func TestRegistryAuth_RecipientMissing_503(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	// Override the recipient var to return nil — same posture as
 	// TestSecrets_RecipientMissing_503 (handlers_secrets_test.go).
-	prev := setSecretRecipient
-	setSecretRecipient = func() *age.X25519Recipient { return nil }
-	t.Cleanup(func() { setSecretRecipient = prev })
-	app := createApp(t, e, "no-recip-app")
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+	prev := (*apidserver.SetSecretRecipient)
+	(*apidserver.SetSecretRecipient) = func() *age.X25519Recipient { return nil }
+	t.Cleanup(func() { (*apidserver.SetSecretRecipient) = prev })
+	app := apidserver.CreateApp(t, e, "no-recip-app")
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{
 			Registry: "https://registry.gregale.dev", Username: "alice", Password: registryAuthMark,
 		}, nil)
@@ -378,8 +379,8 @@ func TestRegistryAuth_RecipientMissing_503(t *testing.T) {
 // handler cannot guess which host to delete.
 func TestRegistryAuth_DeleteRequiresRegistryParam(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "del-qp-app")
-	rec := e.do(t, "DELETE",
+	app := apidserver.CreateApp(t, e, "del-qp-app")
+	rec := e.Do(t, "DELETE",
 		"/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("DELETE without registry: %d %s, want 400", rec.Code, rec.Body.String())
@@ -398,15 +399,15 @@ func TestRegistryAuth_DeleteRequiresRegistryParam(t *testing.T) {
 // pin the persisted ciphertext shape (length + non-zero).
 func TestRegistryAuth_StoredCiphertextContainsNamespace(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "ns-app")
-	rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+	app := apidserver.CreateApp(t, e, "ns-app")
+	rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 		api.PutAppRegistryCredentialRequest{
 			Registry: "https://registry.gregale.dev", Username: "alice", Password: "p",
 		}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
 	}
-	row, err := e.store.GetAppRegistryCredential(context.Background(), e.acct.ID, app.ID, "registry.gregale.dev")
+	row, err := (*e.Store()).GetAppRegistryCredential(context.Background(), (*e.Acct()).ID, app.ID, "registry.gregale.dev")
 	if err != nil {
 		t.Fatalf("GetAppRegistryCredential: %v", err)
 	}
@@ -438,7 +439,7 @@ func TestRegistryAuth_ProScaleQuotaMatrix(t *testing.T) {
 	for _, pc := range cases {
 		t.Run(pc.name, func(t *testing.T) {
 			e := setupRegistry(t, pc.plan)
-			app := createApp(t, e, "quota-"+strings.ToLower(pc.name))
+			app := apidserver.CreateApp(t, e, "quota-"+strings.ToLower(pc.name))
 			// Fill the cap with distinct hosts.
 			for i := 0; i < pc.cap; i++ {
 				h := "https://h" + string(rune('a'+i%26))
@@ -446,7 +447,7 @@ func TestRegistryAuth_ProScaleQuotaMatrix(t *testing.T) {
 					h += "2"
 				}
 				h += ".example.com"
-				rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+				rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 					api.PutAppRegistryCredentialRequest{
 						Registry: h, Username: "u", Password: "p",
 					}, nil)
@@ -455,7 +456,7 @@ func TestRegistryAuth_ProScaleQuotaMatrix(t *testing.T) {
 				}
 			}
 			// The (cap+1)-th distinct host hits 413 with the stable code.
-			rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+			rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 				api.PutAppRegistryCredentialRequest{
 					Registry: "https://overflow.example.com", Username: "u", Password: "p",
 				}, nil)
@@ -466,7 +467,7 @@ func TestRegistryAuth_ProScaleQuotaMatrix(t *testing.T) {
 				t.Errorf("%s overflow body lacks stable code: %s", pc.name, rec.Body.String())
 			}
 			// Quota metadata on the GET response surfaces the cap.
-			rec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
+			rec = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/registry-credentials", nil, nil)
 			if rec.Code != 200 {
 				t.Fatalf("GET on %s: %d %s", pc.name, rec.Code, rec.Body.String())
 			}
@@ -491,7 +492,7 @@ func TestRegistryAuth_ProScaleQuotaMatrix(t *testing.T) {
 // and the live handler.
 func TestRegistryAuth_HTTPSRequired(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	app := createApp(t, e, "https-app")
+	app := apidserver.CreateApp(t, e, "https-app")
 	reject := []string{
 		"registry.example.com",               // schemeless
 		"http://registry.example.com",        // cleartext
@@ -503,7 +504,7 @@ func TestRegistryAuth_HTTPSRequired(t *testing.T) {
 		"  ",                                 // whitespace only
 	}
 	for _, h := range reject {
-		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
+		rec := e.Do(t, "PUT", "/v1/apps/"+app.Slug+"/registry-credentials",
 			api.PutAppRegistryCredentialRequest{
 				Registry: h, Username: "alice", Password: "p",
 			}, nil)

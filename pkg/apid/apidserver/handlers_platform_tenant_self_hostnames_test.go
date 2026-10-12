@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,38 +10,39 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantSelfHostnameIsPolicyBoundAndRetrySafe(t *testing.T) {
-	withTenantSurfacesEnabled(t)
-	e := setup(t, api.PlanPro)
+	apidserver.WithTenantSurfacesEnabled(t)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "hostname-self", "Hostname self", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "hostname-self", "Hostname self", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "hostname-self-app", Status: state.AppActive})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "hostname-self-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits, ok := api.LimitsFor(e.acct.Plan)
+	limits, ok := api.LimitsFor((*e.Acct()).Plan)
 	if !ok {
 		t.Fatal("missing account plan limits")
 	}
-	surface, err := e.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
-		AccountID: e.acct.ID, AppID: app.ID, Name: "hostname-self-surface",
+	surface, err := (*e.Store()).CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "hostname-self-surface",
 	}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surface.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenant.ID, surface.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.SetPlatformTenantHostnamePolicy(ctx, e.acct.ID, tenant.ID, []string{"customers.example.com"}, 2); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantHostnamePolicy(ctx, (*e.Acct()).ID, tenant.ID, []string{"customers.example.com"}, 2); err != nil {
 		t.Fatal(err)
 	}
-	tokenResp := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	tokenResp := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "hostname manager", Scopes: []string{api.ScopePlatformTenantHostnamesManage},
 	}, nil)
 	if tokenResp.Code != http.StatusCreated {
@@ -60,7 +61,7 @@ func TestPlatformTenantSelfHostnameIsPolicyBoundAndRetrySafe(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/hostnames", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	first := request(" Store.Customers.Example.COM ")
@@ -85,7 +86,7 @@ func TestPlatformTenantSelfHostnameIsPolicyBoundAndRetrySafe(t *testing.T) {
 	if rejected := request("outside.example.net"); rejected.Code != http.StatusForbidden {
 		t.Fatalf("outside policy status=%d body=%s", rejected.Code, rejected.Body)
 	}
-	readOnlyResp := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	readOnlyResp := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "activation reader", Scopes: []string{api.ScopePlatformTenantActivationRead},
 	}, nil)
 	if readOnlyResp.Code != http.StatusCreated {
@@ -98,7 +99,7 @@ func TestPlatformTenantSelfHostnameIsPolicyBoundAndRetrySafe(t *testing.T) {
 	unauthorized := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/hostnames", bytes.NewReader([]byte(`{"surface_id":"`+surface.ID+`","hostname":"read-only.customers.example.com"}`)))
 	unauthorized.Header.Set("Authorization", "Bearer "+readOnly.Token)
 	unauthorizedRec := httptest.NewRecorder()
-	e.h.ServeHTTP(unauthorizedRec, unauthorized)
+	(*e.H()).ServeHTTP(unauthorizedRec, unauthorized)
 	if unauthorizedRec.Code != http.StatusForbidden {
 		t.Fatalf("read-only token write status=%d body=%s", unauthorizedRec.Code, unauthorizedRec.Body)
 	}

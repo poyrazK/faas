@@ -1128,6 +1128,32 @@ var VCPUPerPlan = map[Plan]int{
 	PlanScale: 4,
 }
 
+// BlockRateLimit is a VM's sustained limit on its writable app-layer drive
+// (ADR-910): Firecracker token buckets on bandwidth and on operations. It
+// keeps one tenant's disk flood from starving its neighbours' I/O; the
+// one-time bursts below keep startup unthrottled.
+type BlockRateLimit struct {
+	BandwidthMBps int
+	IOPS          int
+}
+
+// BlockRateLimitPerPlan is each plan's BlockRateLimit. Every value was
+// measured on the n2 node to keep a neighbour's fdatasync latency at its
+// unloaded p50 (ADR-910).
+var BlockRateLimitPerPlan = map[Plan]BlockRateLimit{
+	PlanFree:  {BandwidthMBps: 50, IOPS: 2000},
+	PlanHobby: {BandwidthMBps: 100, IOPS: 4000},
+	PlanPro:   {BandwidthMBps: 200, IOPS: 8000},
+	PlanScale: {BandwidthMBps: 200, IOPS: 8000},
+}
+
+// BlockRateLimitBurstMB and BlockRateLimitBurstOps are the one-time bursts a
+// VM may use above its BlockRateLimit before the sustained rate applies.
+const (
+	BlockRateLimitBurstMB  = 256
+	BlockRateLimitBurstOps = 20000
+)
+
 // PlanResourceShapeFor returns the canonical joint shape for p. The bool is
 // false for an unknown plan so callers fail closed instead of inheriting a
 // higher-tier topology.
@@ -4457,6 +4483,13 @@ const (
 	// still books BillableRAMMB. See MeasuredChargeMB.
 	MeasuredChargeFloorMB         = 64
 	MeasuredChargeHeadroomPercent = 25
+	// The sample a measured charge starts from is the larger of an
+	// instance's latest resident memory and its p95 over the last
+	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
+	// (ADR-909 proposal 1).
+	MeasuredChargeWindowSeconds = 600
+	MeasuredChargeSampleSeconds = 5
+	MeasuredChargePercentile    = 95
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
@@ -4464,6 +4497,10 @@ const (
 	// measurement may be before admission falls back to reservations.
 	MeasuredAdmissionMaxOvercommitPercent = 200
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
+	// MeasuredEvictionTargetPercent: under measured admission, when a node's
+	// measured memory exceeds its admission ceiling, schedd evicts until it
+	// is back under this share of the ceiling (ADR-909 proposal 3).
+	MeasuredEvictionTargetPercent = 90
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to

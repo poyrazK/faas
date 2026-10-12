@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -17,11 +19,11 @@ func TestPlatformTenantActivityCursorRoundTripAndValidation(t *testing.T) {
 		ID:         pgtype.UUID{Bytes: rowID, Valid: true},
 		ReceivedAt: pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
 	}
-	token, err := encodePlatformTenantActivityCursor(tenantID, appID, 503, time.Hour, now.Add(-time.Hour), now, false, row)
+	token, err := apidserver.EncodePlatformTenantActivityCursor(tenantID, appID, 503, time.Hour, now.Add(-time.Hour), now, false, row)
 	if err != nil {
 		t.Fatalf("encode cursor: %v", err)
 	}
-	got, err := decodePlatformTenantActivityCursor(token)
+	got, err := apidserver.DecodePlatformTenantActivityCursor(token)
 	if err != nil {
 		t.Fatalf("decode cursor: %v", err)
 	}
@@ -30,7 +32,7 @@ func TestPlatformTenantActivityCursorRoundTripAndValidation(t *testing.T) {
 	}
 
 	for _, malformed := range []string{"not-base64", "", "e30"} {
-		if _, err := decodePlatformTenantActivityCursor(malformed); err == nil {
+		if _, err := apidserver.DecodePlatformTenantActivityCursor(malformed); err == nil {
 			t.Errorf("decode malformed cursor %q succeeded", malformed)
 		}
 	}

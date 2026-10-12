@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 644 — verified promotion and gateway resource-policy acceptance.
 

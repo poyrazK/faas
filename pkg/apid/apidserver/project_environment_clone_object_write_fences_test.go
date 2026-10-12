@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -33,13 +35,13 @@ func (s *cloneObjectFenceFailureStore) AbandonProjectEnvironmentCloneObjectWrite
 }
 
 func TestCloneObjectWriteFenceCoordinatorAbandonmentRecovers(t *testing.T) {
-	fixture := newCloneCoordinatorFixture(t, false)
-	srv := fixture.srv
-	account, project, app := state.Account{ID: fixture.lease.Operation.AccountID}, state.Project{ID: fixture.lease.Operation.ProjectID}, fixture.apps[0]
-	store := &cloneObjectFenceFailureStore{PgStore: fixture.store.PgStore}
-	srv.store = store
+	fixture := apidserver.NewCloneCoordinatorFixture(t, false)
+	srv := (*fixture.Srv())
+	account, project, app := state.Account{ID: (*fixture.Lease()).Operation.AccountID}, state.Project{ID: (*fixture.Lease()).Operation.ProjectID}, (*fixture.Apps())[0]
+	store := &cloneObjectFenceFailureStore{PgStore: (*fixture.Store()).PgStore}
+	(*srv.Store()) = store
 	ctx := t.Context()
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, fixture.lease, time.Hour); err != nil {
+	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, (*fixture.Lease()), time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.NewString()
@@ -85,7 +87,7 @@ func TestCloneObjectWriteFenceCoordinatorAbandonmentRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.failBefore = true
-	l, err = srv.processProjectEnvironmentCloneLease(ctx, store, l)
+	l, err = srv.ProcessProjectEnvironmentCloneLease(ctx, store, l)
 	if err == nil {
 		t.Fatal("unavailable abandonment advanced cleanup")
 	}
@@ -93,7 +95,7 @@ func TestCloneObjectWriteFenceCoordinatorAbandonmentRecovers(t *testing.T) {
 		t.Fatalf("failed cleanup released source: %v", err)
 	}
 	store.loseAfter = true
-	l, err = srv.processProjectEnvironmentCloneLease(ctx, store, l)
+	l, err = srv.ProcessProjectEnvironmentCloneLease(ctx, store, l)
 	if err == nil {
 		t.Fatal("lost cleanup acknowledgement was ignored")
 	}
@@ -105,8 +107,8 @@ func TestCloneObjectWriteFenceCoordinatorAbandonmentRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err = srv.processProjectEnvironmentCloneLease(ctx, store, l)
-	if !errors.Is(err, errCloneCompensationUnavailable) || l.Operation.Status != state.CloneOperationCompensating {
+	l, err = srv.ProcessProjectEnvironmentCloneLease(ctx, store, l)
+	if !errors.Is(err, (*apidserver.ErrCloneCompensationUnavailable)) || l.Operation.Status != state.CloneOperationCompensating {
 		t.Fatalf("abandonment marked full cleanup complete: %+v %v", l, err)
 	}
 	if _, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(ctx, stale); !errors.Is(err, state.ErrConflict) {

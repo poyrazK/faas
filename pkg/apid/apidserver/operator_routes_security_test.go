@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,18 +52,18 @@ func TestOperatorRoutesRefuseCustomers(t *testing.T) {
 	if _, err := store.CreateAPIKey(ctx, customer.ID, hash, "customer-admin", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithAdminAllowlist("ops@gregale.dev")
 	sid := uuid.NewString()
 	if _, err := store.CreateSession(ctx, sid, customer.ID, "192.0.2.10", "operator-routes-test"); err != nil {
 		t.Fatal(err)
 	}
-	token, err := srv.sessions.IssueWithSessionAndBindingHashAndStepUp(sid, customer.ID, "", time.Now(), false)
+	token, err := (*srv.Sessions()).IssueWithSessionAndBindingHashAndStepUp(sid, customer.ID, "", time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := &http.Cookie{Name: sessionCookie, Value: token}
-	h := srv.handler()
+	cookie := &http.Cookie{Name: apidserver.SessionCookie, Value: token}
+	h := srv.Handler()
 
 	checked := 0
 	for _, route := range routes {

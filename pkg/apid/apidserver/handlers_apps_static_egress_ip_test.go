@@ -18,7 +18,7 @@
 //   - cross:   unique-index violation → 403 quota
 //   - notify:  pg_notify('app_changed') payload carries the new IP
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,7 +53,7 @@ func staticEgressIPReq(ip string, set bool) api.SetAppStaticEgressIPRequest {
 // passes. Tests that exercise the happy-path PUT call this helper
 // before the request; tests that exercise the 404 not-provisioned
 // path skip it.
-func mustSeedProvisionedStaticEgressIPs(t *testing.T, e testEnv, ips ...string) {
+func mustSeedProvisionedStaticEgressIPs(t *testing.T, e apidserver.TestEnv, ips ...string) {
 	t.Helper()
 	parsed := make([]netip.Addr, 0, len(ips))
 	for _, ip := range ips {
@@ -62,8 +63,8 @@ func mustSeedProvisionedStaticEgressIPs(t *testing.T, e testEnv, ips ...string) 
 		}
 		parsed = append(parsed, a)
 	}
-	mem := e.store
-	if err := mem.ReplaceProvisionedStaticEgressIPs(context.Background(), e.acct.ID, parsed); err != nil {
+	mem := (*e.Store())
+	if err := mem.ReplaceProvisionedStaticEgressIPs(context.Background(), (*e.Acct()).ID, parsed); err != nil {
 		t.Fatalf("seed operator bundle: %v", err)
 	}
 }
@@ -75,15 +76,15 @@ func mustSeedProvisionedStaticEgressIPs(t *testing.T, e testEnv, ips ...string) 
 // is invisible until the operator flips the flag).
 func TestStaticEgressIP_FlagOffBlocksAllHandlers(t *testing.T) {
 	// Do NOT call withStaticEgressIPEnabled.
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "any-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "any-app")
 
 	for _, verb := range []string{"GET", "PUT", "DELETE"} {
 		var body any
 		if verb == "PUT" {
 			body = staticEgressIPReq("203.0.113.42", true)
 		}
-		rec := e.do(t, verb, "/v1/apps/any-app/static-egress-ip", body, nil)
+		rec := e.Do(t, verb, "/v1/apps/any-app/static-egress-ip", body, nil)
 		if rec.Code != http.StatusPaymentRequired {
 			t.Errorf("%s flag-off status = %d, want 402; body=%s", verb, rec.Code, rec.Body.String())
 		}
@@ -95,10 +96,10 @@ func TestStaticEgressIP_FlagOffBlocksAllHandlers(t *testing.T) {
 // plan_cap=1, plan_allowed=true.
 func TestStaticEgressIP_GetHappyPath(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "read-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "read-app")
 
-	rec := e.do(t, "GET", "/v1/apps/read-app/static-egress-ip", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/read-app/static-egress-ip", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -126,10 +127,10 @@ func TestStaticEgressIP_GetHappyPath(t *testing.T) {
 // shape so the dashboard can render "upgrade to Scale".
 func TestStaticEgressIP_GetFreePlanIsNotAllowed(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "free-app")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "free-app")
 
-	rec := e.do(t, "GET", "/v1/apps/free-app/static-egress-ip", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/free-app/static-egress-ip", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -150,10 +151,10 @@ func TestStaticEgressIP_GetFreePlanIsNotAllowed(t *testing.T) {
 // plan_static_egress_ip_not_allowed.
 func TestStaticEgressIP_PutFreePlanBlocks(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "free-write-app")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "free-write-app")
 
-	rec := e.do(t, "PUT", "/v1/apps/free-write-app/static-egress-ip",
+	rec := e.Do(t, "PUT", "/v1/apps/free-write-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("PUT Free status = %d, want 402; body=%s", rec.Code, rec.Body.String())
@@ -168,11 +169,11 @@ func TestStaticEgressIP_PutFreePlanBlocks(t *testing.T) {
 // the canonical IP and a non-nil SetAt.
 func TestStaticEgressIP_PutScaleAcceptedRoundTrips(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "scale-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "scale-app")
 	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
 
-	rec := e.do(t, "PUT", "/v1/apps/scale-app/static-egress-ip",
+	rec := e.Do(t, "PUT", "/v1/apps/scale-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT Scale status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -189,7 +190,7 @@ func TestStaticEgressIP_PutScaleAcceptedRoundTrips(t *testing.T) {
 	}
 
 	// GET round-trip.
-	rec = e.do(t, "GET", "/v1/apps/scale-app/static-egress-ip", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/scale-app/static-egress-ip", nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode GET: %v", err)
 	}
@@ -204,8 +205,8 @@ func TestStaticEgressIP_PutScaleAcceptedRoundTrips(t *testing.T) {
 // app_static_egress_ip_invalid code, BEFORE the column write.
 func TestStaticEgressIP_PutRejectsBadIPs(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "bad-ip-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "bad-ip-app")
 
 	cases := []struct {
 		name string
@@ -224,7 +225,7 @@ func TestStaticEgressIP_PutRejectsBadIPs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := e.do(t, "PUT", "/v1/apps/bad-ip-app/static-egress-ip",
+			rec := e.Do(t, "PUT", "/v1/apps/bad-ip-app/static-egress-ip",
 				staticEgressIPReq(tc.ip, true), nil)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("PUT %s status = %d, want 400; body=%s", tc.name, rec.Code, rec.Body.String())
@@ -244,13 +245,13 @@ func TestStaticEgressIP_PutRejectsBadIPs(t *testing.T) {
 // behaviour is exercised end-to-end in migrations/00325_...
 func TestStaticEgressIP_CrossAppSameAccountQuota(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanScale)
-	mustSeedApp(t, e, "first-app")
-	mustSeedApp(t, e, "second-app")
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "first-app")
+	apidserver.MustSeedApp(t, e, "second-app")
 	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
 
 	// First app: pin 203.0.113.42.
-	rec := e.do(t, "PUT", "/v1/apps/first-app/static-egress-ip",
+	rec := e.Do(t, "PUT", "/v1/apps/first-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first PUT status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -260,7 +261,7 @@ func TestStaticEgressIP_CrossAppSameAccountQuota(t *testing.T) {
 	// mirrors the on-disk unique-index conflict surface
 	// (see memstore.go cross-app check; on pgstore this is
 	// apps_static_egress_ip_key).
-	rec = e.do(t, "PUT", "/v1/apps/second-app/static-egress-ip",
+	rec = e.Do(t, "PUT", "/v1/apps/second-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code == http.StatusOK {
 		t.Fatalf("second PUT status = 200, want 403/409; body=%s", rec.Body.String())
@@ -275,24 +276,24 @@ func TestStaticEgressIP_CrossAppSameAccountQuota(t *testing.T) {
 // No Content, follow-up GET returns ip=null, set_at=null.
 func TestStaticEgressIP_DeleteClears(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "delete-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "delete-app")
 	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
 
 	// Pin first.
-	rec := e.do(t, "PUT", "/v1/apps/delete-app/static-egress-ip",
+	rec := e.Do(t, "PUT", "/v1/apps/delete-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("seed PUT status = %d, want 200", rec.Code)
 	}
 
-	rec = e.do(t, "DELETE", "/v1/apps/delete-app/static-egress-ip", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/delete-app/static-egress-ip", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 
 	// GET confirms the clear.
-	rec = e.do(t, "GET", "/v1/apps/delete-app/static-egress-ip", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/delete-app/static-egress-ip", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET-after-delete status = %d, want 200", rec.Code)
 	}
@@ -316,20 +317,19 @@ func TestStaticEgressIP_DeleteClears(t *testing.T) {
 // shape (kind, app_id, ip, clear).
 func TestStaticEgressIP_PutEmitsAppChanged(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e, notif := newTestServerWithCapturingNotifier(t, api.PlanScale)
-	appID := mustSeedApp(t, e, "notify-app")
+	e, notif := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanScale)
+	appID := apidserver.MustSeedApp(t, e, "notify-app")
 	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
 
-	rec := e.do(t, "PUT", "/v1/apps/notify-app/static-egress-ip",
+	rec := e.Do(t, "PUT", "/v1/apps/notify-app/static-egress-ip",
 		staticEgressIPReq("203.0.113.42", true), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-
-	notif.mu.Lock()
-	defer notif.mu.Unlock()
+	(*notif.Mu()).Lock()
+	defer (*notif.Mu()).Unlock()
 	var found bool
-	for _, n := range notif.emitted {
+	for _, n := range *notif.Emitted() {
 		if n.Channel != "app_changed" {
 			continue
 		}
@@ -348,7 +348,7 @@ func TestStaticEgressIP_PutEmitsAppChanged(t *testing.T) {
 		found = true
 	}
 	if !found {
-		t.Errorf("no app_changed notify for static_egress_ip; emissions=%+v", notif.emitted)
+		t.Errorf("no app_changed notify for static_egress_ip; emissions=%+v", (*notif.Emitted()))
 	}
 }
 
@@ -398,11 +398,11 @@ func TestStaticEgressIP_ValidCustomerEgressIPTableDriven(t *testing.T) {
 // handler side.
 func TestStaticEgressIP_AppUpdateSanity(t *testing.T) {
 	withStaticEgressIPEnabled(t)
-	e := setup(t, api.PlanScale)
-	appID := mustSeedApp(t, e, "sanity-app")
+	e := apidserver.Setup(t, api.PlanScale)
+	appID := apidserver.MustSeedApp(t, e, "sanity-app")
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if _, err := e.store.UpdateApp(context.Background(), appID, state.UpdateAppParams{
+	if _, err := (*e.Store()).UpdateApp(context.Background(), appID, state.UpdateAppParams{
 		StaticEgressIP:    &ip,
 		SetStaticEgressIP: true,
 	}); err != nil {
@@ -410,7 +410,7 @@ func TestStaticEgressIP_AppUpdateSanity(t *testing.T) {
 	}
 
 	// GET via the handler.
-	rec := e.do(t, "GET", "/v1/apps/sanity-app/static-egress-ip", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/sanity-app/static-egress-ip", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200", rec.Code)
 	}

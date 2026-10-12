@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // scan_service_quota_test.go — unit tests for the ADR-124
 // can_apply rescue signal (evaluateQuotaGate). The three failure
@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -63,7 +64,7 @@ func makeWL(name, schedule string) reposcan.Workload {
 // path's ErrPlanLimitApps.
 func TestEvaluateQuotaGate_AppsOver(t *testing.T) {
 	workloads := []reposcan.Workload{makeWL("new-app", "")}
-	canApply, notAllowed, reasons, _ := evaluateQuotaGate(workloads, freeLimits(), 4, 0)
+	canApply, notAllowed, reasons, _ := apidserver.EvaluateQuotaGate(workloads, freeLimits(), 4, 0)
 	if canApply {
 		t.Fatalf("Free plan + 4 apps + 1 workload: got canApply=true, want false")
 	}
@@ -88,7 +89,7 @@ func TestEvaluateQuotaGate_AppsOver(t *testing.T) {
 // be set together.
 func TestEvaluateQuotaGate_CronsNotAllowed(t *testing.T) {
 	workloads := []reposcan.Workload{makeWL("daily-job", "0 0 * * *")}
-	canApply, notAllowed, reasons, cronCount := evaluateQuotaGate(workloads, freeLimits(), 0, 0)
+	canApply, notAllowed, reasons, cronCount := apidserver.EvaluateQuotaGate(workloads, freeLimits(), 0, 0)
 	if canApply {
 		t.Fatalf("Free plan + cron workload: got canApply=true, want false")
 	}
@@ -125,7 +126,7 @@ func TestEvaluateQuotaGate_CountsEveryDiscoveredSchedule(t *testing.T) {
 			{Expression: "0 12 * * *", Enabled: false},
 		},
 	}}
-	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
+	_, _, _, cronCount := apidserver.EvaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
 	if cronCount != 2 {
 		t.Fatalf("cronCount = %d, want 2", cronCount)
 	}
@@ -140,7 +141,7 @@ func TestEvaluateQuotaGate_RejectsPerAppScheduleOverflow(t *testing.T) {
 		{Expression: "*/5 * * * *", Enabled: true},
 		{Expression: "0 12 * * *", Enabled: true},
 	}}}
-	canApply, _, reasons, _ := evaluateQuotaGate(workloads, limits, 0, 0)
+	canApply, _, reasons, _ := apidserver.EvaluateQuotaGate(workloads, limits, 0, 0)
 	if canApply || len(reasons) != 1 || !strings.Contains(reasons[0], "per-app") {
 		t.Fatalf("canApply=%v reasons=%v", canApply, reasons)
 	}
@@ -149,11 +150,11 @@ func TestEvaluateQuotaGate_RejectsPerAppScheduleOverflow(t *testing.T) {
 func TestValidateScannedSchedules_UsesSchedulerGrammar(t *testing.T) {
 	t.Parallel()
 	valid := []reposcan.Workload{{Name: "job", Schedule: "*/5 * * * *"}}
-	if err := validateScannedSchedules(valid); err != nil {
+	if err := apidserver.ValidateScannedSchedules(valid); err != nil {
 		t.Fatalf("valid schedule: %v", err)
 	}
 	invalid := []reposcan.Workload{{Name: "job", Schedule: "definitely-not-a-cron"}}
-	if err := validateScannedSchedules(invalid); err == nil || !strings.Contains(err.Error(), "job") {
+	if err := apidserver.ValidateScannedSchedules(invalid); err == nil || !strings.Contains(err.Error(), "job") {
 		t.Fatalf("invalid schedule err = %v, want workload-specific failure", err)
 	}
 
@@ -164,14 +165,14 @@ func TestValidateScannedSchedules_UsesSchedulerGrammar(t *testing.T) {
 			{Expression: "0 * * * *", Enabled: false},
 		},
 	}}
-	if err := validateScannedSchedules(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
+	if err := apidserver.ValidateScannedSchedules(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate schedule err = %v, want duplicate identity failure", err)
 	}
 }
 
 func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T) {
 	t.Parallel()
-	got := projectWorkloadCrons([]reposcan.Workload{{
+	got := apidserver.ProjectWorkloadCrons([]reposcan.Workload{{
 		Name: "cleanup",
 		Schedules: []reposcan.CronSchedule{
 			{Expression: "*/5 * * * *", Enabled: true},
@@ -192,7 +193,7 @@ func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T)
 // here (Hobby allows crons; this is a quota, not a hard-block).
 func TestEvaluateQuotaGate_CronsOver(t *testing.T) {
 	workloads := []reposcan.Workload{makeWL("extra-cron", "*/5 * * * *")}
-	canApply, notAllowed, reasons, _ := evaluateQuotaGate(workloads, hobbyLimits(), 0, 10)
+	canApply, notAllowed, reasons, _ := apidserver.EvaluateQuotaGate(workloads, hobbyLimits(), 0, 10)
 	if canApply {
 		t.Fatalf("Hobby plan + 10 crons + 1 cron workload: got canApply=true, want false")
 	}
@@ -209,7 +210,7 @@ func TestEvaluateQuotaGate_CronsOver(t *testing.T) {
 // empty. omitempty on the wire drops CanApplyReasons on this path.
 func TestEvaluateQuotaGate_AllPass(t *testing.T) {
 	workloads := []reposcan.Workload{makeWL("solo", "")}
-	canApply, notAllowed, reasons, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
+	canApply, notAllowed, reasons, cronCount := apidserver.EvaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
 	if !canApply {
 		t.Fatalf("Hobby plan + 0 + 1 workload + 0 crons: got canApply=false, want true")
 	}
@@ -255,7 +256,7 @@ func TestEvaluateQuotaGate_RescueViaExclude(t *testing.T) {
 		makeWL("d", ""),
 		makeWL("e", ""),
 	}
-	preCanApply, preNotAllowed, _, _ := evaluateQuotaGate(preFilter, limits, observedApps, 0)
+	preCanApply, preNotAllowed, _, _ := apidserver.EvaluateQuotaGate(preFilter, limits, observedApps, 0)
 	if preCanApply {
 		t.Fatalf("pre-exclude: 4 + 5 = 9 > 1: got preCanApply=true, want false (rescue invariant requires the gate start blocked)")
 	}
@@ -286,7 +287,7 @@ func TestEvaluateQuotaGate_RescueViaExclude(t *testing.T) {
 	_ = rescueLimits // difference at a glance
 
 	postFilter := []reposcan.Workload{makeWL("a", "")} // --exclude=b,c,d,e
-	canApply, notAllowed, reasons, _ := evaluateQuotaGate(postFilter, rescueLimits, 0, 0)
+	canApply, notAllowed, reasons, _ := apidserver.EvaluateQuotaGate(postFilter, rescueLimits, 0, 0)
 	if !canApply {
 		t.Fatalf("post-exclude: 0 + 1 = 1 ≤ 1: got canApply=false, want true (rescue should unblock)")
 	}
@@ -308,13 +309,13 @@ func TestPlanCanApplyReasons(t *testing.T) {
 	pre := []string{"apps over plan limit", "duplicate workload slug"}
 	post := []string{"post-exclude blocker"}
 
-	if got := planCanApplyReasons(true, pre, nil); !reflect.DeepEqual(got, pre) {
+	if got := apidserver.PlanCanApplyReasons(true, pre, nil); !reflect.DeepEqual(got, pre) {
 		t.Fatalf("rescued reasons = %#v, want pre-exclude reasons %#v", got, pre)
 	}
-	if got := planCanApplyReasons(false, pre, post); !reflect.DeepEqual(got, post) {
+	if got := apidserver.PlanCanApplyReasons(false, pre, post); !reflect.DeepEqual(got, post) {
 		t.Fatalf("blocked reasons = %#v, want post-exclude reasons %#v", got, post)
 	}
-	if got := planCanApplyReasons(false, pre, nil); len(got) != 0 {
+	if got := apidserver.PlanCanApplyReasons(false, pre, nil); len(got) != 0 {
 		t.Fatalf("applicable reasons = %#v, want empty", got)
 	}
 }
@@ -334,8 +335,8 @@ func TestEvaluateQuotaGate_NoRescueOnStillBlocked(t *testing.T) {
 
 	// The --exclude on an unrelated slug leaves the workload
 	// set identical (here we only have one anyway).
-	preCanApply, _, preReasons, _ := evaluateQuotaGate(workloads, limits, 4, 0)
-	postCanApply, _, postReasons, _ := evaluateQuotaGate(workloads, limits, 4, 0)
+	preCanApply, _, preReasons, _ := apidserver.EvaluateQuotaGate(workloads, limits, 4, 0)
+	postCanApply, _, postReasons, _ := apidserver.EvaluateQuotaGate(workloads, limits, 4, 0)
 	if preCanApply || postCanApply {
 		t.Fatalf("baseline: got preCanApply=%v postCanApply=%v, want both false (4+1 > 1)", preCanApply, postCanApply)
 	}
@@ -360,7 +361,7 @@ func TestEvaluateQuotaGate_CronCountDerivation(t *testing.T) {
 		makeWL("c", ""),             // not a cron
 		makeWL("d", "*/15 * * * *"), // cron
 	}
-	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
+	_, _, _, cronCount := apidserver.EvaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
 	if cronCount != 2 {
 		t.Errorf("cronCount: got %d, want 2 (workloads with Schedule != \"\" only)", cronCount)
 	}
@@ -368,22 +369,22 @@ func TestEvaluateQuotaGate_CronCountDerivation(t *testing.T) {
 
 func TestProjectedQuotaGateAllowsExactLimitReapplyAndReplacement(t *testing.T) {
 	limits := api.Limits{DeployedApps: 2, CronLimitPerAccount: 2, CronLimitPerApp: 2}
-	crons := []planCron{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
-	canApply, notAllowed, reasons, cronCount := evaluateProjectedQuotaGate(crons, limits, 2, 2)
+	crons := []apidserver.PlanCron{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
+	canApply, notAllowed, reasons, cronCount := apidserver.EvaluateProjectedQuotaGate(crons, limits, 2, 2)
 	if !canApply || notAllowed || len(reasons) != 0 || cronCount != 1 {
 		t.Fatalf("exact-limit reapply = canApply %v notAllowed %v reasons %v crons %d", canApply, notAllowed, reasons, cronCount)
 	}
-	partition := affectedPartition{
+	partition := apidserver.AffectedPartition{
 		Removed: []string{"old-worker"},
 		WillDeploy: []api.PlanAffectedApp{
 			{Slug: "api", Action: "update"},
 			{Slug: "new-worker", Action: "create"},
 		},
 	}
-	if got := projectedAppCount(2, partition); got != 2 {
+	if got := apidserver.ProjectedAppCount(2, partition); got != 2 {
 		t.Fatalf("one-for-one projected apps = %d, want 2", got)
 	}
-	canApply, _, reasons, _ = evaluateProjectedQuotaGate(crons, limits, 3, 2)
+	canApply, _, reasons, _ = apidserver.EvaluateProjectedQuotaGate(crons, limits, 3, 2)
 	if canApply || len(reasons) == 0 {
 		t.Fatalf("real net addition should be blocked: %v %v", canApply, reasons)
 	}
@@ -398,8 +399,8 @@ func TestProjectCronsWithPreservedRetainsOnlyUnselectedSiblings(t *testing.T) {
 		"api-id":    {{AppID: "api-id", Schedule: "0 * * * *", Path: "/old", Enabled: true}},
 		"worker-id": {{AppID: "worker-id", Schedule: "*/5 * * * *", Path: "/work", Enabled: true}},
 	}
-	desired := []planCron{{WorkloadName: "api", Schedule: "30 * * * *", Path: "/new", Enabled: true}}
-	got := projectCronsWithPreserved(desired, projectApps, inventory, func(name string) bool { return name == "worker" })
+	desired := []apidserver.PlanCron{{WorkloadName: "api", Schedule: "30 * * * *", Path: "/new", Enabled: true}}
+	got := apidserver.ProjectCronsWithPreserved(desired, projectApps, inventory, func(name string) bool { return name == "worker" })
 	if len(got) != 2 || got[0].WorkloadName != "api" || got[0].Schedule != "30 * * * *" ||
 		got[1].WorkloadName != "worker" || got[1].Schedule != "*/5 * * * *" {
 		t.Fatalf("preserved cron model = %#v", got)

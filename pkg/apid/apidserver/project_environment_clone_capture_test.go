@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,12 +21,12 @@ func TestCloneConfigurationCaptureInventoryIsFrozenAndDeterministic(t *testing.T
 			SourceDeploymentID: name + "-deployment", SourceHash: hash, SourceSettingsHash: hash, SourceProjectConfigHash: hash,
 			SourceValuesHash: hash, SourceBindingsHash: hash, SourcePoliciesHash: hash})
 	}
-	resources, err := capturedCloneConfigurationResources(op, capture, views)
+	resources, err := apidserver.CapturedCloneConfigurationResources(op, capture, views)
 	if err != nil || len(resources) != 14 || views[0].WorkloadSlug != "jobs" {
 		t.Fatalf("frozen inventory: %+v, %v", resources, err)
 	}
 	reversed := []state.ProjectEnvironmentCloneWorkload{views[1], views[0]}
-	replayed, err := capturedCloneConfigurationResources(op, capture, reversed)
+	replayed, err := apidserver.CapturedCloneConfigurationResources(op, capture, reversed)
 	if err != nil || !reflect.DeepEqual(replayed, resources) {
 		t.Fatalf("reader order changed capture: %+v, %v", replayed, err)
 	}
@@ -66,7 +67,7 @@ func TestCloneConfigurationCaptureInventoryIsFrozenAndDeterministic(t *testing.T
 			case "prepared_target":
 				bad[0].TargetDeploymentID = "old-target"
 			}
-			if _, err := capturedCloneConfigurationResources(op, root, bad); !errors.Is(err, state.ErrConflict) {
+			if _, err := apidserver.CapturedCloneConfigurationResources(op, root, bad); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("accepted %s: %v", fault, err)
 			}
 		})

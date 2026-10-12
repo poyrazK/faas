@@ -8,7 +8,7 @@
 //   - expired entry is dropped on lookup
 //   - sweepExpiredCacheEntries removes TTL-expired files
 //   - FAAS_PLAN_CACHE_ROOT override is honoured
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/base64"
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // withPlanCacheRoot sets a per-test cache root and resets the
@@ -34,9 +35,9 @@ func withPlanCacheRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("FAAS_PLAN_CACHE_ROOT", dir)
-	planCacheRootOnce = sync.Once{}
-	planCacheRoot = ""
-	planCacheRootErr = nil
+	(*apidserver.PlanCacheRootOnce) = sync.Once{}
+	(*apidserver.PlanCacheRoot) = ""
+	(*apidserver.PlanCacheRootErr) = nil
 	return dir
 }
 
@@ -62,10 +63,10 @@ func TestStoreAndLookupPlanCache_RoundTrip(t *testing.T) {
 	src := writeSource(t, []byte("hello-cache"))
 	sha := "abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"
 	const acct = "acct-1"
-	if err := storePlanCache(sha, src, acct); err != nil {
+	if err := apidserver.StorePlanCache(sha, src, acct); err != nil {
 		t.Fatalf("storePlanCache: %v", err)
 	}
-	got, err := lookupPlanCache(sha, acct)
+	got, err := apidserver.LookupPlanCache(sha, acct)
 	if err != nil {
 		t.Fatalf("lookupPlanCache: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestStoreAndLookupPlanCache_RoundTrip(t *testing.T) {
 
 func TestLookupPlanCache_MissReturnsErrNotExist(t *testing.T) {
 	withPlanCacheRoot(t)
-	_, err := lookupPlanCache("00", "acct")
+	_, err := apidserver.LookupPlanCache("00", "acct")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v; want os.ErrNotExist", err)
 	}
@@ -90,11 +91,11 @@ func TestLookupPlanCache_CrossAccountReturnsErrNotExist(t *testing.T) {
 	withPlanCacheRoot(t)
 	src := writeSource(t, []byte("x"))
 	sha := "deadbeef"
-	if err := storePlanCache(sha, src, "acct-A"); err != nil {
+	if err := apidserver.StorePlanCache(sha, src, "acct-A"); err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	// Same SHA, different account → must NOT leak the path.
-	_, err := lookupPlanCache(sha, "acct-B")
+	_, err := apidserver.LookupPlanCache(sha, "acct-B")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cross-account err = %v; want os.ErrNotExist (no leak)", err)
 	}
@@ -104,17 +105,17 @@ func TestLookupPlanCache_ExpiredDropsInMemoryEntry(t *testing.T) {
 	withPlanCacheRoot(t)
 	src := writeSource(t, []byte("x"))
 	sha := "feedface"
-	if err := storePlanCache(sha, src, "acct"); err != nil {
+	if err := apidserver.StorePlanCache(sha, src, "acct"); err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	// Force-expire the in-memory entry by mutating expiresAt.
-	v, ok := planSourceCache.Load(sha)
+	v, ok := (*apidserver.PlanSourceCache).Load(sha)
 	if !ok {
 		t.Fatalf("entry not stored")
 	}
-	cs := v.(*cachedSource)
-	cs.expiresAt = time.Now().Add(-1 * time.Minute)
-	_, err := lookupPlanCache(sha, "acct")
+	cs := v.(*apidserver.CachedSource)
+	(*cs.ExpiresAt()) = time.Now().Add(-1 * time.Minute)
+	_, err := apidserver.LookupPlanCache(sha, "acct")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v; want os.ErrNotExist after expiry", err)
 	}
@@ -127,11 +128,11 @@ func TestSweepExpiredCacheEntries_RemovesOldFiles(t *testing.T) {
 	if err := os.WriteFile(old, []byte("old"), 0o640); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	past := time.Now().Add(-2 * planCacheTTL)
+	past := time.Now().Add(-2 * apidserver.PlanCacheTTL)
 	if err := os.Chtimes(old, past, past); err != nil {
 		t.Fatalf("Chtimes: %v", err)
 	}
-	if err := sweepExpiredCacheEntries(root); err != nil {
+	if err := apidserver.SweepExpiredCacheEntries(root); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
@@ -140,7 +141,7 @@ func TestSweepExpiredCacheEntries_RemovesOldFiles(t *testing.T) {
 }
 
 func TestDecodePlanToken_RoundTrip(t *testing.T) {
-	pt := planTokenWire{
+	pt := apidserver.PlanTokenWire{
 		Hash:             "abcd",
 		AccountID:        "acct-1",
 		Slug:             "demo",
@@ -154,7 +155,7 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 	}
 	b, _ := json.Marshal(pt)
 	encoded := base64.StdEncoding.EncodeToString(b)
-	got, err := decodePlanToken(encoded)
+	got, err := apidserver.DecodePlanToken(encoded)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestValidProjectRepoFullName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := validProjectRepoFullName(tt.repo); got != tt.valid {
+			if got := apidserver.ValidProjectRepoFullName(tt.repo); got != tt.valid {
 				t.Fatalf("validProjectRepoFullName(%q) = %v; want %v", tt.repo, got, tt.valid)
 			}
 		})
@@ -189,7 +190,7 @@ func TestValidProjectRepoFullName(t *testing.T) {
 }
 
 func TestDecodePlanToken_RejectsEmpty(t *testing.T) {
-	if _, err := decodePlanToken(""); err == nil {
+	if _, err := apidserver.DecodePlanToken(""); err == nil {
 		t.Fatal("empty plan_token accepted; want error")
 	}
 }
@@ -197,10 +198,10 @@ func TestDecodePlanToken_RejectsEmpty(t *testing.T) {
 func TestDecodePlanToken_RejectsMissingFields(t *testing.T) {
 	// Empty Hash + AccountID — base64 + json unmarshal succeeds
 	// but the required-field guard must trip.
-	pt := planTokenWire{TSUnix: 1}
+	pt := apidserver.PlanTokenWire{TSUnix: 1}
 	b, _ := json.Marshal(pt)
 	encoded := base64.StdEncoding.EncodeToString(b)
-	if _, err := decodePlanToken(encoded); err == nil {
+	if _, err := apidserver.DecodePlanToken(encoded); err == nil {
 		t.Fatal("missing-field plan_token accepted; want error")
 	}
 }
@@ -208,7 +209,7 @@ func TestDecodePlanToken_RejectsMissingFields(t *testing.T) {
 func TestBuildCachedSourceRequest_EmitsMultipart(t *testing.T) {
 	withPlanCacheRoot(t)
 	src := writeSource(t, []byte("source-bytes"))
-	req, err := buildCachedSourceRequest(src, "demo", []string{"alpha", "Beta"})
+	req, err := apidserver.BuildCachedSourceRequest(src, "demo", []string{"alpha", "Beta"})
 	if err != nil {
 		t.Fatalf("buildCachedSourceRequest: %v", err)
 	}

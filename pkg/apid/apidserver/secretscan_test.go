@@ -3,7 +3,7 @@
 // that breaks file-handling (FD leak, binary false-positives) opens
 // the box to "too many open files" outages. Tests run without
 // Postgres — the scan is filesystem-only.
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -17,13 +17,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestScanExtractedTreeSecrets_CleanTree pins the no-findings fast
 // path on an empty customer tree (the most common path in CI).
 func TestScanExtractedTreeSecrets_CleanTree(t *testing.T) {
 	dir := t.TempDir()
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestScanExtractedTreeSecrets_EnvFileHit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env.production"), []byte(env), 0o600); err != nil {
 		t.Fatalf("seed .env.production: %v", err)
 	}
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestScanExtractedTreeSecrets_PEMHit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "keys.pem"), []byte(pem), 0o600); err != nil {
 		t.Fatalf("seed keys.pem: %v", err)
 	}
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestScanExtractedTreeSecrets_PNGSkipped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "logo.png"), png, 0o600); err != nil {
 		t.Fatalf("seed logo.png: %v", err)
 	}
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestScanSourceTarballSecrets_RejectsEnvSecret(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.tar.gz")
 	writeSecretScanTarGz(t, sourcePath, ".env", "STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n")
 
-	prob := scanSourceTarballSecrets(sourcePath, api.MustLimitsFor(api.PlanFree))
+	prob := apidserver.ScanSourceTarballSecrets(sourcePath, api.MustLimitsFor(api.PlanFree))
 	if prob == nil {
 		t.Fatal("secret-bearing tarball was accepted")
 	}
@@ -146,7 +147,7 @@ func TestScanExtractedTreeSecrets_ScansBuildDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(buildDir, ".env"), []byte("STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n"), 0o600); err != nil {
 		t.Fatalf("seed build secret: %v", err)
 	}
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestScanExtractedTreeSecrets_NoFDLeak(t *testing.T) {
 		}
 	}
 	before := countOpenFDs(t)
-	findings, err := scanExtractedTreeSecrets(dir)
+	findings, err := apidserver.ScanExtractedTreeSecrets(dir)
 	if err != nil {
 		t.Fatalf("scanExtractedTreeSecrets: %v", err)
 	}

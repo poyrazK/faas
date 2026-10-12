@@ -11,7 +11,7 @@
 // sans metrics path, so tests can run without a Prometheus
 // registry). This file opts into the metrics path explicitly.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -67,11 +68,11 @@ func (e failingAppendError) Error() string { return e.msg }
 func TestAuditLifecycle_StartFlushClose(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
-	defer srv.audit.Close()
+	defer (*srv.Audit()).Close()
 
-	h := srv.handler()
+	h := srv.Handler()
 	form := url.Values{"email": {"nobody@example.com"}, "password": {"any-password-1234567890"}}
 	req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -102,7 +103,7 @@ func TestAuditLifecycle_StartFlushClose(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, e := range events {
-			if e.Kind == KindAuthLoginFailed {
+			if e.Kind == apidserver.KindAuthLoginFailed {
 				// The row landed through the full Start ->
 				// flusher -> AppendEvent pipeline.
 				return
@@ -122,9 +123,9 @@ func TestAuditLifecycle_StartFlushClose(t *testing.T) {
 func TestAuditLifecycle_CloseDrainsInFlightRows(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("apid")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
-	h := srv.handler()
+	h := srv.Handler()
 
 	// Drive several failed-login attempts through the full
 	// pipeline so the channel has buffered rows at Close time.
@@ -143,10 +144,11 @@ func TestAuditLifecycle_CloseDrainsInFlightRows(t *testing.T) {
 			t.Fatalf("/login status = %d, want 401", rec.Code)
 		}
 	}
+	(*
 
 	// Close drains the channel. After Close returns, every row
 	// must have landed in the events table.
-	srv.audit.Close()
+	srv.Audit()).Close()
 
 	events, err := store.ListEvents(context.Background(), "", 100)
 	if err != nil {
@@ -154,7 +156,7 @@ func TestAuditLifecycle_CloseDrainsInFlightRows(t *testing.T) {
 	}
 	var got int
 	for _, e := range events {
-		if e.Kind == KindAuthLoginFailed {
+		if e.Kind == apidserver.KindAuthLoginFailed {
 			got++
 		}
 	}
@@ -174,11 +176,11 @@ func TestAuditLifecycle_CloseDrainsInFlightRows(t *testing.T) {
 func TestAuditLifecycle_FailingStoreIncrementsDedicatedCounter(t *testing.T) {
 	store := failingAppendStore{Store: state.NewMemStore()}
 	ops := wire.NewOpsMetrics("apid")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
-	defer srv.audit.Close()
+	defer (*srv.Audit()).Close()
 
-	h := srv.handler()
+	h := srv.Handler()
 	form := url.Values{"email": {"victim@example.com"}, "password": {"any-password-1234567890"}}
 	req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

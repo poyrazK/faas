@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	created := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "shielded"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	created := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "shielded"}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", created.Code, created.Body.String())
 	}
@@ -19,7 +20,7 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &app); err != nil {
 		t.Fatal(err)
 	}
-	installPromFixture(t, &e, func(query string) string {
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		if !strings.Contains(query, `[1h]`) || !strings.Contains(query, app.ID) {
 			t.Errorf("unexpected query: %s", query)
 		}
@@ -60,7 +61,7 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 				{"metric":{"kind":"throttle","status":"429"},"value":[0,"9"]}]}}`
 		}
 	})
-	rec := e.do(t, "GET", "/v1/apps/shielded/edge-protection", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("edge-protection = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -87,17 +88,17 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 		len(out.WAF.TopRules) != 2 || out.WAF.TopRules[0] != (api.EdgeProtectionCount{Name: "942100", Count: 5}) {
 		t.Fatalf("waf breakdown = %+v, want largest first", out.WAF)
 	}
-	if rec := e.do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
+	if rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)
 	}
 }
 
 func TestAppEdgeProtectionDegradedWithoutPrometheus(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "shielded"}, nil); rec.Code != http.StatusCreated {
+	e := apidserver.Setup(t, api.PlanPro)
+	if rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "shielded"}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d", rec.Code)
 	}
-	rec := e.do(t, "GET", "/v1/apps/shielded/edge-protection", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection", nil, nil)
 	var out api.EdgeProtectionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Source, "degraded:") || out.Rejections == nil || out.WAF.TopRules == nil {
 		t.Fatalf("degraded summary = %d %+v (err=%v)", rec.Code, out, err)
