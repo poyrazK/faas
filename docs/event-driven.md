@@ -377,6 +377,12 @@ idempotent. Gregale does not yet provide `ctx.sleep()` or year-long
 code-as-workflow executions. Its existing short-lived `ctx.waitUntil()`
 post-response tail is separate from durable `wait_for_condition` checks.
 
+Each async invocation attempt, including any wake it triggers, must answer
+within 30 seconds (`api.GatewaySynthDispatchTimeout`). A longer attempt is
+recorded as a timeout ("the invocation attempt exceeded the 30s dispatch
+limit") and retried under the invocation's retry policy, so work that needs
+longer belongs in a job.
+
 ```bash
 gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
