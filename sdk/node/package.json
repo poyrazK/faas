@@ -85,6 +85,9 @@
     "test:operations-starter": "npm run build && node --test test/operations-starter.test.mjs",
     "test:operations-starter-browser": "npm run build && node --test --test-concurrency=1 test/operations-starter-browser.test.mjs"
   },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "0.3.31"
+  },
   "devDependencies": {
     "@types/node": "22.10.0",
     "openapi-typescript-codegen": "0.31.0",
