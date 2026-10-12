@@ -1086,7 +1086,7 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 ### 6.2 Invariants (test these, they are the product)
 
 1. At most `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of one app in {WAKING, COLD_BOOTING, RUNNING}. **Issue #168:** `gatewayd-internal` routes requests across the entire live set via atomic round-robin so a fan-out burst actually distributes load; `Backend.Admit` atomically refuses over-cap callers under the same `tgtMu` lock that mutates the cache. **ADR-199:** the grant is `1` and applies only while a second deployment is coming up alongside the one already serving — the overlap window of a traffic split or canary stage. Steady state remains `max_concurrency(plan)`; the grant retires on its own when the old revision's instances are reaped, and it never relaxes invariant 2, the per-node ceiling (ADR-193), or vCPU admission.
-2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
+2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB. **ADR-909 (accepted 2026-10-12):** under measured admission, schedd's default, a node's measured memory stays ≤ its admission ceiling (47,600 MB on the reference box) and Σ (ram_mb + 8) ≤ twice it. Each instance is charged its cgroup memory at the larger of its latest sample and its 10-minute p95, plus 25%, never more than ram_mb + 8. When measured memory crosses the ceiling, schedd evicts until it is under 90%. `measured_admission = false` restores the reservation form.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
 5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-680:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
@@ -1910,7 +1910,7 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
-| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits only to 47,600 MB** (85 % of the model's 56 GB budget) |
+| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
