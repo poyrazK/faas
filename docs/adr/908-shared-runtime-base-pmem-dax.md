@@ -210,6 +210,30 @@ a reflink XFS loop mount, under `cache/`:
   snapshot. A second account got its own clone, and a VMM without pmem
   bases cold booted the pmem snapshot from virtio-blk.
 
+### Wake latency with every default on (measured 2026-10-12)
+
+`TestMetalParkWakeCycle` with `FAAS_TEST_PRODUCTION_DEFAULTS=1` configures
+the VMM as vmmd does by default: free page reporting, per-account pmem
+(`auto`), restore prefetch at concurrency 3 and prepared networks. The
+block limiter of ADR-910 also applies. The test does 100 park/wake cycles
+of a busybox httpd guest on the n2 node, a shared host with nested KVM:
+
+| run | p50 | p95 |
+|---|---|---|
+| baseline, five rounds | 267–275 ms | 291–379 ms (median 298) |
+| every default, five rounds | 212–239 ms | 288–417 ms (median 311) |
+| every default, quiet host | 230–233 ms | 298–319 ms |
+| every default but pmem, quiet host | 235–245 ms | 263–373 ms |
+
+The defaults together cut the median wake by about 20%. p95 did not move
+beyond the node's run-to-run noise, about ±40 ms between identical runs.
+Taking pmem out did not lower p95 consistently. Runs during another
+session's builds on the node (p95 1.3–1.8 s) are left out.
+
+**Decision (owner, 2026-10-12):** per-account pmem stays on by default. It
+saves about 12% of host memory per VM (331 → 292 MB), and any p95 cost was
+below what the test node can resolve.
+
 Follow-ups:
 
 - **Metrics:** none yet for pmem boots or for fallbacks to virtio-blk.

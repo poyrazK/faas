@@ -33,6 +33,7 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 	}
 	var approval *QualificationArtifact
 	var approvalErr error
+	guest, manifest, requireGuest, guestErr := loadGuestQualification(getenv)
 	if getenv != nil {
 		if path := strings.TrimSpace(getenv(QualificationApprovalPathEnv)); path != "" {
 			loaded, err := LoadQualificationArtifact(path)
@@ -50,6 +51,9 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 		if !strings.EqualFold(strings.TrimSpace(getenv(EnvironmentEnv)), QualificationStagingEnvironment) {
 			return false
 		}
+		if requireGuest && (guestErr != nil || approval == nil) {
+			return false
+		}
 		if approval != nil || approvalErr != nil {
 			if approvalErr != nil || approval == nil {
 				return false
@@ -57,6 +61,9 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 			canaryAccounts, err := ParseStagingCanaryAccounts(getenv(CanaryAccountsEnv))
 			if err != nil {
 				return false
+			}
+			if requireGuest {
+				return registry.VerifyRolloutQualification(*approval, guest, manifest, canaryAccounts, now().UTC()).Ready
 			}
 			return registry.VerifyQualificationArtifact(*approval, canaryAccounts, now().UTC()).Ready
 		}
