@@ -18,22 +18,29 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 	var active *testChaosEvidence
 	activeIndex := -1
 	activeCaptured := false
+	installInFlight := false
 	var offset time.Duration
 	defer func() {
-		if active != nil {
+		if active != nil || installInFlight {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
+			phaseName := "unknown"
+			if activeIndex >= 0 && activeIndex < len(phases) {
+				phaseName = phases[activeIndex].Name
+			}
 			if clearErr := client.ClearScenarioTestChaos(cleanupCtx, runID); clearErr != nil {
-				err = errors.Join(err, fmt.Errorf("clear chaos phase %q: %w", phases[activeIndex].Name, clearErr))
+				err = errors.Join(err, fmt.Errorf("clear chaos phase %q: %w", phaseName, clearErr))
 			} else {
 				clock.finish(time.Now())
-				if !activeCaptured {
+				if active != nil && !activeCaptured {
 					if captureErr := captureTestChaosMatches(cleanupCtx, client, runID, active); captureErr != nil {
-						err = errors.Join(err, fmt.Errorf("capture chaos phase %q matches: %w", phases[activeIndex].Name, captureErr))
+						err = errors.Join(err, fmt.Errorf("capture chaos phase %q matches: %w", phaseName, captureErr))
 					}
 				}
 			}
-			result.Phases[activeIndex] = active
+			if active != nil {
+				result.Phases[activeIndex] = active
+			}
 		}
 		clock.finish(time.Now())
 	}()
@@ -73,6 +80,11 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 				if planErr != nil {
 					return result, fmt.Errorf("prepare chaos phase %q: %w", phase.Name, planErr)
 				}
+				// A canceled request may still have reached the API and installed
+				// the plan before its response was lost. Ensure the deferred cleanup
+				// clears that uncertain installation too.
+				installInFlight = true
+				activeIndex = i
 				installed, installErr := client.InjectScenarioTestChaos(ctx, runID, api.InjectScenarioTestChaosRequest{
 					DurationMS: plan.DurationMS,
 					Rules:      scenarioChaosAPIRules(plan.Rules),
@@ -82,6 +94,7 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 				}
 				active = newTestChaosEvidence(&testChaosSpec{Rules: phase.Rules}, plan, installed)
 				activeIndex, activeCaptured = i, false
+				installInFlight = false
 				result.Phases[i] = active
 			}
 		}

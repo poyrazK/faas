@@ -292,7 +292,7 @@ func TestOutageCyclesScheduledExecutionAndCancellation(t *testing.T) {
 				defer mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/probe" {
-					if kind == "cancel" && generation == 2 {
+					if mode == "cancel" && generation == 2 {
 						cancel()
 					}
 					if active || (kind == "recovery-failure" && generation >= 2) {
@@ -314,6 +314,12 @@ func TestOutageCyclesScheduledExecutionAndCancellation(t *testing.T) {
 					active = true
 					rule := request.Rules[0]
 					ruleID = chaos.RuleID(chaos.Rule{To: rule.To, Kind: rule.Kind, Percent: rule.Percent, StatusCode: rule.StatusCode, Seed: rule.Seed, Port: rule.Port, LatencyMS: rule.LatencyMS, Direction: rule.Direction, RateKiBPerSecond: rule.RateKiBPerSecond, ResetAfterMS: rule.ResetAfterMS})
+					if mode == "campaign-cancel" && generation == 2 {
+						// The server has accepted the plan, but cancellation wins
+						// before the client receives its response. Cleanup must still
+						// clear this uncertain installation.
+						cancel()
+					}
 					_ = json.NewEncoder(w).Encode(api.InjectScenarioTestChaosResponse{ExpiresAt: time.Now().Add(time.Minute), RulesInstalled: 1, Generation: fmt.Sprint(generation)})
 				case http.MethodDelete:
 					active = false
