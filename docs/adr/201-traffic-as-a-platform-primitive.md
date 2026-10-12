@@ -420,4 +420,6 @@ When the forwarding bridge proves a service-proxy request reached no guest
 (no node client, stream open `Unavailable`, or vmmd `NotFound` before any
 response), the call gets one extra attempt for any method without spending the
 aggregate retry budget or waiting out backoff. Retries of requests that may
-have reached a guest keep every rule above. See ADR-1133.
+have reached a guest keep every rule above. The service proxy also buffers
+declared-length bodies up to 1 MiB so both kinds of replay can resend them.
+See ADR-1133.

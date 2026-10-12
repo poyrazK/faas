@@ -149,8 +149,10 @@ func TestServiceProxyUndeliveredRerouteSkipsRetryBudget(t *testing.T) {
 	}
 }
 
-// The service proxy does not buffer request bodies, so a POST with a body is
-// still not replayable: it fails once, and the next call wakes the target.
+// A body of unknown length (chunked, possibly a long-lived stream) is not
+// buffered, so it is not replayable: it fails once, and the next call wakes
+// the target. Small declared-length bodies are covered in
+// service_proxy_body_test.go.
 func TestServiceProxyUndeliveredCallWithBodyFailsOnce(t *testing.T) {
 	f := newUndeliveredFixture(t, true)
 	f.park("instance-1")

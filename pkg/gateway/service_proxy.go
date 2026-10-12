@@ -1056,6 +1056,9 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
+	if !bufferReplayableServiceBody(w, r) {
+		return
+	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
 	p.forwardOnce(w, r, targetPath, target, caller, deploymentID, endpoints, woken)

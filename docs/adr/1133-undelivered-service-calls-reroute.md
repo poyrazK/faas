@@ -42,14 +42,22 @@ full ADR-201 rules.
 An undelivered failure earns the call **one** extra attempt on top of its
 policy's, for any method, without spending the aggregate retry budget and
 without backoff. The request's own deadline (`MinRemaining`) still applies,
-and the body must be replayable: the proxy does not buffer request bodies, so
-a call carrying a body without `GetBody` still fails once and the next call
-wakes the target.
+and the body must be replayable.
+
+To make bodies replayable, the proxy reads a body up front only when it
+declares a `Content-Length` of at most `ServiceProxyReplayBodyMaxBytes`
+(1 MiB) and keeps it in memory with a rewindable `GetBody`. Chunked or
+unknown-length bodies (possibly long-lived streams), larger bodies, Upgrade
+requests and native gRPC are forwarded unbuffered as before and are not
+replayed; such a call still fails once and the next call wakes the target.
+A declared body that cannot be read in full answers 400
+(`request_body_read_failed`). Buffering also lets ordinary ADR-201 retries
+replay idempotent calls with small bodies, as the public edge already does.
 
 ## Consequences
 
-- A bodyless call — including POST/DELETE — that lands on a just-stopped
-  instance is answered by the woken target in the same request.
+- A bodyless or small-body call — including POST/DELETE — that lands on a
+  just-stopped instance is answered by the woken target in the same request.
 - Repeated park/restart events no longer exhaust a quiet app's retry
   allowance through re-routes; real retries keep the ADR-201 bound.
 - The extra attempt is bounded to one per call, so a node that keeps
@@ -60,6 +68,7 @@ wakes the target.
 - **Exempt every stale signal.** A broken stream after the init frame may
   already have reached a guest; replaying a non-idempotent call there could
   duplicate its effect.
-- **Buffer bodies to make POST bodies replayable.** Worth doing, but it is
-  the public edge's spool admission (bounded size, disk, ownership) brought to
-  the service proxy — a separate change.
+- **The public edge's spool admission** (plan-sized limit, disk spool past
+  1 MiB). The service target carries no plan, and nearly all service calls are
+  small JSON; an in-memory 1 MiB bound covers them without disk or ownership
+  handling. Larger bodies can adopt the spool later.
