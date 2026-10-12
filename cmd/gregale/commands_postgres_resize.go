@@ -18,7 +18,10 @@ func cmdPostgresResize(args []string) int {
 		return 1
 	}
 	id, err := uuid.Parse(*request)
-	if fs.NArg() != 1 || (*class != "development" && *class != "burstable" && *class != "production") || err != nil || id == uuid.Nil || id.String() != *request {
+	if *class != "" && invalidPostgresChoice("postgres resize", "class", *class) {
+		return 1
+	}
+	if fs.NArg() != 1 || !postgresServiceClassOK(*class) || err != nil || id == uuid.Nil || id.String() != *request {
 		PrintUsage(os.Stderr, "usage: gregale postgres resize DATABASE --class CLASS --request-id UUID", "postgres")
 		return 1
 	}

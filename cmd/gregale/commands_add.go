@@ -313,6 +313,9 @@ func cmdAddPostgres(args []string) int {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1
 	}
+	if invalidPostgresChoice("add postgres", "class", *serviceClass, "availability", *availability, "access", *access) {
+		return 1
+	}
 	if fs.NArg() > 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
 		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
 		api.ValidateEnvKey(strings.TrimSpace(*environmentKey)) != nil || !postgresAccessOK(*access) ||
