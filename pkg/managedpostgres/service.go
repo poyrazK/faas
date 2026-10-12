@@ -285,6 +285,12 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
 		return Database{}, false, ErrInvalid
 	}
+	// No database has history from before it existed. The provider rejects
+	// such a point only after the target is reserved, leaving a failed row
+	// on the account's database quota (production-us hunt #9).
+	if request.PointInTime.Before(source.CreatedAt) {
+		return Database{}, false, ErrInvalid
+	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
 	if err != nil {
