@@ -44,7 +44,20 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat) map[string]No
 // publishMemoryShadow records the shadow for admission and metrics. asOf is
 // when the tick started, before it listed the instances.
 func (p *Poller) publishMemoryShadow(instances []state.Instance, rows []InstanceStat, asOf time.Time) {
-	shadow := memoryShadow(instances, rows)
+	if p.rssHistory == nil {
+		p.rssHistory = newRSSHistory()
+	}
+	charged := make([]InstanceStat, len(rows))
+	live := make(map[string]struct{}, len(rows))
+	for i, row := range rows {
+		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
+			row.RSSMB = p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+		}
+		charged[i] = row
+		live[row.InstanceID] = struct{}{}
+	}
+	p.rssHistory.retain(live)
+	shadow := memoryShadow(instances, charged)
 	if p.Reader != nil {
 		p.Reader.replaceMemoryShadow(shadow, asOf)
 	}
