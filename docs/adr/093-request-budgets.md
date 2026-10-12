@@ -222,5 +222,8 @@ days was this deadline. `reqbudget.IsDeploySubmissionRequest` selects the
 upload chunk and commit, deployment create (image, source-tarball,
 source-ref), rollback and deployment retry routes, and apid gives them
 `RequestBudgetMax` (30 s). Project apply has its own detached timeout (the
-amendment above for `POST /v1/projects`, when merged). The 5 s default for
-every other apid route is unchanged.
+amendment above for `POST /v1/projects`, when merged). The chunk route reads
+the whole chunk before its bookkeeping, and at the supported 512 KiB/s a
+16 MiB chunk takes 32 s, so once the chunk is received its session reload
+and offset advance run detached from the budget under the 15 s upload
+bookkeeping bound. The 5 s default for every other apid route is unchanged.
