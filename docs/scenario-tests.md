@@ -257,6 +257,15 @@ UDP application traffic is outside the TCP proxy's scope.
 
 ### Staged fault and recovery checks
 
+For a complete business-level example, use the
+[checkout resilience starter](../examples/scenario-checkout/README.md). It
+verifies a controlled checkout error within two seconds during a payment
+dependency timeout, bounded retries, catalog availability, recovery within ten
+seconds, and duplicate-order prevention. It combines existing staged faults,
+native JSON assertions, load budgets, and repository-owned assertion commands.
+The sample uses an echo acknowledgement and an in-memory ledger; its README
+explains the limits of those substitutes for a production payment integration.
+
 Use `steps` when one scenario needs to compare baseline behavior, behavior under
 a fault, and recovery in the same application process. The first step establishes
 the baseline. A later step can install a chaos plan, and a subsequent step uses
