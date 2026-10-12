@@ -186,6 +186,12 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 				startCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-start"))
 			}
 			session, err = c.StartUpload(startCtx, slug, info.Size(), archiveSHA256, options...)
+			if isUploadSessionCap(err) && reclaimAppUploadSessions(ctx, c, slug, statePath) > 0 {
+				if !jsonOutput {
+					PrintWarn(osStderr, "cancelled earlier unfinished uploads for %s that this deploy cannot resume; retrying", slug)
+				}
+				session, err = c.StartUpload(startCtx, slug, info.Size(), archiveSHA256, options...)
+			}
 			if err != nil {
 				if errors.Is(err, api.ErrResumableUploadUnsupported) {
 					return api.DeploymentResponse{}, "", false, nil
