@@ -46,6 +46,15 @@ from ._rfc7807 import (
 from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
+from .ai_gateway import (
+    AI_SESSION_HEADER,
+    AI_USER_HEADER,
+    AIGatewayError,
+    ai_gateway_headers,
+    ai_gateway_url,
+    is_valid_ai_user_id,
+    opaque_ai_user_id,
+)
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, insert_commit_event
 from .customer_operations import (
@@ -110,15 +119,6 @@ from .operations import (
     with_operation_transaction,
 )
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
-from .ai_gateway import (
-    AI_SESSION_HEADER,
-    AI_USER_HEADER,
-    AIGatewayError,
-    ai_gateway_headers,
-    ai_gateway_url,
-    is_valid_ai_user_id,
-    opaque_ai_user_id,
-)
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,

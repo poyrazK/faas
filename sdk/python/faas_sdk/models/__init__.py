@@ -1318,6 +1318,7 @@ from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
 from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
+from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
 from .failure_rules import FailureRules
@@ -2535,6 +2536,7 @@ from .outbound_ai_route_list import OutboundAIRouteList
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
+from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
 from .outbound_ai_user_usage_item import OutboundAIUserUsageItem
 from .outbound_ai_user_usage_response import OutboundAIUserUsageResponse
 from .outbound_app_binding import OutboundAppBinding
@@ -5160,6 +5162,7 @@ __all__ = (
     "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
+    "ExportOutboundIntegrationAIUserUsageFormat",
     "FailureRule",
     "FailureRuleAction",
     "FailureRules",
@@ -6285,6 +6288,7 @@ __all__ = (
     "OutboundAIRouteTarget",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
+    "OutboundAIUserUsageExportRow",
     "OutboundAIUserUsageItem",
     "OutboundAIUserUsageResponse",
     "OutboundAppBinding",

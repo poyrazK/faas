@@ -1346,6 +1346,7 @@ export type { OutboundAIRouteList } from './models/OutboundAIRouteList.js';
 export type { OutboundAIRouteTarget } from './models/OutboundAIRouteTarget.js';
 export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';
 export type { OutboundAIUsageResponse } from './models/OutboundAIUsageResponse.js';
+export type { OutboundAIUserUsageExportRow } from './models/OutboundAIUserUsageExportRow.js';
 export type { OutboundAIUserUsageItem } from './models/OutboundAIUserUsageItem.js';
 export type { OutboundAIUserUsageResponse } from './models/OutboundAIUserUsageResponse.js';
 export type { OutboundAppBinding } from './models/OutboundAppBinding.js';

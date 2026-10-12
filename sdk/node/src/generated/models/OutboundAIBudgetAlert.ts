@@ -8,8 +8,12 @@
 export type OutboundAIBudgetAlert = {
   id: string;
   integration_id: string;
-  budget: 'daily_tokens' | 'app_daily_tokens' | 'daily_cost' | 'monthly_cost';
+  budget: 'daily_tokens' | 'app_daily_tokens' | 'daily_cost' | 'monthly_cost' | 'user_daily_tokens' | 'user_daily_cost';
   app_id: string | null;
+  /**
+   * The end user of a user_daily_tokens or user_daily_cost alert (ADR-993).
+   */
+  end_user: string | null;
   period_start: string;
   threshold_percent: 80 | 100;
   limit: number;

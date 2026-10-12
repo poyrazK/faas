@@ -1340,6 +1340,7 @@ export type { OutboundAIRouteList } from './OutboundAIRouteList.js';
 export type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
 export type { OutboundAIUsageItem } from './OutboundAIUsageItem.js';
 export type { OutboundAIUsageResponse } from './OutboundAIUsageResponse.js';
+export type { OutboundAIUserUsageExportRow } from './OutboundAIUserUsageExportRow.js';
 export type { OutboundAIUserUsageItem } from './OutboundAIUserUsageItem.js';
 export type { OutboundAIUserUsageResponse } from './OutboundAIUserUsageResponse.js';
 export type { OutboundAppBinding } from './OutboundAppBinding.js';

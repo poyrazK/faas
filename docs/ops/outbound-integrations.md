@@ -649,7 +649,8 @@ Notes per provider:
 ## OpenAI-format routes
 
 `gregale ai routes create --name any-chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4 --target <gemini-id>:gemini-2.5-flash`
-creates a route that accepts OpenAI chat completions. Each target can be:
+creates a route that accepts OpenAI chat completions and embeddings. Each
+target can be:
 
 - **`openai`:** receives the request as is.
 - **`azure_openai`:** receives it at `/openai/v1/chat/completions`, with the
@@ -658,17 +659,49 @@ creates a route that accepts OpenAI chat completions. Each target can be:
   translated back.
 - **`gemini`:** translated to `generateContent`, with the response translated
   back.
+- **`bedrock`:** translated to Converse (`/model/{id}/converse`, or
+  `converse-stream`, whose binary event stream is translated into SSE). The
+  target model is a Bedrock model ID, inference profile or ARN.
+- **`vertex`:** Claude models go to `rawPredict` with the Anthropic
+  translation, other models to Gemini `generateContent`. Prefix the model
+  with `anthropic/` or `google/` to choose the publisher explicitly. The
+  integration's allowed path prefixes must name exactly one
+  `/v1/projects/{project}/locations/{location}`; route creation refuses a
+  Vertex target without one.
 
 The translation covers:
 
 - system and developer messages;
 - text and image parts (Gemini takes `data:` images only);
 - tools, tool calls, tool results and `tool_choice`;
-- `stop`, `temperature`, `top_p`, the output ceiling and streaming.
+- `stop`, `temperature`, `top_p`, the output ceiling and streaming;
+- `response_format` (see below).
+
+**Structured output.** `json_schema` becomes Anthropic's
+`output_config.format`, Gemini's `responseJsonSchema` and Bedrock's
+`outputConfig.textFormat`. `json_object` becomes Gemini JSON mode. Anthropic
+and Bedrock always need a schema, so `json_object` is refused for them with
+`400 outbound_ai_translation_unsupported`; its `detail` says why. The schema
+is passed through unchanged, so each provider's JSON Schema subset applies.
+
+**Embeddings.** `POST $GREGALE_OUTBOUND_URL/r/<route-id>/v1/embeddings` takes a
+string or an array of strings:
+
+- OpenAI receives it as is, and Azure OpenAI at `/openai/v1/embeddings`.
+- Gemini receives `batchEmbedContents`, and Vertex AI Google models
+  `predict`. `dimensions` becomes the output dimensionality.
+- Anthropic and Bedrock targets are refused.
+
+`encoding_format: base64`, the OpenAI SDK default, is supported. Use one
+embeddings model per route: vectors from a fallback target with another model
+are not comparable. `X-Gregale-AI-Route-Target` names the target that served.
+Vertex embeddings report token counts and count toward budgets. Gemini
+embeddings report none, so they settle as usage unknown.
 
 Callers see OpenAI JSON and `chat.completion.chunk` events, with a usage chunk
 only when they ask for one. `n` above 1 gets
-`400 outbound_ai_translation_unsupported`.
+`400 outbound_ai_translation_unsupported`. That problem's `detail` says what
+could not be translated.
 
 Point any OpenAI SDK at `$GREGALE_OUTBOUND_URL/r/<route-id>/v1`. Usage and cost
 are still read from each provider's native response.
@@ -720,6 +753,37 @@ integration and app budgets.
 `GET .../ai-usage/users`) lists a day's end users by cost. Each integration
 tracks up to 10,000 distinct end users per UTC day. Later ones are counted
 under `~other`, and per-user caps do not apply to them.
+
+**Alerts.** With per-user limits set, an end user's day alerts at 80% and 100%
+of each limit, once per user, day and threshold:
+
+- the budget is `user_daily_tokens` or `user_daily_cost`;
+- the `outbound.ai_budget.threshold` webhook carries `end_user` and goes only
+  to the app whose call crossed the threshold;
+- `gregale ai alerts` shows the end user;
+- these alerts are kept for 31 days.
+
+**Export.** `gregale ai users export <id> --from 2026-10-01 --to 2026-10-31 >
+ai-users.csv` (or `GET .../ai-usage/users/export?from=&to=&format=csv`)
+streams every end user's row for each day in the range, ordered by day and end
+user. The columns are `usage_date, end_user, requests, error_requests,
+input_tokens, output_tokens, tokens, cost_millicents`. The API's default
+format is NDJSON.
+
+**App helpers.** The Node and Python SDKs build the relay URL and headers:
+
+```ts
+import OpenAI from 'openai';
+import { aiGatewayURL, aiGatewayHeaders, opaqueAIUserId } from '@gregale/sdk-node';
+
+const client = new OpenAI({ baseURL: `${aiGatewayURL({ route: routeId })}/v1`, apiKey: 'unused' });
+const user = opaqueAIUserId(email, process.env.USER_ID_SECRET);
+await client.chat.completions.create(body, { headers: aiGatewayHeaders({ user, session: chatId }) });
+```
+
+Python offers `ai_gateway_url`, `ai_gateway_headers` and `opaque_ai_user_id`
+from `faas_sdk`. `opaqueAIUserId` turns an e-mail address into a stable
+`u_…` ID. Pass a secret so the ID cannot be traced back to the address.
 
 ## Provider key pools
 
