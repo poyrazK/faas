@@ -1587,6 +1587,12 @@ const (
 	CodeAppRuntimeOOM          = "app_runtime_oom"
 	CodeDepInstallFailed       = "dep_install_failed"
 	CodeAppStartupTimeout      = "app_startup_timeout"
+	// CodeAppStartupCrash means the customer's workload exited before it
+	// became ready: guest-init's supervisor reported its restarts or crash
+	// loop, or the characterization report carried a non-zero startup exit.
+	// Distinct from app_startup_timeout (still running, never ready) and
+	// app_not_listening (running, nothing bound).
+	CodeAppStartupCrash = "app_startup_crash"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -2079,6 +2085,7 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
+		CodeAppStartupCrash,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:

@@ -7558,12 +7558,14 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 }
 
 // CountDeploymentOutcomesSince returns one bounded fleet aggregate for the
-// public status page. Successful deployments are live or superseded rows;
-// failed rows backed by a user_error build are explicitly excluded. Failures
-// after a successful build (scan, snapshot, readiness) have no user_error
-// build and therefore remain visible as platform failures. Deleted apps remain
-// in the aggregate because release-acceptance apps are deliberately cleaned up
-// after their terminal result is recorded.
+// public status page. Successful deployments are live or superseded rows.
+// Failed rows are excluded when a user_error build backs them or when their
+// error code places the failure in the customer's workload or content
+// (api.CustomerCausedDeploymentFailureCodes: app crashed, nothing listening,
+// OOM, ...). Other failures after a successful build (scan, snapshot,
+// readiness timeouts) remain visible as platform failures. Deleted apps
+// remain in the aggregate because release-acceptance apps are deliberately
+// cleaned up after their terminal result is recorded.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
@@ -7571,6 +7573,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 			count(*) filter (where d.status in ('live', 'superseded')),
 			count(*) filter (
 				where d.status = 'failed'
+				  and coalesce(d.error_code, '') <> all($2::text[])
 				  and not exists (
 					select 1 from builds b
 					 where b.deployment_id = d.id
@@ -7582,14 +7585,15 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
 			or
 			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
-		   )`, since.UTC()).Scan(&out.Succeeded, &out.Failed)
+		   )`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed)
 	return out, err
 }
 
 // LatestPlatformDeploymentOutcome returns the newest successful deployment or
-// platform-attributable failure. A user-code build failure is not platform
-// health evidence and is skipped. The result remains authoritative until a
-// newer terminal deployment supersedes it.
+// platform-attributable failure. A user-code build failure or a
+// customer-caused runtime failure is not platform health evidence and is
+// skipped. The result remains authoritative until a newer terminal deployment
+// supersedes it.
 func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDeploymentOutcome, error) {
 	var out LatestDeploymentOutcome
 	err := s.pool.QueryRow(ctx, `
@@ -7601,14 +7605,17 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDe
 		  from deployments d
 		 where d.status in ('live', 'superseded', 'failed')
 		   and not (
-		     d.status = 'failed' and exists (
-		       select 1 from builds b
-		        where b.deployment_id = d.id
-		          and b.failure_class = 'user_error'
+		     d.status = 'failed' and (
+		       coalesce(d.error_code, '') = any($1::text[])
+		       or exists (
+		         select 1 from builds b
+		          where b.deployment_id = d.id
+		            and b.failure_class = 'user_error'
+		       )
 		     )
 		   )
 		 order by observed_at desc, d.created_at desc
-		 limit 1`).Scan(&out.Succeeded, &out.ObservedAt)
+		 limit 1`, api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.ObservedAt)
 	if err != nil {
 		return LatestDeploymentOutcome{}, mapErr(err)
 	}

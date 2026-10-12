@@ -6253,10 +6253,11 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 4096 {
 			tail = tail[len(tail)-4096:]
 		}
+		detail := fmt.Sprintf("workload exited with code %d during startup", report.ExitCode)
 		if len(tail) > 0 {
-			return true, fmt.Errorf("workload exited with code %d during startup: %s", report.ExitCode, string(tail))
+			detail += ": " + string(tail)
 		}
-		return true, fmt.Errorf("workload exited with code %d during startup", report.ExitCode)
+		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 	}
 
 	switch executionMode {
@@ -6387,10 +6388,39 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 			lines = append(lines, line.Line)
 		}
 	}
+	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
-		return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready): %s", l.Instance, tail)
+		detail += ": " + tail
 	}
-	return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
+	// Only guest-init's supervisor output proves the customer's workload ran
+	// and exited. Without it the guest itself failed (overlay, pivot, init),
+	// which stays a platform failure (production-us hunt #9, H9-106).
+	if supervisedWorkloadExited(lines) {
+		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+	}
+	return errors.New(detail)
+}
+
+// supervisedWorkloadMarkers are guest-init's own console lines for a
+// supervised workload that exited: each restart, and the final crash-loop or
+// exhausted restart budget (guest/init/supervise.go, main_linux.go,
+// workload_linux.go).
+var supervisedWorkloadMarkers = []string{
+	"guest-init: app restart (",
+	"guest-init: main restart (",
+	"app crash-looped after ",
+	"app restart budget exhausted",
+}
+
+func supervisedWorkloadExited(lines []string) bool {
+	for _, line := range lines {
+		for _, marker := range supervisedWorkloadMarkers {
+			if strings.Contains(line, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // kernelLogLine matches guest kernel messages ("[    1.445781] ...") that the

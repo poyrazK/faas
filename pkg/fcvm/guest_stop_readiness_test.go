@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // spec: §6.1
@@ -94,6 +96,68 @@ func TestGuestStoppedDuringStartupReportsTheWorkloadOutput(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "Kernel panic") {
 		t.Fatalf("startup failure kept kernel lines: %v", err)
+	}
+}
+
+// spec: §6.1, §12
+// production-us hunt #9 (H9-106): a customer app that crashed at startup
+// failed its deploy as error_code "internal", which the public status page
+// counts as a platform deploy failure. guest-init's supervisor lines prove
+// the customer's workload ran and exited; a guest that died without them
+// (overlay, pivot, init failure) stays a platform error.
+func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lines     []string
+		wantCrash bool
+	}{
+		{name: "crash loop", lines: []string{
+			"Error: Cannot find module 'express'\n",
+			"guest-init: app restart (restart 1/3 policy=on-failure): exit status 1\n",
+			"guest-init: app crash-looped after 3 restart(s): exit status 1\n",
+		}, wantCrash: true},
+		{name: "workload set main", lines: []string{
+			"guest-init: main restart (restart 1/3 policy=on-failure): exit status 2\n",
+		}, wantCrash: true},
+		{name: "restart budget", lines: []string{
+			"guest-init: app restart budget exhausted after 3 restart(s)\n",
+		}, wantCrash: true},
+		{name: "guest-init failure", lines: []string{
+			"guest-init: assemble overlay: mount overlay: invalid argument\n",
+			"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
+		}},
+		{name: "no output"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := NewJailerVMM(t.TempDir(), 0)
+			ring := v.registerRing("inst")
+			for _, line := range tc.lines {
+				if _, err := ring.Write("stdout", []byte(line)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := v.guestStoppedDuringStartup(Lease{Instance: "inst"})
+			p := api.AsProblem(err)
+			if tc.wantCrash {
+				if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 || !strings.Contains(p.Detail, "exited before becoming ready") {
+					t.Fatalf("startup failure = %#v, want a 422 %s problem carrying the detail", err, api.CodeAppStartupCrash)
+				}
+				return
+			}
+			if p != nil {
+				t.Fatalf("guest failure without supervisor output = %#v, want a platform (non-problem) error", p)
+			}
+		})
+	}
+}
+
+// spec: §6.1, §12
+// A characterization report of a startup exit is the workload's own exit code.
+func TestCharacterizationStartupExitIsAnAppStartupCrash(t *testing.T) {
+	terminal, err := characterizationBootOutcome(api.CharacterizationReport{ExitCode: 17, LogTail: "boom"}, api.ExecutionModeRequest)
+	p := api.AsProblem(err)
+	if !terminal || p == nil || p.Code != api.CodeAppStartupCrash || !strings.Contains(p.Detail, "code 17") || !strings.Contains(p.Detail, "boom") {
+		t.Fatalf("startup exit = (%v, %#v), want terminal %s with exit code and tail", terminal, err, api.CodeAppStartupCrash)
 	}
 }
 

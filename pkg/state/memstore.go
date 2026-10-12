@@ -4938,19 +4938,27 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			if terminalAt.Before(since) {
 				continue
 			}
-			userError := false
-			for _, build := range m.builds {
-				if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
-					userError = true
-					break
-				}
-			}
-			if !userError {
+			if !m.customerCausedFailureLocked(d) {
 				out.Failed++
 			}
 		}
 	}
 	return out, nil
+}
+
+// customerCausedFailureLocked mirrors the PgStore status aggregates' exclusion
+// of a failed deployment: a user_error build, or an error code that places the
+// failure in the customer's workload. Caller holds m.mu.
+func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
+	if api.IsCustomerCausedDeploymentFailure(d.ErrorCode) {
+		return true
+	}
+	for _, build := range m.builds {
+		if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
+			return true
+		}
+	}
+	return false
 }
 
 // LatestPlatformDeploymentOutcome mirrors the production last-known result.
@@ -4964,17 +4972,8 @@ func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context) (LatestDep
 		if !succeeded && d.Status != DeployFailed {
 			continue
 		}
-		if d.Status == DeployFailed {
-			userError := false
-			for _, build := range m.builds {
-				if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
-					userError = true
-					break
-				}
-			}
-			if userError {
-				continue
-			}
+		if d.Status == DeployFailed && m.customerCausedFailureLocked(d) {
+			continue
 		}
 		observedAt := d.CreatedAt
 		if succeeded && d.RolloutCompletedAt != nil {
