@@ -34,6 +34,9 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 		producer.NativeGeneration == "" || r.generation(lease.Instance) != producer.NativeGeneration {
 		return fmt.Errorf("native qualification restore: target process differs from the original attempt: %w", state.ErrConflict)
 	}
+	// The context carries the pre-binding claim. Every physical owner check from
+	// here onward must use the matching, journal-backed bound target.
+	target = *producer.restore
 	ctx, cancel := context.WithDeadline(ctx, target.Deadline)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
