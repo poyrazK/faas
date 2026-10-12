@@ -91,5 +91,28 @@ func writeUUIDMarker(_ int64) error {
 	if err != nil {
 		return fmt.Errorf("read random/uuid: %w", err)
 	}
-	return os.WriteFile(UUIDMarkerPath, data, 0o644)
+	return overwriteFile(UUIDMarkerPath, data)
+}
+
+// overwriteFile replaces path's content with data, truncating only when the
+// size changes. ext4 starts writeback of a file that was truncated and then
+// rewritten when it is closed (auto_da_alloc). The marker is the same length
+// on every restore, and O_TRUNC made it ~10 ms of the resume hook on the n2
+// node against ~5 ms written in place.
+func overwriteFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	st, err := f.Stat()
+	if err == nil && st.Size() != int64(len(data)) {
+		err = f.Truncate(int64(len(data)))
+	}
+	if err == nil {
+		_, err = f.WriteAt(data, 0)
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
