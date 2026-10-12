@@ -18,7 +18,7 @@ func readWorkflowRecoveryPolicyFile(path string) (api.SetWorkflowRecoveryPolicyR
 	if err != nil {
 		return req, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return req, err
