@@ -27,9 +27,24 @@ docker run --detach --name "$container" --network none \
 cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+init_complete=false
+for attempt in $(seq 1 60); do
+	if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.'; then
+		init_complete=true
+		break
+	fi
+	sleep 1
+done
+if [[ "$init_complete" != true ]]; then
+	docker exec "$container" ls -la /var/run/postgresql || true
+	docker logs "$container"
+	echo "::error::local PostgreSQL 16 initialization did not complete"
+	exit 1
+fi
+
 ready=false
 for attempt in $(seq 1 60); do
-	if docker exec "$container" pg_isready -h /var/run/postgresql -U faas -d faas >/dev/null 2>&1; then
+	if docker exec "$container" psql -h /var/run/postgresql -U faas -d faas -Atqc 'SELECT 1' >/dev/null 2>&1; then
 		ready=true
 		break
 	fi
@@ -39,10 +54,9 @@ if [[ "$ready" != true ]]; then
 	docker exec "$container" pg_isready -h /var/run/postgresql -U faas -d faas || true
 	docker exec "$container" ls -la /var/run/postgresql || true
 	docker logs "$container"
-	echo "::error::local PostgreSQL 16 recovery socket did not become ready"
+	echo "::error::local PostgreSQL 16 recovery socket did not accept SQL"
 	exit 1
 fi
-docker exec "$container" psql -h /var/run/postgresql -U faas -d faas -Atqc 'SELECT 1' >/dev/null
 
 # Recovery deliberately refuses TCP. Run the test's pg_dump with the matching
 # PostgreSQL 16 binary inside the isolated, socket-only database container.
