@@ -29,14 +29,23 @@ type standardProjectBoundaryStore interface {
 }
 
 func standardProjectSource(t *testing.T, names ...string) []byte {
+	return standardProjectSourceWithMarkers(t, nil, names...)
+}
+
+func standardProjectSourceWithMarkers(t *testing.T, markers map[string]string, names ...string) []byte {
 	t.Helper()
 	var body bytes.Buffer
 	gz := gzip.NewWriter(&body)
 	tw := tar.NewWriter(gz)
 	for _, name := range names {
+		marker := markers[name]
+		indexJS := "exports.handler = () => '" + name + "';\n"
+		if marker != "" {
+			indexJS = strings.TrimSuffix(indexJS, "\n") + " // " + marker + "\n"
+		}
 		for _, file := range []struct{ path, body string }{
 			{"Dockerfile", "FROM alpine\nCMD [\"sleep\", \"infinity\"]\n"},
-			{"index.js", "exports.handler = () => '" + name + "';\n"},
+			{"index.js", indexJS},
 		} {
 			path := "repo/apps/" + name + "/" + file.path
 			if err := tw.WriteHeader(&tar.Header{Name: path, Size: int64(len(file.body)), Mode: 0o644, ModTime: time.Unix(0, 0), Typeflag: tar.TypeReg}); err != nil {
@@ -196,7 +205,8 @@ func standardProjectOnboarding(t *testing.T, store standardProjectBoundaryStore)
 		if restoredApp.ID != worker.ID {
 			t.Fatalf("restore changed service identity: got %s, want %s", restoredApp.ID, worker.ID)
 		}
-		restored := standardProjectApply(t, e, source)
+		restoredSource := standardProjectSourceWithMarkers(t, map[string]string{"standards-worker": "restored"}, "standards-api", "standards-worker")
+		restored := standardProjectApply(t, e, restoredSource)
 		standardProjectBuilds(t, e, restored, 1)
 		if restored.Builds[0].AppID != worker.ID {
 			t.Fatal("restored service changed identity")

@@ -3,5 +3,5 @@
 # in package apidserver_test; raise only with a reason in the PR, lower when tests move out.
 # PR #4238 adds application standards admission, lifecycle and rollout coverage.
 # PR #4489 adds 3 internal test lines alongside durable entity changes.
-# PR #4238 covers explicit lifecycle restore before project re-apply.
-77262
+# PR #4238 covers explicit lifecycle restore before project re-apply and rebuild ordering.
+77272

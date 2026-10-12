@@ -24,7 +24,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION application_standard_runtime_root_producer(a public.apps, d public.deployments, workload text) RETURNS jsonb
+CREATE OR REPLACE FUNCTION application_standard_runtime_root_producer(a apps, d deployments, workload text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $_$
 DECLARE p deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE;
@@ -119,7 +119,7 @@ $$;
 
 -- +goose Down
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION application_standard_runtime_root_producer(a public.apps, d public.deployments, workload text) RETURNS jsonb
+CREATE OR REPLACE FUNCTION application_standard_runtime_root_producer(a apps, d deployments, workload text) RETURNS jsonb
     LANGUAGE plpgsql
     AS $_$
 DECLARE p deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE;
