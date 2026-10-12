@@ -189,15 +189,23 @@ func TestOutboundAIRouteFormats(t *testing.T) {
 	openai := seedAIIntegration(t, e, "gpt", api.OutboundAIProviderOpenAI)
 	claude := seedAIIntegration(t, e, "claude", api.OutboundAIProviderAnthropic)
 	bedrock := seedAIIntegration(t, e, "bedrock", api.OutboundAIProviderBedrock)
+	vertex := seedAIIntegration(t, e, "vertex", api.OutboundAIProviderVertex)
 	for name, req := range map[string]api.CreateOutboundAIRouteRequest{
-		"unknown format":     {Name: "x", Format: "grpc", Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}}},
-		"claude needs model": {Name: "y", Format: api.OutboundAIRouteFormatOpenAI, Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: claude}}},
-		"bedrock untranslatable": {Name: "z", Format: api.OutboundAIRouteFormatOpenAI,
-			Targets: []api.OutboundAIRouteTarget{{IntegrationID: bedrock, Model: "anthropic.claude"}}},
+		"unknown format":      {Name: "x", Format: "grpc", Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}}},
+		"claude needs model":  {Name: "y", Format: api.OutboundAIRouteFormatOpenAI, Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: claude}}},
+		"bedrock needs model": {Name: "z", Format: api.OutboundAIRouteFormatOpenAI, Targets: []api.OutboundAIRouteTarget{{IntegrationID: bedrock}}},
+		// ADR-993: a Vertex target needs one project and location in its prefixes.
+		"vertex without location": {Name: "v", Format: api.OutboundAIRouteFormatOpenAI,
+			Targets: []api.OutboundAIRouteTarget{{IntegrationID: vertex, Model: "gemini-2.5-pro"}}},
 	} {
 		if resp := e.Do(t, http.MethodPost, "/v1/outbound/ai-routes", req, nil); resp.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d %s", name, resp.Code, resp.Body.String())
 		}
+	}
+	// ADR-993: openai routes reach Bedrock through Converse.
+	if resp := e.Do(t, http.MethodPost, "/v1/outbound/ai-routes", api.CreateOutboundAIRouteRequest{Name: "bedrock-chat", Format: api.OutboundAIRouteFormatOpenAI,
+		Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: bedrock, Model: "amazon.nova-pro-v1:0"}}}, nil); resp.Code != http.StatusCreated {
+		t.Fatalf("bedrock openai route = %d %s", resp.Code, resp.Body.String())
 	}
 	created := e.Do(t, http.MethodPost, "/v1/outbound/ai-routes", api.CreateOutboundAIRouteRequest{Name: "any-chat", Format: api.OutboundAIRouteFormatOpenAI,
 		Targets: []api.OutboundAIRouteTarget{{IntegrationID: openai}, {IntegrationID: claude, Model: "claude-sonnet-4"}}}, nil)
