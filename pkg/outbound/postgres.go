@@ -81,6 +81,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	var storedDailyRequestLimit, storedDailyAITokenLimit int64
 	var storedDailyAICostLimit, storedMonthlyAICostLimit, storedBindingAITokenLimit int64
 	var storedBindingRequestsPerMinute, storedBindingTokensPerMinute int64
+	var storedUserTokenLimit, storedUserCostLimit int64
 	var requestPolicy api.OutboundRequestPolicy
 	err = tx.QueryRow(ctx, `
 		SELECT account.plan
@@ -135,7 +136,8 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
 		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
 		       COALESCE(ai_daily_token_limit, 0),
-		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0)
+		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID).
@@ -143,7 +145,8 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
 			&requestPolicy.ResponseCacheTTLSeconds, &requestPolicy.CircuitBreakerFailureThreshold,
 			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind,
-			&storedDailyAITokenLimit, &storedDailyAICostLimit, &storedMonthlyAICostLimit)
+			&storedDailyAITokenLimit, &storedDailyAICostLimit, &storedMonthlyAICostLimit,
+			&storedUserTokenLimit, &storedUserCostLimit)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -284,6 +287,15 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		return Decision{}, err
 	}
 	minute.inflightTokens = inflightBindingTokens
+	var userLimits aiBudgetLimits
+	var user aiBudgetState
+	if spec.AIEndUser != "" && (storedUserTokenLimit > 0 || storedUserCostLimit > 0) {
+		// ADR-994: the end user's settled day and live reservations.
+		userLimits.userTokens, userLimits.userCost = positiveLimit(storedUserTokenLimit), positiveLimit(storedUserCostLimit)
+		if user, err = postgresAIUserState(ctx, tx, integrationID, today, spec.AIEndUser); err != nil {
+			return Decision{}, err
+		}
+	}
 	if circuitProbeLeaseID.Valid {
 		var probeExpiresAt time.Time
 		probeErr := tx.QueryRow(ctx, `SELECT expires_at FROM outbound_admission_leases WHERE integration_id = $1 AND lease_id = $2`, integrationID, uuid.UUID(circuitProbeLeaseID.Bytes)).Scan(&probeExpiresAt)
@@ -374,9 +386,12 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		dailyTokens: dailyAITokenCount, bindingTokens: bindingAITokenCount,
 		dailyCost: dailyAICost, monthlyCost: monthlyAICost,
 		inflightTokens: inflightTokens, inflightBindingTokens: inflightBindingTokens, inflightCost: inflightCost,
+		userTokens: user.userTokens, userCost: user.userCost,
+		inflightUserTokens: user.inflightUserTokens, inflightUserCost: user.inflightUserCost,
 	}, aiBudgetLimits{
 		dailyTokens: positiveLimit(storedDailyAITokenLimit), bindingTokens: positiveLimit(storedBindingAITokenLimit),
 		dailyCost: positiveLimit(storedDailyAICostLimit), monthlyCost: positiveLimit(storedMonthlyAICostLimit),
+		userTokens: userLimits.userTokens, userCost: userLimits.userCost,
 	}, reserve); limited {
 		if err := tx.Commit(ctx); err != nil {
 			return Decision{}, err
@@ -401,8 +416,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbound_admission_leases
-		    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents)
-		VALUES ($1, $2, $3, $4, $5, $6)`, leaseID, integrationID, now.Add(ttl), leaseBindingApp, reserve.tokens, reserve.cost); err != nil {
+		    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`, leaseID, integrationID, now.Add(ttl), leaseBindingApp,
+		reserve.tokens, reserve.cost, spec.AIEndUser); err != nil {
 		return Decision{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state

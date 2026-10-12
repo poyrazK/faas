@@ -385,6 +385,7 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	dialer := &statsFakeDialer{}
 	p := NewPoller(store, dialer, nil, NewReader(), wire.NewOpsMetrics("schedd"), nilLogger()).
 		WithTelemetry(cache).
+		WithOwnerNodeID(live.ID).
 		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{live}))
 	p.Now = func() time.Time { return now }
 
@@ -403,6 +404,31 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	}
 	if !rows[0].SampledAt.Equal(now) {
 		t.Fatalf("row SampledAt = %v, want telemetry sample time %v", rows[0].SampledAt, now)
+	}
+}
+
+// TestPoller_SingleBoxReadsStatsDespiteTelemetryCache pins the single-box
+// posture: vmmd publishes the capacity stream only with a node name, so a
+// poller with no owner node must read Stats directly. Projecting the empty
+// stream cache dropped every in-flight request, and the idle reaper parked
+// instances mid-request.
+func TestPoller_SingleBoxReadsStatsDespiteTelemetryCache(t *testing.T) {
+	store := state.NewMemStore()
+	local, _ := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", local.ID)
+	dialer := &statsFakeDialer{stats: map[string]*sched.StatsSnapshot{
+		local.TargetURL: {Instances: []sched.VMInstanceStat{{InstanceID: ins.ID, InflightRequests: 1}}},
+	}}
+	p := NewPoller(store, dialer, nil, NewReader(), nil, nilLogger()).
+		WithTelemetry(sched.NewNodeTelemetryCache()).
+		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{local}))
+
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	activity, ok := p.Reader.SnapshotActivity(time.Now())[ins.ID]
+	if !ok || activity.Inflight != 1 {
+		t.Fatalf("activity = %+v (found %v), want the in-flight request vmmd Stats reported", activity, ok)
 	}
 }
 
@@ -1398,7 +1424,7 @@ func TestPoller_PersistentRequestRateSurvivesCachedTicksAndExpires(t *testing.T)
 	ins := seedInstance(t, store, "app1", node.ID)
 	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(500, 0)
-	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), nil, nilLogger()).WithTelemetry(cache)
+	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), nil, nilLogger()).WithTelemetry(cache).WithOwnerNodeID(node.ID)
 	p.Now = func() time.Time { return now }
 	publish := func(count *int64) {
 		cache.Replace(node.ID, now, now, []sched.NodeTelemetry{{InstanceID: ins.ID, RequestCountTotal: count}})

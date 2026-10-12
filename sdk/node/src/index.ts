@@ -183,6 +183,21 @@ export {
   type VerifyWebhookOptions,
 } from './webhook.js';
 
+// AI gateway helpers for apps: relay URLs, end-user and session headers (ADR-995).
+export {
+  AI_SESSION_HEADER,
+  AI_USER_HEADER,
+  AIGatewayError,
+  aiGatewayHeaders,
+  aiGatewayURL,
+  isValidAIUserId,
+  opaqueAIUserId,
+  withAIGatewayHeaders,
+  type AIGatewayCaller,
+  type AIGatewayTarget,
+  type AIGatewayURLOptions,
+} from './ai-gateway.js';
+
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 

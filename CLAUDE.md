@@ -119,8 +119,7 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - SQL via sqlc only; no string-built queries. Every state column has a CHECK.
 - Handlers ≤ 50 lines — extract. Table-driven tests. No global state except wiring.
 - New apid code goes in a `pkg/apid/<domain>` package (ADR-982); `pkg/apid/apidserver`
-  keeps wiring, the route table and middleware. `make apid-size-check` fails if its
-  non-test code grows; PRs that move code out lower `scripts/ci/apid_size_baseline.txt`.
+  keeps wiring, the route table and middleware.
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
@@ -168,7 +167,7 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   not a bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and
   `GOMEMLIMIT=6GiB`, which holds a `-race` build near 7.5 GB RSS instead of ~13.5 GB.
   Write new apid tests in `package apidserver_test` and reach internals through
-  `export_test.go`; `make apid-size-check` fails when internal tests grow. Run these builds
+  `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
   the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
   developer disks.
