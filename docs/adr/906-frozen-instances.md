@@ -1,4 +1,4 @@
-# ADR-984: Frozen instances
+# ADR-906: Frozen instances
 
 - Status: Proposed (vmmd prototype; schedd, gateway and host swap not wired)
 - Date: 2026-10-12

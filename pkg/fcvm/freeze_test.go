@@ -1,4 +1,4 @@
-// adr: 984 — a frozen instance is paused and reclaimed in place, and every
+// adr: 906 — a frozen instance is paused and reclaimed in place, and every
 // failed freeze leaves the guest running.
 package fcvm
 

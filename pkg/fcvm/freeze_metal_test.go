@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 984 — freeze/thaw keeps a restored guest serving, reachable only
+// adr: 906 — freeze/thaw keeps a restored guest serving, reachable only
 // while thawed, on host time after the pause, and leaves no leases behind.
 package fcvm
 

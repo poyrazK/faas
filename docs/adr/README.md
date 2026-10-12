@@ -799,4 +799,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
-- [ADR-984: Frozen instances](984-frozen-instances.md)
+- [ADR-906: Frozen instances](906-frozen-instances.md)

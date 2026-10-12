@@ -1,6 +1,6 @@
 package fcvm
 
-// Frozen instances (ADR-984, prototype). Freeze pauses a running VM and asks
+// Frozen instances (ADR-906, prototype). Freeze pauses a running VM and asks
 // the kernel to take its memory back, but keeps the Firecracker process, the
 // lease, the network namespace and the guest's page tables. Thaw is a vCPU
 // resume: no snapshot restore, no network setup and no resume hook. The guest
