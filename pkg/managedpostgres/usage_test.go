@@ -221,6 +221,43 @@ func TestServiceAdmissionRunsOnlyForNewReservations(t *testing.T) {
 	}
 }
 
+// TestServiceCreateRejectsUnsupportedSpecBeforeAdmission pins H9-P101: on an
+// account whose usage was stale, `postgres create --region mars-1` and
+// `--postgres-major 12` both answered "usage is stale" because placement was
+// resolved after admission. Unsupported requests must fail as such.
+func TestServiceCreateRejectsUnsupportedSpecBeforeAdmission(t *testing.T) {
+	cases := map[string]func(*Spec){
+		"region without a backend": func(spec *Spec) { spec.Region = "mars-1" },
+		"unsupported major":        func(spec *Spec) { spec.PostgresMajor = 12 },
+		"unsupported class":        func(spec *Spec) { spec.Class = ClassProduction },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+			admitted := 0
+			service, err := NewService(testRegistry(t, provider, nil), NewMemoryStore(), ServiceOptions{
+				ProvisioningEnabled: func() bool { return true },
+				Admit: func(context.Context, string) error {
+					admitted++
+					return ErrUsageStale
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := testSpec()
+			mutate(&spec)
+			_, err = service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: spec})
+			if !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("create = %v, want ErrUnsupported", err)
+			}
+			if admitted != 0 || provider.provisionCalls != 0 {
+				t.Fatalf("admission calls = %d, provider calls = %d, want 0", admitted, provider.provisionCalls)
+			}
+		})
+	}
+}
+
 type usageTestProvider struct {
 	*fakeProvider
 	readings      []MeterReading

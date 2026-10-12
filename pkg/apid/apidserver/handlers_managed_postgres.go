@@ -34,6 +34,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	detail := err.Error()
 	if errors.Is(err, managedpostgres.ErrUnavailable) {
 		detail = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	} else if errors.Is(err, managedpostgres.ErrUsageStale) {
+		detail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
 	} else if status >= 500 {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
