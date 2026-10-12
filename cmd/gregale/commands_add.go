@@ -174,9 +174,9 @@ func cmdAddBucket(args []string) int {
 		return jsonOut(writeJSON(result))
 	}
 	if bucketCreated {
-		_, _ = fmt.Fprintf(osStdout, "Provisioned object-storage bucket %s.\n", bucket.Name)
+		_, _ = fmt.Fprintf(osStdout, "Provisioned object-storage bucket %s (id %s).\n", bucket.Name, bucket.ID)
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "Using object-storage bucket %s.\n", bucket.Name)
+		_, _ = fmt.Fprintf(osStdout, "Using object-storage bucket %s (id %s).\n", bucket.Name, bucket.ID)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s in %s as %s (%s).\n", bucket.Name, appName, bucket.Scope, bindingPrefix, *permission)
 	return 0
