@@ -262,6 +262,6 @@ jobs:
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
-          GOGC: 10
+          GOGC: 30
           GOMAXPROCS: 2
         run: go test -race -v -p=1 ./pkg/apid/apidserver -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
