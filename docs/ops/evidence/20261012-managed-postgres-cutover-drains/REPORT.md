@@ -29,7 +29,14 @@ Migration replay and full up/down walk pass against isolated PostgreSQL 16.
 SQLC generation, protobuf versions, ADR uniqueness and documentation SQL checks
 pass. Production lint (golangci-lint 2.14.0) and Linux amd64 builds of schedd
 and vmmd pass. This change adds zero apidserver production lines; the
-baseline conflict was resolved using main's independently merged size-gate fix.
+initial baseline conflict used main's independently merged size-gate fix.
+
+A later CI merge included main's seven scan slug-holder wiring lines from
+PR #4593 and three recovery-point fixture lines from PR #4595 without updated
+size baselines. Those counters were synchronized during the CI investigation.
+Main subsequently removed the size gate and its baseline files in PR #4637;
+the final rebase preserves that removal. This PR adds no APID implementation
+or internal tests.
 
 Physical native x86_64 Linux KVM `test-metal` and `leakcheck` are still required.
 Full writer membership coverage, route convergence, external SQL-session fencing,
