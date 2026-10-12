@@ -367,3 +367,24 @@ func TestNetworklessConfigOmitsNetworkInterfaces(t *testing.T) {
 		t.Fatalf("app config lost its interface: %s", raw)
 	}
 }
+
+// TestJailerCommandDatabaseOverrides pins the database VM jailer shape
+// (ADR-1027): its own chroot base and cgroup parent, and no netns.
+func TestJailerCommandDatabaseOverrides(t *testing.T) {
+	argv := strings.Join(JailerCommand(JailerSpec{
+		Instance: "db-1", UID: 20001, GID: 20001, Networkless: true,
+		ChrootBase: "/srv/fc/dbjail", ParentCgroup: "faas.slice/faas-db.slice",
+	}), " ")
+	for _, want := range []string{"--chroot-base-dir /srv/fc/dbjail", "--parent-cgroup faas.slice/faas-db.slice"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("jailer argv missing %q: %s", want, argv)
+		}
+	}
+	if strings.Contains(argv, "--netns") || strings.Contains(argv, JailChrootBase+" ") {
+		t.Fatalf("database jailer argv kept app defaults: %s", argv)
+	}
+	def := strings.Join(JailerCommand(JailerSpec{Instance: "app-1", UID: 20002, GID: 20002, Netns: "fc-app-1"}), " ")
+	if !strings.Contains(def, "--chroot-base-dir "+JailChrootBase) {
+		t.Fatalf("app jailer argv lost the default chroot base: %s", def)
+	}
+}

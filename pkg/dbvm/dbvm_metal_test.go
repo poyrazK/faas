@@ -16,12 +16,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -285,4 +287,137 @@ func TestMetalDatabaseVMRejectsWrongPassword(t *testing.T) {
 		t.Fatalf("wrong password error = %v, want SQLSTATE 28P01 from the server", err)
 	}
 	vm.park(t)
+}
+
+// TestMetalRuntimeJailedLifecycle drives the vmmd-facing Runtime: jailed
+// boot with its own chroot base and cgroup parent, bootstrap, park, cold
+// boot, and complete cleanup of jail, cgroup and lease.
+func TestMetalRuntimeJailedLifecycle(t *testing.T) {
+	env := loadMetalEnv(t)
+	parent := "dbvm-metal-test"
+	parentDir := filepath.Join("/sys/fs/cgroup", parent)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		t.Fatalf("cgroup parent: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(parentDir) })
+	leases := &fakeLeaser{}
+	rt, err := NewRuntime(RuntimeConfig{
+		JailBase: filepath.Join(env.workdir, "dbjail"), VolumeRoot: filepath.Join(env.workdir, "volumes"),
+		KernelPath: env.kernel, Bases: map[int]string{17: env.base}, ParentCgroup: parent,
+		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: leases,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	id := "8b1d4e2a-6c3f-4a5b-9d7e-1f2a3b4c5d6e"
+	_ = rt.DeleteVolume(ctx, id)
+	if err := rt.CreateVolume(ctx, id, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Stop(context.Background(), id); _ = rt.DeleteVolume(context.Background(), id) })
+	boot := BootRequest{ID: id, Major: 17, VcpuCount: 1, MemSizeMiB: 384}
+
+	started := time.Now()
+	if err := rt.Start(ctx, boot); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	firstBoot := time.Since(started)
+	assertJailedProcess(t, rt, id, parent)
+	password := hex.EncodeToString([]byte("runtime-metal-test-superuser-pw!"))
+	if resp, err := rt.Control(ctx, id, dbguest.Request{Op: dbguest.OpBootstrap, SuperuserPassword: password}); err != nil || resp.Error != "" {
+		t.Fatalf("bootstrap: %+v %v", resp, err)
+	}
+	if _, err := rt.WaitState(ctx, id, dbguest.StateReady); err != nil {
+		t.Fatal(err)
+	}
+	conn := connectRuntime(ctx, t, rt, id, password)
+	if _, err := conn.Exec(ctx, "create table jailed(v text); insert into jailed values ('kept')"); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close(ctx)
+
+	parkStarted := time.Now()
+	if err := rt.Stop(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	park := time.Since(parkStarted)
+	if _, err := os.Stat(rt.jailDir("db-" + id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("jail dir survived stop: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parentDir, "db-"+id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cgroup survived stop: %v", err)
+	}
+	if len(leases.held) != 0 {
+		t.Fatalf("lease survived stop: %v", leases.held)
+	}
+
+	wakeStarted := time.Now()
+	if err := rt.Start(ctx, boot); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	if _, err := rt.WaitState(ctx, id, dbguest.StateReady); err != nil {
+		t.Fatal(err)
+	}
+	wake := time.Since(wakeStarted)
+	conn = connectRuntime(ctx, t, rt, id, password)
+	var v string
+	if err := conn.QueryRow(ctx, "select v from jailed").Scan(&v); err != nil || v != "kept" {
+		t.Fatalf("data after wake = %q, %v", v, err)
+	}
+	_ = conn.Close(ctx)
+	if err := rt.Stop(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("jailed first boot to control %v; park %v; jailed wake to ready %v",
+		firstBoot.Round(time.Millisecond), park.Round(time.Millisecond), wake.Round(time.Millisecond))
+}
+
+func connectRuntime(ctx context.Context, t *testing.T, rt *Runtime, id, password string) *pgx.Conn {
+	t.Helper()
+	cfg, err := pgx.ParseConfig("host=dbvm user=postgres dbname=postgres sslmode=disable password=" + password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) { return []string{host}, nil }
+	cfg.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) { return rt.Dial(ctx, id) }
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	return conn
+}
+
+// assertJailedProcess checks the VM runs as its jail uid inside its chroot
+// with the billable memory ceiling on its own cgroup.
+func assertJailedProcess(t *testing.T, rt *Runtime, id, parent string) {
+	t.Helper()
+	rt.mu.Lock()
+	vm := rt.vms[id]
+	rt.mu.Unlock()
+	pid := vm.cmd.Process.Pid
+	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("Uid:\t%d\t", vm.lease.UID); !strings.Contains(string(status), want) {
+		t.Fatalf("firecracker not running as jail uid %d:\n%s", vm.lease.UID, status)
+	}
+	if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err != nil || !cmdlineHasJailID(cmdline, vm.jailID) {
+		t.Fatalf("firecracker cmdline lacks --id %s: %q, %v", vm.jailID, cmdline, err)
+	}
+	if pids := jailProcesses(vm.jailID); len(pids) != 1 || pids[0] != pid {
+		t.Fatalf("jail process scan = %v, want [%d]", pids, pid)
+	}
+	memMax, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", parent, vm.jailID, "memory.max"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("%d", int64(api.BillableRAMMB(384))<<20); strings.TrimSpace(string(memMax)) != want {
+		t.Fatalf("memory.max = %s, want %s", memMax, want)
+	}
 }

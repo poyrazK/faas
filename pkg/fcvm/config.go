@@ -659,6 +659,12 @@ type JailerSpec struct {
 	// Networkless omits jailer's --netns argument for disposable execution
 	// guests. Ordinary app and job VMs always retain their tenant namespace.
 	Networkless bool
+	// ChrootBase overrides JailChrootBase. Database VMs use their own base
+	// so the app-VM orphan sweep never touches them (ADR-1027).
+	ChrootBase string
+	// ParentCgroup overrides the plan-derived parent cgroup (relative to
+	// the cgroup v2 mount). Database VMs live under their own slice.
+	ParentCgroup string
 }
 
 // PerInstanceScope returns the cgroup scope name the jailer will create
@@ -725,6 +731,13 @@ func JailerCommand(s JailerSpec) []string {
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
 	}
+	if s.ParentCgroup != "" {
+		parentCgroup = s.ParentCgroup
+	}
+	chrootBase := JailChrootBase
+	if s.ChrootBase != "" {
+		chrootBase = s.ChrootBase
+	}
 	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
@@ -732,7 +745,7 @@ func JailerCommand(s JailerSpec) []string {
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,
-		"--chroot-base-dir", JailChrootBase,
+		"--chroot-base-dir", chrootBase,
 	}
 	if !s.Networkless {
 		// Ordinary app/job VMs join their private tenant namespace. Execution

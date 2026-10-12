@@ -175,6 +175,14 @@ func ensureSubtreeControllers(parentAbs string, want []string) error {
 	return nil
 }
 
+// EnsureCgroupParentControllers enables the per-VM controllers (memory, cpu,
+// pids) on parent, a path relative to the cgroup v2 mount, so the scopes
+// jailer creates under it get memory.max. Database VMs use their own parent
+// slice and call this before their first boot (ADR-1027).
+func EnsureCgroupParentControllers(parent string) error {
+	return ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers)
+}
+
 // readCgroupSet reads a whitespace-separated cgroup pseudo-file into a set.
 // A missing file is reported as an error by the callers above, which is the
 // honest outcome: the parent slice must exist before a VM lands under it.
