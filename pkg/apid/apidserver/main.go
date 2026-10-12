@@ -1450,6 +1450,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	srv.configureAIGateway(*cfg, deps.getenv)
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
@@ -2010,6 +2011,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runAutomaticRouteCheckWorker(ctx)
 	go srv.runRouteMonitorWorker(ctx)
 	go srv.runRouteProbeWorker(ctx)
+	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
+	go srv.runWorkflowReadinessReminderWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}

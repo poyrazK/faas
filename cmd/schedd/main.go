@@ -1568,6 +1568,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if cfg.MeasuredAdmission {
+		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
+			return reader.MeasuredMB(nodeID, time.Now())
+		})
+		log.Info("measured admission enabled (ADR-909)",
+			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

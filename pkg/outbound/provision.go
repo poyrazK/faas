@@ -56,8 +56,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		     max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
 		     circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, enabled, provider_auth_mode,
 		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind,
-		     daily_request_limit)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'operator',$20)
+		     daily_request_limit, ai_provider, ai_daily_token_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'operator',$20,NULLIF($21, ''),$22)
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
@@ -74,6 +74,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
 		    credential_source = EXCLUDED.credential_source,
 		    daily_request_limit = EXCLUDED.daily_request_limit,
+		    ai_provider = EXCLUDED.ai_provider,
+		    ai_daily_token_limit = EXCLUDED.ai_daily_token_limit,
 		    updated_at = now()
 		WHERE outbound_integrations.account_id = EXCLUDED.account_id
 		  AND outbound_integrations.owner_kind = 'operator'`,
@@ -84,7 +86,7 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		record.Policy.CircuitBreakerOpenSeconds, record.Policy.RetryBudgetPerMinute, record.Policy.Enabled,
 		providerAuthMode(record.Policy.ProviderAuthMode), nonNilStrings(record.Policy.AllowedMethods),
 		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource),
-		record.Policy.DailyRequestLimit)
+		record.Policy.DailyRequestLimit, record.Policy.AIProvider, record.Policy.DailyAITokenLimit)
 	if err != nil {
 		return err
 	}

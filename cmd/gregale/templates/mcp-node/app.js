@@ -5,7 +5,9 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { completable, createMcpHandler, McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { createAuth, verifiedCallerIdentity } from './auth.js';
+import { createRuntimeCatalog } from './catalog.js';
 import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from './tasks.js';
+import { createResourceUpdateHub, validResourceUpdateURI } from './resource-updates.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
@@ -40,6 +42,21 @@ function taskIDFromResourceURI(uri) {
   return match?.[1].toLowerCase();
 }
 
+function isConfiguredResourceURI(uri, patterns) {
+  for (const pattern of patterns) {
+    if (pattern === uri) {
+      if (!pattern.includes('{')) return true;
+      continue;
+    }
+    const pieces = pattern.split(/(\{[A-Za-z_][A-Za-z0-9_]*\})/g);
+    const source = pieces.map(piece => piece.startsWith('{')
+      ? '[^/?#]+'
+      : piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
+    if (new RegExp(`^${source}$`).test(uri)) return true;
+  }
+  return false;
+}
+
 function writeSseMessage(response, message) {
   if (!response.writableEnded && !response.destroyed) response.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
 }
@@ -51,19 +68,109 @@ function jsonRpcError(response, requestID, code, message, status = 200, data) {
   });
 }
 
-export function createApp(config, { keyResolver, log = console.log, taskRuntime } = {}) {
+function installDefaultCatalog(catalog) {
+  const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+  catalog.registerTool('greet', {
+    description: 'Return a greeting from Gregale.', inputSchema: z.object({ name: z.string().min(1).max(100) }), annotations: readOnly,
+  }, async ({ name }) => ({ content: [{ type: 'text', text: `Hello, ${name}!` }] }));
+  catalog.registerTool('add', {
+    description: 'Add two finite numbers.', inputSchema: z.object({ a: z.number().finite(), b: z.number().finite() }),
+    outputSchema: z.object({ sum: z.number().finite() }), annotations: readOnly,
+  }, async ({ a, b }) => {
+    const sum = a + b;
+    if (!Number.isFinite(sum)) return { isError: true, content: [{ type: 'text', text: 'Sum exceeds the finite number range.' }] };
+    return { content: [{ type: 'text', text: String(sum) }], structuredContent: { sum } };
+  });
+  catalog.registerTool('stream_demo', {
+    description: 'Send three progress events over one second.', inputSchema: z.object({}), annotations: readOnly,
+  }, async (_args, ctx) => {
+    const progressToken = ctx.mcpReq._meta?.progressToken;
+    for (let step = 1; step <= 3; step++) {
+      if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: step, total: 3 } });
+      await delay(400, undefined, { signal: ctx.mcpReq.signal });
+    }
+    return { content: [{ type: 'text', text: 'Streaming complete.' }] };
+  });
+  catalog.registerTool('build_report', {
+    description: 'Build a harmless sample report; supports durable MCP Tasks when a task store is configured.',
+    inputSchema: z.object({ report: z.string().min(1).max(80), steps: z.number().int().min(1).max(20), request_approval: z.boolean().optional() }),
+    annotations: readOnly,
+  }, async (args, ctx, { authInfo, config, taskRuntime }) => {
+    if (taskRuntime && clientSupportsMcpTasks(ctx)) {
+      const clientCapabilities = ctx.mcpReq.envelope?.['io.modelcontextprotocol/clientCapabilities'] || {};
+      const elicitation = clientCapabilities.elicitation;
+      if (args.request_approval && (!elicitation || typeof elicitation !== 'object' || Array.isArray(elicitation) || (!elicitation.form && Object.keys(elicitation).length > 0))) {
+        return { isError: true, content: [{ type: 'text', text: 'request_approval requires client support for elicitation form requests.' }] };
+      }
+      return taskRuntime.create('build_report', args, authInfo, config.auth.mode, clientCapabilities);
+    }
+    if (args.request_approval) {
+      return { isError: true, content: [{ type: 'text', text: 'request_approval requires durable MCP Tasks and client elicitation support.' }] };
+    }
+    return mcpTaskHandlers.build_report.execute(args, { signal: ctx.mcpReq.signal });
+  });
+  catalog.registerResource('welcome', 'greeting://welcome', {
+    title: 'Welcome', description: 'A public example resource.', mimeType: 'text/plain',
+  }, async uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Welcome to the Gregale MCP starter.' }] }));
+  catalog.registerResource('customer_record', new ResourceTemplate('customer://records/{recordId}', {
+    list: undefined,
+    complete: {
+      recordId: value => SAMPLE_RECORD_IDS.filter(recordID => recordID.startsWith(value.toLowerCase())),
+    },
+  }), {
+    title: 'Customer record', description: 'Example customer-record resource; enforce ownership in your own data lookup.', mimeType: 'application/json',
+  }, async (uri, { recordId }) => ({
+    contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }],
+  }));
+  catalog.registerPrompt('summarize', {
+    title: 'Summarize text', description: 'Create a concise summary request.',
+    argsSchema: z.object({
+      text: z.string().min(1).max(4000),
+      style: completable(z.enum(SUMMARY_STYLES), value => SUMMARY_STYLES.filter(style => style.startsWith(value.toLowerCase()))).optional(),
+    }),
+  }, ({ text, style }) => ({
+    description: style ? `Ask for a ${style} summary.` : 'Ask for a concise summary.',
+    messages: [{ role: 'user', content: { type: 'text', text: `${style ? `Summarize this text in a ${style} style:` : 'Summarize this text concisely:'}\n\n${text}` } }],
+  }));
+}
+
+export function createApp(config, { keyResolver, log = console.log, taskRuntime, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
   if (typeof config.endpoint !== 'string' || !/^\/(?:[A-Za-z0-9._~-]+\/?)*$/.test(config.endpoint) || config.endpoint.split('/').some(s => s === '.' || s === '..')) throw new Error('Invalid MCP endpoint');
   if (!Array.isArray(config.allowed_origins)) throw new Error('Set allowed_origins explicitly');
   const tasksEnabled = config.tasks?.enabled === true;
   if (config.tasks !== undefined && (typeof config.tasks !== 'object' || config.tasks === null || typeof config.tasks.enabled !== 'boolean')) throw new Error('tasks.enabled must be explicitly true or false when task settings are present');
   if (tasksEnabled !== !!taskRuntime) throw new Error('MCP Tasks require an enabled durable task runtime');
+  const resourceUpdateAdapter = suppliedResourceUpdateAdapter || createResourceUpdateHub();
+  if (typeof resourceUpdateAdapter.publish !== 'function' || typeof resourceUpdateAdapter.subscribe !== 'function') {
+    throw new Error('resourceUpdateAdapter must implement publish(uri) and subscribe(uri, listener)');
+  }
   for (const origin of config.allowed_origins) {
     const url = new URL(origin);
     if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin) throw new Error('Use exact HTTP allowed origins');
   }
   const auth = createAuth(config, keyResolver);
-  const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+  const normalizeCatalogDefinition = definition => {
+    const normalized = { ...definition };
+    for (const key of ['inputSchema', 'outputSchema', 'argsSchema']) {
+      const schema = normalized[key];
+      if (schema && typeof schema.safeParse === 'function') normalized[key] = z.toJSONSchema(schema);
+    }
+    return normalized;
+  };
+  const catalog = createRuntimeCatalog({ normalizeDefinition: normalizeCatalogDefinition });
+  installDefaultCatalog(catalog);
+  if (expectedCatalogSHA256 !== undefined && typeof expectedCatalogSHA256 !== 'string') throw new TypeError('MCP_CATALOG_EXPECTED_SHA256 must be a string');
+  expectedCatalogSHA256 = expectedCatalogSHA256?.trim().toLowerCase() || '';
+  if (expectedCatalogSHA256 && !/^[a-f0-9]{64}$/.test(expectedCatalogSHA256)) {
+    throw new Error('MCP_CATALOG_EXPECTED_SHA256 must be a 64-character SHA-256 hex digest');
+  }
+  function catalogStatus() {
+    const authPolicy = Object.fromEntries(['tool_scopes', 'resource_scopes', 'prompt_scopes']
+      .map(key => [key, config.auth[key] ?? null]));
+    const sha256 = catalog.contractFingerprint({ tasks_enabled: Boolean(taskRuntime), auth_policy: authPolicy });
+    return { ready: !expectedCatalogSHA256 || sha256 === expectedCatalogSHA256, revision: catalog.revision(), sha256 };
+  }
 
   function observe(name, callback) {
     return async (args, ctx) => {
@@ -87,89 +194,63 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
       && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = new McpServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
-        tools: { listChanged: true }, resources: { listChanged: true, ...(taskRuntime && era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true },
+        tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {} } } : {}),
       },
     });
     if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
-    function registerTool(name, definition, callback) {
-      const tool = server.registerTool(name, definition, auth.toolPolicy.guard(name, observe(name, callback)));
-      if (!auth.toolPolicy.canAccess(name, authInfo)) tool.disable();
+    for (const entry of catalog.tools()) {
+      const callback = async (args, ctx) => {
+        if (typeof taskRuntime?.canCreate === 'function' && taskRuntime.canCreate(entry.name) && clientSupportsMcpTasks(ctx)) {
+          const clientCapabilities = ctx.mcpReq.envelope?.[MCP_CLIENT_CAPABILITIES_META_KEY] || {};
+          if (entry.name === 'build_report' && args.request_approval) {
+            const elicitation = clientCapabilities.elicitation;
+            if (!elicitation || typeof elicitation !== 'object' || Array.isArray(elicitation) || (!elicitation.form && Object.keys(elicitation).length > 0)) {
+              return { isError: true, content: [{ type: 'text', text: 'request_approval requires client support for elicitation form requests.' }] };
+            }
+          }
+          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities);
+        }
+        return entry.handler(args, ctx, { authInfo, config, taskRuntime });
+      };
+      const tool = server.registerTool(entry.name, entry.definition, auth.toolPolicy.guard(entry.name, observe(entry.name, callback)));
+      if (!auth.toolPolicy.canAccess(entry.name, authInfo)) tool.disable();
     }
-    function registerResource(name, uriOrTemplate, definition, callback) {
-      const policyKey = typeof uriOrTemplate === 'string' ? uriOrTemplate : uriOrTemplate.uriTemplate.toString();
-      if (!auth.resourcePolicy.canAccess(policyKey, authInfo)) return;
-      server.registerResource(name, uriOrTemplate, definition, auth.resourcePolicy.guard(policyKey, callback, 'Resource access denied'));
+    for (const entry of catalog.resources()) {
+      if (!auth.resourcePolicy.canAccess(entry.policyKey, authInfo)) continue;
+      const uriOrTemplate = entry.name === 'customer_record'
+        ? new ResourceTemplate('customer://records/{recordId}', { list: undefined, complete: {
+            recordId: value => SAMPLE_RECORD_IDS.filter(id => canReadSampleRecord(id) && id.startsWith(value.toLowerCase())),
+          } }) : entry.uriOrTemplate;
+      const callback = (uri, variables, ctx) => {
+        if (entry.name === 'customer_record' && !canReadSampleRecord(variables.recordId)) throw new Error('Resource not found');
+        return typeof uriOrTemplate === 'string' ? entry.handler(uri, ctx || variables, {authInfo,config,taskRuntime})
+          : entry.handler(uri,variables,ctx,{authInfo,config,taskRuntime});
+      };
+      server.registerResource(entry.name, uriOrTemplate, entry.definition, auth.resourcePolicy.guard(entry.policyKey,callback,'Resource access denied'));
     }
     function registerPrompt(name, definition, callback) {
       if (!auth.promptPolicy.canAccess(name, authInfo)) return;
       server.registerPrompt(name, definition, auth.promptPolicy.guard(name, callback, 'Prompt access denied'));
     }
-    registerTool('greet', {
-      description: 'Return a greeting from Gregale.', inputSchema: z.object({ name: z.string().min(1).max(100) }), annotations: readOnly,
-    }, async ({ name }) => ({ content: [{ type: 'text', text: `Hello, ${name}!` }] }));
-    registerTool('add', {
-      description: 'Add two finite numbers.', inputSchema: z.object({ a: z.number().finite(), b: z.number().finite() }),
-      outputSchema: z.object({ sum: z.number().finite() }), annotations: readOnly,
-    }, async ({ a, b }) => {
-      const sum = a + b;
-      if (!Number.isFinite(sum)) return { isError: true, content: [{ type: 'text', text: 'Sum exceeds the finite number range.' }] };
-      return { content: [{ type: 'text', text: String(sum) }], structuredContent: { sum } };
-    });
-    registerTool('stream_demo', {
-      description: 'Send three progress events over one second.', inputSchema: z.object({}), annotations: readOnly,
-    }, async (_args, ctx) => {
-      const progressToken = ctx.mcpReq._meta?.progressToken;
-      for (let step = 1; step <= 3; step++) {
-        if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: step, total: 3 } });
-        await delay(400, undefined, { signal: ctx.mcpReq.signal });
-      }
-      return { content: [{ type: 'text', text: 'Streaming complete.' }] };
-    });
-    registerTool('build_report', {
-      description: 'Build a harmless sample report; supports durable MCP Tasks when a task store is configured.',
-      inputSchema: z.object({ report: z.string().min(1).max(80), steps: z.number().int().min(1).max(20) }),
-      annotations: readOnly,
-    }, async (args, ctx) => {
-      if (taskRuntime && clientSupportsMcpTasks(ctx)) {
-        const clientCapabilities = ctx.mcpReq.envelope?.['io.modelcontextprotocol/clientCapabilities'] || {};
-        return taskRuntime.create('build_report', args, authInfo, config.auth.mode, clientCapabilities);
-      }
-      return mcpTaskHandlers.build_report.execute(args, { signal: ctx.mcpReq.signal });
-    });
-    registerResource('welcome', 'greeting://welcome', {
-      title: 'Welcome', description: 'A public example resource.', mimeType: 'text/plain',
-    }, async uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Welcome to the Gregale MCP starter.' }] }));
-    registerResource('customer_record', new ResourceTemplate('customer://records/{recordId}', {
-      list: undefined,
-      complete: {
-        recordId: value => SAMPLE_RECORD_IDS.filter(recordID => canReadSampleRecord(recordID) && recordID.startsWith(value.toLowerCase())),
-      },
-    }), {
-      title: 'Customer record', description: 'Demo records are restricted by the verified OAuth subject.', mimeType: 'application/json',
-    }, async (uri, { recordId }) => {
-      if (!canReadSampleRecord(recordId)) throw new Error('Resource not found');
-      return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify({ recordId, status: 'example' }) }] };
-    });
     if (taskRuntime) {
-      registerResource('task', new ResourceTemplate('task://tasks/{taskId}', { list: undefined }), {
-        title: 'MCP task', description: 'Read the current state and result of a task owned by this caller.', mimeType: 'application/json',
-      }, async (uri, { taskId }) => {
-        if (!MCP_TASK_ID_PATTERN.test(taskId)) throw new Error('Task not found');
-        const task = await taskRuntime.get(taskId, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
-        return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(task) }] };
-      });
+      const taskTemplate = new ResourceTemplate('task://tasks/{taskId}', { list: undefined });
+      const taskPolicyKey = taskTemplate.uriTemplate.toString();
+      if (auth.resourcePolicy.canAccess(taskPolicyKey, authInfo)) {
+        server.registerResource('task', taskTemplate, {
+          title: 'MCP task', description: 'Read the current state and result of a task owned by this caller.', mimeType: 'application/json',
+        }, auth.resourcePolicy.guard(taskPolicyKey, async (uri, { taskId }) => {
+          if (!MCP_TASK_ID_PATTERN.test(taskId)) throw new Error('Task not found');
+          const task = await taskRuntime.get(taskId, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
+          return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(task) }] };
+        }, 'Resource access denied'));
     }
-    registerPrompt('summarize', {
-      title: 'Summarize text', description: 'Create a concise summary request.',
-      argsSchema: z.object({
-        text: z.string().min(1).max(4000),
-        style: completable(z.enum(SUMMARY_STYLES), value => SUMMARY_STYLES.filter(style => style.startsWith(value.toLowerCase()))).optional(),
-      }),
-    }, ({ text, style }) => ({
-      description: style ? `Ask for a ${style} summary.` : 'Ask for a concise summary.',
-      messages: [{ role: 'user', content: { type: 'text', text: `${style ? `Summarize this text in a ${style} style:` : 'Summarize this text concisely:'}\n\n${text}` } }],
-    }));
+    }
+    for (const entry of catalog.prompts()) {
+      if (!auth.promptPolicy.canAccess(entry.name, authInfo)) continue;
+      const callback = (args, ctx) => entry.handler(args, ctx, { authInfo, config, taskRuntime });
+      server.registerPrompt(entry.name, entry.definition, auth.promptPolicy.guard(entry.name, callback, 'Prompt access denied'));
+    }
     return server;
   }
 
@@ -195,7 +276,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     if (['toolsListChanged', 'promptsListChanged', 'resourcesListChanged'].some(key => Object.hasOwn(notifications, key) && typeof notifications[key] !== 'boolean')
       || (Object.hasOwn(notifications, 'resourceSubscriptions') && (!Array.isArray(requestedResourceURIs)
         || requestedResourceURIs.length > MAX_TASK_RESOURCE_SUBSCRIPTIONS
-        || requestedResourceURIs.some(uri => typeof uri !== 'string' || uri.length === 0 || Buffer.byteLength(uri) > MAX_RESOURCE_URI_BYTES)))
+        || requestedResourceURIs.some(uri => !validResourceUpdateURI(uri))))
       || (Object.hasOwn(notifications, 'taskIds') && (!Array.isArray(requestedTaskIDs)
         || requestedTaskIDs.length > 64
         || requestedTaskIDs.some(taskID => typeof taskID !== 'string' || !MCP_TASK_ID_PATTERN.test(taskID))))) {
@@ -219,9 +300,15 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     if (notifications.promptsListChanged === true) honored.promptsListChanged = true;
     if (notifications.resourcesListChanged === true) honored.resourcesListChanged = true;
     const resourceTaskIDs = new Map();
+    const genericResourceURIs = new Set();
     for (const uri of uniqueResourceURIs) {
+      if (!auth.resourcePolicy.canAccess(uri, req.auth)) continue;
+      if (!uri.startsWith('task://tasks/')) {
+        if (isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) genericResourceURIs.add(uri);
+        continue;
+      }
       const taskID = taskIDFromResourceURI(uri);
-      if (!taskRuntime || typeof taskRuntime.subscribe !== 'function' || !taskID || !auth.resourcePolicy.canAccess(uri, req.auth)) continue;
+      if (!taskRuntime || typeof taskRuntime.subscribe !== 'function' || !taskID) continue;
       try {
         await taskRuntime.get(taskID, req.auth, config.auth.mode, name => auth.toolPolicy.canAccess(name, req.auth));
         resourceTaskIDs.set(uri, taskID);
@@ -242,6 +329,8 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     }
     let subscription;
     let unsubscribeBus;
+    let unsubscribeCatalog;
+    const unsubscribeResourceUpdates = new Map();
     let keepAlive;
     let authDeadline;
     let ended = false;
@@ -254,6 +343,9 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
       clearInterval(keepAlive);
       clearTimeout(authDeadline);
       unsubscribeBus?.();
+      unsubscribeCatalog?.();
+      for (const unsubscribe of unsubscribeResourceUpdates.values()) unsubscribe();
+      unsubscribeResourceUpdates.clear();
       subscription?.close();
       taskSubscriptionStreams.delete(closeGracefully);
       if (endResponse && !res.writableEnded && !res.destroyed) res.end();
@@ -295,6 +387,27 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
         _meta: { ...params._meta, [MCP_SUBSCRIPTION_ID_META_KEY]: requestID },
       } });
     }
+    const listChangeMethods = {
+      tools: ['toolsListChanged', 'notifications/tools/list_changed'],
+      resources: ['resourcesListChanged', 'notifications/resources/list_changed'],
+      prompts: ['promptsListChanged', 'notifications/prompts/list_changed'],
+    };
+    const catalogFingerprints = new Map();
+    function catalogFingerprint(kind) {
+      return catalog.fingerprint(kind, (_catalogKind, entry) => {
+        if (kind === 'tools') return auth.toolPolicy.canAccess(entry.name, req.auth);
+        if (kind === 'resources') return auth.resourcePolicy.canAccess(entry.policyKey, req.auth);
+        return auth.promptPolicy.canAccess(entry.name, req.auth);
+      });
+    }
+    function onCatalogChanged(kind) {
+      const change = listChangeMethods[kind];
+      if (!change || !honored[change[0]]) return;
+      const fingerprint = catalogFingerprint(kind);
+      if (catalogFingerprints.get(kind) === fingerprint) return;
+      catalogFingerprints.set(kind, fingerprint);
+      sendChange(change[1]);
+    }
     taskSubscriptionStreams.add(closeGracefully);
     res.once('close', closeNow);
     req.once('aborted', closeNow);
@@ -310,38 +423,58 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     expireAuthentication();
 
     try {
+      for (const kind of Object.keys(listChangeMethods)) {
+        const [filter] = listChangeMethods[kind];
+        if (honored[filter]) catalogFingerprints.set(kind, catalogFingerprint(kind));
+      }
+      unsubscribeCatalog = catalog.subscribe(onCatalogChanged);
       unsubscribeBus = handler.bus.subscribe(event => {
         if (event.kind === 'tools_list_changed' && honored.toolsListChanged) sendChange('notifications/tools/list_changed');
         else if (event.kind === 'prompts_list_changed' && honored.promptsListChanged) sendChange('notifications/prompts/list_changed');
         else if (event.kind === 'resources_list_changed' && honored.resourcesListChanged) sendChange('notifications/resources/list_changed');
-        else if (event.kind === 'resource_updated' && resourceTaskIDs.has(event.uri)) sendChange('notifications/resources/updated', { uri: event.uri });
       });
+      for (const uri of new Set([...genericResourceURIs, ...resourceTaskIDs.keys()])) {
+        const unsubscribe = await resourceUpdateAdapter.subscribe(uri, () => {
+          if (uri.startsWith('task://tasks/')) {
+            if (resourceTaskIDs.has(uri)) sendChange('notifications/resources/updated', { uri });
+            return;
+          }
+          if (auth.resourcePolicy.canAccess(uri, req.auth)
+            && isConfiguredResourceURI(uri, new Set(catalog.resourcePatterns()))) {
+            sendChange('notifications/resources/updated', { uri });
+          }
+        });
+        if (typeof unsubscribe === 'function') unsubscribeResourceUpdates.set(uri, unsubscribe);
+      }
+      let acceptedTaskIDs = new Set();
       if (allTaskIDs.length > 0 && taskRuntime?.subscribe) {
         subscription = await taskRuntime.subscribe(
           allTaskIDs, req.auth, config.auth.mode,
           name => auth.toolPolicy.canAccess(name, req.auth), task => {
             const taskID = task.taskId.toLowerCase();
             if (requestedTaskIDSet.has(taskID)) sendTask(task);
-            for (const uri of resourceURIsByTaskID.get(taskID) || []) handler.notify.resourceUpdated(uri);
+            for (const uri of resourceURIsByTaskID.get(taskID) || []) sendChange('notifications/resources/updated', { uri });
           }, closeGracefully,
         );
-        const acceptedTaskIDs = new Set(subscription.taskIds.map(taskID => taskID.toLowerCase()));
-        for (const [uri, taskID] of resourceTaskIDs) {
-          if (!acceptedTaskIDs.has(taskID)) resourceTaskIDs.delete(uri);
+        acceptedTaskIDs = new Set(subscription.taskIds.map(taskID => taskID.toLowerCase()));
+      }
+      for (const [uri, taskID] of resourceTaskIDs) {
+        if (!acceptedTaskIDs.has(taskID)) {
+          resourceTaskIDs.delete(uri);
+          unsubscribeResourceUpdates.get(uri)?.();
+          unsubscribeResourceUpdates.delete(uri);
         }
-        resourceURIsByTaskID.clear();
-        for (const [uri, taskID] of resourceTaskIDs) {
-          const uris = resourceURIsByTaskID.get(taskID) || [];
-          uris.push(uri);
-          resourceURIsByTaskID.set(taskID, uris);
-        }
-        const acceptedResourceURIs = [...resourceTaskIDs.keys()];
-        if (acceptedResourceURIs.length > 0) honored.resourceSubscriptions = acceptedResourceURIs;
-        if (Object.hasOwn(notifications, 'taskIds')) {
-          honored.taskIds = subscription.taskIds.filter(taskID => requestedTaskIDSet.has(taskID.toLowerCase()));
-        }
-      } else if (uniqueTaskIDs.length > 0) {
-        honored.taskIds = [];
+      }
+      resourceURIsByTaskID.clear();
+      for (const [uri, taskID] of resourceTaskIDs) {
+        const uris = resourceURIsByTaskID.get(taskID) || [];
+        uris.push(uri);
+        resourceURIsByTaskID.set(taskID, uris);
+      }
+      const acceptedResourceURIs = uniqueResourceURIs.filter(uri => genericResourceURIs.has(uri) || resourceTaskIDs.has(uri));
+      if (acceptedResourceURIs.length > 0) honored.resourceSubscriptions = acceptedResourceURIs;
+      if (Object.hasOwn(notifications, 'taskIds') && allTaskIDs.length > 0) {
+        honored.taskIds = (subscription?.taskIds || []).filter(taskID => requestedTaskIDSet.has(taskID.toLowerCase()));
       }
       if (ended) { subscription?.close(); return; }
 
@@ -373,7 +506,12 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     }
   }
 
+  let draining = false;
   app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    if (draining) return res.status(503).set('Retry-After', '1').json({ error: 'mcp_server_draining' });
+    next();
+  });
   app.use((req, res, next) => {
     if (req.headers.origin !== undefined && !config.allowed_origins.includes(req.headers.origin)) return res.status(403).json({ error: 'origin_not_allowed' });
     if (req.headers.origin) {
@@ -391,9 +529,20 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
     }
     next();
   });
-  app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
+  app.get('/healthz', (_req, res) => {
+    const catalogState = catalogStatus();
+    res.status(catalogState.ready ? 200 : 503).json({
+      status: catalogState.ready ? 'ok' : 'degraded',
+      instance_id: process.env.FAAS_INSTANCE_ID || '',
+      catalog_revision: catalogState.revision,
+      catalog_sha256: catalogState.sha256,
+    });
+  });
   if (auth.metadata) app.get(`/.well-known/oauth-protected-resource${config.endpoint}`, (_req, res) => res.json(auth.metadata));
-  app.use(config.endpoint, auth.middleware, express.json({ limit: '1mb' }), auth.authorizeCall);
+  app.use(config.endpoint, (req, res, next) => {
+    if (!catalogStatus().ready) return res.status(503).set('Retry-After', '5').json({ error: 'catalog_contract_mismatch' });
+    next();
+  }, auth.middleware, express.json({ limit: '1mb' }), auth.authorizeCall);
   app.all(config.endpoint, (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
@@ -411,6 +560,21 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime 
   return {
     app,
     handler,
+    registerTool: catalog.registerTool,
+    replaceTool: catalog.replaceTool,
+    removeTool: catalog.removeTool,
+    registerResource: catalog.registerResource,
+    replaceResource: catalog.replaceResource,
+    removeResource: catalog.removeResource,
+    registerPrompt: catalog.registerPrompt,
+    replacePrompt: catalog.replacePrompt,
+    removePrompt: catalog.removePrompt,
+    catalogStatus,
+    notifyResourceUpdated(uri) {
+      if (!validResourceUpdateURI(uri)) throw new TypeError('resource update URI must be a nonempty URI under 16 KiB');
+      return resourceUpdateAdapter.publish(uri);
+    },
+    beginDrain() { draining = true; },
     closeTaskSubscriptions() {
       for (const close of [...taskSubscriptionStreams]) close();
     },

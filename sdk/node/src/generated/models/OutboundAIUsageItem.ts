@@ -1,0 +1,32 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
+ */
+export type OutboundAIUsageItem = {
+  /**
+   * App UUID, or "runs" for stateless Runs.
+   */
+  caller: string;
+  /**
+   * Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.
+   */
+  model: string;
+  requests: number;
+  error_requests: number;
+  /**
+   * Successful calls whose response reported no usage, such as an OpenAI stream without stream_options.include_usage.
+   */
+  usage_unknown_requests: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  /**
+   * Priced from the list in effect at each call and rounded up per call; zero without a price list.
+   */
+  cost_millicents?: number;
+};
+

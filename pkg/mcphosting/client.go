@@ -312,6 +312,17 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if c.Version != LegacyProtocolVersion {
 		return nil
 	}
+	return c.InitializeStateless(ctx)
+}
+
+// InitializeStateless performs the MCP initialize handshake for either
+// supported protocol version, sends notifications/initialized, and rejects
+// servers that create a stateful session. It is useful for hosting
+// qualification, where initialization itself is part of the contract.
+func (c *Client) InitializeStateless(ctx context.Context) error {
+	if c.Version != ProtocolVersion && c.Version != LegacyProtocolVersion {
+		return fmt.Errorf("unsupported diagnostic protocol version %q", c.Version)
+	}
 	x, err := c.request(ctx, "initialize", map[string]any{"protocolVersion": c.Version, "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "gregale-doctor", "version": "1.0.0"}}, nil, false)
 	if err != nil {
 		return err

@@ -70,6 +70,7 @@ type server struct {
 	operation             operation.Service // ADR-977; Host wired in newServer
 	appEvents             appevents.Service // ADR-977; Host wired in newServer
 	featureFlagsEnabled   bool
+	aiGatewayEnabled      bool
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
@@ -138,11 +139,11 @@ type server struct {
 	githubDeploysAvailable func(context.Context) bool
 	// gatewaydControlURL (ADR-093) is the loopback URL apid uses
 	// to reach gatewayd-internal's control listener
-	// (default http://127.0.0.1:9090). Only the /v1/internal/apps/{slug}/routes
-	// endpoint is dialled today; the quota endpoint at
+	// (default http://127.0.0.1:9090). App route, streaming-cap, and exact
+	// MCP instance-health readers use it; the quota endpoint at
 	// /v1/internal/quota has no apid-side caller yet so it's
-	// still operator-curl-only. Empty disables the reverse-
-	// proxy path; getAppRoutes surfaces
+	// still operator-curl-only. Empty disables these control
+	// hops; getAppRoutes surfaces
 	// X-Faas-Routes-State: unavailable so the dashboard
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
@@ -1681,6 +1682,34 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/runtime/workflow-operations/{id}/artifact-upload-receipts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ReuseWorkflowOperationUpload)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.DownloadPlatformTenantOperationArtifact)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/artifacts/{artifact}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.DownloadOwnedOperationArtifact))))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAccountWorkflowReadiness))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/compare", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.comparePlatformTenantSelfWorkflowReadiness)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowCoordinationTimeline))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/timeline", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowCoordinationTimeline)))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookReview))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowPlaybookReview)))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/playbook-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookProgress))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookProgress))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/playbook-progress", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowPlaybookProgress)))
+	mux.HandleFunc("PATCH /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowPlaybookProgress)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/case", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowCase))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/case", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowCase)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/follow-ups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowReadinessFollowUps))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/follow-ups", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowReadinessFollowUps)))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/workflow-readiness/subscriptions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/subscriptions", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/subscriptions", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("DELETE /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowReadinessSubscriptions))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowReadinessSubscriptions)))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/queue", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountWorkflowReadinessQueue))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/queue", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfWorkflowReadinessQueue)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/invocations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.getPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.cancelPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/replay", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.replayPlatformTenantSelfInvocation)))
@@ -1941,6 +1970,7 @@ func (s *server) handler() http.Handler {
 	// new-row creation. The closed-vocab guard lives in the
 	// handler (state.IsStageName) — invalid from_stage returns 400
 	// with a structured RFC 7807 problem before the storage call.
+	mux.HandleFunc("POST /v1/deployments/{id}/mcp-task-hold/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryMCPTaskPromotionHold))))
 	mux.HandleFunc("POST /v1/deployments/{id}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryDeployment))))
 	// DEPLOY-PROV-4 / ADR-092 / issue #739 — headless source-ref
 	// deploy from CI. Same auth chain as the multipart sibling
@@ -2081,6 +2111,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putCustomMetric)))
 	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listCustomMetrics)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
+	// MCP task compatibility is an observer-owned, bounded aggregate snapshot.
+	// The observer publishes it through the existing metrics:write scope; the
+	// account read surface lets operators inspect freshness and handler counts.
+	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-task-compatibility", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putMCPTaskCompatibilityReport)))
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-task-compatibility", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPTaskCompatibilityReport)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))
@@ -2215,6 +2250,11 @@ func (s *server) handler() http.Handler {
 
 	// Instances (read-only here; schedd is the writer).
 	mux.HandleFunc("GET /v1/apps/{slug}/instances", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInstances))))
+	// MCP hosting verification can read the fixed health route or execute an
+	// allowlisted, read-only protocol request on one exact running replica.
+	// Both handlers validate ownership before asking gatewayd to forward.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPInstanceHealth))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.postMCPInstanceProtocolProbe))))
 	// Account-scoped instances (issue #393). Cursor: ?before=
 	// (instances.id UUIDv7). Default limit 25, max 100 (strict 400
 	// on bad input via api.ParseLimit). Additive to the per-app
@@ -2735,6 +2775,24 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundIntegrationUsage))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundIntegrationDailyBudget))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/request-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRequestPolicy))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIPolicy)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-prices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIPrices)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-prices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIPrices)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundBindingAIBudget)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIRoutes)))))
+	mux.HandleFunc("POST /v1/outbound/ai-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.createOutboundAIRoute)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.getOutboundAIRoute)))))
+	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/targets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundAIRouteTargets)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.deleteOutboundAIRoute)))))
+	// ADR-991: per-app guardrails, extra key pools, budget alerts and the
+	// opt-in AI request log.
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.putOutboundBindingAIGuardrails)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/credential-keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundCredentialKeys)))))
+	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/credential-keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.createOutboundCredentialKey)))))
+	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.deleteOutboundCredentialKey)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIBudgetAlerts)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.listOutboundAIRequestLog)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/probe-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundProbePolicy))))

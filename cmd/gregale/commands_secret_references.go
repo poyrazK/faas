@@ -51,7 +51,17 @@ func cmdSecretReferences(args []string) int {
 		if err != nil {
 			return printErr("List references failed", err)
 		}
-		return renderSecretReferences(*app, response)
+		if jsonOutput {
+			return renderSecretReferences(*app, response)
+		}
+		if response.Environment != *environment {
+			return printErr("Invalid reference scope", fmt.Errorf("server returned references for a different environment"))
+		}
+		code := renderSecretReferences(*app, response)
+		if code != 0 || jsonOutput || len(response.References) == 0 {
+			return code
+		}
+		return renderSecretReferenceAvailability(ctx, client, *app, response)
 	case "set":
 		response, err := client.SetAppSecretReference(ctx, *app, *environment, key, api.PutAppSecretReferenceRequest{Reference: reference})
 		if err != nil {
@@ -61,6 +71,7 @@ func cmdSecretReferences(args []string) int {
 			return jsonOut(writeJSON(response))
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s/%s: %s -> %s\n", *app, *environment, key, reference)
+		printSecretReferenceApplicationHint(*app, *environment)
 	case "unset":
 		if err := client.DeleteAppSecretReference(ctx, *app, *environment, key); err != nil {
 			return printErr("Remove reference failed", err)
@@ -69,6 +80,7 @@ func cmdSecretReferences(args []string) int {
 			return jsonOut(writeJSON(map[string]string{"environment": *environment, "key": key}))
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s/%s: key %s suppressed on future cold wakes\n", *app, *environment, key)
+		printSecretReferenceApplicationHint(*app, *environment)
 	}
 	return 0
 }

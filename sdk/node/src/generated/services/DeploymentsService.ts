@@ -1203,6 +1203,9 @@ export class DeploymentsService {
    * An in-flight managed canary owns the app's traffic weights; direct
    * traffic changes during `pending` or `rolling_out` return 409
    * `traffic_change_during_canary` without changing traffic.
+   * Promoting a candidate to 100% also returns 409
+   * `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+   * an outstanding MCP task handler version.
    *
    * @returns DeploymentResponse The updated deployment with the new traffic_percent.
    * @throws ApiError
@@ -1238,9 +1241,10 @@ export class DeploymentsService {
         (\`traffic_percent_sum_invalid\`), the optional
         expected_serving_deployment_id was stale
         (\`traffic_serving_changed\`), or an in-flight managed canary
-        owns traffic (\`traffic_change_during_canary\`). The canary and
-        serving checks run before mutation; a sum-invariant failure
-        rolls back all tentative updates.
+        owns traffic (\`traffic_change_during_canary\`), or MCP task handler
+        compatibility blocks a 100% promotion
+        (\`mcp_task_compatibility_gate_blocked\`). These checks run before
+        mutation; a sum-invariant failure rolls back all tentative updates.
         `,
         422: `\`422 Unprocessable Entity\` — \`traffic_percent\` was
         outside the inclusive \`[0, 100]\` range. Stable code
@@ -1832,6 +1836,40 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Schedule another recovery attempt for an active MCP compatibility hold.
+   * Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration override.
+   * @returns DeploymentResponse Current deployment status after scheduling; promotion remains asynchronous.
+   * @throws ApiError
+   */
+  public static retryDeploymentMcpTaskHold({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/mcp-task-hold/retry',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `Deployment write scope or MFA is missing.`,
+        404: `No deployment owned by this account.`,
+        409: `The candidate has no active queued hold or is no longer eligible.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `Recovery scheduling or status refresh failed.`,
       },
     });
   }

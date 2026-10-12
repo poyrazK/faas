@@ -38,6 +38,10 @@ func (s *server) renderAppCustomerOperations(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if id == "readiness" {
+		s.renderAppWorkflowReadinessQueue(w, r, log, acct, app)
+		return
+	}
 	if id == "performance" {
 		s.renderAppWorkflowPerformance(w, r, log, acct, app)
 		return

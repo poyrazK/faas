@@ -33,10 +33,10 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	currentResponse := s.deploymentResponse(deployment, app)
+	currentResponse := s.deploymentResponse(r.Context(), deployment, app)
 	var previousResponse *api.DeploymentResponse
 	if previous != nil {
-		projected := s.deploymentResponse(*previous, app)
+		projected := s.deploymentResponse(r.Context(), *previous, app)
 		previousResponse = &projected
 	}
 

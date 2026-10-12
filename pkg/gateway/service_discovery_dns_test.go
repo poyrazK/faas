@@ -9,8 +9,10 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
+	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
 type serviceDiscoveryResponseWriter struct {
@@ -149,5 +151,91 @@ func TestServiceDiscoveryDNSAliasLookupFailureIsNotForwarded(t *testing.T) {
 	h.ServeDNS(w, req)
 	if w.msg == nil || w.msg.Rcode != dns.RcodeServerFailure {
 		t.Fatalf("response = %#v, want SERVFAIL", w.msg)
+	}
+}
+
+func TestServiceDiscoveryDNSScenarioFaultsAndMatchEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		kind    string
+		latency int64
+		rcode   int
+		timeout bool
+	}{
+		{kind: chaos.KindDNSLatency, latency: 20},
+		{kind: chaos.KindDNSTimeout, timeout: true},
+		{kind: chaos.KindDNSServFail, rcode: dns.RcodeServerFailure},
+		{kind: chaos.KindDNSNXDomain, rcode: dns.RcodeNameError},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			h, err := NewServiceDiscoveryDNSHandler(netip.MustParseAddr("10.100.0.1"), nil, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var matches atomic.Int32
+			rule := chaos.Rule{From: "checkout", To: "cache", Kind: tc.kind, Percent: 100, LatencyMS: tc.latency}
+			h.WithScenarioDNSChaos(func(_ context.Context, remote, target string) (ServiceDiscoveryDNSChaosPolicy, error) {
+				if remote != "10.100.0.5:54321" || target != "cache" {
+					t.Fatalf("resolver args = %q/%q", remote, target)
+				}
+				return ServiceDiscoveryDNSChaosPolicy{
+					RunID: "run", CallerAppID: "caller-app",
+					Lease: chaos.Lease{CallerWorkload: "checkout", Generation: "generation", ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{rule}},
+				}, nil
+			}, func(runID, callerAppID, generation string, got chaos.Rule) {
+				if runID != "run" || callerAppID != "caller-app" || generation != "generation" || got != rule {
+					t.Fatalf("match evidence = %q/%q/%q/%+v", runID, callerAppID, generation, got)
+				}
+				matches.Add(1)
+			})
+			req := new(dns.Msg)
+			req.SetQuestion("cache.svc.gregale.", dns.TypeA)
+			w := &serviceDiscoveryResponseWriter{remote: &net.UDPAddr{IP: net.ParseIP("10.100.0.5"), Port: 54321}}
+			started := time.Now()
+			h.ServeDNS(w, req)
+			if matches.Load() != 1 {
+				t.Fatalf("recorded matches = %d, want 1", matches.Load())
+			}
+			if tc.timeout {
+				if w.msg != nil {
+					t.Fatalf("timeout wrote response %#v", w.msg)
+				}
+				return
+			}
+			if tc.rcode != 0 {
+				if w.msg == nil || w.msg.Rcode != tc.rcode || tc.rcode == dns.RcodeNameError && !w.msg.Authoritative {
+					t.Fatalf("response = %#v, want rcode %d", w.msg, tc.rcode)
+				}
+				return
+			}
+			if elapsed := time.Since(started); elapsed < 20*time.Millisecond {
+				t.Fatalf("DNS latency elapsed %s, want at least 20ms", elapsed)
+			}
+			if w.msg == nil || len(w.msg.Answer) != 1 || w.msg.Answer[0].(*dns.A).A.String() != "10.100.0.1" {
+				t.Fatalf("delayed response = %#v, want ordinary private answer", w.msg)
+			}
+		})
+	}
+}
+
+func TestServiceDiscoveryDNSChaosIgnoresNonmatchingCallerAndTarget(t *testing.T) {
+	h, err := NewServiceDiscoveryDNSHandler(netip.MustParseAddr("10.100.0.1"), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matches atomic.Int32
+	h.WithScenarioDNSChaos(func(context.Context, string, string) (ServiceDiscoveryDNSChaosPolicy, error) {
+		return ServiceDiscoveryDNSChaosPolicy{
+			RunID: "run", CallerAppID: "caller-app",
+			Lease: chaos.Lease{CallerWorkload: "other-caller", ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{{
+				From: "checkout", To: "cache", Kind: chaos.KindDNSNXDomain, Percent: 100,
+			}}},
+		}, nil
+	}, func(string, string, string, chaos.Rule) { matches.Add(1) })
+	req := new(dns.Msg)
+	req.SetQuestion("cache.svc.gregale.", dns.TypeA)
+	w := &serviceDiscoveryResponseWriter{remote: &net.UDPAddr{IP: net.ParseIP("10.100.0.5"), Port: 54321}}
+	h.ServeDNS(w, req)
+	if matches.Load() != 0 || w.msg == nil || w.msg.Rcode != dns.RcodeSuccess || len(w.msg.Answer) != 1 {
+		t.Fatalf("nonmatching policy changed answer: matches=%d response=%#v", matches.Load(), w.msg)
 	}
 }

@@ -625,6 +625,107 @@ func TestWorkerCustomMetricScalesOnFreshAppBacklog(t *testing.T) {
 	}
 }
 
+func TestWorkerCustomMetricScalesFromZeroAndBackToZero(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "mcp-worker-zero@example.test", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "mcp-task-observer", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1,
+		Manifest: state.AppManifest{
+			ExecutionMode:  api.ExecutionModeWorker,
+			WorkerReplicas: &state.WorkerScaling{Min: 1, Max: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observerDeployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: observer.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-task-observer", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, observerDeployment.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	seedScopedWorker(t, store, observer, observerDeployment)
+	metricName := "mcp_tasks_outstanding"
+	target := 2.0
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "mcp-worker-zero", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 5,
+		Manifest: state.AppManifest{
+			ExecutionMode: api.ExecutionModeWorker,
+			WorkerReplicas: &state.WorkerScaling{
+				Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName,
+				Target: target, ObserverAppSlug: observer.Slug,
+			},
+		},
+		ScalingPolicy: &state.ScalingPolicy{MinInstances: 0, MaxInstances: 5,
+			Target: &state.ScalingTarget{Metric: api.ScalingMetricCustom, Name: metricName, Value: target}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-worker-zero", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	// With a separately running observer, the configured zero minimum stays
+	// empty until the observer publishes a fresh backlog metric.
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile before observer metric: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 {
+		t.Fatalf("worker pool before backlog = %d, want zero", got)
+	}
+
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 8, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile fresh backlog: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 4 {
+		t.Fatalf("backlog of 8 at target 2 should create four workers, got %d", got)
+	}
+
+	staleHeartbeat := time.Now().Add(-time.Duration(api.CustomMetricFreshnessSeconds+1) * time.Second)
+	if err := store.PutCustomMetric(ctx, app.ID, mcpTasksObserverHeartbeatMetric, 1, staleHeartbeat, api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 0, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile while observer heartbeat is stale: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 4 {
+		t.Fatalf("stale observer heartbeat changed worker pool to %d replicas, want it held at 4", got)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, mcpTasksObserverHeartbeatMetric, 1, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile with ready observer and fresh heartbeat: %v", err)
+	}
+	// adr: 426 — scale-in uses the background graceful-stop contract.
+	engine.WaitWorkerStops()
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 {
+		t.Fatalf("fresh zero metric should return worker pool to zero, got %d", got)
+	}
+}
+
 func TestWorkerCustomMetricMissingOrStalePreservesFleet(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		name := "missing"

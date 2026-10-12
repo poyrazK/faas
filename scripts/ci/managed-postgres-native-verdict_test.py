@@ -32,6 +32,12 @@ class VerdictTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pooled_disconnect_recovery"):
             verdict.verify(old)
 
+    def test_old_probe_only_evidence_is_rejected(self):
+        old = [line for line in self.events()
+               if "/starter_" not in json.loads(line)["Test"]]
+        with self.assertRaisesRegex(ValueError, "starter_"):
+            verdict.verify(old)
+
     def test_package_failure_after_cleanup(self):
         with self.assertRaises(ValueError):
             verdict.verify(self.events() + [json.dumps({"Action": "fail"})])

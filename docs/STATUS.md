@@ -7,6 +7,16 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Deployed PostgreSQL starter qualification — 2026-10-12
+
+The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
+thirteen phases, including the shipped Node starter, real public API rotation,
+restored pools and failed-hook cold fallback. The portable public API and restricted
+TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
+record the narrowed API build and outstanding guest execution. The internal GCE
+node failed preflight with existing jail/mount leaks and provides nested diagnostics
+only. Supported native KVM qualification remains pending; provisioning stays disabled.
+
 ## Local built validators and project publication — 2026-10-10
 
 [ADR-948](adr/948-built-validator-artifacts-and-project-publication.md) adds explicit
@@ -518,6 +528,16 @@ so each restore ran a fresh handler process. The migration's Up, Down and
 replay passed on Postgres 16.
 Functions without an explicit `idle_timeout_s` park after 30 s on every
 plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps keep the plan default.
+Functions stream responses and send every header value (ADR-999). All five
+runners share `guest/runners/internal.Serve`. Node Fetch bodies still being
+produced, async-iterable and Python generator bodies, and Go handlers that
+`Flush` stream; every other response is sent whole as before. Evidence,
+2026-10-12 on `gregale-internal-test-1` (`cmd/e2e`
+`TestFunctionStreamingMetal`, full daemon set): a streamed response reached
+the client through the gateway with its first chunk 0.8 ms after the headers
+and the second 1.97 s later, matching the handler's 2 s pause, and with both
+`Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
+runner core.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

@@ -31,6 +31,14 @@ type VMConfig struct {
 	// shape inside is identical to the Vsock type the PUT /vsock API
 	// endpoint accepts.
 	VsockDevice *VsockDevice `json:"vsock,omitempty"`
+	// Balloon, when set, attaches a never-inflated balloon whose only job is
+	// free page reporting (ADR-907). JailerVMM.WithFreePageReporting sets it
+	// at boot; the config builders leave it nil.
+	Balloon *Balloon `json:"balloon,omitempty"`
+	// Pmem, when set, attaches the shared base as a virtio-pmem device
+	// mounted with DAX instead of drive0 (ADR-908). JailerVMM.WithPmemBase
+	// sets it at boot from a per-account copy; the builders leave it nil.
+	Pmem []Pmem `json:"pmem,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
 	// unique scratch image deleted immediately after export, so provisioning
 	// may hard-link it instead of copying multi-gigabyte bytes. App and
@@ -70,10 +78,26 @@ type BootSource struct {
 // Drive is one virtio-blk device. The two-drive scheme (spec §4.6): drive0 is the
 // shared read-only base rootfs, drive1 the per-app writable layer. Never flatten.
 type Drive struct {
-	DriveID      string `json:"drive_id"`
-	PathOnHost   string `json:"path_on_host"`
-	IsRootDevice bool   `json:"is_root_device"`
-	IsReadOnly   bool   `json:"is_read_only"`
+	DriveID      string       `json:"drive_id"`
+	PathOnHost   string       `json:"path_on_host"`
+	IsRootDevice bool         `json:"is_root_device"`
+	IsReadOnly   bool         `json:"is_read_only"`
+	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
+}
+
+// RateLimiter is Firecracker's device rate limiter: token buckets on bytes
+// and on operations.
+type RateLimiter struct {
+	Bandwidth *TokenBucket `json:"bandwidth,omitempty"`
+	Ops       *TokenBucket `json:"ops,omitempty"`
+}
+
+// TokenBucket refills Size tokens every RefillTimeMs; OneTimeBurst tokens are
+// available once on top.
+type TokenBucket struct {
+	Size         int64 `json:"size"`
+	OneTimeBurst int64 `json:"one_time_burst,omitempty"`
+	RefillTimeMs int64 `json:"refill_time"`
 }
 
 type Machine struct {
@@ -339,8 +363,9 @@ type JobColdBootSpec struct {
 	TaskIndex int
 }
 
-// BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS and
-// balloon are off in v1 (spec §4.4); virtio-rng is always attached (spec §11).
+// BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is
+// off (spec §4.4); virtio-rng is always attached (spec §11). The VMM adds the
+// free-page-reporting balloon when enabled (ADR-907).
 //
 // slot is the per-instance slot from Lease.Slot; it must be in range [0, MaxSlots).
 // It derives GuestVsockCID so the in-guest resume listener is reachable at a

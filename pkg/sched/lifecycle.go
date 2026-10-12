@@ -533,6 +533,12 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		}
 		switch state.State(fresh.State) {
 		case state.StateRunning:
+			if fresh.Mode == string(state.InstanceModeWorker) {
+				if err := e.beginWorkerStop(ctx, fresh, e.workerStopOptions(app)); err != nil {
+					e.log.Warn("sched: drain superseded worker", "instance", fresh.ID, "err", err)
+				}
+				continue
+			}
 			if preserveSnapshot {
 				if err := e.Park(ctx, fresh.ID); err != nil {
 					e.log.Warn("sched: park superseded deployment instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
@@ -611,6 +617,14 @@ func sortedServiceGatewaySet(values map[string]struct{}) []string {
 }
 
 func (e *Engine) updateServiceRolloutHandoff(ctx context.Context, deploymentID string, mutate func(*state.ServiceRolloutHandoff)) {
+	// A runtime-configuration restart converges routes without a deployment
+	// rollout and passes no rollout id. Looking up "" made Postgres reject
+	// the uuid on every phase update (production-us hunt #9, H9-102: a burst
+	// of "load service rollout handoff: invalid input syntax for type uuid"
+	// warnings per restart).
+	if deploymentID == "" {
+		return
+	}
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {

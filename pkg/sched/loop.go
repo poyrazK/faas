@@ -450,6 +450,8 @@ type InstanceStatsPoller interface {
 type InstanceActivity struct {
 	Inflight    int64
 	LastRequest time.Time
+	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
+	ResidentMB int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -2716,6 +2718,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.runReaperAggressive(ctx, apps, snapshot, instanceToApp, cooldownHeldByApp, now)
 	}
 
+	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
 		if err := l.engine.Evict(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
@@ -4985,4 +4988,43 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
+// ceiling (ADR-909). It runs only under measured admission: otherwise each
+// VM's memory.max keeps a node's memory under its reservations. A node
+// without a fresh vmmd capacity report is skipped.
+func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
+	ledger := l.engine.Ledger()
+	if !ledger.MeasuredAdmissionEnabled() {
+		return
+	}
+	used, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
+			continue
+		}
+		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
+		if !ok {
+			continue
+		}
+		used[in.NodeID] = int(report.UsedMB)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	resident := make(map[string]int, len(activity))
+	for id, a := range activity {
+		resident[id] = a.ResidentMB
+	}
+	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
+		if err := l.engine.Evict(ctx, id); err != nil {
+			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
+			continue
+		}
+		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
+				counter.Inc()
+			}
+		}
+	}
 }

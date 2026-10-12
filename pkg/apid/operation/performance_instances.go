@@ -22,9 +22,9 @@ func OperationWorkflowPerformanceInstanceOptions(r *http.Request, operator bool,
 			return opts, state.ErrInvalidArgument
 		}
 		switch key {
-		case "scope", "workflow", "tenant_id", "app_id":
+		case "scope", "workflow", "tenant_id", "app_id", "baseline_token":
 			base[key] = values
-		case "cohort", "dimension", "state", "operation", "code", "owner", "cohort_token":
+		case "gap_status", "condition_evidence_status", "condition_id", "condition_description", "condition_result", "cohort", "dimension", "state", "operation", "code", "owner", "cohort_token", "kind", "decision_code", "rule_id", "rule_version", "group_id", "path_id", "outcome_code":
 		case "contract_version":
 			opts.ContractVersion, err = strconv.Atoi(values[0])
 			if err != nil || opts.ContractVersion < 1 {
@@ -48,6 +48,10 @@ func OperationWorkflowPerformanceInstanceOptions(r *http.Request, operator bool,
 		return opts, err
 	}
 	opts.Cohort, opts.Dimension, opts.State, opts.Operation, opts.Code, opts.Owner, opts.CohortToken = q.Get("cohort"), q.Get("dimension"), q.Get("state"), q.Get("operation"), q.Get("code"), q.Get("owner"), q.Get("cohort_token")
+	opts.GapStatus = q.Get("gap_status")
+	opts.ConditionEvidenceStatus = q.Get("condition_evidence_status")
+	opts.ConditionID, opts.ConditionDescription, opts.ConditionResult = q.Get("condition_id"), q.Get("condition_description"), q.Get("condition_result")
+	opts.Kind, opts.DecisionCode, opts.RuleID, opts.RuleVersion, opts.GroupID, opts.PathID, opts.OutcomeCode = q.Get("kind"), q.Get("decision_code"), q.Get("rule_id"), q.Get("rule_version"), q.Get("group_id"), q.Get("path_id"), q.Get("outcome_code")
 	return opts, nil
 }
 func (s *Service) ListAccountWorkflowPerformanceInstances(w http.ResponseWriter, r *http.Request, acct state.Account) {

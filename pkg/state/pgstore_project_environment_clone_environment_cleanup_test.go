@@ -264,6 +264,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"custom_domains.environment_id",
 		"customer_operation_definitions.scope",
 		"customer_operation_workflow_states.scope",
+		"customer_workflow_readiness_subscriptions.scope",
 		"data_upstreams.deployment_scope",
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",

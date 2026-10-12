@@ -100,7 +100,13 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
     return `http://127.0.0.1:${server.address().port}`
   }
   const old = await gateway(config), token = 'a'.repeat(64), stranger = 'c'.repeat(64)
-  const request = (url, path='/rest/v1/notes?select=id', refresh, identity='alice', method='GET') => fetch(url + path, { method, headers: { Authorization: `Bearer ${identity}`, ...(refresh ? { 'X-Gregale-Refresh-Token': refresh } : {}) } })
+  // Complete each fixture request before replacing the engine or probing its
+  // single-connection pool; receiving headers alone does not drain the body.
+  const request = async (url, path='/rest/v1/notes?select=id', refresh, identity='alice', method='GET') => {
+    const response = await fetch(url + path, { method, headers: { Authorization: `Bearer ${identity}`, ...(refresh ? { 'X-Gregale-Refresh-Token': refresh } : {}) } })
+    const body = await response.arrayBuffer()
+    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers})
+  }
   assert.deepEqual(await (await request(old)).json(), [{ id: 1 }])
   held = new pg.Client({ connectionString: config.connection }); await held.connect()
   for (const isolation of ['REPEATABLE READ','SERIALIZABLE']) {
@@ -128,7 +134,9 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   assert.equal((await fetch(old+'/rest/v1/notes', { headers: { 'X-Gregale-Refresh-Token':token } })).status, 401)
   await assert.rejects(changeRefreshBarrier(control,'pause',role,stranger))
   await assert.rejects(changeRefreshBarrier(control,'resume',role,stranger,config.fingerprint))
-  assert.equal((await request(old,'/__gregale/schema',token).then(r => r.json())).refresh_verified,true)
+  const oldSchemaResponse = await request(old,'/__gregale/schema',token)
+  const oldSchema = await oldSchemaResponse.json()
+  assert.equal(oldSchema.refresh_verified,true,JSON.stringify({status:oldSchemaResponse.status,contract:oldSchema}))
   assert.equal((await request(old,'/__gregale/schema').then(r => r.json())).refresh_verified,false)
   await assert.rejects(owner.query('SET ROLE "'+role+'"; SELECT * FROM gregale_data_api.refresh_gate'))
   await owner.query('RESET ROLE')
@@ -168,6 +176,14 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
     })
     return response
   }
+  // Engine /ready can briefly regress while its single connection is released
+  // after the first post-restart request. Establish the serving prerequisite
+  // before exercising hosted authentication and RLS; never retry those checks.
+  await eventually(async () => {
+    const response = await request(fresh,'/__gregale/schema',token)
+    const contract = await response.json()
+    return response.status === 200 && contract.ready === true && contract.fingerprint === freshConfig.fingerprint && contract.refresh_verified === true
+  })
   try {
     assert.equal((await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})).failed,0)
   } catch (error) {

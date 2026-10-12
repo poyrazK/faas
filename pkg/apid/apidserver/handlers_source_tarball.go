@@ -47,19 +47,20 @@ import (
 // on the build row for audit/provenance, but the build pipeline does
 // NOT use them to fetch upstream.
 type sidecarPayload struct {
-	Repo                   string                     `json:"repo,omitempty"`
-	Ref                    string                     `json:"ref,omitempty"`
-	Environment            string                     `json:"environment,omitempty"`
-	Reason                 string                     `json:"reason,omitempty"`
-	Tag                    string                     `json:"tag,omitempty"`
-	DeployedBy             string                     `json:"deployed_by,omitempty"`
-	PRNumber               int                        `json:"pr_number,omitempty"`
-	TrafficPercent         *int                       `json:"traffic_percent,omitempty"`
-	Canary                 *api.CanaryPresetSpec      `json:"canary,omitempty"`
-	RollbackOn5xx          *bool                      `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool                      `json:"disable_startup_cpu_boost,omitempty"`
-	Healthcheck            *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
-	NoTriggers             bool                       `json:"no_triggers,omitempty"`
+	Repo                     string                     `json:"repo,omitempty"`
+	Ref                      string                     `json:"ref,omitempty"`
+	Environment              string                     `json:"environment,omitempty"`
+	Reason                   string                     `json:"reason,omitempty"`
+	Tag                      string                     `json:"tag,omitempty"`
+	DeployedBy               string                     `json:"deployed_by,omitempty"`
+	PRNumber                 int                        `json:"pr_number,omitempty"`
+	TrafficPercent           *int                       `json:"traffic_percent,omitempty"`
+	Canary                   *api.CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx            *bool                      `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost   *bool                      `json:"disable_startup_cpu_boost,omitempty"`
+	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
+	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -147,7 +148,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -324,7 +325,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 // auditLocalTarballDeploy emits the `deploy.local_tarball` audit row

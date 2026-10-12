@@ -95,6 +95,37 @@ test("decodes an application's unmarked 504 without reclassifying it", async () 
   assert.equal(await response.text(), "application timeout");
 });
 
+test("advertises the statuses it can restore", async () => {
+  await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async (req) => {
+    assert.equal(req.headers.get("X-Faas-Edge-Restorable"), "502,504");
+    assert.equal(req.headers.get("X-Faas-Request-Id"), "req-worker-1");
+    return new Response("ok", { status: 200 });
+  });
+});
+
+// Production-us hunt #9 (H9-96): an app OOM-killed mid-request produced the
+// gateway's "App connection failed" problem, but Cloudflare replaced the
+// origin 502 with its HTML error page, dropping the JSON body and request id.
+test("restores a transported 502 with its problem body", async () => {
+  const response = await handleRequest(request(), { ORIGIN_HOSTNAME: "origin.gregale.dev" }, async () => new Response(
+    JSON.stringify({ code: "bad_gateway", status: 502 }),
+    {
+      status: 409,
+      headers: {
+        "X-Faas-Edge-Original-Status": "502",
+        "X-Faas-Request-Id": "req-worker-1",
+        "Content-Type": "application/problem+json",
+      },
+    },
+  ));
+
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get("X-Faas-Edge-Original-Status"), null);
+  assert.equal(response.headers.get("X-Faas-Request-Id"), "req-worker-1");
+  assert.equal(response.headers.get("Content-Type"), "application/problem+json");
+  assert.deepEqual(await response.json(), { code: "bad_gateway", status: 502 });
+});
+
 test("does not rewrite genuine origin or CDN failures", async () => {
   const origin = new Response("origin timeout", {
     status: 504,
