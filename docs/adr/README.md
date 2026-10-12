@@ -807,3 +807,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
+
+- [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
