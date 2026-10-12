@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -67,8 +66,7 @@ func TestSignedMainConversionRetainsExactRegistryRootfs(t *testing.T) {
 			p := &resolvingTestPuller{fakeManifestPuller: mp, resolution: oci.ImageResolution{SourceReference: "registry.example/team/app@" + source, SourceDigest: source, Reference: mp.appRef, Digest: child},
 				attachments: []oci.ImageSignatureAttachment{{ManifestDigest: "sha256:" + strings.Repeat("c", 64), PayloadDigest: fmt.Sprintf("sha256:%x", sum), Payload: payload, Signature: sig}}}
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
-			h.trustedPublishersCacheOK = true
-			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+			seedTestTrustedPublisher(t, th.store, th.app, "company", key)
 			if err := buildSignedTestLayer(t, h, th, tc.prepared); err != nil {
 				t.Fatal(err)
 			}

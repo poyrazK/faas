@@ -22,6 +22,8 @@ type OperationMilestoneValidationResponse struct {
 }
 
 type OperationWorkflowStateReport struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
 	OutcomeCode        string                               `json:"outcome_code,omitempty"`
@@ -58,6 +60,8 @@ type OperationWorkflowStateValidationResponse struct {
 }
 
 type OperationWorkflowStateReportResponse struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
 	OutcomeCode        string                               `json:"outcome_code,omitempty"`
@@ -80,6 +84,8 @@ type OperationWorkflowStateReportResponse struct {
 }
 
 type OperationWorkflowState struct {
+	ChangeReason       *OperationWorkflowChangeReason       `json:"change_reason,omitempty"`
+	SelectedPaths      []OperationWorkflowPathSelection     `json:"selected_paths,omitempty"`
 	SLA                *OperationWorkflowStateSLA           `json:"sla,omitempty"`
 	DependsOn          []OperationWorkflowDependency        `json:"depends_on,omitempty"`
 	DependenciesOnly   bool                                 `json:"dependencies_only,omitempty"`
@@ -110,6 +116,10 @@ type OperationWorkflowState struct {
 }
 
 type OperationWorkflowStateHistoryEntry struct {
+	OutcomeLink             *OperationWorkflowOutcomeLink             `json:"outcome_link,omitempty"`
+	ChangeReason            *OperationWorkflowChangeReason            `json:"change_reason,omitempty"`
+	Comparison              *OperationWorkflowRevisionComparison      `json:"comparison,omitempty"`
+	SelectedPaths           []OperationWorkflowPathSelection          `json:"selected_paths,omitempty"`
 	ResolutionVerifications []OperationWorkflowResolutionVerification `json:"resolution_verifications,omitempty"`
 	DependsOn               []OperationWorkflowDependency             `json:"depends_on,omitempty"`
 	DependenciesOnly        bool                                      `json:"dependencies_only,omitempty"`
@@ -180,14 +190,18 @@ type OperationWorkflowInstanceSnapshot struct {
 }
 
 type OperationWorkflowInstanceTransition struct {
-	From                        string                                  `json:"from"`
-	To                          string                                  `json:"to"`
-	Operation                   string                                  `json:"operation"`
-	RequiredDependencyWorkflows *[]string                               `json:"required_dependency_workflows,omitempty"`
-	RequiredEffects             []OperationWorkflowEffectRequirement    `json:"required_effects,omitempty"`
-	RequiredInvariants          []OperationWorkflowInvariantRequirement `json:"required_invariants,omitempty"`
-	RequiredPolicies            []OperationWorkflowPolicyRequirement    `json:"required_policies,omitempty"`
-	RequiredMilestones          []string                                `json:"required_milestones,omitempty"`
+	RetainedMilestoneGroups        []OperationWorkflowRetainedMilestoneGroup            `json:"retained_milestone_groups,omitempty"`
+	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessRule    `json:"retained_milestone_freshness,omitempty"`
+	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
+	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`
+	From                           string                                               `json:"from"`
+	To                             string                                               `json:"to"`
+	Operation                      string                                               `json:"operation"`
+	RequiredDependencyWorkflows    *[]string                                            `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects                []OperationWorkflowEffectRequirement                 `json:"required_effects,omitempty"`
+	RequiredInvariants             []OperationWorkflowInvariantRequirement              `json:"required_invariants,omitempty"`
+	RequiredPolicies               []OperationWorkflowPolicyRequirement                 `json:"required_policies,omitempty"`
+	RequiredMilestones             []string                                             `json:"required_milestones,omitempty"`
 }
 
 type OperationWorkflowInstanceStep struct {
@@ -323,4 +337,74 @@ type OperationWorkflowDependencyFinding struct {
 	Explanation string                        `json:"explanation"`
 	State       *OperationWorkflowState       `json:"state,omitempty"`
 	Limit       string                        `json:"limit,omitempty"`
+}
+
+// OperationWorkflowRevisionComparison explains adjacent retained reports without inferring causality.
+type OperationWorkflowRevisionComparison struct {
+	ConditionComparison *OperationWorkflowConditionComparison `json:"condition_comparison,omitempty"`
+	ChangeReason        *OperationWorkflowChangeReason        `json:"change_reason,omitempty"`
+	Status              string                                `json:"status"`
+	Summary             string                                `json:"summary"`
+	PreviousReportID    string                                `json:"previous_report_id,omitempty"`
+	PreviousOperationID string                                `json:"previous_operation_id,omitempty"`
+	PreviousRevision    int64                                 `json:"previous_revision,omitempty"`
+	Changes             []OperationWorkflowRevisionChange     `json:"changes"`
+	Evidence            []OperationWorkflowRevisionEvidence   `json:"evidence"`
+}
+type OperationWorkflowRevisionChange struct {
+	Kind        string `json:"kind"`
+	Key         string `json:"key"`
+	Before      string `json:"before,omitempty"`
+	After       string `json:"after,omitempty"`
+	Explanation string `json:"explanation"`
+}
+type OperationWorkflowRevisionEvidence struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operation_id"`
+	MilestoneID string `json:"milestone_id"`
+	Milestone   string `json:"milestone,omitempty"`
+}
+
+// OperationWorkflowOutcomeLink correlates one retained report with a later reported outcome on this page.
+type OperationWorkflowOutcomeLink struct {
+	Status             string `json:"status"`
+	Summary            string `json:"summary"`
+	OutcomeReportID    string `json:"outcome_report_id,omitempty"`
+	OutcomeOperationID string `json:"outcome_operation_id,omitempty"`
+	OutcomeRevision    int64  `json:"outcome_revision,omitempty"`
+	OutcomeCode        string `json:"outcome_code,omitempty"`
+	ElapsedSeconds     int64  `json:"elapsed_seconds"`
+	BlockedSeconds     int64  `json:"blocked_seconds"`
+}
+
+// OperationWorkflowConditionComparison uses the same retained baseline as revision history.
+type OperationWorkflowConditionComparison struct {
+	Status    string                             `json:"status"`
+	Changes   []OperationWorkflowConditionChange `json:"changes"`
+	Truncated bool                               `json:"truncated"`
+}
+
+// OperationWorkflowConditionChange describes application-reported evidence, not predicate evaluation.
+type OperationWorkflowConditionChange struct {
+	Source           string                              `json:"source"`
+	GroupID          string                              `json:"group_id,omitempty"`
+	ConditionID      string                              `json:"condition_id"`
+	Status           string                              `json:"status"`
+	Before           *OperationBusinessConditionResult   `json:"before,omitempty"`
+	After            *OperationBusinessConditionResult   `json:"after,omitempty"`
+	PreviousEvidence *OperationWorkflowConditionEvidence `json:"previous_evidence,omitempty"`
+	CurrentEvidence  OperationWorkflowConditionEvidence  `json:"current_evidence"`
+	Explanation      string                              `json:"explanation"`
+}
+
+// OperationWorkflowConditionEvidence identifies a decision snapshot without duplicating its conditions.
+type OperationWorkflowConditionEvidence struct {
+	ReportID     string `json:"report_id"`
+	OperationID  string `json:"operation_id"`
+	Revision     int64  `json:"revision"`
+	MilestoneID  string `json:"milestone_id"`
+	DecisionCode string `json:"decision_code"`
+	RuleID       string `json:"rule_id"`
+	RuleVersion  string `json:"rule_version"`
+	PathID       string `json:"path_id,omitempty"`
 }

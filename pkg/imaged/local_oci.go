@@ -146,7 +146,7 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 		cleanup()
 		return nil, "", func() {}, err
 	}
-	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine {
+	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary {
 		executable, err := goFunctionExecutable(config)
 		if err != nil {
 			cleanup()
@@ -348,6 +348,21 @@ func functionAppEntryName(name string) (string, bool) {
 	return clean, true
 }
 
+// functionHandlerSourcePath returns the handler file inside the built source
+// tree. A deployment handler that names a file for the runtime selects it
+// (ADR-985 shared-tree functions); any other value keeps fallback, the
+// runtime's default file.
+func functionHandlerSourcePath(runtime, handler, fallback string) (string, error) {
+	file, ok, err := api.FunctionHandlerFile(runtime, handler)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return fallback, nil
+	}
+	return "/app/" + file, nil
+}
+
 func functionHandlerPaths(runtime string) (source, target string, err error) {
 	switch runtime {
 	case RuntimeNode22:
@@ -356,7 +371,7 @@ func functionHandlerPaths(runtime string) (source, target string, err error) {
 		return "/app/handler.js", "/app/node24.js", nil
 	case RuntimePython312, RuntimePython313:
 		return "/app/handler.py", "/app/handler.py", nil
-	case RuntimeGo124, RuntimeGo124Alpine:
+	case RuntimeGo124, RuntimeGo124Alpine, RuntimeBinary:
 		return "/app/server", "/app/handler", nil
 	default:
 		return "", "", fmt.Errorf("unsupported function runtime %q", runtime)

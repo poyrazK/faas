@@ -207,6 +207,28 @@ func TestForwardingReverseProxy_WarmInstanceUsesRequestScopedTraceContext(t *tes
 	}
 }
 
+// adr: 028 — production-us hunt #9 (H9-98): the guest received
+// "Host: 10.0.0.2:3000" for a request to h9-echo.gregale.dev. net/http keeps
+// Host in r.Host, so copying r.Header alone dropped it and the bridge fell
+// back to the guest address.
+func TestForwardingReverseProxy_ForwardsTheRequestHost(t *testing.T) {
+	stream := noContentHTTPStream()
+	cli := &fakeVmmdClient{Stream: stream}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+	r := httptest.NewRequest(http.MethodGet, "http://h9-echo.gregale.dev/hdr", nil)
+	r.Header.Set("x-faas-instance", "i-test")
+	rec := httptest.NewRecorder()
+
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "Host"); got != "h9-echo.gregale.dev" {
+		t.Fatalf("forwarded Host = %q, want the request host", got)
+	}
+}
+
 func TestForwardingReverseProxy_DropsOversizedBaggage(t *testing.T) {
 	stream := noContentHTTPStream()
 	cli := &fakeVmmdClient{Stream: stream}

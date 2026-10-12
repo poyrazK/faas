@@ -291,6 +291,7 @@ type ServiceProxyConfig struct {
 	ValidateDeployment ServiceProxyDeploymentValidator
 	ResolveChaos       ServiceProxyChaosResolver
 	ObserveChaosMatch  ServiceProxyChaosObserver
+	ObserveTCPAttempt  ServiceProxyChaosObserver
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
@@ -337,9 +338,7 @@ type ServiceProxy struct {
 	resolveCaller             ServiceProxyCallerResolver
 	resolveCallerIdentity     ServiceProxyCallerIdentityResolver
 	resolveRelease            ServiceProxyReleaseResolver
-	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
 	devBridge                 ServiceProxyDevBridge
-	observeCall               func(callerAppID, targetAppID string, woken bool)
 	forward                   func(Target) http.Handler
 	rawForward                func(Target) http.Handler
 	wake                      ServiceProxyWaker
@@ -347,11 +346,14 @@ type ServiceProxy struct {
 	validateDeployment        ServiceProxyDeploymentValidator
 	resolveChaos              ServiceProxyChaosResolver
 	observeChaosMatch         ServiceProxyChaosObserver
+	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
 	metrics                   *Metrics
 	endpointTTL               time.Duration
 	now                       func() time.Time
 	log                       *slog.Logger
+	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
+	observeCall               func(callerAppID, targetAppID string, woken bool)
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -440,8 +442,6 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:             cfg.ResolveCaller,
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
 		resolveRelease:            cfg.ResolveRelease,
-		observeCall:               cfg.ObserveCall,
-		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,
@@ -450,6 +450,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		validateDeployment:        cfg.ValidateDeployment,
 		resolveChaos:              cfg.ResolveChaos,
 		observeChaosMatch:         cfg.ObserveChaosMatch,
+		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
 		metrics:                   cfg.Metrics,
 		endpointTTL:               ttl,
@@ -461,6 +462,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		snapshots:                 make(map[string]serviceProxySnapshot),
 		next:                      make(map[string]uint64),
 		nextSeen:                  make(map[string]time.Time),
+		observeCall:               cfg.ObserveCall,
+		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
 	}
 }
 
@@ -893,7 +896,7 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
 			return true
 		}
-		if rule.IsTCP() {
+		if rule.IsTCP() || rule.IsDNS() {
 			continue
 		}
 		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {

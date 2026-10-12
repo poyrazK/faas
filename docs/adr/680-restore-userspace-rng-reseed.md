@@ -46,6 +46,12 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
    `/run/guest-init/reseed.sock` (0660, the workload's group) and says
    `hello <runtime> <pid>`. The connection lives in guest memory, so it
    survives the snapshot. Python registers again in every forked child.
+   Node package-manager launchers do not register (amended 2026-10-11, hunt
+   #9): when the entry script resolves into npm, npx, yarn, pnpm or corepack's
+   own `node_modules` install, the preload returns before connecting. Those
+   processes only start the app and wait; the app is a separate exec the
+   kernel seeds, and it registers itself. Registering them made every
+   `npm run start` restore wait for npm's idle heap to fault back in.
 3. **Barrier on resume.** After the kernel reseed and clock step, and before
    the resume ACK that gates readiness, guest-init sends every registered
    process `reseed <32-byte nonce>` drawn from the reseeded kernel and waits
@@ -57,6 +63,8 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
      DRBG). Then it reseeds a xoshiro128** `Math.random` replacement with
      urandom XOR nonce, and drains Node's `randomUUID` (128-entry) and
      `randomInt` (6 KiB) caches so they refill from the reseeded OpenSSL.
+     Amended by ADR-981: the reply marks both caches stale instead, and the
+     first call that reads one drains it.
    - **Python:** `random.seed()`, `ssl.RAND_add()` when `ssl` is loaded, and
      numpy's legacy global generator when numpy is loaded.
 4. **Fail closed.** A registered process that answers late, answers `err`, or
@@ -87,7 +95,13 @@ committed binary matches the source.
 
 - Node and Python apps and functions no longer replay RNG state across
   restores. Restore latency grows by one local round trip per registered
-  process: microseconds for an idle event loop.
+  process, and that round trip is not cheap: the restored process faults its
+  heap back in before it can answer. Measured on the metal host
+  (`TestMetalRestoreReseedTimingBench`, 1024 MiB guests, 2026-10-11):
+  `resume_hook` p50 rises 51 → 112 ms for Node and 49 → 112 ms for Python,
+  partly paid back by a faster first request (the process is already paged
+  in). Under `npm exec` the launcher's second registration raised it to
+  156 ms (p90 248 ms) until launchers stopped registering (115 ms).
 - Instances whose process cannot confirm a reseed cold-boot instead of
   restoring. `vmmd: resume hook failed (ack=13)` in the vmmd journal names
   this path.

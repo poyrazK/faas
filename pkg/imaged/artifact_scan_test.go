@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -93,8 +92,7 @@ func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handl
 		t.Fatal(err)
 	}
 	h := New(th.store, th.notif, p, rootfs.NewBuilder(&recordingRunner{}), guest, th.appsR, silentLogger())
-	h.trustedPublishersCacheOK = true
-	h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+	seedTestTrustedPublisher(t, th.store, th.app, "company", key)
 	{
 		rawBase, _ := json.Marshal(baseManifest)
 		baseRef := "registry.example/base@" + imagechain.Digest(rawBase)

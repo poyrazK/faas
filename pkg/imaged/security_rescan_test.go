@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -159,12 +158,8 @@ func TestReconcileSecuritySignaturesQuarantinesRevokedSigner(t *testing.T) {
 		notif: notif,
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	// The trust cache has been refreshed after the signer was removed. An
-	// empty per-app list is the fail-closed representation of that state.
-	handler.trustedPublishersMu.Lock()
-	handler.trustedPublishersCache = map[string][]cosign.TrustedPublisher{app.ID: {}}
-	handler.trustedPublishersCacheOK = true
-	handler.trustedPublishersMu.Unlock()
+	// The app's last signer was removed: app_trusted_signers has no rows,
+	// which fails the revalidation closed.
 	loop := &Loop{
 		store:   store,
 		handler: handler,

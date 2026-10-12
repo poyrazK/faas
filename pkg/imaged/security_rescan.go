@@ -183,6 +183,13 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 		if producedEvidenceBusy(verifyErr) {
 			continue
 		}
+		if errors.Is(verifyErr, errTrustedPublishersUnavailable) {
+			// The trust list could not be read, which says nothing about
+			// the image. Stop the sweep; the next signer change or restart
+			// revalidates.
+			l.log.Warn("imaged: signature revalidation skipped", "deployment", dep.ID, "app", app.ID, "err", verifyErr)
+			return
+		}
 
 		l.quarantineSignatureFailure(ctx, app, dep, verifyErr, now)
 	}

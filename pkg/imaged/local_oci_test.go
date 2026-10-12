@@ -532,6 +532,7 @@ func TestFunctionHandlerPaths_CoversAllSupportedRuntimes(t *testing.T) {
 		RuntimePython313:   {"/app/handler.py", "/app/handler.py"},
 		RuntimeGo124:       {"/app/server", "/app/handler"},
 		RuntimeGo124Alpine: {"/app/server", "/app/handler"},
+		RuntimeBinary:      {"/app/server", "/app/handler"},
 	}
 	for runtime, want := range cases {
 		t.Run(runtime, func(t *testing.T) {
@@ -543,6 +544,27 @@ func TestFunctionHandlerPaths_CoversAllSupportedRuntimes(t *testing.T) {
 				t.Fatalf("paths = (%q, %q), want (%q, %q)", source, target, want[0], want[1])
 			}
 		})
+	}
+}
+
+// ADR-985: a deployment handler naming a file selects it inside the built
+// tree; the historical handler values keep each runtime's default file.
+func TestFunctionHandlerSourcePath(t *testing.T) {
+	cases := []struct {
+		runtime, handler, fallback, want string
+		fails                            bool
+	}{
+		{RuntimeNode24, "handler.handler", "/app/handler.js", "/app/handler.js", false},
+		{RuntimeNode24, "api/resize.js", "/app/handler.js", "/app/api/resize.js", false},
+		{RuntimePython313, "api/digest.py", "/app/handler.py", "/app/api/digest.py", false},
+		{RuntimeGo124, "cmd/thumbs/main.go", "/app/server", "/app/server", false},
+		{RuntimeNode22, "../escape.js", "/app/handler.js", "", true},
+	}
+	for _, tc := range cases {
+		got, err := functionHandlerSourcePath(tc.runtime, tc.handler, tc.fallback)
+		if (err != nil) != tc.fails || got != tc.want {
+			t.Errorf("functionHandlerSourcePath(%q, %q) = (%q, %v), want (%q, fails=%v)", tc.runtime, tc.handler, got, err, tc.want, tc.fails)
+		}
 	}
 }
 

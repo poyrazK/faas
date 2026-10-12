@@ -1618,6 +1618,15 @@ func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, 
 	return "budget_candidate", budgetPolicyReason(policy), &ActionPreview{Type: "budget", BudgetPolicy: &policy}
 }
 
+// gatewayThrottleRPS mirrors cmd/gatewayd-internal compileThrottleRules:
+// a non-positive rate is replaced with 1, a fractional one is kept.
+func gatewayThrottleRPS(rps float64) float64 {
+	if !(rps > 0) {
+		return 1
+	}
+	return rps
+}
+
 func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
 	action, ok := decodeAction[api.EdgeRuleThrottleAction](rule.Action, "throttle")
 	if !ok {
@@ -1626,7 +1635,7 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 	policy := &ThrottlePolicyPreview{
 		RequestsPerSecond: action.RequestsPerSecond,
 		Burst:             action.Burst,
-		GatewayRateRPS:    max(action.RequestsPerSecond, 1),
+		GatewayRateRPS:    gatewayThrottleRPS(action.RequestsPerSecond),
 		GatewayBurst:      max(action.Burst, 1),
 		KeyBy:             action.KeyBy,
 		JWTClaimName:      action.JWTClaimName,

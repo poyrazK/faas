@@ -165,6 +165,12 @@ var catalog = map[string]Render{
 		Why:   "the application did not satisfy its configured readiness check before the startup deadline; startup_timeout_s controls this window, while idle_timeout_s controls parking",
 		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• increase `startup_timeout_s` only when healthy startup needs more time",
 	},
+	api.CodeAppStartupCrash: {
+		Title: "Application exited during startup",
+		Hint:  "your app crashed before it became ready",
+		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
+		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
+	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
 		Hint:  "this app shape needs persistent storage we don't provide",

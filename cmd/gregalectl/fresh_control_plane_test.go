@@ -85,12 +85,12 @@ func readRepoFile(t *testing.T, parts ...string) string {
 // create one in /var/lib/faas. The role must provision exactly the files
 // apid loads, and never replace existing ones.
 func TestControlPlaneRoleProvisionsApidHMACKeys(t *testing.T) {
-	apid := readRepoFile(t, "cmd", "apid", "main.go")
+	apid := readRepoFile(t, "pkg", "apid", "apidserver", "main.go")
 	role := readRepoFile(t, "deploy", "ansible", "roles", "control_plane_service", "tasks", "main.yml")
 	for _, name := range []string{"auditHMACKeyFile", "recoveryHMACKeyFile"} {
 		m := regexp.MustCompile(`const ` + name + ` = "(/var/lib/faas/[^"]+)"`).FindStringSubmatch(apid)
 		if m == nil {
-			t.Fatalf("cmd/apid lost %s", name)
+			t.Fatalf("pkg/apid/apidserver lost %s", name)
 		}
 		if !strings.Contains(role, "    - "+filepath.Base(m[1])+"\n") {
 			t.Errorf("control_plane_service does not provision %s", m[1])

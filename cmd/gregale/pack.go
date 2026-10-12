@@ -51,6 +51,10 @@ const (
 	runtimePython312 = "python312"
 	runtimePython313 = "python313"
 	runtimeGo124     = "go124"
+	// runtimeBinary builds one static executable from the source's
+	// Dockerfile (ADR-987). It is never inferred: deploys select it
+	// with --runtime binary, a template, or gregale.yaml.
+	runtimeBinary = "binary"
 )
 
 // shape is the deploy shape auto-detected from the current directory when
@@ -1124,6 +1128,34 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		}
 		return shapeUnknown, "", "", baseErr
 	case shapeFunction:
+		// ADR-987: a binary function is built from a Dockerfile at the
+		// source root and has no handler.* file to infer from.
+		if len(displayOverride) > 0 && displayOverride[0] == runtimeBinary {
+			if info, statErr := os.Stat(filepath.Join(srcDir, "Dockerfile")); statErr != nil || info.IsDir() {
+				return shapeUnknown, "", "", fmt.Errorf("--runtime binary builds from a Dockerfile at the source root; none found in %s", filepath.Base(srcDir))
+			}
+			handler := defaultTemplateHandler
+			if len(displayOverride) > 1 && displayOverride[1] != "" {
+				handler = displayOverride[1]
+			}
+			if !jsonOutput {
+				PrintOK(osStdout, "Detected: function, runtime=%s, built from Dockerfile, class=function", runtimeBinary)
+			}
+			return shapeFunction, runtimeBinary, handler, nil
+		}
+		// ADR-985: an explicit runtime plus a handler file that exists in the
+		// source is a complete function shape; a shared source tree may hold
+		// several handlers and no conventional handler.* at its root.
+		if len(displayOverride) > 1 {
+			if file, isFile, _ := api.FunctionHandlerFile(displayOverride[0], displayOverride[1]); isFile {
+				if info, statErr := os.Stat(filepath.Join(srcDir, filepath.FromSlash(file))); statErr == nil && !info.IsDir() {
+					if !jsonOutput {
+						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayOverride[0], file)
+					}
+					return shapeFunction, displayOverride[0], displayOverride[1], nil
+				}
+			}
+		}
 		rt, hnd, ok := inferFunctionRuntime(srcDir)
 		if !ok {
 			// Issue #740 / DEPLOY-PROV-5 / ADR-087: when the user

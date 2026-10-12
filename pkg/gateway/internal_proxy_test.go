@@ -382,6 +382,26 @@ func TestInternalReverseProxy_DialFailure_502BadGateway(t *testing.T) {
 	}
 }
 
+func TestInternalReverseProxy_DialFailureSanitizesLog(t *testing.T) {
+	var logs bytes.Buffer
+	dialer := &stubDialer{dialErr: errors.New("failed\r\nFORGED\x00entry")}
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	p := NewInternalReverseProxy(dialer, &url.URL{Scheme: "http", Host: "internal"}, logger, false)
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rr.Code)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode single log record: %v", err)
+	}
+	message, ok := entry["err"].(string)
+	if !ok || !strings.Contains(message, "failed··FORGED·entry") || strings.ContainsAny(message, "\r\n\x00") {
+		t.Fatalf("unsafe logged error: %q", message)
+	}
+}
+
 // TestInternalReverseProxy_BudgetExpiry_504NotBadGateway pins the
 // production regression this fix closes. Under a 1000-concurrency
 // burst the compute layer answered 200 for 99% of requests, but the
@@ -614,6 +634,64 @@ func TestInternalReverseProxy_Encodes504ForCloudflareWorkerSubrequest(t *testing
 	}
 	if !strings.Contains(rr.Body.String(), api.CodeRequestBudgetExceeded) {
 		t.Fatalf("body = %q, want canonical budget error", rr.Body.String())
+	}
+}
+
+// Production-us hunt #9 (H9-96): an app OOM-killed mid-request gave the
+// gateway's "App connection failed" 502, but Cloudflare replaced it with its
+// HTML page. A 502 rides the Worker hop as 409 + marker only when the Worker
+// advertises it can restore 502; an older Worker still gets the raw 502.
+func TestInternalReverseProxy_Encodes502OnlyForAWorkerThatRestoresIt(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"code":"bad_gateway","status":502}`))
+	}))
+	defer upstream.Close()
+	for _, tc := range []struct {
+		name       string
+		worker     bool
+		restorable string
+		wantStatus int
+		wantMarker string
+	}{
+		{name: "worker advertises 502", worker: true, restorable: "502,504", wantStatus: edgeOrigin504TransportStatus, wantMarker: "502"},
+		{name: "older worker", worker: true, wantStatus: http.StatusBadGateway},
+		{name: "direct request", restorable: "502,504", wantStatus: http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.worker {
+				req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+			}
+			if tc.restorable != "" {
+				req.Header.Set(edgeRestorableHeader, tc.restorable)
+			}
+			rr := httptest.NewRecorder()
+			p.ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus || rr.Header().Get(edgeOriginalStatusHeader) != tc.wantMarker {
+				t.Fatalf("status = %d marker = %q, want %d %q", rr.Code, rr.Header().Get(edgeOriginalStatusHeader), tc.wantStatus, tc.wantMarker)
+			}
+			if !strings.Contains(rr.Body.String(), "bad_gateway") {
+				t.Fatalf("body = %q, want the problem body", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestInternalReverseProxy_EncodesItsOwn502ForARestoringWorker(t *testing.T) {
+	p := NewInternalReverseProxy(&stubDialer{dialErr: errors.New("connection refused")}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+	req.Header.Set(edgeRestorableHeader, "502,504")
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, req)
+	if rr.Code != edgeOrigin504TransportStatus || rr.Header().Get(edgeOriginalStatusHeader) != "502" {
+		t.Fatalf("status = %d marker = %q, want the 409 transport of 502", rr.Code, rr.Header().Get(edgeOriginalStatusHeader))
+	}
+	if !strings.Contains(rr.Body.String(), api.CodeBadGateway) {
+		t.Fatalf("body = %q, want the App connection failed problem", rr.Body.String())
 	}
 }
 

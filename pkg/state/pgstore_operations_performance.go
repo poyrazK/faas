@@ -22,11 +22,31 @@ func (s *PgStore) summarizeWorkflowPerformance(ctx context.Context, account, ten
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
+	baseline, err := workflowRefreshProgressBaseline(account, tenant, opts, operator, at)
+	if err != nil {
+		return api.OperationWorkflowPerformanceSummary{}, err
+	}
 	instances, err := s.readWorkflowPerformance(ctx, account, tenant, opts, operator, at)
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
 	out := workflowPerformanceSummary(instances, opts, at)
+	if baseline != nil {
+		out.RefreshProgress = workflowRefreshProgress(instances, *baseline, at)
+		definitions, err := s.workflowProgressDefinitions(ctx, account, tenant, opts, operator, workflowMissingProgressOperations(instances, *baseline))
+		if err != nil {
+			return api.OperationWorkflowPerformanceSummary{}, err
+		}
+		out.MissingProgress = workflowMissingConditionProgress(instances, definitions, *baseline, at)
+		out.NewMissingProgress = workflowNewMissingConditionProgress(instances, definitions, *baseline, at)
+	}
+	if !operator {
+		hideRuleOverlapTenants(&out)
+		hideRefreshProgressTenants(out.RefreshProgress)
+		hideMissingProgressTenants(out.MissingProgress)
+		hideNewMissingProgressTenants(out.NewMissingProgress)
+		hideConditionCoverageTenants(out.ConditionCoverage)
+	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil
 }

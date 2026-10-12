@@ -62,8 +62,9 @@ func TestLevenshtein_KnownPairs(t *testing.T) {
 //
 // Notes on the cases:
 //   - empty_query: distances from "" to every cliCommand are the
-//     name lengths; the shortest names (1-2 chars) hit distance ≤2
-//     alone, so the algorithm picks one. The function does NOT
+//     name lengths; the shortest names (1-2 chars) hit distance ≤2.
+//     "ai" and "ps" tie at length 2, so, as with any tie, the
+//     algorithm suppresses the suggestion. The function does NOT
 //     special-case empty input — this is intentional; cmdMan never
 //     reaches this path with 0 args (it renders the top-level man
 //     page instead). We pin the academic behaviour so a future
@@ -96,7 +97,9 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 		// Empty query is academic (cmdMan 0-args branch renders
 		// the top-level page) but we pin the deterministic pick
 		// so a future refactor doesn't shift it silently.
-		{"empty_query_deterministic_shortest_pick", "", "ps", true},
+		// "ai" and "ps" now tie as the shortest names, so an empty query is
+		// ambiguous and the suggestion is suppressed.
+		{"empty_query_two_way_shortest_tie", "", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

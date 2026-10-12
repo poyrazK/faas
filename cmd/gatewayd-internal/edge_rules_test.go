@@ -233,6 +233,35 @@ func TestCompileThrottleRules_PreservesDimensionalPolicy(t *testing.T) {
 	}
 }
 
+// Only a non-positive rate from a direct-DB write is replaced; a fractional
+// rate apid accepted is kept (hunt #9: 0.1 rps compiled to 1 rps).
+func TestCompileThrottleRules_KeepsFractionalRate(t *testing.T) {
+	for _, tc := range []struct {
+		rps, want float64
+	}{
+		{rps: 0.1, want: 0.1},
+		{rps: 2.5, want: 2.5},
+		{rps: 0, want: 1},
+		{rps: -1, want: 1},
+	} {
+		got, parseErrs := compileThrottleRules([]state.EdgeRule{{
+			ID: "rule-throttle", AccountID: "acct-1", AppID: "app-1",
+			MatchHost: "api.example.com", MatchPath: "/login", Enabled: true,
+			Kind: state.EdgeRuleKindThrottle,
+			Action: state.EdgeRuleAction{
+				Kind:     state.EdgeRuleKindThrottle,
+				Throttle: &state.EdgeRuleThrottleAction{RequestsPerSecond: tc.rps, Burst: 5},
+			},
+		}})
+		if len(parseErrs) != 0 || len(got) != 1 {
+			t.Fatalf("rps %g: compiled %d rules, errors %v", tc.rps, len(got), parseErrs)
+		}
+		if got[0].RequestsPerSecond != tc.want {
+			t.Errorf("rps %g compiled to %g, want %g", tc.rps, got[0].RequestsPerSecond, tc.want)
+		}
+	}
+}
+
 // TestCompileRouteRules_MalformedGlobDroppedAndReported (review fix R3)
 // pins the new behaviour: a rule whose MatchPath fails stdlib
 // path.Match validation (unmatched bracket, etc.) is dropped

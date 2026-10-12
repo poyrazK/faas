@@ -33,6 +33,7 @@ func TestCanUseResumableUpload_PreservesRolloutFallback(t *testing.T) {
 		{name: "dockerfile", dockerfile: true, trafficPercent: -1, want: true},
 		{name: "traffic split", trafficPercent: 50},
 		{name: "annotation", annotations: api.DeployAnnotations{Reason: "release"}, trafficPercent: -1, want: true},
+		{name: "revision environment override", annotations: api.DeployAnnotations{OverrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": "digest"}}, trafficPercent: -1},
 		{name: "workspace source root", sourceRoot: "apps/api", trafficPercent: -1, want: true},
 	}
 	for _, tc := range cases {
@@ -126,14 +127,18 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fingerprint options: %v", err)
 	}
-	statePath, err := uploadStatePath("demo", path)
+	statePath, err := uploadStatePath("demo", digestHex, optionsHash)
 	if err != nil {
 		t.Fatalf("state path: %v", err)
 	}
+	// The state was written by an earlier run that packed the same bytes into
+	// another temp file: `deploy --path` repacks on every run, and keying the
+	// state by archive path meant directory deploys never resumed
+	// (production-us hunt #9).
 	if err := saveResumableUploadState(statePath, resumableUploadState{
 		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
 		APIBase:     apiBase(),
-		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
+		ArchivePath: filepath.Join(dir, "gregale-cwd-previous-run.tar.gz"), ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
 		ArchiveModTimeUnixNano: info.ModTime().UnixNano(), DeployOptionsSHA256: optionsHash,
 		TotalSize: info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
 	}); err != nil {

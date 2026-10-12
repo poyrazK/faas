@@ -167,8 +167,7 @@ func TestPrepareContainerImageRealSignedIndexRegistry(t *testing.T) {
 			defer srv.Close()
 			client := oci.NewRegistryClient(oci.WithEndpoint("http", strings.TrimPrefix(srv.URL, "http://")), oci.WithHTTPClient(srv.Client()), oci.WithPullRetry(0, 0))
 			h := New(th.store, th.notif, client, th.bld, "./init", th.appsR, silentLogger())
-			h.trustedPublishersCacheOK = true
-			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+			seedTestTrustedPublisher(t, th.store, th.app, "company", key)
 			ref, digest, err := h.prepareContainerImage(context.Background(), th.app, th.dep, auth)
 			if mode == "approved index" {
 				if err != nil || ref != "registry.example/team/service@"+childDigest || digest != childDigest {

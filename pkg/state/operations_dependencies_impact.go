@@ -49,6 +49,7 @@ func (m *MemStore) projectDependencyImpactLocked(page *api.OperationMilestonesRe
 				continue
 			}
 			state := record.State
+			state.ChangeReason = api.CloneOperationWorkflowChangeReason(state.ChangeReason)
 			state.Stale = operationWorkflowStateIsStale(now, state)
 			evaluateOperationWorkflowDeadline(now, &state)
 			state.PlatformTenantID = ""

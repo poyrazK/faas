@@ -22,23 +22,24 @@ func randomPages(t *testing.T, n int) []byte {
 
 func page(b []byte, i int) []byte { return b[i*pageSize : (i+1)*pageSize] }
 
-// memoryFixture writes an image and a memory file whose pages are: a run of
-// three consecutive image blocks, a single image block out of order, a zero
-// page, and two pages found in no image.
+// minRunPages is the shortest run the pass shares.
+const minRunPages = memoryShareMinRun / pageSize
+
+// memoryFixture writes an image and a memory file whose pages are: a
+// minimum-length run of consecutive image blocks, a page found in no image,
+// a three-block run, a zero page, another unknown page and a single image
+// block. Only the first run is long enough to share.
 func memoryFixture(t *testing.T, dir string) (imagePath, memPath string, mem []byte) {
 	t.Helper()
-	image := randomPages(t, 16)
+	image := randomPages(t, 40)
 	imagePath = filepath.Join(dir, "layer.ext4")
 	if err := os.WriteFile(imagePath, image, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	other := randomPages(t, 2)
-	mem = make([]byte, 0, 8*pageSize)
-	mem = append(mem, page(image, 4)...)
-	mem = append(mem, page(image, 5)...)
-	mem = append(mem, page(image, 6)...)
+	mem = append([]byte{}, image[4*pageSize:(4+minRunPages)*pageSize]...)
 	mem = append(mem, page(other, 0)...)
-	mem = append(mem, page(image, 11)...)
+	mem = append(mem, image[30*pageSize:33*pageSize]...)
 	mem = append(mem, make([]byte, pageSize)...)
 	mem = append(mem, page(other, 1)...)
 	mem = append(mem, page(image, 0)...)
@@ -66,7 +67,8 @@ func TestIndexImageFilesSkipsZeroPages(t *testing.T) {
 }
 
 // Sharing must never change a byte of the memory file. Where the filesystem
-// shares blocks (XFS, Btrfs) the five image pages are shared and nothing else.
+// shares blocks (XFS, Btrfs) the minimum-length run is shared and the shorter
+// matches are not.
 func TestShareMemoryPagesKeepsBytesAndSharesImagePages(t *testing.T) {
 	dir := t.TempDir()
 	imagePath, memPath, want := memoryFixture(t, dir)
@@ -85,8 +87,8 @@ func TestShareMemoryPagesKeepsBytesAndSharesImagePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shared != 5*pageSize {
-		t.Fatalf("shared %d bytes, want %d", shared, 5*pageSize)
+	if shared != memoryShareMinRun {
+		t.Fatalf("shared %d bytes, want %d", shared, memoryShareMinRun)
 	}
 	extents, err := fileExtents(memPath)
 	if err != nil {
@@ -98,8 +100,8 @@ func TestShareMemoryPagesKeepsBytesAndSharesImagePages(t *testing.T) {
 			sharedExtent += e.length
 		}
 	}
-	if sharedExtent != 5*pageSize {
-		t.Fatalf("FIEMAP reports %d shared bytes, want %d", sharedExtent, 5*pageSize)
+	if sharedExtent != memoryShareMinRun {
+		t.Fatalf("FIEMAP reports %d shared bytes, want %d", sharedExtent, memoryShareMinRun)
 	}
 }
 
@@ -142,11 +144,46 @@ func TestShareSnapshotMemoryRunsOncePerFile(t *testing.T) {
 		}
 		t.Skip("filesystem cannot share blocks")
 	}
-	if first.SharedBytes != 5*pageSize || !second.Skipped {
-		t.Fatalf("first=%+v second=%+v, want 5 pages shared then skipped", first, second)
+	if first.SharedBytes != memoryShareMinRun || !second.Skipped {
+		t.Fatalf("first=%+v second=%+v, want one minimum run shared then skipped", first, second)
 	}
 	missing, err := x.ShareSnapshotMemory(t.Context(), cache, "snap/other/captures/c/v2/mem", nil)
 	if err != nil || !missing.Skipped {
 		t.Fatalf("uncached memory = %+v, %v; want skipped", missing, err)
+	}
+}
+
+// A block that changed after indexing fails the kernel's comparison; the run
+// is retried in minimum-length chunks, so only the chunk holding the changed
+// block stays unshared and no single pages are shared.
+func TestShareMemoryPagesRetriesChangedRunInChunks(t *testing.T) {
+	dir := t.TempDir()
+	image := randomPages(t, 2*minRunPages)
+	imagePath := filepath.Join(dir, "layer.ext4")
+	if err := os.WriteFile(imagePath, image, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	memPath := filepath.Join(dir, "mem")
+	if err := os.WriteFile(memPath, image, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := indexImageFiles(t.Context(), []string{imagePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := append([]byte{}, image...)
+	copy(page(changed, minRunPages+3), randomPages(t, 1))
+	if err := os.WriteFile(imagePath, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := shareMemoryPages(t.Context(), memPath, idx)
+	if errors.Is(err, errDedupeUnsupported) {
+		t.Skipf("%s cannot share blocks", dir)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared != memoryShareMinRun {
+		t.Fatalf("shared %d bytes, want the unchanged chunk (%d)", shared, memoryShareMinRun)
 	}
 }

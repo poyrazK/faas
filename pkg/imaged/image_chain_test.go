@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -159,8 +158,7 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 						t.Fatal(baseErr)
 					}
 				}
-				h.trustedPublishersCacheOK = true
-				h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+				seedTestTrustedPublisher(t, th.store, th.app, "company", key)
 				if kind == "sidecar-layer" {
 					_, err = h.buildSidecarLayers(t.Context(), th.app, th.dep, th.acct)
 				} else {

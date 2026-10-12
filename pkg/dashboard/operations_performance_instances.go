@@ -3,8 +3,9 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type WorkflowPerformanceContributor struct {
-	Entry                    api.OperationWorkflowPerformanceInstance
-	HistoryURL, OperationURL string
+	GapGroups                                      []WorkflowGapProgressGroupLink
+	Entry                                          api.OperationWorkflowPerformanceInstance
+	HistoryURL, OperationURL, DecisionOperationURL string
 }
 type WorkflowStatePerformanceLink struct {
 	api.OperationWorkflowStatePerformance
@@ -17,4 +18,9 @@ type WorkflowBlockerPerformanceLink struct {
 type WorkflowVerificationPerformanceLink struct {
 	api.OperationWorkflowVerificationPerformance
 	URL string
+}
+
+type WorkflowDecisionOutcomeLink struct {
+	api.OperationWorkflowDecisionOutcomeGroup
+	CompletionURL, BlockedURL string
 }

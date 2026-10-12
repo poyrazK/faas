@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -69,4 +70,55 @@ func classifyGuestBuildExit(exitCode int) string {
 	default:
 		return "FailureUserError"
 	}
+}
+
+// buildOutputFailurePatterns map the customer's own build output to the
+// error-explanations codes. guest-init only reports a coarse failure class and
+// never stamps BuildDone.FailureCode, so without this host-side reading
+// dep_install_failed and app_arch_mismatch (spec §6.4 amendment 1) could never
+// fire: a missing npm package failed as a bare "build exited 1" (production-us
+// hunt #9).
+var buildOutputFailurePatterns = []struct {
+	needles []string
+	code    string
+	pkg     string
+}{
+	{needles: []string{"exec format error"}, code: api.CodeAppArchMismatch},
+	{needles: []string{"err_pnpm_"}, code: api.CodeDepInstallFailed, pkg: "pnpm"},
+	{needles: []string{"npm error code e404", "npm err! code e404", "npm error code etarget", "npm err! code etarget", "npm error code eresolve", "npm err! code eresolve", "npm error 404 ", "npm err! 404 "}, code: api.CodeDepInstallFailed, pkg: "npm"},
+	{needles: []string{"error an unexpected error occurred: \"https://registry.yarnpkg.com", "couldn't find any versions for", "doesn't exist in the registry"}, code: api.CodeDepInstallFailed, pkg: "yarn"},
+	{needles: []string{"could not find a version that satisfies the requirement", "no matching distribution found for"}, code: api.CodeDepInstallFailed, pkg: "pip"},
+	{needles: []string{"no matching package named", "failed to select a version for the requirement"}, code: api.CodeDepInstallFailed, pkg: "cargo"},
+}
+
+// classifyBuildOutput returns the error-explanations code (and package
+// manager) a failed build's own output proves, or "" when nothing matches.
+// Only the customer's [build] section is read: buildkitd's daemon log repeats
+// generic exec errors for every failure.
+func classifyBuildOutput(logTail string) (code, pkg string) {
+	build, _, _ := strings.Cut(logTail, "\n[buildkitd]\n")
+	lower := strings.ToLower(build)
+	for _, pattern := range buildOutputFailurePatterns {
+		for _, needle := range pattern.needles {
+			if strings.Contains(lower, needle) {
+				return pattern.code, pattern.pkg
+			}
+		}
+	}
+	if goModuleFailure(lower) {
+		return api.CodeDepInstallFailed, "go"
+	}
+	return "", ""
+}
+
+func goModuleFailure(lower string) bool {
+	if !strings.Contains(lower, "go: ") {
+		return false
+	}
+	for _, needle := range []string{"unknown revision", "invalid version", "module lookup disabled", "cannot find module providing package", "reading https://proxy.golang.org", "missing go.sum entry"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }

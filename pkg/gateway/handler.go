@@ -2088,8 +2088,11 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 			"reason": "missing_or_malformed_bearer",
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
+		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`"))
+			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2118,7 +2121,8 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "the presented API key is not valid for this app"))
+			"Unauthorized", "the presented API key is not valid for this app").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -4416,7 +4420,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4430,6 +4433,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
@@ -4567,18 +4571,36 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	return ip, true
 }
 
+// clientIPAliasHeaders are the client-address headers web frameworks read
+// instead of, or before, X-Forwarded-For (Go chi's RealIP checks
+// True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
+// values unchanged, so a workload behind it could be handed a forged client
+// address (hunt #9 H9-67, production-us rc.252).
+var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's
 // single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
 // fail closed by removing the header entirely; the existing IP allowlist and
 // geo paths retain their own deny/unknown handling.
+//
+// The client-address aliases get the same treatment: True-Client-IP and
+// X-Real-IP carry the trusted address, the others and the client's RFC 7239
+// Forwarded header are dropped (Forwarded is not rebuilt, so its proto and
+// host cannot drift from X-Forwarded-*).
 func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
 	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del("Forwarded")
+	for _, name := range clientIPAliasHeaders {
+		r.Header.Del(name)
+	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
+		r.Header.Set("True-Client-IP", ip.String())
+		r.Header.Set("X-Real-IP", ip.String())
 	}
 }
 
@@ -5926,7 +5948,8 @@ haveApp:
 	// Consumer-attributed traffic always carries a bounded billing route so
 	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
+	routeCarrier := ObservedRouteCarrierFrom(r.Context())
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5934,6 +5957,7 @@ haveApp:
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
+		routeCarrier.set(preLabel)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
@@ -6862,6 +6886,7 @@ haveApp:
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
 			h.logFleetCapacityRefusal(app.ID, err)
+			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -7616,6 +7641,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
+		if platformFailureUnbillable(r, status) {
+			h.metrics.ObservePlatformError(appID, plan)
+		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -8772,7 +8800,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			idleSeconds = limits.IdleTimeoutS
+			idleSeconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if idleSeconds <= 0 || target.InstanceID == "" {
@@ -9043,10 +9071,48 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				writeFleetCapacityRefusal(w)
 				return
 			}
+			if public, ok := publicWakeFailure(prob); ok {
+				w.Header().Set("Cache-Control", "no-store")
+				api.WriteProblem(w, public)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
+	}
+}
+
+// publicWakeFailure is what an app's visitor sees when its instance could
+// not be started. The wake error's detail is written for the app owner and
+// operators: platform wake/instance ids, component names ("cold boot: vmm:
+// readiness"), and for a crashed workload its last output lines, which
+// routinely include connection strings and other secrets. A public caller gets
+// the stable code and a generic detail; logWakeFailure keeps the original
+// (production-us hunt #9: a crashing app answered every visitor with
+// "500 vmmd operation failed" and the internal wake detail). 503 rather than
+// 502: Cloudflare replaces 502 bodies.
+func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
+	switch p.Code {
+	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
+			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
+	case "internal", api.CodeInternal:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App temporarily unavailable",
+			"the platform could not start this app; retry shortly"), true
+	}
+	return nil, false
+}
+
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+func (h *Handler) logWakeFailure(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) {
+		return
+	}
+	if _, hidden := publicWakeFailure(prob); hidden {
+		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
 }
 

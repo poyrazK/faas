@@ -1,0 +1,255 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "import-preview",
+      "requests": [
+        {
+          "name": "Preview valid and invalid rows",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/preview_import",
+          "body": {
+            "items": [
+              {
+                "key": "existing",
+                "body": "Original"
+              },
+              {
+                "key": "new",
+                "body": "Draft"
+              },
+              {
+                "key": "bad",
+                "body": ""
+              }
+            ]
+          },
+          "expect": {
+            "status": 200,
+            "json": {
+              "rows": [
+                {
+                  "index": 0,
+                  "action": "unchanged",
+                  "errors": [],
+                  "expected_id": "1",
+                  "expected_version": 1
+                },
+                {
+                  "index": 1,
+                  "action": "insert",
+                  "errors": [],
+                  "expected_id": null,
+                  "expected_version": null
+                },
+                {
+                  "index": 2,
+                  "action": "invalid",
+                  "errors": [
+                    "body_requires_1_to_10000_characters"
+                  ],
+                  "expected_id": null,
+                  "expected_version": null
+                }
+              ],
+              "total": 3,
+              "valid": 2,
+              "items": [
+                {
+                  "key": "existing",
+                  "body": "Original"
+                },
+                {
+                  "key": "new",
+                  "body": "Draft"
+                },
+                {
+                  "key": "bad",
+                  "body": ""
+                }
+              ],
+              "identity": {
+                "subject": "alice",
+                "tenant": "team-a"
+              }
+            }
+          },
+          "capture": {
+            "existing_id": "/rows/0/expected_id",
+            "existing_version": "/rows/0/expected_version"
+          }
+        },
+        {
+          "name": "Other subject cannot see existing key",
+          "identity": "bob",
+          "method": "POST",
+          "path": "/rest/v1/rpc/preview_import",
+          "body": {
+            "items": [
+              {
+                "key": "existing",
+                "body": "Original"
+              }
+            ]
+          },
+          "expect": {
+            "status": 200,
+            "json": {
+              "rows": [
+                {
+                  "index": 0,
+                  "action": "insert",
+                  "errors": [],
+                  "expected_id": null,
+                  "expected_version": null
+                }
+              ],
+              "total": 1,
+              "valid": 1,
+              "identity": {
+                "subject": "bob",
+                "tenant": "team-a"
+              },
+              "items": [
+                {
+                  "key": "existing",
+                  "body": "Original"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Preview writes no rows",
+          "identity": "alice",
+          "method": "GET",
+          "path": "/rest/v1/documents?external_key=eq.new",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Invalid import cannot commit",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/commit_import",
+          "body": {
+            "items": [
+              {
+                "key": "existing",
+                "body": "Original"
+              },
+              {
+                "key": "new",
+                "body": "Draft"
+              },
+              {
+                "key": "bad",
+                "body": ""
+              }
+            ],
+            "review_identity": {
+              "subject": "alice",
+              "tenant": "team-a"
+            },
+            "expected": [
+              {
+                "id": "{{existing_id}}",
+                "version": "{{existing_version}}"
+              },
+              {
+                "id": null,
+                "version": null
+              },
+              {
+                "id": null,
+                "version": null
+              }
+            ]
+          },
+          "expect": {
+            "status": 400
+          }
+        },
+        {
+          "name": "Reviewed valid input commits",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/commit_import",
+          "body": {
+            "items": [
+              {
+                "key": "existing",
+                "body": "Original"
+              },
+              {
+                "key": "new",
+                "body": "Draft"
+              }
+            ],
+            "review_identity": {
+              "subject": "alice",
+              "tenant": "team-a"
+            },
+            "expected": [
+              {
+                "id": "{{existing_id}}",
+                "version": "{{existing_version}}"
+              },
+              {
+                "id": null,
+                "version": null
+              }
+            ]
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Committed row is visible",
+          "identity": "alice",
+          "method": "GET",
+          "path": "/rest/v1/documents?external_key=eq.new&select=body",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "body": "Draft"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Old review cannot overwrite committed row",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/rpc/commit_import",
+          "body": {
+            "items": [
+              {
+                "key": "existing",
+                "body": "stale"
+              }
+            ],
+            "expected": [
+              {
+                "id": "{{existing_id}}",
+                "version": "{{existing_version}}"
+              }
+            ],
+            "review_identity": {
+              "subject": "alice",
+              "tenant": "team-a"
+            }
+          },
+          "expect": {
+            "status": 409
+          }
+        }
+      ]
+    }
+  ]
+}

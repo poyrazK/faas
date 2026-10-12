@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -92,8 +91,6 @@ func TestSignedSidecarUsesSelectedChildAndCurrentStoredPublisher(t *testing.T) {
 				p.attachments = nil
 			}
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
-			h.trustedPublishersCacheOK = true
-			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
 			if mode == "artifact replaced during build" {
 				th.bld.buildHook = func() {
 					be, e := h.storageFor()

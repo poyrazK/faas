@@ -11,12 +11,15 @@ which uses different database prerequisites. Compiling this test and invoking
 it without the strict runner's opt-in fails; it never silently skips.
 
 The disposable fixture runs PostgreSQL with TLS and SCRAM, in a separate empty
-customer database. Provider management is simulated in-process. It uses the real
+customer database. Provider management is simulated through an authenticated loopback fixture. The
+real apid daemon loads this driver only when compiled with both acceptance tags;
+production builds (including ordinary `metal` builds) register Neon alone. The
+fixture uses the real
 managed database and binding services, catalog, age/HMAC credential delivery,
 release task, scheduler, vmmd, imaged, builderd and gateway. It needs no Neon key or
 paid provider resources.
 
-The strict verdict requires all six phases and the parent test to pass:
+The strict verdict requires all thirteen phases and the parent test to pass:
 
 1. Upload a scratch Dockerfile containing the SQL probe compiled from the current
    checkout; run its normal release migration; restore the initial serving guest
@@ -27,27 +30,76 @@ The strict verdict requires all six phases and the parent test to pass:
 3. Rotate the writer while running. Require the real scheduler's retirement
    receipt, withdrawal of previous resident guests, stale snapshot invalidation,
    and a PostgreSQL authentication rejection for the retired credential.
-4. Park and restore a guest using the new credential. Require the gateway's
+4. Park a guest retaining writer and reader pools, then disconnect its external
+   SQL sessions. Require a real snapshot restore and successful loopback-only
+   `after_restore` callback that resets both pools and reads the existing marker
+   through new TLS sessions before readiness. Preserve data and credentials.
+5. Park and restore a guest using the new credential. Require the gateway's
    `restore` receipt, the new credential proof, unchanged reader proof and marker,
    and increasing SQL counter.
-5. Rotate while parked and restart schedd. Require durable notification recovery,
+6. Stop schedd before rotating the parked workload through the public API, then
+   restart it. Require durable notification recovery,
    retirement, delivery of the next credential and preserved SQL data.
-6. Stop owned daemons, disable fixture provisioning, delete every owned binding,
+7. Upload the unchanged embedded `rest-api-postgres` source, lockfile and manifest.
+   Add only the disposable server's public CA and a nonsecret build token. Run
+   its ordinary `node migrate.js` release, restore through `/healthz`, and insert
+   exactly one note through the shipped HTTP handler.
+8. Run an ordinary Node application task and require a runtime credential while
+   rejecting the migration credential. Serving startup also rejects that secret.
+9. Read to retain a real `pg` pool, capture a fresh snapshot, disconnect external
+   SQL sessions, and require the gateway's `restore` receipt with the same note.
+   A forwarded external request to the lifecycle path must be forbidden.
+10. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
+    starter's 1.5-second recovery budget. The one-shot fault is consumed by
+    restore, so SQL is healthy for the fresh cold boot.
+    Require vmmd's failed-hook acknowledgment, a `cold_boot` wake receipt, stale
+    failed snapshot, one resident replacement guest, and unchanged note data.
+11. Rotate the running starter through the public API, await the scheduler and
+    public completion state, reject old SQL authentication, preserve the original
+    note and perform a new write using the replacement credential.
+12. Stop schedd before rotating the parked starter through the public API, then
+    restart it. Require
+    recovered retirement/completion, preserved data and another successful write. An independent SQL read
+    confirms the complete notes dataset was neither lost nor replayed.
+13. Stop owned daemons, disable fixture provisioning, delete every owned binding,
    independently prove encrypted-secret removal and SQL credential retirement,
    then delete the managed database. Cleanup failures fail the parent test;
    role/database teardown and host leak checks are also required.
 
-Rotation uses the production durable runtime-refresh seam after the binding
-service updates its credential. The test does not call the public rotation API or
-a vendor API and never supplies a scheduler retirement receipt itself. The
-SQL-only regression suite explicitly supplies that receipt because it has no
-guests; it runs in CI's TLS-enabled PostgreSQL shard.
+Both workloads rotate through the authenticated `POST /v1/postgres/bindings/{id}/rotate`
+route and poll the public binding state. They never update application restart
+status, send scheduler notifications, fabricate retirement receipts, or invoke
+rotation reconciliation themselves. The production API and binding worker own
+those steps. The separate SQL-only regression suite has no guests and explicitly
+supplies its retirement receipt.
 
-Every SQL request opens fresh TLS sessions. This suite does not qualify retained
-connection pools, application `after_restore` reconnection hooks, provider pooling,
-real-provider DNS/Internet access, branching or point-in-time recovery. The fixture
-represents pooled/direct endpoints with the same SQL server. Backend-specific
-qualification and application reconnect testing remain separate requirements.
+A portable tagged API test also exercises the production loader, authentication,
+sealing, binding worker, held-session revocation and restart persistence against
+this same disposable SQL fixture. Both CI workflows explicitly invoke it with
+`metal,managed_postgres_native`; it does not claim guest execution.
+
+The Go probe retains separate writer and reader pools. The customer Node starter
+retains its shipped writer pool; its source and handlers have no test-only routes. Its source
+manifest opts into a two-second `after_restore` callback; the handler requires a
+loopback peer and the platform header. It discards captured sockets and reads
+the existing marker without mutations. Missing data or unavailable SQL fails
+the callback and readiness. Manual tasks still use fresh short-lived sessions.
+The proxy retires sessions only through explicit fault controls or cleanup;
+it does not expire idle connections after thirty seconds.
+
+The local TLS/SCRAM race tests exercise retained sessions beyond that former
+deadline, socket loss, concurrent writes, pre-commit cancellation, hook failure,
+and retirement of held sessions and fresh logins. Mutations use explicit
+transactions and are never automatically retried. A failed COMMIT can still
+have an uncertain outcome; these checks do not establish exactly-once delivery
+for application retries.
+
+The deployed runner must actually pass to establish guest pool/hook acceptance.
+Older seven-phase probe reports fail the expanded verdict.
+Compilation and local SQL tests alone cannot do so. This fixture does not qualify
+provider pooling, real-provider DNS/Internet access, branching or point-in-time
+recovery: its pooled/direct endpoints share one SQL server. Fresh backend-specific
+qualification and supported native-host execution remain separate requirements.
 
 Run on an idle designated x86_64 Linux acceptance host with root, KVM, Firecracker,
 jailer, ip, nft, Python 3, a supported guest kernel and qualified builder base:
@@ -55,6 +107,7 @@ jailer, ip, nft, Python 3, a supported guest kernel and qualified builder base:
 ```sh
 export DATABASE_URL='<private disposable PostgreSQL administrator URL>'
 export FAAS_PGTEST_TEMPLATE_DATABASE=1
+export GREGALE_POSTGRES_NATIVE_CA_PATH='<public SQL certificate/CA; server SAN must include 198.18.0.254>'
 export FAAS_TEST_KERNEL=/srv/fc/base/vmlinux-6.1.134
 export FAAS_BUILDER_BASE_PATH=/srv/fc/base/runner-builder-amd64.ext4
 export FAAS_GUEST_INIT='<static Linux amd64 guest/init binary built from this checkout>'

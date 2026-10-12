@@ -73,6 +73,34 @@ func TestGoFunctionArtifactUsesRailpackCommand(t *testing.T) {
 	}
 }
 
+// ADR-987: a binary function's Dockerfile image names its executable with
+// ENTRYPOINT; imaged extracts exactly that file, as for Go builds.
+func TestBinaryFunctionArtifactUsesDockerfileEntrypoint(t *testing.T) {
+	archive := goArtifactFixture(t, "app/handler", map[string]any{"Entrypoint": []string{"/app/handler"}})
+	h := &Handler{}
+	layers, source, cleanup, err := h.functionBuildArtifact(context.Background(), RuntimeBinary, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if source != "/app/server" || len(layers) != 1 {
+		t.Fatalf("source=%s layers=%d", source, len(layers))
+	}
+	target := t.TempDir()
+	if err := rootfs.ApplyLayerGz(target, layers[0]); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "app", "server")); err != nil || string(data) != "compiled-go-handler" {
+		t.Fatalf("normalized artifact = %q, %v", data, err)
+	}
+	// An executable outside /app is refused, whatever the Dockerfile says.
+	outside := goArtifactFixture(t, "usr/local/bin/handler", map[string]any{"Entrypoint": []string{"/usr/local/bin/handler"}})
+	if _, _, cleanup, err := h.functionBuildArtifact(context.Background(), RuntimeBinary, outside); err == nil {
+		cleanup()
+		t.Fatal("an executable outside /app was accepted")
+	}
+}
+
 func TestGoFunctionExecutableCommandContract(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

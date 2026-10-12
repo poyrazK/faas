@@ -156,3 +156,12 @@ SET last_dependencies=s.depends_on,last_dependencies_revision=c.revision
 FROM public.gregale_customer_operation_workflow_states s
 WHERE s.platform_tenant_id=c.platform_tenant_id AND s.workflow=c.workflow
  AND s.instance_id=c.instance_id AND s.revision=c.revision AND c.last_dependencies_revision=0;
+
+-- Application-reported business path choices commit with transition outbox rows.
+ALTER TABLE public.gregale_customer_operation_workflow_states
+ ADD COLUMN IF NOT EXISTS selected_paths jsonb NOT NULL DEFAULT '[]'::jsonb
+ CHECK (jsonb_typeof(selected_paths)='array' AND jsonb_array_length(selected_paths)<=8);
+
+ALTER TABLE public.gregale_customer_operation_workflow_states
+ ADD COLUMN IF NOT EXISTS change_reason jsonb NOT NULL DEFAULT 'null'::jsonb
+ CHECK (jsonb_typeof(change_reason) IN ('object','null'));

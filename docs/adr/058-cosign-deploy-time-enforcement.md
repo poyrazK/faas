@@ -78,6 +78,8 @@ This ADR commits to:
    and before `PullDigest`. The verify path:
    - Loads `/etc/faas/secrets/trusted-publishers/*.pem` once at
      startup; refreshes on `pg_notify('trusted_signer_changed')`.
+     (Superseded 2026-10-11: imaged reads `app_trusted_signers` on
+     every verify; see the amendment at the end.)
    - For each pending deployment, resolves the manifest digest,
      fetches the cosign signature blob at the registry's
      well-known `sha256-<digest>.sig` location, and verifies
@@ -255,3 +257,39 @@ registry publisher verification.
 | `deploy/ansible/roles/apid/templates/apid.env.j2` | `FAAS_TRUSTED_PUBLISHERS_DIR` |
 | `docs/adr/035-auth-audit-events.md` | append 6 new audit-event rows |
 | `docs/faas_implementation_spec.md` §11 | add the trusted-publishers / require_signed paragraph |
+
+## Amendment 2026-10-11: imaged reads `app_trusted_signers` (hunt #9 H9-51)
+
+Decision 5 loaded the trust list from `/etc/faas/secrets/trusted-publishers/`,
+which apid mirrored from `app_trusted_signers`. That only works when apid and
+imaged share a filesystem. In the multi-host topology apid runs on the
+control plane and imaged runs on compute nodes. On production-us the
+directory existed only on the control plane, and it stayed empty: no unit set
+`FAAS_TRUSTED_PUBLISHERS_DIR`, so the apid writer never ran. imaged had
+neither the directory nor the variable. A publisher added with
+`gregale trusted-publishers add` therefore never reached imaged. Every
+`require_signed` deploy failed with "no trusted publishers configured", and
+the posture report scored the app higher.
+
+**Decision.** imaged reads the app's rows from `app_trusted_signers` on every
+verify, for both the deploy gate and the live-image revalidation. This is the
+same pattern imaged already uses for per-app registry credentials (ADR-062).
+apid stays the only writer. `trusted_signer_changed` now only triggers
+revalidation of live signed images; there is no cache to refresh. The disk
+mirror is removed: the apid writer, imaged's directory cache,
+`FAAS_TRUSTED_PUBLISHERS_DIR`, the ansible directory task, and the
+`pkg/cosign` directory loaders.
+
+**Failure handling.** A stored key that does not parse fails the verify
+closed instead of being skipped, so a corrupt row cannot shrink the trust
+set. A database error is not a verdict on the image:
+- the deploy fails with `signature_verify: trusted publisher list
+  unavailable`;
+- the live-image sweep stops without quarantining.
+
+An app with no signer rows still fails closed, and a live image is still
+quarantined when its last signer is removed.
+
+**Cost.** One indexed query per signed deploy and per live signed image in a
+revalidation sweep. Both are rare next to the registry round trip a verify
+already makes.

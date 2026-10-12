@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -486,5 +487,21 @@ func TestPreparedNetworkShutdownDrainsWorker(t *testing.T) {
 	}
 	if p.claim("late", policy) != nil {
 		t.Fatal("claim after shutdown")
+	}
+}
+
+// A host without the tenant bridge (CI runners, macOS) cannot hold a cache.
+// vmmd treats this sentinel as "run without one" for the default-sized cache.
+func TestEnablePreparedNetworksReportsMissingHostNetwork(t *testing.T) {
+	if _, err := net.InterfaceByName(netns.TenantBridge); err == nil {
+		t.Skipf("%s exists on this host", netns.TenantBridge)
+	}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	err := m.EnablePreparedNetworks(t.Context(), 2)
+	if !errors.Is(err, ErrPreparedNetworkHost) {
+		t.Fatalf("EnablePreparedNetworks = %v, want ErrPreparedNetworkHost", err)
+	}
+	if m.preparedNetworks != nil {
+		t.Fatal("a failed enable left a cache behind")
 	}
 }

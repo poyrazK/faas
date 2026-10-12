@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -131,6 +132,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	w.Header().Set("x-faas-cache", "stale-while-waking")
+	w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 	w.Header().Add("Warning", `110 - "Response is Stale"`)
 	w.Header().Set("X-From-Cache", "stale")
 	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))

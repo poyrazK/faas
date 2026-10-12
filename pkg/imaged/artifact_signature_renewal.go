@@ -64,7 +64,7 @@ func (h *Handler) renewProducedSignature(ctx context.Context, app state.App, dep
 }
 
 func (h *Handler) fetchRetainedSourceSignature(ctx context.Context, app state.App, origin state.DeploymentRegistryVerification) (cosign.ImageSignatureProof, error) {
-	pubs, err := h.imageSignaturePublishers(app)
+	pubs, err := h.imageSignaturePublishers(ctx, app)
 	if err != nil {
 		return cosign.ImageSignatureProof{}, err
 	}

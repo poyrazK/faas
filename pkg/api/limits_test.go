@@ -1035,6 +1035,27 @@ func TestIdleTimeoutBounds(t *testing.T) {
 	}
 }
 
+// ADR-974: functions default to 30 s on every plan; apps and untyped legacy
+// rows keep the plan default.
+func TestDefaultIdleTimeoutS(t *testing.T) {
+	for _, p := range Plans {
+		l := MustLimitsFor(p)
+		if got := l.DefaultIdleTimeoutS("app"); got != l.IdleTimeoutS {
+			t.Errorf("%s app default = %d, want plan default %d", p, got, l.IdleTimeoutS)
+		}
+		if got := l.DefaultIdleTimeoutS(""); got != l.IdleTimeoutS {
+			t.Errorf("%s untyped default = %d, want plan default %d", p, got, l.IdleTimeoutS)
+		}
+		want := min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
+		if got := l.DefaultIdleTimeoutS("function"); got != want {
+			t.Errorf("%s function default = %d, want %d", p, got, want)
+		}
+		if floor, _ := l.IdleTimeoutBounds(); want < floor {
+			t.Errorf("%s function default %d is below the configurable floor %d", p, want, floor)
+		}
+	}
+}
+
 func TestPlanValidity(t *testing.T) {
 	for _, p := range Plans {
 		if !p.Valid() {
@@ -3422,6 +3443,28 @@ func TestEgressFloodLimitsBelowVMRate(t *testing.T) {
 		}
 		if l.EgressNewConnPerDestBurst < l.EgressNewConnPerDestPerSecond || l.EgressFloodDropsPerMinute <= 0 {
 			t.Errorf("%s: burst %d / flood ceiling %d invalid", p, l.EgressNewConnPerDestBurst, l.EgressFloodDropsPerMinute)
+		}
+	}
+}
+
+// spec: §4.3 — the reaper and the surfaces that explain it resolve an app's
+// idle timeout the same way.
+func TestEffectiveIdleTimeoutSClampsTheConfiguredValue(t *testing.T) {
+	pro := MustLimitsFor(PlanPro)
+	floor, ceiling := pro.IdleTimeoutBounds()
+	for _, tc := range []struct {
+		appType    string
+		configured int
+		want       int
+	}{
+		{appType: "app", configured: 0, want: pro.IdleTimeoutS},
+		{appType: "function", configured: 0, want: pro.DefaultIdleTimeoutS("function")},
+		{appType: "app", configured: 120, want: 120},
+		{appType: "app", configured: 1, want: floor},
+		{appType: "app", configured: ceiling + 1, want: ceiling},
+	} {
+		if got := pro.EffectiveIdleTimeoutS(tc.appType, tc.configured); got != tc.want {
+			t.Errorf("EffectiveIdleTimeoutS(%q, %d) = %d, want %d", tc.appType, tc.configured, got, tc.want)
 		}
 	}
 }

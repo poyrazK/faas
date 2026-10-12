@@ -862,6 +862,7 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 	}
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	// ADR-687: a sidecar chrooted into its own rootfs cannot see
 	// /run/guest-init, and a --require of a missing file stops Node from

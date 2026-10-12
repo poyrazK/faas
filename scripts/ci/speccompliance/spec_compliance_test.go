@@ -346,6 +346,7 @@ var dtoExclude = map[string]bool{
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
 	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowReadinessQueueOptions":      true, // Go query builder; parameters are described on each queue route.
 	"OperationWorkflowAttentionOptions":           true,
 	"OperationWorkflowAttentionSummaryOptions":    true,
 	"OperationWorkflowOutcomeOptions":             true,
@@ -892,8 +893,8 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// in tier-a7 PR-A); the applogs route is the only route the two
 	// daemons share today.
 	sources := []string{
-		filepath.Join(root, "cmd/apid", serverSrcPath),
-		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
+		filepath.Join(root, "pkg/apid/apidserver", serverSrcPath),
+		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -1074,6 +1075,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
@@ -1220,6 +1222,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
+		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
@@ -1253,12 +1256,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_condition_coverage.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_missing_progress.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_new_missing_progress.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_readiness.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_readiness_subscriptions.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_retained_milestones.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),

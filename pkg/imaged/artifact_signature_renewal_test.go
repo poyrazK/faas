@@ -104,7 +104,7 @@ func TestProducedSignatureRenewalUsesRotatedKeyForExactRetainedSubject(t *testin
 			if _, _, err := th.store.UpsertAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company", der, th.app.AccountID); err != nil {
 				t.Fatal(err)
 			}
-			h.trustedPublishersCache[th.app.ID] = []cosign.TrustedPublisher{{Name: "company", PublicKey: &key.PublicKey}}
+			seedTestTrustedPublisher(t, th.store, th.app, "company", key)
 			sum := sha256.Sum256(p.attachments[0].Payload)
 			sig, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
 			if err != nil {
