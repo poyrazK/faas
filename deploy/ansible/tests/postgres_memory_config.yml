@@ -1,0 +1,36 @@
+---
+# Render the postgres role's memory drop-in for representative hosts and pin
+# the sizing rules (defaults/main.yml). No host writes.
+- name: Verify PostgreSQL memory sizing
+  hosts: localhost
+  gather_facts: false
+  vars:
+    postgres_memory_template: "{{ playbook_dir }}/../roles/postgres/templates/90-gregale-memory.conf.j2"
+    postgres_memory_cases:
+      # ansible_memtotal_mb as reported, then the expected MB values.
+      - {ram: 7950, shared: 993, cache: 4968, maint: 124}     # nominal 8 GB
+      - {ram: 15986, shared: 1998, cache: 9991, maint: 249}   # e2-highmem-2 (production-us CP)
+      - {ram: 64000, shared: 8000, cache: 40000, maint: 1000} # 64 GB bare metal
+      - {ram: 131072, shared: 8192, cache: 81920, maint: 1024} # caps
+  tasks:
+    - name: Load the role's sizing rules
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/postgres/defaults/main.yml"
+
+    - name: Render and check each host size
+      ansible.builtin.assert:
+        that:
+          - "('shared_buffers = ' ~ item.shared ~ 'MB') in rendered"
+          - "('effective_cache_size = ' ~ item.cache ~ 'MB') in rendered"
+          - "('maintenance_work_mem = ' ~ item.maint ~ 'MB') in rendered"
+          - (item.ram | int) >= (faas_postgres_memory_sizing_min_mb | int)
+        fail_msg: "{{ item.ram }} MB host rendered: {{ rendered }}"
+      vars:
+        ansible_memtotal_mb: "{{ item.ram }}"
+        rendered: "{{ lookup('ansible.builtin.template', postgres_memory_template) }}"
+      loop: "{{ postgres_memory_cases }}"
+
+    - name: A 4 GB host keeps the packaged defaults
+      ansible.builtin.assert:
+        that:
+          - 3908 < (faas_postgres_memory_sizing_min_mb | int)

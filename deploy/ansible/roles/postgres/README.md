@@ -30,6 +30,10 @@ share the database without opening it to the public interface.
      best-effort `rclone` push (reload)
    - `max_wal_senders = 3` (reload)
    - Creates `/var/lib/pgsql/archive` owned `postgres:postgres 0750`.
+   - Memory from host RAM on hosts with at least 7 GB
+     (`conf.d/90-gregale-memory.conf`, restart): `shared_buffers` 1/8 of RAM
+     (max 8 GB), `effective_cache_size` 5/8, `maintenance_work_mem` 1/64
+     (max 1 GB). Smaller hosts keep the packaged defaults.
 8. Hands connection sizing to the adjacent `postgres_capacity` role. The
    bootstrap and node-join playbooks both run that role so capacity follows
    the complete compute inventory before admission continues.

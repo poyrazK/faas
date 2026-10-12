@@ -1,0 +1,16 @@
+---
+# Memory sizing from host RAM. The packaged PostgreSQL defaults
+# (shared_buffers 128 MB) left production-us reading from its HDD on every
+# cache miss after the control plane grew to 16 GB (hunt #9, 2026-10-12).
+# Below the threshold the packaged defaults stay: the control plane runs
+# apid, schedd, Prometheus and the gateways beside PostgreSQL, and a 4 GB
+# host has no memory to give it. ansible_memtotal_mb reports a little under
+# the nominal size (a 16 GB VM reports ~15,986 MB), so the threshold sits
+# below 8 GB.
+faas_postgres_memory_sizing_min_mb: 7168
+# 1/8 of RAM, at most 8 GB.
+faas_postgres_shared_buffers_mb: "{{ [((ansible_memtotal_mb | int) // 8), 8192] | min }}"
+# Planner hint only: PostgreSQL's buffers plus the OS page cache it can expect.
+faas_postgres_effective_cache_size_mb: "{{ (ansible_memtotal_mb | int) * 5 // 8 }}"
+# 1/64 of RAM, at most 1 GB; used by VACUUM and index builds.
+faas_postgres_maintenance_work_mem_mb: "{{ [((ansible_memtotal_mb | int) // 64), 1024] | min }}"

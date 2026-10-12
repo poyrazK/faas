@@ -1,0 +1,4 @@
+# Managed by Ansible (deploy/ansible/roles/postgres); sized from host RAM.
+shared_buffers = {{ faas_postgres_shared_buffers_mb | int }}MB
+effective_cache_size = {{ faas_postgres_effective_cache_size_mb | int }}MB
+maintenance_work_mem = {{ faas_postgres_maintenance_work_mem_mb | int }}MB
