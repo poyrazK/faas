@@ -187,6 +187,15 @@ func standardProjectOnboarding(t *testing.T, store standardProjectBoundaryStore)
 		if err != nil || worker.Status != state.AppDeleted {
 			t.Fatalf("remove workload: %+v %v", worker, err)
 		}
+		// Project apply must not implicitly reclaim a deleted app's globally
+		// reserved slug. Restore the retained app through its lifecycle API,
+		// then verify project onboarding installs the current standard pin
+		// before it queues the next build.
+		restoredApp := standardOnboardingBoundaryResponse[api.AppResponse](t,
+			standardOnboardingBoundaryRequest(t, e, http.MethodPost, "/v1/apps/standards-worker/restore", nil), http.StatusOK)
+		if restoredApp.ID != worker.ID {
+			t.Fatalf("restore changed service identity: got %s, want %s", restoredApp.ID, worker.ID)
+		}
 		restored := standardProjectApply(t, e, source)
 		standardProjectBuilds(t, e, restored, 1)
 		if restored.Builds[0].AppID != worker.ID {
