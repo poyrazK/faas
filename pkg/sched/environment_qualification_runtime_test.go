@@ -315,8 +315,8 @@ func TestQualificationBootBudgetCancelsWithoutShorteningClaimDeadline(t *testing
 	}
 	select {
 	case <-bootCtx.Done():
-		if !errors.Is(bootCtx.Err(), context.Canceled) || claimCtx.Err() != nil {
-			t.Fatalf("boot budget canceled the claim: boot=%v claim=%v", bootCtx.Err(), claimCtx.Err())
+		if !errors.Is(bootCtx.Err(), context.Canceled) || !errors.Is(context.Cause(bootCtx), context.DeadlineExceeded) || claimCtx.Err() != nil {
+			t.Fatalf("boot budget canceled the claim or lost its timeout cause: boot=%v cause=%v claim=%v", bootCtx.Err(), context.Cause(bootCtx), claimCtx.Err())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("boot exceeded its cancellation budget")

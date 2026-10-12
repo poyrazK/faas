@@ -210,12 +210,12 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	bootCtx, bootCancel := qualificationBootBudgetContext(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
 	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(bootCtx, claimed, frame); err != nil {
-		return err
+		return errors.Join(err, context.Cause(bootCtx))
 	}
 	vmAttempted = true
 	out, err := vm.RestoreEnvironmentQualification(bootCtx, frame, prepared.Spec)
 	if err != nil {
-		return errors.Join(err, context.Cause(ctx))
+		return errors.Join(err, context.Cause(bootCtx), context.Cause(ctx))
 	}
 	if out == nil || out.Instance != frame.InstanceID || out.Method != vmmdpb.WakeMethod_WAKE_RESTORE || out.RequestedMethod != vmmdpb.WakeMethod_WAKE_RESTORE {
 		return fmt.Errorf("qualification restore used an unexpected target or lifecycle: %w", state.ErrConflict)
