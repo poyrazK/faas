@@ -73,6 +73,10 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 		if errors.Is(err, state.ErrCheckedRollbackChanged) || errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNoRollbackTarget) {
 			return operation, target, api.NewProblem(http.StatusConflict, "rollback_deployment_changed", "Rollback selection changed", "The expected deployment must still serve all traffic, with no active rollout or other rollback in this scope.")
 		}
+		// The customer sees a retryable 503; the cause has to reach the
+		// operator log (production-us hunt #9: the first of two identical
+		// rollbacks failed after 16 s and nothing recorded why).
+		s.log.Error("checked rollback: persist", "app", app.ID, "target", target.ID, "expected_current", currentID, "err", err)
 		return operation, target, api.ErrCapacity("could not persist checked rollback")
 	}
 	prepared, err := s.store.DeploymentByID(ctx, target.ID)
