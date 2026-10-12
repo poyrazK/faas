@@ -71,8 +71,11 @@ func TestCmdAddPostgresCreatesAndBindsWithoutSecrets(t *testing.T) {
 	}
 }
 
-func TestCmdAddBucketCreatesAndReusesBindingWithoutCredentialOutput(t *testing.T) {
-	var bucketCreates, bindingCreates atomic.Int64
+// addBucketTestServer fakes the app, bucket and compute-binding routes that
+// `gregale add bucket assets --app api` uses, counting creations.
+func addBucketTestServer(t *testing.T) (*httptest.Server, *atomic.Int64, *atomic.Int64) {
+	t.Helper()
+	bucketCreates, bindingCreates := &atomic.Int64{}, &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -114,7 +117,12 @@ func TestCmdAddBucketCreatesAndReusesBindingWithoutCredentialOutput(t *testing.T
 			http.NotFound(w, r)
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv, bucketCreates, bindingCreates
+}
+
+func TestCmdAddBucketCreatesAndReusesBindingWithoutCredentialOutput(t *testing.T) {
+	srv, bucketCreates, bindingCreates := addBucketTestServer(t)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
@@ -138,6 +146,33 @@ func TestCmdAddBucketCreatesAndReusesBindingWithoutCredentialOutput(t *testing.T
 	}
 	if strings.Contains(out.String(), "AKIA_TEST_SECRET") || strings.Contains(out.String(), "SECRET_VALUE") {
 		t.Fatalf("second add output exposed credential material: %s", out.String())
+	}
+}
+
+// Hunt #9: running instances kept their boot environment after `add bucket`
+// (the GREGALE_S3_* settings stayed absent until a restart) and nothing said so.
+func TestCmdAddBucketSaysWhenTheNewBindingReachesRunningInstances(t *testing.T) {
+	srv, _, _ := addBucketTestServer(t)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	args := []string{"add", "bucket", "assets", "--app", "api", "--env", "production", "--region", "eu"}
+	if code := run(append([]string(nil), args...)); code != 0 {
+		t.Fatalf("first add exit = %d, output = %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "gregale app api restart") || !strings.Contains(out.String(), "GREGALE_S3_ASSETS_*") {
+		t.Fatalf("new binding output lacks the restart guidance: %s", out.String())
+	}
+	out.Reset()
+	if code := run(append([]string(nil), args...)); code != 0 {
+		t.Fatalf("second add exit = %d, output = %s", code, out.String())
+	}
+	if strings.Contains(out.String(), "restart") {
+		t.Fatalf("reused binding repeated the restart guidance: %s", out.String())
 	}
 }
 
