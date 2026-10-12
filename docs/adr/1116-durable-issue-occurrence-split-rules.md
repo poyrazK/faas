@@ -10,3 +10,5 @@
 - **Scope:** Selectors remain exception type, error code, route, and source kind against sanitized evidence. No regular expressions, raw stack matching, automatic precedence edits, destructive history reconstruction, or chained routing. Rules are returned in issue detail and can be managed on both source and branch.
 
 - **Migration replay:** ADR-1114 is still an unmerged migration in this change. Its replay preserves the additive branch-source view column and newer audit vocabulary when split-rule tables already exist. Down migrations preserve routing data.
+
+- **Environment cloning:** Issue group links, split rules, and occurrence provenance are operational state tied to original observed identities. Register their tables and columns as operational so configuration cloning remains complete and never copies issue evidence or cross-environment identity references.
