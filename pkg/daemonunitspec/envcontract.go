@@ -418,6 +418,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PERSISTENT_WORKER", Owners: []string{"shared"}, Source: EnvSourceInternal, Note: "set by the builder path for its own worker process"},
 	{Name: "FAAS_PGTEST_TEMPLATE_DATABASE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_PLAN_CACHE_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PMEM_BASE_DIR", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional directory of per-account pmem base copies (ADR-908); unset keeps every base on virtio-blk; must share a reflink-capable filesystem with the cached bases"},
 	{Name: "FAAS_POLAR_ACCESS_TOKEN", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_API_KEY", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_BASE_URL", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},

@@ -879,6 +879,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-907: Firecracker before 1.14 rejects the balloon field, so an
 	// older or undetected binary boots without it.
 	freePageReporting := !cfg.DisableFreePageReporting && fcvm.FreePageReportingSupported(fcVersion)
+	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
+	// images through its own journal, which has no pmem slot yet.
+	pmemBaseDir := ""
+	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
+		pmemBaseDir = cfg.PmemBaseDir
+	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithServiceProxyCA(serviceProxyCAPEM).
 		// Same registry the Manager gets below, so per-artifact
@@ -888,6 +894,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
+		WithPmemBase(pmemBaseDir).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -906,7 +913,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ops.IncLogDropped("slow_subscriber")
 		})
 	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
-		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting)
+		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "pmem_base_dir", pmemBaseDir)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
 			return fmt.Errorf("vmmd: prepare jail helper: %w", err)

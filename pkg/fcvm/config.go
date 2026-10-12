@@ -35,6 +35,10 @@ type VMConfig struct {
 	// free page reporting (ADR-907). JailerVMM.WithFreePageReporting sets it
 	// at boot; the config builders leave it nil.
 	Balloon *Balloon `json:"balloon,omitempty"`
+	// Pmem, when set, attaches the shared base as a virtio-pmem device
+	// mounted with DAX instead of drive0 (ADR-908). JailerVMM.WithPmemBase
+	// sets it at boot from a per-account copy; the builders leave it nil.
+	Pmem []Pmem `json:"pmem,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
 	// unique scratch image deleted immediately after export, so provisioning
 	// may hard-link it instead of copying multi-gigabyte bytes. App and

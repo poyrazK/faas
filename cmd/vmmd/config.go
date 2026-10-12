@@ -62,6 +62,12 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
+	// reflinked per-account copy of their base with DAX instead of reading
+	// it over virtio-blk. It must be on the same reflink-capable filesystem
+	// as the cached bases. Empty (the default) keeps virtio-blk;
+	// FAAS_PMEM_BASE_DIR overrides TOML.
+	PmemBaseDir string `toml:"pmem_base_dir"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -720,6 +726,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
 		}
 		c.DisableRestorePrefetch = !enabled
+	}
+	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
+		c.PmemBaseDir = v
 	}
 	if v := os.Getenv("FAAS_FREE_PAGE_REPORTING"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

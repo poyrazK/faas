@@ -1041,3 +1041,23 @@ func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
 		t.Fatalf("invalid FAAS_FREE_PAGE_REPORTING error = %v, want named validation error", err)
 	}
 }
+
+// adr: 908 — per-account pmem bases are off unless vmmd.toml or the
+// environment names their directory; the environment overrides TOML.
+func TestLoadConfig_PmemBaseDir(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.PmemBaseDir != "" {
+		t.Fatalf("default PmemBaseDir = %q, err %v; want off", cfg.PmemBaseDir, err)
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("pmem_base_dir = \"/srv/fc/pmem\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(path); err != nil || cfg.PmemBaseDir != "/srv/fc/pmem" {
+		t.Fatalf("TOML PmemBaseDir = %q, err %v", cfg.PmemBaseDir, err)
+	}
+	t.Setenv("FAAS_PMEM_BASE_DIR", "")
+	if cfg, err = LoadConfig(path); err != nil || cfg.PmemBaseDir != "" {
+		t.Fatalf("FAAS_PMEM_BASE_DIR= PmemBaseDir = %q, err %v; want off", cfg.PmemBaseDir, err)
+	}
+}

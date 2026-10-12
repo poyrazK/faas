@@ -76,6 +76,9 @@ type JailerVMM struct {
 	// freePageReporting attaches a free-page-reporting balloon to every cold
 	// boot (ADR-907).
 	freePageReporting bool
+	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
+	// nil keeps drive0 on virtio-blk.
+	pmemBase *pmemBaseStore
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -1001,6 +1004,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	_ = v.registerRing(l.Instance)
 
 	cfg = v.withBalloon(cfg)
+	cfg = v.withPmemBase(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
@@ -1884,6 +1888,15 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, baseSrc, stableReadOnlyName(baseSrc, baseImageName), l.Instance); err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	// A pmem snapshot refers to the account's copy (ADR-908). Without one
+	// the snapshot cannot load and the wake falls back to a cold boot.
+	if v.pmemEligible(l) {
+		if copyPath, err := v.pmemBase.accountCopy(l.AccountID, baseSrc); err == nil {
+			if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, copyPath, pmemBaseImageName, l.Instance); err != nil {
+				return fmt.Errorf("vmm: stage pmem base: %w", err)
+			}
+		}
 	}
 	// layerSrc is empty when cold-booting without a layer (cold path, no snapshot yet).
 	// stageWritable with an empty src would fail; skip it — Boot handles a missing drive1.
@@ -5237,8 +5250,24 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		return out, err
 	}
 	out.BootSource.KernelImagePath = kname
+	// A pmem base takes drive0's place; the remaining drives keep the jail
+	// names they have on virtio-blk, which restores stage by.
+	driveOffset := 0
+	if len(cfg.Pmem) > 0 {
+		driveOffset = 1
+		out.Pmem = make([]Pmem, len(cfg.Pmem))
+		for i, p := range cfg.Pmem {
+			name, err := v.stageReadOnlyAsForOwner(ctx, owner, root, p.PathOnHost, pmemBaseImageName, instanceID)
+			if err != nil {
+				return out, fmt.Errorf("stage pmem base: %w", err)
+			}
+			p.PathOnHost = name
+			out.Pmem[i] = p
+		}
+	}
 	out.Drives = make([]Drive, len(cfg.Drives))
-	for i, d := range cfg.Drives {
+	for j, d := range cfg.Drives {
+		i := j + driveOffset
 		var name string
 		var err error
 		if d.IsReadOnly {
@@ -5259,7 +5288,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 			return out, err
 		}
 		d.PathOnHost = name
-		out.Drives[i] = d
+		out.Drives[j] = d
 	}
 	return out, nil
 }
