@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from attrs import define as _attrs_define, field as _attrs_field
-from dateutil.parser import isoparse
 
 from ..types import UNSET, Unset
 
@@ -37,7 +36,7 @@ class DeploymentWorkerDrainStatus:
         deadline = data.pop("deadline", UNSET)
         result = cls(active=data.pop("active"), completed=data.pop("completed"), timed_out=data.pop("timed_out"),
                      failed=data.pop("failed"), overdue=data.pop("overdue"),
-                     deadline=UNSET if isinstance(deadline, Unset) else isoparse(deadline))
+                     deadline=UNSET if isinstance(deadline, Unset) else datetime.datetime.fromisoformat(deadline))
         result.additional_properties = data
         return result
 
