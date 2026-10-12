@@ -49,6 +49,8 @@ type AIUsageRecord struct {
 	CostMillicents int64
 	// Log, when set, adds one metadata row to the AI request log (ADR-991).
 	Log *AIRequestLog
+	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
+	EndUser string
 }
 
 // AIRequestLog is the non-usage metadata of one logged AI call. It never
@@ -115,6 +117,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
 	}
+	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
+		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
+	}
 	return validateAIRequestLog(record.Log)
 }
 
@@ -170,6 +175,31 @@ type aiEnvelope struct {
 	Message       *aiEnvelopeInner `json:"message"`
 	Response      *aiEnvelopeInner `json:"response"`
 	Bytes         []byte           `json:"bytes"`
+	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
+	Predictions []struct {
+		Embeddings *struct {
+			Statistics *struct {
+				TokenCount *int64 `json:"token_count"`
+			} `json:"statistics"`
+		} `json:"embeddings"`
+	} `json:"predictions"`
+}
+
+// vertexPredictionTokens sums the token counts of Vertex AI embedding
+// predictions, or returns nil when none reports one.
+func vertexPredictionTokens(envelope aiEnvelope) *int64 {
+	var total int64
+	seen := false
+	for _, prediction := range envelope.Predictions {
+		if prediction.Embeddings != nil && prediction.Embeddings.Statistics != nil && prediction.Embeddings.Statistics.TokenCount != nil {
+			total += max(*prediction.Embeddings.Statistics.TokenCount, 0)
+			seen = true
+		}
+	}
+	if !seen {
+		return nil
+	}
+	return &total
 }
 
 // aiRawUsage keeps the largest value seen per provider field. Streaming
@@ -491,6 +521,9 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	o.raw.merge(envelope.Usage)
 	o.raw.merge(envelope.UsageMetadata)
 	o.raw.merge(envelope.Metrics)
+	if tokens := vertexPredictionTokens(envelope); tokens != nil {
+		o.raw.merge(&aiUsageFields{PromptTokenCount: tokens})
+	}
 	o.noteModel(envelope.Model)
 	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {

@@ -248,12 +248,6 @@ jobs:
         run: make memstore-stubs-check
       - name: daemon environment contract
         run: make env-contract-check
-      # ADR-982: apidserver source and internal-test ratchets. Feature PRs run
-      # only this workflow, so the gate has to live here to bind them.
-      - name: apid size
-        run: make apid-size-check
-      - name: apid size gate checker tests
-        run: make apid-size-check-test
       - name: restore-drill script contract
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks

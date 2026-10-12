@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 func int64Ref(v int64) *int64 { return &v }
@@ -47,6 +48,31 @@ func TestAICostMillicentsPricesByLongestPrefix(t *testing.T) {
 	huge := ResolveAIPrices([]api.OutboundAIPriceEntry{{ModelPrefix: "*", InputMillicentsPerMTok: api.MaxOutboundAIPriceMillicentsPerMTok, OutputMillicentsPerMTok: api.MaxOutboundAIPriceMillicentsPerMTok}})
 	if got := aiCostMillicents(huge, AIUsage{Model: "m", Known: true, InputTokens: 3 * api.OutboundAIMaxTokensPerResponse, OutputTokens: api.OutboundAIMaxTokensPerResponse}); got != api.MaxOutboundAICostMillicents {
 		t.Fatalf("overflow-sized cost = %d, want clamp %d", got, api.MaxOutboundAICostMillicents)
+	}
+}
+
+// adr: 994 — models missing from the customer's list price from the
+// built-in catalog; the customer's list, including "*", always wins.
+func TestAICallCostFallsBackToCatalog(t *testing.T) {
+	integration := Integration{AIProvider: api.OutboundAIProviderOpenAI}
+	usage := AIUsage{Model: "gpt-4o-mini-2024-07-18", Known: true, InputTokens: 1_000_000, OutputTokens: 1_000_000}
+	catalogEntry, ok := aiprices.Default().Lookup(api.OutboundAIProviderOpenAI, usage.Model)
+	if !ok {
+		t.Fatal("the catalog does not price gpt-4o-mini")
+	}
+	if got, want := aiCallCostMillicents(integration, usage), catalogEntry.Price.Input+catalogEntry.Price.Output; got != want || got == 0 {
+		t.Fatalf("catalog cost = %d, want %d", got, want)
+	}
+	integration.AIPrices = ResolveAIPrices([]api.OutboundAIPriceEntry{{ModelPrefix: "gpt-4o-mini", InputMillicentsPerMTok: 1, OutputMillicentsPerMTok: 2}})
+	if got := aiCallCostMillicents(integration, usage); got != 3 {
+		t.Fatalf("customer price cost = %d, want 3", got)
+	}
+	integration.AIPrices = ResolveAIPrices([]api.OutboundAIPriceEntry{{ModelPrefix: "*", InputMillicentsPerMTok: 0, OutputMillicentsPerMTok: 0}})
+	if got := aiCallCostMillicents(integration, usage); got != 0 {
+		t.Fatalf("a zero wildcard did not turn the catalog off: %d", got)
+	}
+	if got := aiCallCostMillicents(Integration{AIProvider: api.OutboundAIProviderOpenAI}, AIUsage{Model: "unlisted-model", Known: true, InputTokens: 9}); got != 0 {
+		t.Fatalf("an unlisted model cost %d", got)
 	}
 }
 

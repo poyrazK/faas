@@ -288,6 +288,7 @@ type MemStore struct {
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
+	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex

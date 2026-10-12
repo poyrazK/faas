@@ -35,7 +35,7 @@ func cmdAIPrices(args []string) int {
 		return jsonOut(writeJSON(list))
 	}
 	if list.EffectiveFrom == nil {
-		_, _ = fmt.Fprintln(osStdout, "(no price list; cost is zero)")
+		_, _ = fmt.Fprintln(osStdout, "(no price list; known models are priced from the built-in catalog, see gregale ai catalog)")
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Effective from %s (EUR per million tokens)\n", list.EffectiveFrom.Format("2006-01-02 15:04 UTC"))

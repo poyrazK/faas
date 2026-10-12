@@ -26,6 +26,8 @@ Public surface:
   responses on opt-in pre-auth routes.
 * Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 * `GregaleOperations` and Customer Operation transaction support for async HTTP handlers.
+* `ai_gateway_url`, `ai_gateway_headers`, `opaque_ai_user_id` - AI gateway
+  relay URLs and end-user / session headers for app calls.
 """
 
 from ._rfc7807 import (
@@ -44,6 +46,15 @@ from ._rfc7807 import (
 from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
+from .ai_gateway import (
+    AI_SESSION_HEADER,
+    AI_USER_HEADER,
+    AIGatewayError,
+    ai_gateway_headers,
+    ai_gateway_url,
+    is_valid_ai_user_id,
+    opaque_ai_user_id,
+)
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .customer_operations import (
@@ -131,6 +142,13 @@ from .webhook import (
 __version__ = "0.1.0"
 
 __all__ = (
+    "AI_SESSION_HEADER",
+    "AI_USER_HEADER",
+    "AIGatewayError",
+    "ai_gateway_headers",
+    "ai_gateway_url",
+    "is_valid_ai_user_id",
+    "opaque_ai_user_id",
     "IssueReporter",
     "FaaSClient",
     "FaaSClientOptions",

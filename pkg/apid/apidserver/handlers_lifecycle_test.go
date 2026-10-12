@@ -196,9 +196,10 @@ func TestAppAfterRestoreRejectsUnsupportedModeAndPath(t *testing.T) {
 	}
 }
 
+// adr: 1150 — Pro allows a request_timeout_s of up to 5 minutes.
 func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 31}, nil)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 301}, nil)
 	if rec.Code != 422 {
 		t.Fatalf("request timeout: %d %s", rec.Code, rec.Body)
 	}

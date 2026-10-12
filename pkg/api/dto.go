@@ -9731,13 +9731,12 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // Field-by-field:
 //
 //   - BudgetMs: required per-request budget in milliseconds. Must
-//     be > 0 and ≤ api.RequestBudgetMaxMs (30 s). 0 is rejected
-//     with 422 — a kind=budget rule with no budget is a silent
-//     no-op, worst shape for a safety feature. The hard upper bound
-//     matches api.RequestBudgetMaxMs so a kind=budget rule can
-//     never widen past the platform ceiling; if a customer wants a
-//     longer per-route budget they're mis-using this primitive
-//     (api.RequestBudgetMax is the absolute ceiling).
+//     be > 0 and ≤ api.RequestBudgetPlanMax (15 min, ADR-1150). 0 is
+//     rejected with 422 — a kind=budget rule with no budget is a
+//     silent no-op, worst shape for a safety feature. At request time
+//     the budget is further clamped to the plan's ceiling
+//     (Limits.RequestBudgetMaxDuration), so a rule never widens past
+//     what the account's plan allows.
 //   - AllowOverrideHeader: optional HTTP header name (default
 //     `x-faas-budget-ms`) whose numeric value, if present on the
 //     inbound request, overrides BudgetMs for that single request.
@@ -9767,10 +9766,10 @@ func (a *EdgeRuleBudgetAction) Validate() *Problem {
 			"budget action: budget_ms must be > 0 (got %d) — a kind=budget rule with no budget is a silent no-op; drop the rule if you want the platform default to apply",
 			a.BudgetMs))
 	}
-	if a.BudgetMs > int(RequestBudgetMax.Milliseconds()) {
+	if a.BudgetMs > int(RequestBudgetPlanMax.Milliseconds()) {
 		return ErrValidation(fmt.Sprintf(
 			"budget action: budget_ms (%d) exceeds the platform ceiling (%d ms = %s)",
-			a.BudgetMs, int(RequestBudgetMax.Milliseconds()), RequestBudgetMax))
+			a.BudgetMs, int(RequestBudgetPlanMax.Milliseconds()), RequestBudgetPlanMax))
 	}
 	if a.AllowOverrideHeader != "" {
 		if len(a.AllowOverrideHeader) > 128 {

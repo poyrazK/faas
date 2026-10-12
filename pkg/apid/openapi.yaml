@@ -559,6 +559,121 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-usage/users:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose per-end-user AI usage is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundIntegrationAIUserUsage
+      summary: Read one UTC day of AI gateway usage by end user.
+      description: >-
+        Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User
+        values apps send; rows are kept for 31 days and listed by cost, then tokens.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+          schema: { type: string, format: date }
+        - name: end_user
+          in: query
+          required: false
+          description: Read only this end user's row ("~other" reads the overflow row).
+          schema: { type: string, maxLength: 64 }
+        - name: limit
+          in: query
+          required: false
+          description: Rows to return, 1 to 1000; defaults to 1000.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: Per-end-user AI usage for the selected day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIUserUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-usage/users/export:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose per-end-user AI usage is exported.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: exportOutboundIntegrationAIUserUsage
+      summary: Export per-end-user AI gateway usage for a range of UTC days.
+      description: >-
+        Requires MFA and read scope (ADR-995). Streams every per-end-user row of the
+        days from through to, ordered by day and end user. CSV columns are usage_date,
+        end_user, requests, error_requests, input_tokens, output_tokens, tokens and
+        cost_millicents; NDJSON lines carry the same fields.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: First UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Last UTC day as YYYY-MM-DD, not before from; defaults to today.
+          schema: { type: string, format: date }
+        - name: format
+          in: query
+          required: false
+          description: NDJSON lines (the default) or CSV rows with a header.
+          schema: { type: string, enum: [ndjson, csv], default: ndjson }
+      responses:
+        '200':
+          description: Per-end-user usage rows.
+          content:
+            application/x-ndjson:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-price-catalog:
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPriceCatalog
+      summary: Read the built-in AI price catalog of one provider.
+      description: >-
+        Requires MFA and read scope (ADR-994). The catalog prices the models an
+        integration's own price list does not name. Prices are list prices
+        converted to EUR at usd_per_eur and rounded up.
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          description: AI provider whose catalog is listed.
+          schema: { type: string, enum: [openai, anthropic, gemini, azure_openai, bedrock, vertex] }
+        - name: model
+          in: query
+          required: false
+          description: Return only the catalog entry that would price this model.
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: The provider's catalog, or the one entry that prices the model.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPriceCatalogResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /v1/outbound/integrations/{integration}/ai-prices:
     parameters:
       - name: integration
@@ -51355,6 +51470,18 @@ components:
         ai_request_log_enabled:
           type: boolean
           description: Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
+        ai_user_daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+          description: UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
+        ai_user_daily_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -51419,6 +51546,18 @@ components:
         request_log_enabled:
           type: boolean
           description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
+        user_daily_token_limit:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 100000000000
+          description: Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+        user_daily_cost_limit_millicents:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
@@ -51433,7 +51572,7 @@ components:
         cached_input_tokens: { type: integer, format: int64, minimum: 0 }
         cache_write_tokens: { type: integer, format: int64, minimum: 0 }
         output_tokens: { type: integer, format: int64, minimum: 0 }
-        cost_millicents: { type: integer, format: int64, minimum: 0, description: Priced from the list in effect at each call and rounded up per call; zero without a price list. }
+        cost_millicents: { type: integer, format: int64, minimum: 0, description: 'Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an unpriced model.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -51630,13 +51769,60 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
     OutboundAIPriceListResponse:
       type: object
-      description: The price list in effect; effective_from is null when none was ever set, and cost is then zero.
+      description: The price list in effect; effective_from is null when none was ever set. Models the list does not name are priced from the built-in catalog.
       required: [effective_from, entries]
       properties:
         effective_from: { type: [string, 'null'], format: date-time }
         entries:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
+    OutboundAIPriceCatalogResponse:
+      type: object
+      description: >-
+        One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's
+        MIT-licensed price data. model_prefix holds the catalog model name.
+      required: [ai_provider, source, generated, usd_per_eur, fx_source, entries]
+      properties:
+        ai_provider: { type: string }
+        source: { type: string, description: URL of the price data the catalog was generated from. }
+        generated: { type: string, format: date }
+        usd_per_eur: { type: string, description: 'USD per EUR used for the conversion, as a decimal string.' }
+        fx_source: { type: string, description: Source and date of the exchange rate. }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
+    OutboundAIUserUsageItem:
+      type: object
+      description: One end user's UTC-day AI usage on an integration; tokens is input plus output, the amount the per-user token limit counts.
+      required: [end_user, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents]
+      properties:
+        end_user: { type: string, maxLength: 64, description: 'X-Gregale-AI-User value; "~other" collects end users beyond the daily cap.' }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    OutboundAIUserUsageResponse:
+      type: object
+      description: One UTC day of per-end-user AI usage, most expensive first (ADR-994).
+      required: [usage_date, user_daily_token_limit, user_daily_cost_limit_millicents, tracked_users, items]
+      properties:
+        usage_date: { type: string, format: date }
+        user_daily_token_limit: { type: [integer, 'null'], format: int64 }
+        user_daily_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
+        tracked_users: { type: integer, format: int64, minimum: 0, description: 'Distinct end-user rows of the day, including "~other".' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIUserUsageItem' }
+    OutboundAIUserUsageExportRow:
+      description: One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order.
+      allOf:
+        - type: object
+          required: [usage_date]
+          properties:
+            usage_date: { type: string, format: date }
+        - $ref: '#/components/schemas/OutboundAIUserUsageItem'
     OutboundAIRouteTarget:
       type: object
       description: One ordered fallback step; model replaces the request's "model" for this target.
@@ -51646,7 +51832,7 @@ components:
         model: { type: string, maxLength: 128 }
     OutboundAIRoute:
       type: object
-      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and translates them for Anthropic and Gemini targets (ADR-991).
+      description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
       required: [id, name, format, targets, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -51674,7 +51860,7 @@ components:
         format:
           type: string
           enum: [native, openai]
-          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and gemini targets, and every target but openai must name its model (ADR-991).
+          description: native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic, gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995).
         targets:
           type: array
           minItems: 1
@@ -51729,12 +51915,13 @@ components:
     OutboundAIBudgetAlert:
       type: object
       description: The first settlement that reached a budget threshold in its period (ADR-991). limit and used are tokens for token budgets and millicents for cost budgets.
-      required: [id, integration_id, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
+      required: [id, integration_id, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at]
       properties:
         id: { type: string, format: uuid }
         integration_id: { type: string, format: uuid }
-        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost] }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The end user of a user_daily_tokens or user_daily_cost alert (ADR-995). }
         period_start: { type: string, format: date }
         threshold_percent: { type: integer, format: int32, enum: [80, 100] }
         limit: { type: integer, format: int64, minimum: 1 }
@@ -51751,7 +51938,7 @@ components:
     OutboundAIRequestLogEntry:
       type: object
       description: One settled AI call's metadata (ADR-991). No request or response content is kept.
-      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts]
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user]
       properties:
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -51768,6 +51955,7 @@ components:
         duration_ms: { type: integer, format: int64, minimum: 0 }
         ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
         attempts: { type: integer, minimum: 0 }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.
@@ -71197,9 +71385,10 @@ components:
 
         Field-by-field:
           * `budget_ms` — required wall-clock budget. Must be > 0
-            and ≤ the per-plan max (`Plan.RequestBudgetMaxMs`, default
-            `RequestBudgetMax = 30 s`). A 0 or negative value is
-            rejected at create-time with 422.
+            and ≤ 15 min (`RequestBudgetPlanMax`). The plan's ceiling
+            (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro
+            5 min, Scale 15 min; ADR-1150) clamps it at request time.
+            A 0 or negative value is rejected at create-time with 422.
           * `allow_override_header` — optional HTTP request header
             that lets a customer set a per-request override
             (default `x-faas-budget-ms`). Empty (default) =
@@ -71220,8 +71409,8 @@ components:
           type: integer
           format: int64
           minimum: 1
-          maximum: 30000
-          description: "Per-request wall-clock budget in milliseconds (1 ms – 30 s)."
+          maximum: 900000
+          description: "Per-request wall-clock budget in milliseconds (1 ms – 15 min; the plan's ceiling applies at request time)."
         allow_override_header:
           type: string
           maxLength: 128
@@ -78160,14 +78349,15 @@ components:
 
     OutboundAIBudgetThresholdWebhookPayload:
       type: object
-      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
-      required: [alert_id, integration_id, integration_name, budget, app_id, period_start, threshold_percent, limit, used, crossed_at]
+      description: Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991). alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's budget only the app whose call crossed it (ADR-995).
+      required: [alert_id, integration_id, integration_name, budget, app_id, end_user, period_start, threshold_percent, limit, used, crossed_at]
       properties:
         alert_id: { type: string, format: uuid }
         integration_id: { type: string, format: uuid }
         integration_name: { type: string }
-        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost] }
+        budget: { type: string, enum: [daily_tokens, app_daily_tokens, daily_cost, monthly_cost, user_daily_tokens, user_daily_cost] }
         app_id: { type: [string, 'null'], format: uuid }
+        end_user: { type: [string, 'null'], maxLength: 64, description: The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995). }
         period_start: { type: string, format: date }
         threshold_percent: { type: integer, format: int32, enum: [80, 100] }
         limit: { type: integer, format: int64, minimum: 1 }

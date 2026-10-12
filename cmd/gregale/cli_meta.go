@@ -760,12 +760,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "ai",
 		DocSlug: "ai",
-		Short:   "AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs",
+		Short:   "AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs",
 		Examples: []string{
 			"gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 --daily-cost 25 --request-log on",
 			"gregale ai guardrails <integration-id> --app my-api --rpm 60 --models 'gpt-4o-mini,o3*' --max-output-tokens 2048",
 			"gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60",
 			"gregale ai usage <integration-id> --date 2026-10-11",
+			"gregale ai policy <integration-id> --user-daily-tokens 200000 --user-daily-cost 2",
+			"gregale ai users <integration-id> --limit 20",
+			"gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv",
+			"gregale ai catalog openai --model gpt-4o-mini",
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
@@ -777,6 +781,8 @@ var cliCommands = []cliCommand{
 				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
 				{Name: "request-log", Short: "log per-call metadata for 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
+				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
@@ -792,8 +798,19 @@ var cliCommands = []cliCommand{
 			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
 			}},
+			{Name: "catalog", Short: "Show the built-in prices that apply to models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
+				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
+			}},
 			{Name: "usage", Short: "Show one UTC day of token usage and cost by caller and model", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 90 days", Value: "YYYY-MM-DD"},
+			}},
+			{Name: "users", Short: "Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range", Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
+				{Name: "date", Short: "UTC day within the last 31 days", Value: "YYYY-MM-DD"},
+				{Name: "user", Short: "show only this end user", Value: "ID"},
+				{Name: "limit", Short: "end users to show, 1 to 1000", Value: "N"},
+				{Name: "from", Short: "export: first UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
+				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
+				{Name: "format", Short: "export format", Value: "csv|ndjson", ClosedSet: []string{"csv", "ndjson"}},
 			}},
 			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes", Positionals: []string{"<list|create|set|rm>", "[<route-id>]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},
