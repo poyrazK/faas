@@ -36,9 +36,9 @@ const (
 	defaultMaxAttempts    = 3
 	// maxRetryBackoff caps the exponential backoff a RetryWindow sender
 	// waits between attempts of one record.
-	maxRetryBackoff = 30 * time.Second
-	maxURLBytes           = 2048
-	maxAuthHeaderBytes    = 4096
+	maxRetryBackoff    = 30 * time.Second
+	maxURLBytes        = 2048
+	maxAuthHeaderBytes = 4096
 )
 
 // Record is one runtime log line. Timestamps are retained as time.Time so
@@ -82,10 +82,10 @@ type Config struct {
 	// endpoint that is briefly unavailable (a collector redeploy) then loses
 	// nothing; zero keeps the MaxAttempts-only budget.
 	RetryWindow time.Duration
-	HTTPClient     *http.Client
-	OnDropped      func(Record)
-	OnDelivered    func(Record)
-	OnFailed       func(Record, error)
+	HTTPClient  *http.Client
+	OnDropped   func(Record)
+	OnDelivered func(Record)
+	OnFailed    func(Record, error)
 	// OnQueueDepth is called after queue mutations and once at construction.
 	// The capacity is fixed for the sender lifetime, while depth is the
 	// current number of records waiting for delivery.
