@@ -170,7 +170,7 @@ func collectTestRecoveryDiagnosticLogs(ctx context.Context, client testDiagnosti
 		result.CollectionError = "application logs unavailable"
 		return
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	stopClose := context.AfterFunc(ctx, func() { _ = body.Close() })
 	defer stopClose()
 	reader := io.LimitReader(body, 64*1024+1)

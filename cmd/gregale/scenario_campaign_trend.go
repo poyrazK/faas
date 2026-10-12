@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -149,7 +150,7 @@ func cmdTestTrend(args []string, recovery bool) int {
 		return printErr("Invalid trend configuration", err)
 	}
 	var extra interface{}
-	if err = decoder.Decode(&extra); err != io.EOF {
+	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return printErr("Invalid trend configuration", fmt.Errorf("expected one YAML document"))
 	}
 	scenarios, _, err := readTestManifestForScenario(*manifest, *scenario, nil)
@@ -194,7 +195,7 @@ func cmdTestTrend(args []string, recovery bool) int {
 	if err = os.WriteFile(*htmlPath, report.Bytes(), 0600); err != nil {
 		return printErr("Write coverage trend", err)
 	}
-	fmt.Fprintf(osStdout, "%s: %d ordered points written to %s\n", command, len(trend.Points), *htmlPath)
+	_, _ = fmt.Fprintf(osStdout, "%s: %d ordered points written to %s\n", command, len(trend.Points), *htmlPath)
 	return 0
 }
 

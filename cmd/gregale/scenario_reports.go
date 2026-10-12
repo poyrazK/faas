@@ -76,22 +76,22 @@ func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDi
 	}
 	for _, result := range results {
 		if reg := result.CampaignRecoveryRegression; reg != nil {
-			fmt.Fprintf(osStdout, "%s: recovery regression baseline %s (%s); %d checks; report SHA256 %s\n", result.Scenario, reg.RunID, reg.Baseline.Coverage.Profile, len(reg.Checks), reg.Baseline.Coverage.ReportSHA256)
+			_, _ = fmt.Fprintf(osStdout, "%s: recovery regression baseline %s (%s); %d checks; report SHA256 %s\n", result.Scenario, reg.RunID, reg.Baseline.Coverage.Profile, len(reg.Checks), reg.Baseline.Coverage.ReportSHA256)
 		}
 		if reg := result.CampaignRegression; reg != nil {
-			fmt.Fprintf(osStdout, "%s: coverage regression baseline %s (%s); minimum exercised-event rate %.2f%%; report SHA256 %s\n", result.Scenario, reg.Baseline.RunID, reg.Baseline.Profile, 100*reg.MinExercisedRate, reg.Baseline.ReportSHA256)
+			_, _ = fmt.Fprintf(osStdout, "%s: coverage regression baseline %s (%s); minimum exercised-event rate %.2f%%; report SHA256 %s\n", result.Scenario, reg.Baseline.RunID, reg.Baseline.Profile, 100*reg.MinExercisedRate, reg.Baseline.ReportSHA256)
 			if len(reg.MaxDropPercentagePoints) > 0 {
-				fmt.Fprintf(osStdout, "  per-choice drop allowances (percentage points): %v; minimum %d planned events\n", reg.MaxDropPercentagePoints, reg.MinPlannedEvents)
+				_, _ = fmt.Fprintf(osStdout, "  per-choice drop allowances (percentage points): %v; minimum %d planned events\n", reg.MaxDropPercentagePoints, reg.MinPlannedEvents)
 			}
 		}
 		if result.CampaignSelection != nil {
 			if g := result.CampaignSelection.Guidance; g != nil {
-				fmt.Fprintln(osStdout, result.Scenario+": "+printTestCampaignGuidance(g))
+				_, _ = fmt.Fprintln(osStdout, result.Scenario+": "+printTestCampaignGuidance(g))
 				for _, batch := range g.Contributions {
-					fmt.Fprintf(osStdout, "  batch %s: observed %v; seeds %v; report SHA256 %s\n", batch.RunID, batch.Observed, batch.Seeds, batch.ReportSHA256)
+					_, _ = fmt.Fprintf(osStdout, "  batch %s: observed %v; seeds %v; report SHA256 %s\n", batch.RunID, batch.Observed, batch.Seeds, batch.ReportSHA256)
 				}
 			}
-			fmt.Fprintf(osStdout, "%s: selected seeds %v after %d candidates; planned events by choice %v (traffic matches still required)\n", result.Scenario, result.CampaignSelection.Seeds, result.CampaignSelection.Candidates, result.CampaignSelection.Planned)
+			_, _ = fmt.Fprintf(osStdout, "%s: selected seeds %v after %d candidates; planned events by choice %v (traffic matches still required)\n", result.Scenario, result.CampaignSelection.Seeds, result.CampaignSelection.Candidates, result.CampaignSelection.Planned)
 		}
 		if engine == "local" {
 			_, _ = fmt.Fprintf(osStdout, "%s: valid (local HTTP scenario)\n", result.Scenario)

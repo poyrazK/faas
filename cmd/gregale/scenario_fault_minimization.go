@@ -423,13 +423,14 @@ func runTestFaultMinimization(ctx context.Context, prepared testPreparedScenario
 		initialRemoved = original.Replay.RemovedRules
 	}
 	var initial testFaultMinimizationTrial
-	if options.Mode == "duration" {
+	switch options.Mode {
+	case "duration":
 		selected, _, _ := testDurationSelection(prepared.Scenario, original.Replay, options)
 		initial = confirm(prepared, initialRemoved, testDurationEdits(original.Replay, selected))
-	} else if options.Mode == "stability" {
+	case "stability":
 		spec, _, _ := testRecoveryDeadlineSpec(prepared.Scenario, options.Target)
 		initial = confirm(prepared, initialRemoved, testStabilityEdits(original.Replay, options.Target, spec.Stability))
-	} else {
+	default:
 		initial = confirm(prepared, initialRemoved)
 	}
 	evidence.Trials = append(evidence.Trials, initial)
@@ -458,15 +459,16 @@ func runTestFaultMinimization(ctx context.Context, prepared testPreparedScenario
 	}
 	if isTestConfigurationMinimization(options.Mode) {
 		evidence.RemovedRules = append([]testFaultRuleRef(nil), initialRemoved...)
-		if options.Mode == "latency" {
+		switch options.Mode {
+		case "latency":
 			runTestLatencyMinimization(ctx, prepared, original, options, evidence, confirm)
-		} else if options.Mode == "bandwidth" {
+		case "bandwidth":
 			runTestBandwidthMinimization(ctx, prepared, original, options, evidence, confirm)
-		} else if options.Mode == "duration" {
+		case "duration":
 			runTestDurationMinimization(ctx, prepared, original, options, evidence, confirm)
-		} else if options.Mode == "stability" {
+		case "stability":
 			runTestStabilityMinimization(ctx, prepared, original, options, evidence, confirm)
-		} else {
+		default:
 			runTestPercentMinimization(ctx, prepared, original, options, evidence, confirm)
 		}
 		if evidence.Status != "inconclusive" {

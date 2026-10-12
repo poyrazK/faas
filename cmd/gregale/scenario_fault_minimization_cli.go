@@ -108,7 +108,7 @@ func cmdTestMinimize(args []string) int {
 		return printErr("Invalid minimization source", err)
 	}
 	if *validate {
-		fmt.Fprintln(osStdout, "Fault minimization configuration and budgets validated")
+		_, _ = fmt.Fprintln(osStdout, "Fault minimization configuration and budgets validated")
 		return 0
 	}
 	client, err := authedClient()
@@ -118,7 +118,7 @@ func cmdTestMinimize(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
 	result := runTestFaultMinimization(ctx, prepared, original, options, func(ctx context.Context, plan testRunPlan) testRunReceipt {
-		fmt.Fprintf(osStderr, "Fault minimization: isolated run %d/%d\n", plan.Attempt, options.MaxRuns)
+		_, _ = fmt.Fprintf(osStderr, "Fault minimization: isolated run %d/%d\n", plan.Attempt, options.MaxRuns)
 		return executeTestRunPlan(ctx, client, plan)
 	})
 	printTestRunResult(result, 1)

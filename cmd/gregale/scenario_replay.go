@@ -265,7 +265,7 @@ func cmdTestReplay(args []string) int {
 		return printErr("Invalid replay source", err)
 	}
 	if *validate {
-		fmt.Fprintln(osStdout, "Replay configuration validated")
+		_, _ = fmt.Fprintln(osStdout, "Replay configuration validated")
 		return 0
 	}
 	client, err := authedClient()

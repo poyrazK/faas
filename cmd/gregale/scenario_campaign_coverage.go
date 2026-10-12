@@ -326,56 +326,56 @@ func summarizeTestCampaignCoverage(scenario testScenario, matrix *testFaultMatri
 
 func printTestCampaignCoverage(out io.Writer, e *testCampaignCoverageEvidence) {
 	if r := e.RecoveryRegression; r != nil {
-		fmt.Fprintf(out, "  recovery regression: %s; baseline %s; report SHA256 %s; %s\n", r.Status, r.RunID, r.ReportSHA256, r.Error)
+		_, _ = fmt.Fprintf(out, "  recovery regression: %s; baseline %s; report SHA256 %s; %s\n", r.Status, r.RunID, r.ReportSHA256, r.Error)
 		for _, c := range r.Checks {
-			fmt.Fprintf(out, "      limits: recovery %s%%, p95 %s%%, error rate %s; minimum %d samples\n", recoveryTrendNumber(c.Limits.MaxRecoveryIncreasePercent), recoveryTrendNumber(c.Limits.MaxP95IncreasePercent), recoveryTrendNumber(c.Limits.MaxErrorRateIncrease), c.Limits.MinSamples)
-			fmt.Fprintf(out, "    choice %d / %s: baseline recovery %v ms, p95 %v ms, rate %v; current recovery %v ms, p95 %v ms, rate %v; %s %s\n", c.Choice, c.Current.Target, recoveryTrendNumber(c.Baseline.RecoveryMS), recoveryTrendNumber(c.Baseline.P95MS), recoveryTrendNumber(c.Baseline.ErrorRate), recoveryTrendNumber(c.Current.RecoveryMS), recoveryTrendNumber(c.Current.P95MS), recoveryTrendNumber(c.Current.ErrorRate), c.Current.Status, c.Current.Error)
+			_, _ = fmt.Fprintf(out, "      limits: recovery %s%%, p95 %s%%, error rate %s; minimum %d samples\n", recoveryTrendNumber(c.Limits.MaxRecoveryIncreasePercent), recoveryTrendNumber(c.Limits.MaxP95IncreasePercent), recoveryTrendNumber(c.Limits.MaxErrorRateIncrease), c.Limits.MinSamples)
+			_, _ = fmt.Fprintf(out, "    choice %d / %s: baseline recovery %v ms, p95 %v ms, rate %v; current recovery %v ms, p95 %v ms, rate %v; %s %s\n", c.Choice, c.Current.Target, recoveryTrendNumber(c.Baseline.RecoveryMS), recoveryTrendNumber(c.Baseline.P95MS), recoveryTrendNumber(c.Baseline.ErrorRate), recoveryTrendNumber(c.Current.RecoveryMS), recoveryTrendNumber(c.Current.P95MS), recoveryTrendNumber(c.Current.ErrorRate), c.Current.Status, c.Current.Error)
 		}
 	}
 
 	if r := e.Regression; r != nil {
-		fmt.Fprintf(out, "  coverage regression: %s; baseline %s; report SHA256 %s; %s\n", r.Status, r.RunID, r.ReportSHA256, r.Error)
+		_, _ = fmt.Fprintf(out, "  coverage regression: %s; baseline %s; report SHA256 %s; %s\n", r.Status, r.RunID, r.ReportSHA256, r.Error)
 		for _, c := range r.Choices {
-			fmt.Fprintf(out, "    choice %d: baseline %d/%d, current %d/%d (%.2f%%), minimum %.2f%%; lost coverage %t; %s\n", c.Index, c.BaselineExercised, c.Planned, c.CurrentExercised, c.Planned, 100*c.CurrentRate, 100*r.MinExercisedRate, c.LostCoverage, c.Status)
+			_, _ = fmt.Fprintf(out, "    choice %d: baseline %d/%d, current %d/%d (%.2f%%), minimum %.2f%%; lost coverage %t; %s\n", c.Index, c.BaselineExercised, c.Planned, c.CurrentExercised, c.Planned, 100*c.CurrentRate, 100*r.MinExercisedRate, c.LostCoverage, c.Status)
 			if c.MaxDropPercentagePoints != nil {
 				if c.DropPercentagePoints != nil {
-					fmt.Fprintf(out, "      drop %.6f percentage points; allowed %.6f; minimum %d planned events (%s)\n", *c.DropPercentagePoints, *c.MaxDropPercentagePoints, r.MinPlannedEvents, c.DropStatus)
+					_, _ = fmt.Fprintf(out, "      drop %.6f percentage points; allowed %.6f; minimum %d planned events (%s)\n", *c.DropPercentagePoints, *c.MaxDropPercentagePoints, r.MinPlannedEvents, c.DropStatus)
 				} else {
-					fmt.Fprintf(out, "      drop unavailable; allowed %.6f; minimum %d planned events (%s)\n", *c.MaxDropPercentagePoints, r.MinPlannedEvents, c.DropStatus)
+					_, _ = fmt.Fprintf(out, "      drop unavailable; allowed %.6f; minimum %d planned events (%s)\n", *c.MaxDropPercentagePoints, r.MinPlannedEvents, c.DropStatus)
 				}
 			}
 		}
 	}
 	if e.SeedSelection != nil {
 		if g := e.SeedSelection.Guidance; g != nil {
-			fmt.Fprintln(out, "  "+printTestCampaignGuidance(g))
+			_, _ = fmt.Fprintln(out, "  "+printTestCampaignGuidance(g))
 			for _, batch := range g.Contributions {
-				fmt.Fprintf(out, "    batch %s: observed %v; seeds %v; report SHA256 %s\n", batch.RunID, batch.Observed, batch.Seeds, batch.ReportSHA256)
+				_, _ = fmt.Fprintf(out, "    batch %s: observed %v; seeds %v; report SHA256 %s\n", batch.RunID, batch.Observed, batch.Seeds, batch.ReportSHA256)
 			}
 		}
-		fmt.Fprintf(out, "  selected seeds %v after %d candidates; planned events %v\n", e.SeedSelection.Seeds, e.SeedSelection.Candidates, e.SeedSelection.Planned)
+		_, _ = fmt.Fprintf(out, "  selected seeds %v after %d candidates; planned events %v\n", e.SeedSelection.Seeds, e.SeedSelection.Candidates, e.SeedSelection.Planned)
 	}
-	fmt.Fprintf(out, "  campaign coverage (%s): %d seeds\n", e.Step, len(e.Seeds))
+	_, _ = fmt.Fprintf(out, "  campaign coverage (%s): %d seeds\n", e.Step, len(e.Seeds))
 	for _, choice := range e.Choices {
-		fmt.Fprintf(out, "    choice %d (%s, %s): %d planned, %d installed, %d exercised\n", choice.Index, choice.Rule.Kind, choice.Duration, choice.Planned, choice.Installed, choice.Exercised)
+		_, _ = fmt.Fprintf(out, "    choice %d (%s, %s): %d planned, %d installed, %d exercised\n", choice.Index, choice.Rule.Kind, choice.Duration, choice.Planned, choice.Installed, choice.Exercised)
 	}
 	if e.RequirementsStatus != "" {
-		fmt.Fprintf(out, "  coverage requirements: %s %s\n", e.RequirementsStatus, e.RequirementsError)
+		_, _ = fmt.Fprintf(out, "  coverage requirements: %s %s\n", e.RequirementsStatus, e.RequirementsError)
 		for _, choice := range e.Choices {
 			if choice.MinExercised > 0 {
-				fmt.Fprintf(out, "    choice %d: %d exercised, requires %d (%s)\n", choice.Index, choice.Exercised, choice.MinExercised, choice.RequirementStatus)
+				_, _ = fmt.Fprintf(out, "    choice %d: %d exercised, requires %d (%s)\n", choice.Index, choice.Exercised, choice.MinExercised, choice.RequirementStatus)
 			}
 		}
 	}
 	for _, seed := range e.Seeds {
-		fmt.Fprintf(out, "    seed %d: %s; %d passed, %d failed, %d skipped\n", seed.Seed, seed.Status, seed.Passed, seed.Failed, seed.Skipped)
+		_, _ = fmt.Fprintf(out, "    seed %d: %s; %d passed, %d failed, %d skipped\n", seed.Seed, seed.Status, seed.Passed, seed.Failed, seed.Skipped)
 		for _, run := range seed.Runs {
 			if run.Status == "passed" {
 				continue
 			}
-			fmt.Fprintf(out, "      run %s: %s; first failed cycle %d; %s\n", run.RunID, run.Status, run.FirstFailedCycle, run.Error)
+			_, _ = fmt.Fprintf(out, "      run %s: %s; first failed cycle %d; %s\n", run.RunID, run.Status, run.FirstFailedCycle, run.Error)
 			for _, failure := range run.RecoveryFailures {
-				fmt.Fprintf(out, "        recovery %s: %s\n", testRecoveryDisplayPhase(failure.Phase, failure.Request), failure.Error)
+				_, _ = fmt.Fprintf(out, "        recovery %s: %s\n", testRecoveryDisplayPhase(failure.Phase, failure.Request), failure.Error)
 			}
 		}
 	}

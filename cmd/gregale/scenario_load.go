@@ -1253,14 +1253,14 @@ func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
 	if report.OutageCycles != nil {
 		e := report.OutageCycles
 		if e.Campaign != nil {
-			fmt.Fprintf(out, "  fault campaign: seed %d (%s)\n", e.Campaign.Seed, e.Campaign.Algorithm)
+			_, _ = fmt.Fprintf(out, "  fault campaign: seed %d (%s)\n", e.Campaign.Seed, e.Campaign.Algorithm)
 		}
-		fmt.Fprintf(out, "  outage cycles: %s; %d/%d completed\n", e.Status, e.Completed, e.Count)
+		_, _ = fmt.Fprintf(out, "  outage cycles: %s; %d/%d completed\n", e.Status, e.Completed, e.Count)
 		if e.FirstRecoveryFailedCycle > 0 {
-			fmt.Fprintf(out, "    first failed recovery comparison: cycle %d\n", e.FirstRecoveryFailedCycle)
+			_, _ = fmt.Fprintf(out, "    first failed recovery comparison: cycle %d\n", e.FirstRecoveryFailedCycle)
 		}
 		for _, cycle := range e.Cycles {
-			fmt.Fprintf(out, "    cycle %d (%s → %s): %s %s\n", cycle.Number, cycle.FaultPhase, cycle.RecoveryPhase, cycle.Status, cycle.Error)
+			_, _ = fmt.Fprintf(out, "    cycle %d (%s → %s): %s %s\n", cycle.Number, cycle.FaultPhase, cycle.RecoveryPhase, cycle.Status, cycle.Error)
 			for _, check := range cycle.RecoveryChecks {
 				target := check.Request
 				if target == "" {
@@ -1271,9 +1271,9 @@ func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
 					if check.Passed {
 						status = "passed"
 					}
-					fmt.Fprintf(out, "      %s recovery: %.3fms; cycle 1 %.3fms, limit %.3fms (%s)\n", target, *check.CurrentMS, *check.BaselineMS, *check.LimitMS, status)
+					_, _ = fmt.Fprintf(out, "      %s recovery: %.3fms; cycle 1 %.3fms, limit %.3fms (%s)\n", target, *check.CurrentMS, *check.BaselineMS, *check.LimitMS, status)
 				} else {
-					fmt.Fprintf(out, "      %s recovery: %s\n", target, check.Error)
+					_, _ = fmt.Fprintf(out, "      %s recovery: %s\n", target, check.Error)
 				}
 			}
 		}

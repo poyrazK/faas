@@ -162,7 +162,7 @@ func TestRecoveryFailureDiagnosticsCredentialVariants(t *testing.T) {
 	}
 }
 
-type excessiveDiagnosticMetadata struct{ testDiagnosticsFake }
+type excessiveDiagnosticMetadata struct{}
 
 func (excessiveDiagnosticMetadata) GetAppWakeTimeline(context.Context, string, api.AppWakeTimelineOptions) (api.AppWakeTimelineResponse, error) {
 	rows := make([]api.WakeTimelineJSONRow, 50)

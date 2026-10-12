@@ -191,10 +191,10 @@ func printTestRunStart(plan testRunPlan, repeat int) {
 
 func printTestRunResult(receipt testRunReceipt, repeat int) {
 	if receipt.Replay != nil {
-		fmt.Fprintf(osStderr, "Replay available: gregale test replay --from REPORT.json --run-id %s --manifest MANIFEST.yaml\n", receipt.RunID)
+		_, _ = fmt.Fprintf(osStderr, "Replay available: gregale test replay --from REPORT.json --run-id %s --manifest MANIFEST.yaml\n", receipt.RunID)
 	}
 	if receipt.ReplayOf != "" {
-		fmt.Fprintf(osStderr, "Replay of run %s\n", receipt.ReplayOf)
+		_, _ = fmt.Fprintf(osStderr, "Replay of run %s\n", receipt.ReplayOf)
 	}
 	if jsonOutput {
 		return
@@ -214,55 +214,55 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 	if receipt.Minimization != nil {
 		e := receipt.Minimization
 		if e.Duration != nil {
-			fmt.Fprintf(osStdout, "  confirmed failing fault duration %s/%s: %d → %d ms (resolution %d ms)\n", e.Duration.Step, e.Duration.Phase, e.Duration.BeforeMS, e.Duration.BestMS, e.Duration.ResolutionMS)
+			_, _ = fmt.Fprintf(osStdout, "  confirmed failing fault duration %s/%s: %d → %d ms (resolution %d ms)\n", e.Duration.Step, e.Duration.Phase, e.Duration.BeforeMS, e.Duration.BestMS, e.Duration.ResolutionMS)
 		}
 		if e.Stability != nil {
-			fmt.Fprintf(osStdout, "  confirmed stability relapse interval: %d → %d ms (resolution %d ms)\n", e.Stability.BeforeMS, e.Stability.BestMS, e.Stability.ResolutionMS)
+			_, _ = fmt.Fprintf(osStdout, "  confirmed stability relapse interval: %d → %d ms (resolution %d ms)\n", e.Stability.BeforeMS, e.Stability.BestMS, e.Stability.ResolutionMS)
 			if e.Stability.PassedBelowMS != nil {
-				fmt.Fprintf(osStdout, "    tested passing interval: %d ms\n", *e.Stability.PassedBelowMS)
+				_, _ = fmt.Fprintf(osStdout, "    tested passing interval: %d ms\n", *e.Stability.PassedBelowMS)
 			}
 		}
 		if e.Recovery != nil {
 			if e.Recovery.BestWithinMS != nil {
-				fmt.Fprintf(osStdout, "  confirmed passing recovery deadline: %d ms; tested failing deadline: %d ms (ceiling %d, resolution %d ms)\n", *e.Recovery.BestWithinMS, e.Recovery.FailedWithinMS, e.Recovery.MaxWithinMS, e.Recovery.ResolutionMS)
+				_, _ = fmt.Fprintf(osStdout, "  confirmed passing recovery deadline: %d ms; tested failing deadline: %d ms (ceiling %d, resolution %d ms)\n", *e.Recovery.BestWithinMS, e.Recovery.FailedWithinMS, e.Recovery.MaxWithinMS, e.Recovery.ResolutionMS)
 			} else {
-				fmt.Fprintf(osStdout, "  no passing recovery deadline confirmed up to %d ms\n", e.Recovery.MaxWithinMS)
+				_, _ = fmt.Fprintf(osStdout, "  no passing recovery deadline confirmed up to %d ms\n", e.Recovery.MaxWithinMS)
 			}
 		}
 		if e.Percent != nil {
-			fmt.Fprintf(osStdout, "  confirmed selection percentage: %d → %d%% (resolution %d percentage points)\n", e.Percent.BeforePercent, e.Percent.BestPercent, e.Percent.ResolutionPercentagePoints)
+			_, _ = fmt.Fprintf(osStdout, "  confirmed selection percentage: %d → %d%% (resolution %d percentage points)\n", e.Percent.BeforePercent, e.Percent.BestPercent, e.Percent.ResolutionPercentagePoints)
 			if e.Percent.PassedBelowPercent != nil {
-				fmt.Fprintf(osStdout, "    tested passing percentage: %d%%\n", *e.Percent.PassedBelowPercent)
+				_, _ = fmt.Fprintf(osStdout, "    tested passing percentage: %d%%\n", *e.Percent.PassedBelowPercent)
 			}
 		}
 		if e.Bandwidth != nil {
-			fmt.Fprintf(osStdout, "  confirmed bandwidth: %d → %d KiB/s (ceiling %d, resolution %d KiB/s)\n", e.Bandwidth.BeforeKiBPerSecond, e.Bandwidth.BestKiBPerSecond, e.Bandwidth.MaxKiBPerSecond, e.Bandwidth.ResolutionKiBPerSecond)
+			_, _ = fmt.Fprintf(osStdout, "  confirmed bandwidth: %d → %d KiB/s (ceiling %d, resolution %d KiB/s)\n", e.Bandwidth.BeforeKiBPerSecond, e.Bandwidth.BestKiBPerSecond, e.Bandwidth.MaxKiBPerSecond, e.Bandwidth.ResolutionKiBPerSecond)
 			if e.Bandwidth.PassedAboveKiBPerSecond != nil {
-				fmt.Fprintf(osStdout, "    tested passing rate: %d KiB/s\n", *e.Bandwidth.PassedAboveKiBPerSecond)
+				_, _ = fmt.Fprintf(osStdout, "    tested passing rate: %d KiB/s\n", *e.Bandwidth.PassedAboveKiBPerSecond)
 			}
 		}
 		if e.Latency != nil {
-			fmt.Fprintf(osStdout, "  confirmed latency: %d → %d ms (resolution %d ms)\n", e.Latency.BeforeMS, e.Latency.BestMS, e.Latency.ResolutionMS)
+			_, _ = fmt.Fprintf(osStdout, "  confirmed latency: %d → %d ms (resolution %d ms)\n", e.Latency.BeforeMS, e.Latency.BestMS, e.Latency.ResolutionMS)
 		}
-		fmt.Fprintf(osStdout, "  fault minimization: %s; %d → %d rules; %d/%d runs, %d/%d estimated workload-minutes\n", e.Status, e.OriginalRules, e.RemainingRules, e.RunsUsed, e.MaxRuns, e.EstimatedWorkloadMinutes, e.MaxWorkloadMinutes)
+		_, _ = fmt.Fprintf(osStdout, "  fault minimization: %s; %d → %d rules; %d/%d runs, %d/%d estimated workload-minutes\n", e.Status, e.OriginalRules, e.RemainingRules, e.RunsUsed, e.MaxRuns, e.EstimatedWorkloadMinutes, e.MaxWorkloadMinutes)
 		if e.Reason != "" {
-			fmt.Fprintf(osStdout, "    %s\n", e.Reason)
+			_, _ = fmt.Fprintf(osStdout, "    %s\n", e.Reason)
 		}
 		if e.BestRunID != "" {
-			fmt.Fprintf(osStdout, "    best confirmed replay run: %s\n", e.BestRunID)
+			_, _ = fmt.Fprintf(osStdout, "    best confirmed replay run: %s\n", e.BestRunID)
 		}
 	}
 	if receipt.Sweep != nil {
 		if receipt.Sweep.Mode == "duration" {
-			fmt.Fprintf(osStdout, "  sweep duration=%s (phase %s/%s)\n", receipt.Sweep.Value, receipt.Sweep.Rule.Step, receipt.Sweep.Rule.Phase)
+			_, _ = fmt.Fprintf(osStdout, "  sweep duration=%s (phase %s/%s)\n", receipt.Sweep.Value, receipt.Sweep.Rule.Step, receipt.Sweep.Rule.Phase)
 		} else {
-			fmt.Fprintf(osStdout, "  sweep %s=%s (rule %s/%s/%d)\n", receipt.Sweep.Mode, receipt.Sweep.Value, receipt.Sweep.Rule.Step, receipt.Sweep.Rule.Phase, receipt.Sweep.Rule.Index)
+			_, _ = fmt.Fprintf(osStdout, "  sweep %s=%s (rule %s/%s/%d)\n", receipt.Sweep.Mode, receipt.Sweep.Value, receipt.Sweep.Rule.Step, receipt.Sweep.Rule.Phase, receipt.Sweep.Rule.Index)
 		}
 	}
 	if receipt.FaultMatrix != nil {
 		e := receipt.FaultMatrix
 		if e.Sweep != nil {
-			fmt.Fprintf(osStdout, "  resilience sweep limits: %d runs, %d estimated workload-minutes per sweep\n", e.Sweep.MaxRuns, e.Sweep.MaxWorkloadMinutes)
+			_, _ = fmt.Fprintf(osStdout, "  resilience sweep limits: %d runs, %d estimated workload-minutes per sweep\n", e.Sweep.MaxRuns, e.Sweep.MaxWorkloadMinutes)
 		}
 		_, _ = fmt.Fprintf(osStdout, "  fault matrix: %d passed, %d failed, %d skipped cases\n", e.Passed, e.Failed, e.Skipped)
 		if e.CampaignCoverage != nil {
@@ -325,12 +325,12 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 	}
 	if receipt.SweepRegression != nil {
 		e := receipt.SweepRegression
-		fmt.Fprintf(osStdout, "  sweep regression: %s (baseline %s) %s\n", e.Status, e.ReportSHA256, e.Error)
+		_, _ = fmt.Fprintf(osStdout, "  sweep regression: %s (baseline %s) %s\n", e.Status, e.ReportSHA256, e.Error)
 		for _, c := range e.Checks {
-			fmt.Fprintf(osStdout, "    %s=%s: %d/%d → %d/%d passed; drop %.2f percentage points (limit %.2f); passing setting lost=%t, passed=%t\n", c.Setting.Mode, c.Setting.Value, c.BaselinePassed, c.Runs, c.CurrentPassed, c.Runs, 100*c.Drop, 100*c.MaxDrop, c.LostPassingSetting, c.Passed)
+			_, _ = fmt.Fprintf(osStdout, "    %s=%s: %d/%d → %d/%d passed; drop %.2f percentage points (limit %.2f); passing setting lost=%t, passed=%t\n", c.Setting.Mode, c.Setting.Value, c.BaselinePassed, c.Runs, c.CurrentPassed, c.Runs, 100*c.Drop, 100*c.MaxDrop, c.LostPassingSetting, c.Passed)
 		}
 		for _, c := range e.Recovery {
-			fmt.Fprintf(osStdout, "    %s recovery %s/%s: p95 %.3f → %.3fms (limit %.3fms), passed=%t\n", c.Case, c.Step, testRecoveryDisplayPhase(c.Phase, c.Request), c.BaselineP95MS, c.CurrentP95MS, c.LimitMS, c.Passed)
+			_, _ = fmt.Fprintf(osStdout, "    %s recovery %s/%s: p95 %.3f → %.3fms (limit %.3fms), passed=%t\n", c.Case, c.Step, testRecoveryDisplayPhase(c.Phase, c.Request), c.BaselineP95MS, c.CurrentP95MS, c.LimitMS, c.Passed)
 		}
 	}
 	if receipt.RecoveryRegression != nil {

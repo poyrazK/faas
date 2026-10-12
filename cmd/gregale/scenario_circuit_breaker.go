@@ -134,7 +134,7 @@ func readTestCircuitCounter(ctx context.Context, client *http.Client, baseURL st
 	if err != nil {
 		return 0, errors.New("counter request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("counter returned HTTP %d", response.StatusCode)
 	}
@@ -300,12 +300,12 @@ func evaluateTestCircuitBreaker(spec *testCircuitBreakerSpec, phases []testLoadC
 			}
 			fullWindows++
 			evidence.Windows = append(evidence.Windows, testCircuitBreakerWindow{IncomingRequests: requestCount, Phase: phases[phaseIndex].Name, StartMS: start.At.Sub(boundary.StartedAt).Milliseconds(), EndMS: elapsed, Attempts: attempts, Passed: healthy})
-			switch {
-			case phaseIndex == index-1:
+			switch phaseIndex {
+			case index - 1:
 				if !healthy {
 					return fail("baseline dependency activity is below resume_min_attempts per window")
 				}
-			case phaseIndex == index:
+			case index:
 				if evidence.StoppedMS == nil {
 					if healthy && elapsed <= evidence.StopWithinMS {
 						value := elapsed
@@ -319,7 +319,7 @@ func evaluateTestCircuitBreaker(spec *testCircuitBreakerSpec, phases []testLoadC
 						sustained = true
 					}
 				}
-			case phaseIndex == index+1:
+			case index + 1:
 				if evidence.ResumedMS == nil {
 					if healthy && elapsed <= evidence.ResumeWithinMS {
 						value := elapsed
