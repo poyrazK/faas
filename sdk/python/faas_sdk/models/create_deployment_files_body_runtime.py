@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateDeploymentFilesBodyRuntime = Literal["go124", "go124-alpine", "node22", "node24", "python312", "python313"]
+CreateDeploymentFilesBodyRuntime = Literal["binary", "go124", "go124-alpine", "node22", "node24", "python312", "python313"]
 
 CREATE_DEPLOYMENT_FILES_BODY_RUNTIME_VALUES: set[CreateDeploymentFilesBodyRuntime] = {
+    "binary",
     "go124",
     "go124-alpine",
     "node22",

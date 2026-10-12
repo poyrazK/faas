@@ -8,7 +8,7 @@ import type { DevPostgresRequest } from './DevPostgresRequest.js';
  */
 export type UpsertDevSessionRequest = {
   type?: 'app' | 'function';
-  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
+  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
   /**
    * Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
    */

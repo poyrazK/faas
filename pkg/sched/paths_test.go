@@ -46,6 +46,16 @@ func TestBaseKeyForArch_DistinctPerArch(t *testing.T) {
 	}
 }
 
+// ADR-987: the binary runtime has no base of its own; it boots on go124's.
+func TestBaseKeyForArch_BinarySharesGo124Base(t *testing.T) {
+	if got, want := BaseKeyForArch("binary", "amd64"), BaseKeyForArch("go124", "amd64"); got != want {
+		t.Fatalf("BaseKeyForArch(binary) = %q; want go124's %q", got, want)
+	}
+	if got, want := BaseDigestKeyForArch("binary", "amd64"), BaseDigestKeyForArch("go124", "amd64"); got != want {
+		t.Fatalf("BaseDigestKeyForArch(binary) = %q; want go124's %q", got, want)
+	}
+}
+
 func TestBaseKeyForArch_PlainApp(t *testing.T) {
 	// Empty runtime (plain app, not a function app) still gets the
 	// per-arch suffix.

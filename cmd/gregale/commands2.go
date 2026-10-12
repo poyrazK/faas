@@ -770,9 +770,12 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		// An unset idle timeout is stored as NULL and the plan default
-		// applies (600 s on Scale); printing "0s" read as "parks at once".
-		if a.IdleTimeoutS == 0 {
+		// An unset idle timeout is stored as NULL and the type default
+		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
+		// printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 && a.Type == "function" {
+			fmt.Printf("%-30s %s\n", "idle timeout:", fmt.Sprintf("function default (%ds)", api.FunctionIdleTimeoutDefaultSeconds))
+		} else if a.IdleTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
 		} else {
 			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
@@ -1954,6 +1957,14 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err := m.Validate(); err != nil {
 		return txn, err
 	}
+	return reconcileManifestCronsWithRollback(ctx, client, slug, m)
+}
+
+// reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback
+// for an already loaded and validated manifest. The functions fan-out
+// (ADR-985) passes each function's crons through it.
+func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
+	txn := &manifestCronTransaction{}
 	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var matching []gregalemanifest.Trigger
 	for _, t := range m.Triggers {
@@ -2179,6 +2190,10 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
+	case "function-rust":
+		// ADR-987: built from the template's Dockerfile; the handler value
+		// is vestigial, but the deploy API requires it to be non-empty.
+		return runtimeBinary, "handler", true
 	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
@@ -2273,7 +2288,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
-	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
+	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313|binary)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
@@ -3168,6 +3183,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
+	// ADR-985: a manifest listing several functions fans out into one
+	// single-function deploy per entry, before any app or upload exists.
+	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
+		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		if fnErr != nil {
+			return printErr("Invalid deploy manifest", fnErr)
+		}
+		if isFunctionSet {
+			return deployFunctionSet(ctx, functionSetDeploy{
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
+				noTriggers: *noTriggers,
+			})
+		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making
