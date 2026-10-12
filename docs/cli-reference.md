@@ -11925,7 +11925,7 @@ Add a log drain; the credential is read from an environment variable
 | `--app <SLUG>` | app slug |  |
 | `--url <URL>` | destination URL | required |
 | `--kind <KIND>` | destination format (default http_json) | one of `http_json` · `otlp` |
-| `--auth-header-env <ENV>` | environment variable holding the Authorization header value |  |
+| `--auth-header-env <ENV>` | environment variable holding the Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
 | `--disabled` | create the drain disabled |  |
 
 Examples:
@@ -11973,7 +11973,7 @@ Change a drain&#39;s URL or credential, or pause and resume it
 | `--app <SLUG>` | app slug |  |
 | `--id <ID>` | log drain id | required |
 | `--url <URL>` | new destination URL |  |
-| `--auth-header-env <ENV>` | environment variable holding the new Authorization header value |  |
+| `--auth-header-env <ENV>` | environment variable holding the new Authorization value (&#39;Bearer …&#39;) or one &#39;Name: value&#39; header |  |
 | `--enable` | resume delivery |  |
 | `--disable` | pause delivery |  |
 

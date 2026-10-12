@@ -4592,7 +4592,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "SLUG"},
 				{Name: "url", Short: "destination URL", Value: "URL", Req: true},
 				{Name: "kind", Short: "destination format (default http_json)", Value: "KIND", ClosedSet: []string{"http_json", "otlp"}},
-				{Name: "auth-header-env", Short: "environment variable holding the Authorization header value", Value: "ENV"},
+				{Name: "auth-header-env", Short: "environment variable holding the Authorization value ('Bearer …') or one 'Name: value' header", Value: "ENV"},
 				{Name: "disabled", Short: "create the drain disabled"},
 			}, Examples: []string{"LOG_TOKEN='Bearer …' gregale log-drains add --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN"}},
 			{Name: "get", Short: "Show one log drain (credential masked)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
@@ -4607,7 +4607,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "SLUG"},
 				{Name: "id", Short: "log drain id", Value: "ID", Req: true},
 				{Name: "url", Short: "new destination URL", Value: "URL"},
-				{Name: "auth-header-env", Short: "environment variable holding the new Authorization header value", Value: "ENV"},
+				{Name: "auth-header-env", Short: "environment variable holding the new Authorization value ('Bearer …') or one 'Name: value' header", Value: "ENV"},
 				{Name: "enable", Short: "resume delivery"},
 				{Name: "disable", Short: "pause delivery"},
 			}},
