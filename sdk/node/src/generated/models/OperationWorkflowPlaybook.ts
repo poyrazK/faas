@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookEvidenceRequirement } from './OperationWorkflowPlaybookEvidenceRequirement.js';
 /**
  * OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists and links are never executed by Gregale.
  */
@@ -31,7 +32,11 @@ export type OperationWorkflowPlaybook = {
    */
   owner?: string;
   /**
-   * OperationWorkflowPlaybook.required_evidence. Advisory evidence checklist, not automatically verified prerequisites.
+   * OperationWorkflowPlaybook.evidence_requirements. Optional unique live selectors for declared checklist labels. Frozen with guidance; human reviews remain independent.
+   */
+  evidence_requirements?: Array<OperationWorkflowPlaybookEvidenceRequirement>;
+  /**
+   * OperationWorkflowPlaybook.required_evidence. Human checklist labels with optional live application-evidence selectors.
    */
   required_evidence?: Array<string>;
   /**

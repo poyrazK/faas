@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -10,6 +10,10 @@ from ..models.operation_workflow_playbook_match_kind import (
     check_operation_workflow_playbook_match_kind,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_evidence_requirement import OperationWorkflowPlaybookEvidenceRequirement
+
 
 T = TypeVar("T", bound="OperationWorkflowPlaybook")
 
@@ -37,9 +41,12 @@ class OperationWorkflowPlaybook:
     owner: str | Unset = UNSET
     """OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
     ownership."""
+    evidence_requirements: list[OperationWorkflowPlaybookEvidenceRequirement] | Unset = UNSET
+    """OperationWorkflowPlaybook.evidence_requirements. Optional unique live selectors for declared checklist
+    labels. Frozen with guidance; human reviews remain independent."""
     required_evidence: list[str] | Unset = UNSET
-    """OperationWorkflowPlaybook.required_evidence. Advisory evidence checklist, not automatically verified
-    prerequisites."""
+    """OperationWorkflowPlaybook.required_evidence. Human checklist labels with optional live application-evidence
+    selectors."""
     runbook_url: str | Unset = UNSET
     """OperationWorkflowPlaybook.runbook_url. Absolute HTTPS runbook link without user credentials; never fetched
     automatically."""
@@ -59,6 +66,13 @@ class OperationWorkflowPlaybook:
         summary = self.summary
 
         owner = self.owner
+
+        evidence_requirements: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.evidence_requirements, Unset):
+            evidence_requirements = []
+            for evidence_requirements_item_data in self.evidence_requirements:
+                evidence_requirements_item = evidence_requirements_item_data.to_dict()
+                evidence_requirements.append(evidence_requirements_item)
 
         required_evidence: list[str] | Unset = UNSET
         if not isinstance(self.required_evidence, Unset):
@@ -81,6 +95,8 @@ class OperationWorkflowPlaybook:
         )
         if owner is not UNSET:
             field_dict["owner"] = owner
+        if evidence_requirements is not UNSET:
+            field_dict["evidence_requirements"] = evidence_requirements
         if required_evidence is not UNSET:
             field_dict["required_evidence"] = required_evidence
         if runbook_url is not UNSET:
@@ -92,6 +108,10 @@ class OperationWorkflowPlaybook:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_evidence_requirement import (
+            OperationWorkflowPlaybookEvidenceRequirement,
+        )
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -104,6 +124,17 @@ class OperationWorkflowPlaybook:
         summary = d.pop("summary")
 
         owner = d.pop("owner", UNSET)
+
+        _evidence_requirements = d.pop("evidence_requirements", UNSET)
+        evidence_requirements: list[OperationWorkflowPlaybookEvidenceRequirement] | Unset = UNSET
+        if _evidence_requirements is not UNSET:
+            evidence_requirements = []
+            for evidence_requirements_item_data in _evidence_requirements:
+                evidence_requirements_item = OperationWorkflowPlaybookEvidenceRequirement.from_dict(
+                    evidence_requirements_item_data
+                )
+
+                evidence_requirements.append(evidence_requirements_item)
 
         required_evidence = cast(list[str], d.pop("required_evidence", UNSET))
 
@@ -118,6 +149,7 @@ class OperationWorkflowPlaybook:
             match_code=match_code,
             summary=summary,
             owner=owner,
+            evidence_requirements=evidence_requirements,
             required_evidence=required_evidence,
             runbook_url=runbook_url,
             action_url=action_url,

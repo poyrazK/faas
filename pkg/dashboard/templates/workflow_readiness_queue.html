@@ -690,6 +690,12 @@
    if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
    if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
    p.items.forEach((item,index)=>{
+    if(item.evidence_check){
+     const check=item.evidence_check;
+     section.append(node('p','Current requirement for '+item.label+': '+check.status.replace(/_/g,' ')+' · '+check.reason.replace(/_/g,' ')+' · Checked '+clock(check.checked_at)));
+     if(check.review_suggested)section.append(node('p','Review suggested: this completed item currently lacks satisfied application evidence. Your original review is preserved.'));
+     if(check.evidence){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(check.evidence.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Current requirement evidence');link.href=url.href;section.append(link);}
+    }
     const editable=(p.disposition||'active')==='active';const edit=node(editable?'form':'div','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
     for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
     if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}

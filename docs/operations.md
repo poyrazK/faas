@@ -3049,3 +3049,59 @@ Case overviews derive `replaces_progress_ids` from retained predecessor decision
 these inverse links are not stored or accepted in requests. Dashboard controls show
 closure, review context and links, and SDKs expose the review endpoint. Timeline
 entries retain the decision, reason, reviewer, clock and replacement identity.
+
+### Live evidence requirements for checklist items
+
+A playbook can bind each `required_evidence` label to one optional
+`evidence_requirements` selector. Selectors are frozen when a checklist starts:
+
+```yaml
+playbooks:
+  - id: payment-review
+    version: 1
+    match_kind: blocker
+    match_code: payment
+    summary: Review payment before fulfillment.
+    required_evidence:
+      - Payment verified
+    evidence_requirements:
+      - label: Payment verified
+        kind: prerequisite
+        operation: fulfill-order
+        from_state: paid
+        to_state: fulfilled
+        prerequisite_operation: capture-payment
+        milestone: payment-captured
+```
+
+The transition and retained prerequisite must already exist in the contract.
+`prerequisite` uses the exact current-state transition and producer/milestone;
+optional `group_id` and `path_id` select an alternative group and named path.
+The single fact uses existing freshness/invalidation policies. Its satisfaction
+does not assert that the whole path or decision is satisfied. Unevaluated edges
+are unavailable.
+
+`milestone` needs `operation` and `milestone`, and checks the selected contract's
+declared step and latest retained fact without adding age/invalidation policy.
+`verification` needs `operation` and `blocker_code`, and requires every matching
+obligation on the exact current report to have retained verification. Absence of
+a current obligation or a verification observation from a different report is
+unavailable, not successful verification. Fields from
+other kinds are rejected; each selector uses a unique existing label, with the
+existing 16-label limit. YAML and TOML support the same fields.
+
+Case reads add `items[].evidence_check` for configured labels. Status is
+`satisfied`, `missing`, `stale`, `invalidated` or `unavailable`, with a diagnostic
+reason, observation clock and current report identity. Prerequisites include
+existing freshness and invalidating-fact diagnostics. Stale state, changed
+contract/guidance, incomplete verification coverage or missing declarations
+cannot establish satisfaction. Completed human items in active checklists without satisfaction set
+`review_suggested`; the dashboard shows this beside the preserved review and
+links current milestone evidence.
+
+These observations evaluate declared requirements, not the validity of attached
+human references. They do not edit checklist status, revisions, history or
+business state, and are absent from stored progress and mutation responses.
+Reload the case to refresh them. Satisfaction means retained application-reported
+evidence, not external correctness, business success or execution permission.
+Existing playbooks without selectors remain human-only.

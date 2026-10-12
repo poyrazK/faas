@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -162,6 +163,14 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	return store.savePlaybookProgress(ctx, r, req.Revision)
 }
 func clonePlaybookProgress(p api.OperationWorkflowPlaybookProgress) api.OperationWorkflowPlaybookProgress {
+	p.Items = slices.Clone(p.Items)
+	for i := range p.Items {
+		p.Items[i].EvidenceCheck = nil
+	}
+	p.History = slices.Clone(p.History)
+	for i := range p.History {
+		p.History[i].Item.EvidenceCheck = nil
+	}
 	raw, _ := json.Marshal(p)
 	var out api.OperationWorkflowPlaybookProgress
 	_ = json.Unmarshal(raw, &out)

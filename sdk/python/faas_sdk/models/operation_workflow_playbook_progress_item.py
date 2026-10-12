@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
+    from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookProgressItem")
@@ -35,6 +36,10 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    evidence_check: OperationWorkflowPlaybookEvidenceCheck | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
+    from human review and attachment validity. Contract or guidance changes, missing declarations and incomplete
+    coverage remain unavailable. Does not change progress or authorize execution."""
     reviewed_by: str | Unset = UNSET
     """OperationWorkflowPlaybookProgressItem.reviewed_by. Authenticated account or API-key reviewer, assigned by
     the server."""
@@ -53,6 +58,10 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        evidence_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.evidence_check, Unset):
+            evidence_check = self.evidence_check.to_dict()
+
         reviewed_by = self.reviewed_by
 
         reviewed_at: str | Unset = UNSET
@@ -69,6 +78,8 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if evidence_check is not UNSET:
+            field_dict["evidence_check"] = evidence_check
         if reviewed_by is not UNSET:
             field_dict["reviewed_by"] = reviewed_by
         if reviewed_at is not UNSET:
@@ -79,6 +90,7 @@ class OperationWorkflowPlaybookProgressItem:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
+        from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
 
         d = dict(src_dict)
         label = d.pop("label")
@@ -94,6 +106,13 @@ class OperationWorkflowPlaybookProgressItem:
 
             evidence.append(evidence_item)
 
+        _evidence_check = d.pop("evidence_check", UNSET)
+        evidence_check: OperationWorkflowPlaybookEvidenceCheck | Unset
+        if isinstance(_evidence_check, Unset):
+            evidence_check = UNSET
+        else:
+            evidence_check = OperationWorkflowPlaybookEvidenceCheck.from_dict(_evidence_check)
+
         reviewed_by = d.pop("reviewed_by", UNSET)
 
         _reviewed_at = d.pop("reviewed_at", UNSET)
@@ -108,6 +127,7 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            evidence_check=evidence_check,
             reviewed_by=reviewed_by,
             reviewed_at=reviewed_at,
         )

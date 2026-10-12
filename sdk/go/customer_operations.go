@@ -307,6 +307,8 @@ type OperationWorkflowCoordinationTimeline = api.OperationWorkflowCoordinationTi
 type OperationWorkflowCase = api.OperationWorkflowCase
 type OperationWorkflowCaseAction = api.OperationWorkflowCaseAction
 
+type OperationWorkflowPlaybookEvidenceRequirement = api.OperationWorkflowPlaybookEvidenceRequirement
+type OperationWorkflowPlaybookEvidenceCheck = api.OperationWorkflowPlaybookEvidenceCheck
 type OperationWorkflowPlaybook = api.OperationWorkflowPlaybook
 type OperationWorkflowPlaybookGuidance = api.OperationWorkflowPlaybookGuidance
 

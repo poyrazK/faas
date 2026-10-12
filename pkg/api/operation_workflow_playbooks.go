@@ -47,6 +47,32 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 				return nil, fmt.Errorf("workflow playbook evidence is invalid or duplicated")
 			}
 		}
+		if len(r.EvidenceRequirements) > OperationWorkflowPlaybookEvidenceMax {
+			return nil, fmt.Errorf("workflow playbook evidence requirements exceed their limit")
+		}
+		r.EvidenceRequirements = append([]OperationWorkflowPlaybookEvidenceRequirement(nil), r.EvidenceRequirements...)
+		slices.SortFunc(r.EvidenceRequirements, func(a, b OperationWorkflowPlaybookEvidenceRequirement) int { return strings.Compare(a.Label, b.Label) })
+		for j, e := range r.EvidenceRequirements {
+			if !slices.Contains(r.RequiredEvidence, e.Label) || j > 0 && r.EvidenceRequirements[j-1].Label == e.Label || ValidateOperationWorkflowName(e.Operation) != nil {
+				return nil, fmt.Errorf("workflow playbook evidence requirement needs a unique declared label and valid operation")
+			}
+			switch e.Kind {
+			case "milestone":
+				if ValidateOperationWorkflowStateName(e.Milestone) != nil || e.PrerequisiteOperation != "" || e.FromState != "" || e.ToState != "" || e.GroupID != "" || e.PathID != "" || e.BlockerCode != "" {
+					return nil, fmt.Errorf("invalid playbook milestone requirement")
+				}
+			case "prerequisite":
+				if ValidateOperationWorkflowStateName(e.Milestone) != nil || ValidateOperationWorkflowName(e.PrerequisiteOperation) != nil || ValidateOperationWorkflowStateName(e.FromState) != nil || ValidateOperationWorkflowStateName(e.ToState) != nil || e.BlockerCode != "" || e.GroupID != "" && ValidateOperationWorkflowStateName(e.GroupID) != nil || e.PathID != "" && (e.GroupID == "" || ValidateOperationWorkflowStateName(e.PathID) != nil) {
+					return nil, fmt.Errorf("invalid playbook prerequisite requirement")
+				}
+			case "verification":
+				if !workflowPlaybookMatchCode.MatchString(e.BlockerCode) || e.Milestone != "" || e.PrerequisiteOperation != "" || e.FromState != "" || e.ToState != "" || e.GroupID != "" || e.PathID != "" {
+					return nil, fmt.Errorf("invalid playbook verification requirement")
+				}
+			default:
+				return nil, fmt.Errorf("invalid playbook evidence requirement kind")
+			}
+		}
 	}
 	slices.SortFunc(out, func(a, b OperationWorkflowPlaybook) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil

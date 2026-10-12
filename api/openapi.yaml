@@ -80650,6 +80650,93 @@ components:
           description: OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
             boundaries.
 
+    OperationWorkflowPlaybookEvidenceRequirement:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceRequirement. One pinned live application-evidence selector per checklist label. Milestone selects a declared operation and milestone. Prerequisite additionally selects an exact current-state transition and producer, optionally an alternative group and named path. Verification selects current-report blocker resolutions; absent obligations are unavailable.
+      required: [label, kind, operation]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: OperationWorkflowPlaybookEvidenceRequirement.label. Exact label from required_evidence; unique within evidence_requirements.
+        kind:
+          type: string
+          enum: [milestone, prerequisite, verification]
+          description: OperationWorkflowPlaybookEvidenceRequirement.kind. Selector category; invalid combinations of fields are rejected.
+        operation:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z][a-z0-9-]*$
+          description: OperationWorkflowPlaybookEvidenceRequirement.operation. Declared milestone producer, prerequisite transition operation, or blocker-resolution operation name.
+        milestone:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.milestone. Required milestone name for milestone and prerequisite kinds; omitted for verification.
+        prerequisite_operation:
+          type: string
+          maxLength: 63
+          description: OperationWorkflowPlaybookEvidenceRequirement.prerequisite_operation. Required fact producer name for prerequisite kind only.
+        from_state:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.from_state. Required exact transition source for prerequisite kind only.
+        to_state:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.to_state. Required exact transition destination for prerequisite kind only.
+        group_id:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.group_id. Optional prerequisite alternative group. Without a group, selects mandatory retained facts.
+        path_id:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.path_id. Optional named prerequisite path; requires group_id. Evaluates the selected fact, not the whole path or its decision.
+        blocker_code:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookEvidenceRequirement.blocker_code. Required blocker code for verification kind only; all matching obligations on the current report must be verified.
+    OperationWorkflowPlaybookEvidenceCheck:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate from human review and attachment validity. Contract or guidance changes, missing declarations and incomplete coverage remain unavailable. Does not change progress or authorize execution.
+      required: [requirement, status, reason, checked_at, review_suggested]
+      properties:
+        requirement:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceRequirement'
+          description: OperationWorkflowPlaybookEvidenceCheck.requirement. Frozen application-defined selector.
+        status:
+          type: string
+          enum: [satisfied, missing, stale, invalidated, unavailable]
+          description: OperationWorkflowPlaybookEvidenceCheck.status. Current retained evidence observation, not external proof or business success.
+        reason:
+          type: string
+          description: OperationWorkflowPlaybookEvidenceCheck.reason. Stable diagnostic code explaining the observation or uncertainty.
+        checked_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowPlaybookEvidenceCheck.checked_at. Case evidence observation clock; prerequisite freshness retains its original evaluation clock.
+        state_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookEvidenceCheck.state_revision. Current report revision when available.
+        reporting_operation_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowPlaybookEvidenceCheck.reporting_operation_id. Current application state-report operation.
+        review_suggested:
+          type: boolean
+          description: OperationWorkflowPlaybookEvidenceCheck.review_suggested. Completed human item currently has an unsatisfied or unavailable requirement; no review is modified.
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef'
+          description: OperationWorkflowPlaybookEvidenceCheck.evidence. Current retained milestone reference, including stale or invalidated facts when present.
+        prerequisite:
+          $ref: '#/components/schemas/OperationWorkflowRetainedMilestone'
+          description: OperationWorkflowPlaybookEvidenceCheck.prerequisite. Exact existing readiness diagnostic, including freshness and invalidation evidence.
     OperationWorkflowPlaybook:
       type: object
       additionalProperties: false
@@ -80696,10 +80783,15 @@ components:
           description: OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
             ownership.
           maxLength: 256
+        evidence_requirements:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceRequirement'
+          description: OperationWorkflowPlaybook.evidence_requirements. Optional unique live selectors for declared checklist labels. Frozen with guidance; human reviews remain independent.
         required_evidence:
           type: array
-          description: OperationWorkflowPlaybook.required_evidence. Advisory evidence checklist, not automatically verified
-            prerequisites.
+          description: OperationWorkflowPlaybook.required_evidence. Human checklist labels with optional live application-evidence selectors.
           maxItems: 16
           uniqueItems: true
           items:
@@ -80843,6 +80935,9 @@ components:
       - note
       - evidence
       properties:
+        evidence_check:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceCheck'
+          description: OperationWorkflowPlaybookProgressItem.evidence_check. Optional live requirement check in case overviews only; never stored in reviews, history or mutation responses.
         label:
           type: string
           description: OperationWorkflowPlaybookProgressItem.label. Frozen application-authored evidence requirement.

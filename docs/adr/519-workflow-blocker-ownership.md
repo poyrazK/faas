@@ -1565,3 +1565,27 @@ operational state. Readiness subscriptions, notifications, and playbook progress
 are also registered as operational tables in the environment clone schema
 inventory. Clone preflight can recognize their schema without copying retained
 customer reports, inboxes, or live coordination records into another environment.
+
+## Live application evidence for pinned checklist labels
+
+Optional evidence requirements bind unique existing labels to milestone,
+prerequisite or verification selectors, bounded by the existing 16-item limit.
+Canonicalization copies/sorts selectors without changing caller slices and
+rejects unknown kinds and incompatible fields. Selectors enter immutable
+fingerprints, frozen progress and guidance comparison. Legacy omissions preserve
+existing identities.
+
+Exact-case reads reuse scoped retained facts and current-state readiness edges.
+Prerequisites retain existing freshness/invalidation diagnostics, including
+explicit producer, group and path identities. Verification evaluates all
+matching obligations on the exact current report using full internal coverage.
+Absent obligations, incomplete coverage and unevaluated edges are unavailable.
+Fresh comparable state and unchanged canonical guidance are required.
+
+Per-item checks expose satisfied/missing/stale/invalidated/unavailable, reason,
+observation time and report identity. Completed items in active checklists lacking satisfaction
+suggest review without changing human status or history. Checks evaluate
+requirements rather than attachments and establish no external correctness,
+business outcome or execution authority. Both backend writers strip ephemeral
+checks from progress and history. Dashboard and SDKs expose the same fields;
+no new queries, migration or worker is required.

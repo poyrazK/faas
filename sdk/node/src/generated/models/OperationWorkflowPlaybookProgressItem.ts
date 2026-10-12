@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookEvidence } from './OperationWorkflowPlaybookEvidence.js';
+import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
 /**
  * OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgressItem = {
+  /**
+   * OperationWorkflowPlaybookProgressItem.evidence_check. Optional live requirement check in case overviews only; never stored in reviews, history or mutation responses.
+   */
+  evidence_check?: OperationWorkflowPlaybookEvidenceCheck;
   /**
    * OperationWorkflowPlaybookProgressItem.label. Frozen application-authored evidence requirement.
    */

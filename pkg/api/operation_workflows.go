@@ -88,16 +88,44 @@ type OperationWorkflowBlockerEscalationPolicy struct {
 	Owner        string `json:"owner" yaml:"owner" toml:"owner"`
 }
 
+// OperationWorkflowPlaybookEvidenceRequirement binds one checklist label to current application evidence.
+type OperationWorkflowPlaybookEvidenceRequirement struct {
+	Label                 string `json:"label" yaml:"label" toml:"label"`
+	Kind                  string `json:"kind" yaml:"kind" toml:"kind"`
+	Operation             string `json:"operation" yaml:"operation" toml:"operation"`
+	PrerequisiteOperation string `json:"prerequisite_operation,omitempty" yaml:"prerequisite_operation,omitempty" toml:"prerequisite_operation"`
+	Milestone             string `json:"milestone,omitempty" yaml:"milestone,omitempty" toml:"milestone"`
+	FromState             string `json:"from_state,omitempty" yaml:"from_state,omitempty" toml:"from_state"`
+	ToState               string `json:"to_state,omitempty" yaml:"to_state,omitempty" toml:"to_state"`
+	GroupID               string `json:"group_id,omitempty" yaml:"group_id,omitempty" toml:"group_id"`
+	PathID                string `json:"path_id,omitempty" yaml:"path_id,omitempty" toml:"path_id"`
+	BlockerCode           string `json:"blocker_code,omitempty" yaml:"blocker_code,omitempty" toml:"blocker_code"`
+}
+
+// OperationWorkflowPlaybookEvidenceCheck is ephemeral; it does not certify attached references or change human reviews.
+type OperationWorkflowPlaybookEvidenceCheck struct {
+	Requirement          OperationWorkflowPlaybookEvidenceRequirement `json:"requirement"`
+	Status               string                                       `json:"status"`
+	Reason               string                                       `json:"reason"`
+	CheckedAt            time.Time                                    `json:"checked_at"`
+	StateRevision        int64                                        `json:"state_revision,omitempty"`
+	ReportingOperationID string                                       `json:"reporting_operation_id,omitempty"`
+	ReviewSuggested      bool                                         `json:"review_suggested"`
+	Evidence             *OperationWorkflowInstanceMilestoneRef       `json:"evidence,omitempty"`
+	Prerequisite         *OperationWorkflowRetainedMilestone          `json:"prerequisite,omitempty"`
+}
+
 type OperationWorkflowPlaybook struct {
-	ID               string   `json:"id" yaml:"id" toml:"id"`
-	Version          int      `json:"version" yaml:"version" toml:"version"`
-	MatchKind        string   `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
-	MatchCode        string   `json:"match_code" yaml:"match_code" toml:"match_code"`
-	Summary          string   `json:"summary" yaml:"summary" toml:"summary"`
-	Owner            string   `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
-	RequiredEvidence []string `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
-	RunbookURL       string   `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
-	ActionURL        string   `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
+	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
+	ID                   string                                         `json:"id" yaml:"id" toml:"id"`
+	Version              int                                            `json:"version" yaml:"version" toml:"version"`
+	MatchKind            string                                         `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
+	MatchCode            string                                         `json:"match_code" yaml:"match_code" toml:"match_code"`
+	Summary              string                                         `json:"summary" yaml:"summary" toml:"summary"`
+	Owner                string                                         `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
+	RequiredEvidence     []string                                       `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
+	RunbookURL           string                                         `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
+	ActionURL            string                                         `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
 }
 type OperationWorkflowPlaybookGuidance struct {
 	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
@@ -128,12 +156,13 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence  []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
-	Label      string                              `json:"label"`
-	Status     string                              `json:"status"`
-	Note       string                              `json:"note"`
-	Evidence   []OperationWorkflowPlaybookEvidence `json:"evidence"`
-	ReviewedBy string                              `json:"reviewed_by,omitempty"`
-	ReviewedAt *time.Time                          `json:"reviewed_at,omitempty"`
+	EvidenceCheck *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
+	Label         string                                  `json:"label"`
+	Status        string                                  `json:"status"`
+	Note          string                                  `json:"note"`
+	Evidence      []OperationWorkflowPlaybookEvidence     `json:"evidence"`
+	ReviewedBy    string                                  `json:"reviewed_by,omitempty"`
+	ReviewedAt    *time.Time                              `json:"reviewed_at,omitempty"`
 }
 type OperationWorkflowPlaybookProgressChange struct {
 	Revision  int64                                 `json:"revision"`
