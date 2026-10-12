@@ -181,8 +181,9 @@ func (s *Service) RealtimeWorkerReplay(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "replay"))
-	err := store.ReplayRealtimeConsumerGroupDeadLetter(r.Context(), g.EndpointID, g.Channel, g.Group, r.PathValue("sequence"))
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, "replay")
+	r = r.WithContext(workerCtx)
+	err := store.ReplayRealtimeConsumerGroupDeadLetter(workerCtx, g.EndpointID, g.Channel, g.Group, r.PathValue("sequence"))
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
@@ -195,7 +196,8 @@ func (s *Service) RealtimeWorkerResync(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "resync"))
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, "resync")
+	r = r.WithContext(workerCtx)
 	var req struct {
 		ExpectedSequence string `json:"expected_sequence"`
 		AfterSequence    string `json:"after_sequence"`
@@ -204,7 +206,7 @@ func (s *Service) RealtimeWorkerResync(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid group recovery"))
 		return
 	}
-	err := store.ResetRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group, req.ExpectedSequence, req.AfterSequence)
+	err := store.ResetRealtimeConsumerGroup(workerCtx, g.EndpointID, g.Channel, g.Group, req.ExpectedSequence, req.AfterSequence)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
@@ -217,8 +219,9 @@ func (s *Service) RealtimeWorkerDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "delete"))
-	if err := store.DeleteRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group); err != nil {
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, "delete")
+	r = r.WithContext(workerCtx)
+	if err := store.DeleteRealtimeConsumerGroup(workerCtx, g.EndpointID, g.Channel, g.Group); err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
 	}
