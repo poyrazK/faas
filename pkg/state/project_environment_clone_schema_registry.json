@@ -1777,12 +1777,12 @@
   },
   {
     "table": "customer_operation_code_pins",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
       "expires_at"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_definitions",
@@ -1937,7 +1937,6 @@
   },
   {
     "table": "customer_operation_workflow_claims",
-    "kind": "operational",
     "columns": [
       "attempt",
       "capability_digest",
@@ -1946,7 +1945,8 @@
       "lease_until",
       "operation_id",
       "workflow_run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_workflow_executions",
@@ -2313,7 +2313,6 @@
   },
   {
     "table": "deployment_route_policy_snapshots",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "captured_at",
@@ -2322,7 +2321,8 @@
       "scope",
       "sha256",
       "snapshot"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -6444,6 +6444,9 @@
   {
     "table": "outbound_admission_leases",
     "columns": [
+      "ai_reserved_cost_millicents",
+      "ai_reserved_tokens",
+      "binding_app_id",
       "created_at",
       "expires_at",
       "integration_id",
@@ -6459,10 +6462,14 @@
       "circuit_policy_failure_threshold",
       "circuit_policy_open_seconds",
       "circuit_probe_lease_id",
+      "daily_ai_cost_millicents",
+      "daily_ai_token_count",
       "daily_request_count",
       "daily_usage_date",
       "integration_id",
       "last_refill",
+      "monthly_ai_cost_millicents",
+      "monthly_usage_month",
       "provider_cooldown_policy_revision",
       "provider_cooldown_until",
       "retry_budget_policy_per_minute",
@@ -6473,12 +6480,117 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_budget_alerts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "budget",
+      "crossed_at",
+      "id",
+      "integration_id",
+      "limit_value",
+      "period_start",
+      "threshold_percent",
+      "used_value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_price_entries",
+    "columns": [
+      "cache_write_millicents_per_mtok",
+      "cached_input_millicents_per_mtok",
+      "input_millicents_per_mtok",
+      "model_prefix",
+      "output_millicents_per_mtok",
+      "price_list_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_price_lists",
+    "columns": [
+      "created_at",
+      "effective_from",
+      "id",
+      "integration_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_request_log",
+    "columns": [
+      "attempts",
+      "cache_write_tokens",
+      "cached_input_tokens",
+      "caller",
+      "cost_millicents",
+      "created_at",
+      "duration_ms",
+      "id",
+      "input_tokens",
+      "integration_id",
+      "model",
+      "outcome",
+      "output_tokens",
+      "route_id",
+      "status",
+      "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_targets",
+    "columns": [
+      "integration_id",
+      "model",
+      "position",
+      "route_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_routes",
+    "columns": [
+      "account_id",
+      "created_at",
+      "format",
+      "id",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_usage_daily",
+    "columns": [
+      "cache_write_tokens",
+      "cached_input_tokens",
+      "caller",
+      "cost_millicents",
+      "error_requests",
+      "input_tokens",
+      "integration_id",
+      "model",
+      "output_tokens",
+      "requests",
+      "updated_at",
+      "usage_date",
+      "usage_unknown_requests"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_app_binding_usage",
     "columns": [
       "app_id",
+      "daily_ai_token_count",
       "daily_request_count",
       "daily_usage_date",
-      "integration_id"
+      "integration_id",
+      "minute_ai_token_count",
+      "minute_request_count",
+      "minute_window_start"
     ],
     "kind": "operational"
   },
@@ -6486,6 +6598,11 @@
     "table": "outbound_app_bindings",
     "columns": [
       "account_id",
+      "ai_allowed_models",
+      "ai_daily_token_limit",
+      "ai_max_output_tokens",
+      "ai_requests_per_minute",
+      "ai_tokens_per_minute",
       "allowed_methods",
       "allowed_path_prefixes",
       "app_id",
@@ -6501,6 +6618,18 @@
       "app_id",
       "created_at",
       "integration_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_integration_credential_keys",
+    "columns": [
+      "account_id",
+      "authorization_sealed",
+      "created_at",
+      "id",
+      "integration_id",
+      "label"
     ],
     "kind": "configuration"
   },
@@ -6529,6 +6658,11 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_daily_cost_limit_millicents",
+      "ai_daily_token_limit",
+      "ai_monthly_cost_limit_millicents",
+      "ai_provider",
+      "ai_request_log_enabled",
       "allowed_methods",
       "allowed_path_prefixes",
       "burst",
@@ -6777,7 +6911,6 @@
   },
   {
     "table": "platform_tenant_workflow_schedule_cursors",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
@@ -6790,7 +6923,8 @@
       "trigger_snapshot",
       "updated_at",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "platform_tenants",
@@ -9183,7 +9317,6 @@
   },
   {
     "table": "workflow_automation_definitions",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "draft",
@@ -9193,7 +9326,8 @@
       "published_version",
       "updated_at",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_automation_failure_guards",
@@ -9238,16 +9372,15 @@
   },
   {
     "table": "workflow_automation_publish_policies",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "mode",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_automation_publish_receipts",
-    "kind": "operational",
     "columns": [
       "account_id",
       "api_key_id",
@@ -9257,11 +9390,11 @@
       "name",
       "policy_version",
       "token_hash"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_automation_revisions",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "check_evidence",
@@ -9272,7 +9405,8 @@
       "published_by_api_key_id",
       "recorded_at",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -9317,13 +9451,13 @@
   },
   {
     "table": "workflow_event_receipts",
-    "kind": "operational",
     "columns": [
       "admitted_at",
       "outbox_id",
       "recipient_id",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_events",
@@ -9356,7 +9490,6 @@
   },
   {
     "table": "workflow_run_resumes",
-    "kind": "operational",
     "columns": [
       "account_id",
       "created_at",
@@ -9365,7 +9498,8 @@
       "resume_number",
       "resumed_steps",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_runs",
@@ -9397,7 +9531,6 @@
   },
   {
     "table": "workflow_schedule_cursors",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
@@ -9409,7 +9542,8 @@
       "trigger_snapshot",
       "updated_at",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_schedule_occurrences",
@@ -9472,7 +9606,6 @@
   },
   {
     "table": "workflow_webhook_bindings",
-    "kind": "configuration",
     "columns": [
       "endpoint_id",
       "event_type",
@@ -9480,11 +9613,11 @@
       "updated_at",
       "version",
       "workflow_name"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_webhook_receipts",
-    "kind": "operational",
     "columns": [
       "accepted_at",
       "body_hash",
@@ -9496,6 +9629,7 @@
       "recipient_id",
       "status",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   }
 ]

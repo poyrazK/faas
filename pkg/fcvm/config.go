@@ -170,12 +170,21 @@ const guestTimerArgs = "clocksource=kvm-clock lapic=notscdeadline "
 // new captures inherit the setting.
 const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 "
 
+// guestBootCPUArgs switches off guest kernel work that the Firecracker 1.17
+// guest config builds in and Gregale does not use (ADR-983): boot-time crypto
+// self-tests over ~65 built-in algorithms, SELinux and audit. The guest kernel
+// built from the v1.7 config had none of them. On the n2 test node they added
+// ~250 ms of CPU to every cold boot, which turned into wall time whenever the
+// host was busy. FIPS mode is never enabled, so skipping the self-tests is
+// allowed.
+const guestBootCPUArgs = "cryptomgr.notests selinux=0 audit=0 "
+
 // guestTimerProfile is guestTimerArgs unless a diagnostic test overrides it;
 // it is recorded in every capture's backing identity.
 var guestTimerProfile = guestTimerArgs
 
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
 	// kernel CPU RNG and give virtio-rng maximum credit; otherwise getrandom(2)
@@ -188,7 +197,7 @@ const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
 const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
 
@@ -615,6 +624,19 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
+// vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
+// Builders and an empty plan use the legacy neutral 256 (the kernel accepts
+// [1, 10000]).
+func vmCPUWeight(plan api.Plan, isBuilder bool) int {
+	if isBuilder {
+		return 256
+	}
+	if w := plan.CPUWeight(); w > 0 {
+		return w
+	}
+	return 256
+}
+
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
@@ -651,17 +673,10 @@ func JailerCommand(s JailerSpec) []string {
 		execFile = FirecrackerBin
 	}
 	parentCgroup := ParentCgroupFor(s.Plan)
-	cpuWeight := s.Plan.CPUWeight()
 	if s.IsBuilder {
 		parentCgroup = BuilderCgroupParent
-		cpuWeight = 256
 	}
-	if cpuWeight <= 0 {
-		// Empty plan: keep the legacy neutral default. cpu.weight
-		// must always be in [1, 10000] per the kernel; 256 is the
-		// mid of the normalised range.
-		cpuWeight = 256
-	}
+	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

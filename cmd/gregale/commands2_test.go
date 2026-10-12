@@ -35,6 +35,7 @@ func TestTemplateFunctionConfig(t *testing.T) {
 		{"function-node24", runtimeNode24, defaultTemplateHandler, true},
 		{"function-python", runtimePython312, defaultTemplateHandler, true},
 		{"function-python313", runtimePython313, defaultTemplateHandler, true},
+		{"function-rust", runtimeBinary, "handler", true},
 		{"function-go", runtimeGo124, "handler.go", true},
 		{"cron-worker", runtimeNode22, defaultTemplateHandler, true},
 		{"event-worker", runtimeNode22, defaultTemplateHandler, true},

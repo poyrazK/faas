@@ -620,7 +620,11 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
+from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
+from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
 from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_platform_tenant_access_token_request import CreatePlatformTenantAccessTokenRequest
 from .create_platform_tenant_access_token_request_scopes_item import CreatePlatformTenantAccessTokenRequestScopesItem
@@ -2496,12 +2500,35 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_budget_alert import OutboundAIBudgetAlert
+from .outbound_ai_budget_alert_budget import OutboundAIBudgetAlertBudget
+from .outbound_ai_budget_alert_list import OutboundAIBudgetAlertList
+from .outbound_ai_budget_alert_threshold_percent import OutboundAIBudgetAlertThresholdPercent
+from .outbound_ai_budget_threshold_webhook_payload import OutboundAIBudgetThresholdWebhookPayload
+from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudgetThresholdWebhookPayloadBudget
+from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
+    OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
+)
+from .outbound_ai_price_entry import OutboundAIPriceEntry
+from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
+from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
+from .outbound_ai_request_log_list import OutboundAIRequestLogList
+from .outbound_ai_route import OutboundAIRoute
+from .outbound_ai_route_format import OutboundAIRouteFormat
+from .outbound_ai_route_list import OutboundAIRouteList
+from .outbound_ai_route_target import OutboundAIRouteTarget
+from .outbound_ai_usage_item import OutboundAIUsageItem
+from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
 from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
 from .outbound_binding_usage_response import OutboundBindingUsageResponse
+from .outbound_credential_key import OutboundCredentialKey
+from .outbound_credential_key_list import OutboundCredentialKeyList
 from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_ai_provider import OutboundIntegrationOfferAiProvider
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
 from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
@@ -2972,6 +2999,12 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
+from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
+from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
+from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
+from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
@@ -4436,7 +4469,11 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIRouteRequest",
+    "CreateOutboundAIRouteRequestFormat",
+    "CreateOutboundCredentialKeyRequest",
     "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAiProvider",
     "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePlatformTenantAccessTokenRequest",
     "CreatePlatformTenantAccessTokenRequestScopesItem",
@@ -6198,12 +6235,33 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIBudgetAlert",
+    "OutboundAIBudgetAlertBudget",
+    "OutboundAIBudgetAlertList",
+    "OutboundAIBudgetAlertThresholdPercent",
+    "OutboundAIBudgetThresholdWebhookPayload",
+    "OutboundAIBudgetThresholdWebhookPayloadBudget",
+    "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIPriceEntry",
+    "OutboundAIPriceListResponse",
+    "OutboundAIRequestLogEntry",
+    "OutboundAIRequestLogEntryOutcome",
+    "OutboundAIRequestLogList",
+    "OutboundAIRoute",
+    "OutboundAIRouteFormat",
+    "OutboundAIRouteList",
+    "OutboundAIRouteTarget",
+    "OutboundAIUsageItem",
+    "OutboundAIUsageResponse",
     "OutboundAppBinding",
     "OutboundAppBindingList",
     "OutboundBindingProbePolicy",
     "OutboundBindingProbePolicyMethod",
     "OutboundBindingUsageResponse",
+    "OutboundCredentialKey",
+    "OutboundCredentialKeyList",
     "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferAiProvider",
     "OutboundIntegrationOfferCredentialSource",
     "OutboundIntegrationOfferList",
     "OutboundIntegrationOfferOwnerKind",
@@ -6628,6 +6686,12 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundAIPolicyRequest",
+    "PutOutboundAIPolicyRequestAiProvider",
+    "PutOutboundAIPricesRequest",
+    "PutOutboundAIRouteTargetsRequest",
+    "PutOutboundBindingAIBudgetRequest",
+    "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",

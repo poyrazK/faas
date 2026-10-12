@@ -16,6 +16,44 @@ var FunctionRuntimes = []string{
 	"go124-alpine",
 	"node24",
 	"python313",
+	FunctionRuntimeBinary,
+}
+
+// FunctionRuntimeBinary runs one statically linked Linux executable, built
+// from the function's Dockerfile, in any compiled language (ADR-987). It has
+// no base image of its own: it runs on the go124 base and runner.
+const FunctionRuntimeBinary = "binary"
+
+// FunctionBaseRuntime returns the runtime whose base image and runner serve
+// runtime. Only binary differs: it shares go124's.
+func FunctionBaseRuntime(runtime string) string {
+	if runtime == FunctionRuntimeBinary {
+		return "go124"
+	}
+	return runtime
+}
+
+// FunctionRuntimeBuildsFromDockerfile reports whether a function runtime is
+// built from the customer's Dockerfile. Other function runtimes use the
+// platform's language builds and refuse a Dockerfile.
+func FunctionRuntimeBuildsFromDockerfile(runtime string) bool {
+	return runtime == FunctionRuntimeBinary
+}
+
+// FunctionDockerfileProblem enforces the function source rule (ADR-987): a
+// binary function needs a Dockerfile whose image names one static
+// executable, and every other runtime refuses one. Nil means acceptable.
+func FunctionDockerfileProblem(runtime string, hasDockerfile bool) *Problem {
+	fromDockerfile := FunctionRuntimeBuildsFromDockerfile(runtime)
+	switch {
+	case fromDockerfile && !hasDockerfile:
+		return NewProblem(http.StatusBadRequest, CodeValidation, "Dockerfile required",
+			"binary functions are built from a Dockerfile whose ENTRYPOINT is one static executable inside /app; add a Dockerfile at the source root")
+	case !fromDockerfile && hasDockerfile:
+		return NewProblem(http.StatusBadRequest, CodeValidation, "Dockerfile functions unsupported",
+			"function deploys use the platform runtime scaffold; remove the Dockerfile and dockerfile=true, or use runtime binary to build a compiled executable from it")
+	}
+	return nil
 }
 
 // ValidateExistingAppShape enforces the immutable app class and function

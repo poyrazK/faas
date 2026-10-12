@@ -204,6 +204,9 @@ func writeAppCgroupAt(parent, instance string, plan api.Plan, planMB, cpuMillico
 	return nil
 }
 
+// builderCPUMax is the builder VM cpu.max: two full CPUs.
+const builderCPUMax = "200000 100000"
+
 // writeBuildCgroup applies the dedicated builder VM fence. Build VMs are
 // fixed at 2 vCPU / 2048 MiB by the build contract, so their CPU quota is
 // independent of the owning account's tenant plan quota.
@@ -218,7 +221,7 @@ func writeBuildCgroup(instance string, planMB int) error {
 	if err := writeMemoryMaxAt(scope, api.BuilderMemoryMaxMB(planMB)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("200000 100000\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte(builderCPUMax+"\n"), 0o644); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("fcvm: cgroup: builder scope %s missing: %w", scope, err)
 		}
@@ -250,6 +253,17 @@ func writeMemoryMaxTo(scope string, planMB int) error {
 	return writeMemoryMaxAt(scope, api.BillableRAMMB(planMB))
 }
 
+// snapshotMemoryLimits returns the VM scope with its ordinary memory.max and
+// the widened limit used while a full snapshot is written, both in MiB.
+func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
+	if l.IsBuilder {
+		return filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance)),
+			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
+	}
+	return filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance)),
+		api.BillableRAMMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
+}
+
 // widenSnapshotMemoryCgroup temporarily raises the VM's host-side memory.max
 // while Firecracker materialises a full snapshot. A normal app VM needs
 // bookkeeping and copy-on-write headroom. A builder needs room for a second
@@ -265,14 +279,7 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 		return func() error { return nil }, nil
 	}
 
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
-	original := api.BillableRAMMB(l.MemoryMaxMiB)
-	snapshotLimit := api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
-	if l.IsBuilder {
-		scope = filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance))
-		original = api.BuilderMemoryMaxMB(l.MemoryMaxMiB)
-		snapshotLimit = api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
-	}
+	scope, original, snapshotLimit := snapshotMemoryLimits(l)
 	// An instance created before the controllers were enabled has no
 	// memory.max at all. Repair the parent first so a pre-existing VM can
 	// still be migrated rather than pinning its node forever.
@@ -291,6 +298,26 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 	}, nil
 }
 
+// appCPUMax returns the cpu.max value ("<quota> <period>") for an app VM.
+func appCPUMax(plan api.Plan, cpuMillicores int) (string, error) {
+	quota := plan.CPUQuotaUS()
+	period := plan.CPUPeriodUS()
+	if quota <= 0 || period <= 0 {
+		// Fail closed: a missing quota is a missing-row plan,
+		// which Manager.Wake rejected upstream. The check here
+		// is defence-in-depth so a future caller that bypasses
+		// Manager.Wake doesn't silently emit an unbounded slice.
+		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
+	}
+	if cpuMillicores > 0 {
+		if !api.ValidAppCPUMillicores(cpuMillicores) {
+			return "", fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", cpuMillicores)
+		}
+		quota = cpuMillicores * period / 1000
+	}
+	return fmt.Sprintf("%d %d", quota, period), nil
+}
+
 // writeAppCPUMaxTo writes cpu.max (in microseconds) into the given
 // fully-resolved scope path. Idempotent. Same Newline-terminated
 // format as systemd-run — matches the kernel parser's expectation.
@@ -300,24 +327,12 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 // (an unconstrained slice); we validate the plan above so this
 // branch is unreachable in production.
 func writeAppCPUMaxTo(scope string, plan api.Plan, cpuMillicores int) error {
-	quota := plan.CPUQuotaUS()
-	period := plan.CPUPeriodUS()
-	if quota <= 0 || period <= 0 {
-		// Fail closed: a missing quota is a missing-row plan,
-		// which Manager.Wake rejected upstream. The check here
-		// is defence-in-depth so a future caller that bypasses
-		// Manager.Wake doesn't silently emit an unbounded slice.
-		return fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
-	}
-	if cpuMillicores > 0 {
-		if !api.ValidAppCPUMillicores(cpuMillicores) {
-			return fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", cpuMillicores)
-		}
-		quota = cpuMillicores * period / 1000
+	value, err := appCPUMax(plan, cpuMillicores)
+	if err != nil {
+		return err
 	}
 	path := filepath.Join(scope, "cpu.max")
-	body := fmt.Sprintf("%d %d\n", quota, period)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(value+"\n"), 0o644); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("fcvm: cgroup: scope %s missing (jailer did not create it): %w", scope, err)
 		}

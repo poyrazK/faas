@@ -103,6 +103,7 @@ const (
 var EnvContract = []EnvVar{
 	{Name: "FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
+	{Name: "FAAS_AI_GATEWAY_ENABLED", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Validate: EnvValidationInt, Note: "optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off)"},
 	{Name: "FAAS_ALERT_EVAL_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ADVISORY_SOCK", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_APID_APP_ERRORS_SOCKET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
@@ -647,6 +648,10 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_LISTEN_ADDR", Owners: []string{"vmmd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts"},
 	{Name: "FAAS_VMMD_NODE_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "split-box app outbound relay (ADR-989); vmmd_service 99-faas-outbound-relay.conf"},
+	{Name: "FAAS_VMMD_OUTBOUND_CLIENT_TLS_CERT_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "node-identity vmmd/outboundd-client leaf (ADR-989)"},
+	{Name: "FAAS_VMMD_OUTBOUND_CLIENT_TLS_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "node-identity vmmd/outboundd-client leaf (ADR-989)"},
+	{Name: "FAAS_VMMD_OUTBOUND_RELAY_TARGET", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-989)"},
 	{Name: "FAAS_VMMD_RAW_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_RESOURCE_JOURNAL_DIR", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it)"},
 	{Name: "FAAS_VMMD_ROLE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin},

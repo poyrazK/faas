@@ -92,6 +92,12 @@ type JailerVMM struct {
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
 
+	// fences records the cgroup fence written for each live VM so
+	// RepairCgroupFences can restore it (cgroup_fence.go). fenceMu is never
+	// held while acquiring mu.
+	fenceMu sync.Mutex
+	fences  map[string]*cgroupFence
+
 	mu              sync.Mutex
 	resourceJournal *ResourceJournal
 	ownedJails      map[string][]resourceAsset // live owner only; never reconstructed from storage
@@ -390,7 +396,7 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) || guestInitStageLine(line) {
+		if firecrackerControlLine(line) || guestInitStageLine(line) || benignGuestKernelLine(line) {
 			continue
 		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
@@ -406,6 +412,21 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 // guest-init's app restart and crash lines stay customer-visible.
 func guestInitStageLine(line []byte) bool {
 	return bytes.HasPrefix(bytes.TrimSpace(line), []byte("guest-init: stage "))
+}
+
+// benignGuestKernelLine matches kernel messages every guest prints that only
+// describe Gregale's VM shape. The guest kernel needs CONFIG_PCI to parse
+// Firecracker's ACPI tables, but Firecracker runs without its PCI transport,
+// so pci_arch_init reports the missing config space at KERN_ERR on every boot
+// (ADR-983). The unfiltered console file keeps it for operators.
+func benignGuestKernelLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	if strings.HasPrefix(text, "[") {
+		if end := strings.IndexByte(text, ']'); end >= 0 {
+			text = strings.TrimSpace(text[end+1:])
+		}
+	}
+	return text == "PCI: Fatal: No config space access function found"
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -446,6 +467,12 @@ func firecrackerControlLine(line []byte) bool {
 		if strings.Contains(header, origin) {
 			return true
 		}
+	}
+	// vCPU threads log as "[instance:fc_vcpu N]": resume bookkeeping and the
+	// guest port I/O Firecracker does not emulate, such as the PCI probes a
+	// Firecracker 1.17 guest makes at boot.
+	if strings.Contains(header, ":fc_vcpu ") {
+		return true
 	}
 	// The :main origin carries both Firecracker startup/restore diagnostics and
 	// guest serial output. Keep the latter unless the message contains a
@@ -1502,9 +1529,12 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
 			return err
 		}
-		return nil
+		return v.trackCgroupFence(l)
 	}
 	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
+		return err
+	}
+	if err := v.trackCgroupFence(l); err != nil {
 		return err
 	}
 	// Firecracker is the only host process for every workload in the guest.
@@ -1526,7 +1556,13 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
 	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	value, err := appCPUMax(l.Plan, configuredMillicores)
+	if err != nil {
+		return err
+	}
+	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
 	if err := writeAppCPUMaxTo(parentScope, l.Plan, configuredMillicores); err != nil {
+		revert()
 		return err
 	}
 	_ = workloads
@@ -1551,10 +1587,17 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
+	value, err := appCPUMax(l.Plan, cpuMillicores)
+	if err != nil {
+		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
 	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
 	// Only disarm the startup tail after the live write succeeds. If the
@@ -2128,6 +2171,10 @@ const (
 	// requests from the guest metadata endpoint. The listener is bound per
 	// instance, so the stream itself supplies the app/account identity.
 	VsockRuntimeConfigHostPort uint32 = 1031
+	// VsockOutboundRelayHostPort carries an app's HTTP bytes for managed
+	// outbound integrations (ADR-989). vmmd splices them to outboundd after a
+	// relay assertion for the instance bound to this listener.
+	VsockOutboundRelayHostPort uint32 = 1032
 )
 
 // GuestVsockStreamHandler handles one guest-initiated stream. The instance is
@@ -3112,7 +3159,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
 	}
-	restoreSnapshotLimit, snapshotErr := widenSnapshotMemoryCgroup(l)
+	restoreSnapshotLimit, snapshotErr := v.widenSnapshotFence(l)
 	if snapshotErr != nil {
 		return SnapshotInfo{}, snapshotErr
 	}
@@ -3591,6 +3638,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
 	}
+	v.untrackCgroupFence(l.Instance)
 	v.mu.Lock()
 	delete(v.proc, l.Instance)
 	delete(v.recs, l.Instance)

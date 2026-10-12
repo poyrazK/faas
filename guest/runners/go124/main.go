@@ -31,7 +31,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
+
+// reportedRuntime is the runtime this runner reports in telemetry, to the
+// restore barrier and to the handler (FAAS_RUNTIME). go124-alpine reports as
+// go124, as before; binary keeps its own identity (ADR-987).
+var reportedRuntime = "go124"
 
 type envelope struct {
 	Method  string            `json:"method"`
@@ -75,14 +81,49 @@ type response struct {
 }
 
 func main() {
-	runtime := flag.String("runtime", "go124", "runtime id (informational)")
+	runtime := flag.String("runtime", "go124", "runtime id: go124, go124-alpine or binary")
 	handlerPath := flag.String("handler", "/app/handler", "path to customer handler binary")
 	flag.Parse()
-	if *runtime != "go124" {
-		log.Printf("warning: --runtime=%s ignored; only go124 is supported by this binary", *runtime)
+	switch *runtime {
+	case "binary":
+		// ADR-987: the binary runtime shares this runner and reports its
+		// own identity in telemetry and to the handler.
+		reportedRuntime = "binary"
+	case "go124", "go124-alpine":
+	default:
+		log.Printf("warning: --runtime=%s ignored; this runner serves go124, go124-alpine and binary", *runtime)
 	}
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("go124 runner: handler not found at %s: %v", *handlerPath, err)
+	}
+	// Handlers built on the persistent protocol stay alive between
+	// requests. Starting one here puts the initialized process into the
+	// init snapshot, so a restored VM skips process start and the
+	// handler's own setup on its first request.
+	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
+	persistent, err := workerpool.PrewarmIfSupported(prewarmCtx, handlerSpec(*handlerPath))
+	if err != nil {
+		log.Printf("go124 runner: handler prewarm unavailable: %v", err)
+	}
+	cancelPrewarm()
+	if persistent {
+		// A restored handler would resume with the in-process random state
+		// it held at capture, shared with every sibling restored from the
+		// same snapshot (GHSA-24j2-p895-mwc9, ADR-687). Compiled handlers
+		// have no reseed preload, so on every resume the runner replaces
+		// them before the instance serves traffic; a Go process starts in
+		// milliseconds, and the replacement starts in the background.
+		internal.RegisterRestoreRecycle(reportedRuntime, func() error {
+			workerpool.Recycle()
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, err := workerpool.PrewarmIfSupported(ctx, handlerSpec(*handlerPath)); err != nil {
+					log.Printf("go124 runner: handler restart after restore: %v", err)
+				}
+			}()
+			return nil
+		})
 	}
 
 	// Issue #667 / ADR-078 (PR 3): read the per-request tail
@@ -102,7 +143,7 @@ func main() {
 	})
 	// Issue #470 / PR #470-FU-B: framework_ready signal fires once
 	// per wake when the runner's first non-5xx response lands.
-	signal := internal.NewRunnerSignal("go124", time.Now())
+	signal := internal.NewRunnerSignal(reportedRuntime, time.Now())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath)
 	})
@@ -156,7 +197,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	started := time.Now()
 	resp, processUsage, err := invokeHandler(r.Context(), handlerPath, env)
 	if err != nil {
-		internal.ObserveGuestExecution(r.Context(), "go124", started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
+		internal.ObserveGuestExecution(r.Context(), reportedRuntime, started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
 		log.Printf("go124 runner: handler error: %v", err)
 		internal.WriteHandlerFailure(w, r, err)
 		return
@@ -164,7 +205,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}
-	evidence := internal.ObserveGuestExecution(r.Context(), "go124", started, resp.Status, nil).WithProcessUsage(processUsage)
+	evidence := internal.ObserveGuestExecution(r.Context(), reportedRuntime, started, resp.Status, nil).WithProcessUsage(processUsage)
 	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
 	// writing the response. The drain runs AFTER invokeHandler
 	// returns (the handler has already written to the JSONL
@@ -192,15 +233,33 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	}
 }
 
-// invokeHandler spawns the customer's static Go binary at handlerPath
-// and pipes the request envelope over stdin; reads the response
-// envelope from stdout.
+// handlerSpec describes the customer's binary to the worker pool. The
+// binary is executed directly; its persistent-protocol marker sits in
+// the compiled data section, so the pool scans the whole file.
+func handlerSpec(handlerPath string) workerpool.Spec {
+	return workerpool.Spec{
+		Executable:     handlerPath,
+		Env:            append(os.Environ(), "FAAS_RUNTIME="+reportedRuntime),
+		HandlerPath:    handlerPath,
+		MarkerAnywhere: true,
+	}
+}
+
+// invokeHandler sends the request envelope to the customer's static Go
+// binary at handlerPath. Binaries that speak the persistent protocol are
+// served by a reused worker; others are spawned once per request with
+// the envelope on stdin and the response envelope read from stdout.
 func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, internal.GuestProcessUsage, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	spec := handlerSpec(handlerPath)
+	var pooled response
+	if handled, err := workerpool.InvokeIfSupported(timeoutCtx, spec, env, &pooled); handled {
+		return pooled, internal.GuestProcessUsage{}, err
+	}
 
 	cmd := exec.CommandContext(timeoutCtx, handlerPath)
-	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=go124")
+	cmd.Env = spec.Env
 
 	var stdin bytes.Buffer
 	if err := json.NewEncoder(&stdin).Encode(env); err != nil {

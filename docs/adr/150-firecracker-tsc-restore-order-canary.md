@@ -1,6 +1,6 @@
 # ADR-150 · Correct timer register restore order in the SSD canary
 
-- **Status:** accepted for the GCP SSD test canary; fleet release pending validation.
+- **Status:** superseded by [ADR-983](983-firecracker-1-17-and-guest-kernel-6-18.md); upstream fixed the ordering in Firecracker 1.8.
 - **Date:** 2026-09-05
 - **Scope:** temporary exception to the upstream binary pin in ADR-005. The
   Firecracker snapshot format and reported compatibility version remain 1.7.0.

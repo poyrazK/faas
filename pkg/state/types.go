@@ -1187,7 +1187,7 @@ type App struct {
 	// internal apps are reachable only through authenticated service routing.
 	Visibility     api.AppVisibility
 	Type           AppType
-	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
+	Runtime        string // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB          int
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
@@ -3713,6 +3713,7 @@ const (
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
 	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventOutboundAIBudgetThreshold        AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
@@ -3780,6 +3781,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventOutboundAIBudgetThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,

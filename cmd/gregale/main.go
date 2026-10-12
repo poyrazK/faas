@@ -475,6 +475,9 @@ func run(args []string) (status int) {
 		// list|set|rm dispatcher shape; cmdRegistry lives in
 		// commands_registry.go.
 		return cmdRegistry(args[1:])
+	case "ai":
+		// ADR-988/989/990/991 — AI gateway settings, prices, usage and routes.
+		return cmdAI(args[1:])
 	case "webhooks":
 		// Issue #476 / ADR-076 — outbound webhook subscriptions
 		// and delivery ledger. Mirrors the crons surface (list /

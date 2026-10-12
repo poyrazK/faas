@@ -5542,10 +5542,13 @@ type OrgMembership struct {
 }
 
 type OutboundAdmissionLease struct {
-	LeaseID       pgtype.UUID
-	IntegrationID pgtype.UUID
-	ExpiresAt     pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	LeaseID                  pgtype.UUID
+	IntegrationID            pgtype.UUID
+	ExpiresAt                pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	BindingAppID             pgtype.UUID
+	AiReservedTokens         int64
+	AiReservedCostMillicents int64
 }
 
 type OutboundAdmissionState struct {
@@ -5564,6 +5567,90 @@ type OutboundAdmissionState struct {
 	RetryBudgetPolicyPerMinute     int32
 	ProviderCooldownUntil          pgtype.Timestamptz
 	ProviderCooldownPolicyRevision int64
+	DailyAiTokenCount              int64
+	DailyAiCostMillicents          int64
+	MonthlyUsageMonth              pgtype.Date
+	MonthlyAiCostMillicents        int64
+}
+
+type OutboundAiBudgetAlert struct {
+	ID               pgtype.UUID
+	IntegrationID    pgtype.UUID
+	AccountID        pgtype.UUID
+	Budget           string
+	AppID            pgtype.UUID
+	PeriodStart      pgtype.Date
+	ThresholdPercent int16
+	LimitValue       int64
+	UsedValue        int64
+	CrossedAt        pgtype.Timestamptz
+}
+
+type OutboundAiPriceEntry struct {
+	PriceListID                  pgtype.UUID
+	ModelPrefix                  string
+	InputMillicentsPerMtok       int64
+	CachedInputMillicentsPerMtok pgtype.Int8
+	CacheWriteMillicentsPerMtok  pgtype.Int8
+	OutputMillicentsPerMtok      int64
+}
+
+type OutboundAiPriceList struct {
+	ID            pgtype.UUID
+	IntegrationID pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiRequestLog struct {
+	ID                pgtype.UUID
+	IntegrationID     pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	Caller            string
+	RouteID           pgtype.UUID
+	Model             string
+	Status            int16
+	Outcome           string
+	InputTokens       int64
+	CachedInputTokens int64
+	CacheWriteTokens  int64
+	OutputTokens      int64
+	CostMillicents    int64
+	DurationMs        int32
+	TtfbMs            pgtype.Int4
+	Attempts          int16
+}
+
+type OutboundAiRoute struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	Format    string
+}
+
+type OutboundAiRouteTarget struct {
+	RouteID       pgtype.UUID
+	Position      int16
+	IntegrationID pgtype.UUID
+	Model         pgtype.Text
+}
+
+type OutboundAiUsageDaily struct {
+	IntegrationID        pgtype.UUID
+	UsageDate            pgtype.Date
+	Caller               string
+	Model                string
+	Requests             int64
+	ErrorRequests        int64
+	UsageUnknownRequests int64
+	InputTokens          int64
+	CachedInputTokens    int64
+	CacheWriteTokens     int64
+	OutputTokens         int64
+	UpdatedAt            pgtype.Timestamptz
+	CostMillicents       int64
 }
 
 type OutboundAppBinding struct {
@@ -5574,13 +5661,22 @@ type OutboundAppBinding struct {
 	AllowedMethods      []string
 	AllowedPathPrefixes []string
 	DailyRequestLimit   pgtype.Int8
+	AiDailyTokenLimit   pgtype.Int8
+	AiRequestsPerMinute pgtype.Int4
+	AiTokensPerMinute   pgtype.Int8
+	AiAllowedModels     []string
+	AiMaxOutputTokens   pgtype.Int4
 }
 
 type OutboundAppBindingUsage struct {
-	IntegrationID     pgtype.UUID
-	AppID             pgtype.UUID
-	DailyUsageDate    pgtype.Date
-	DailyRequestCount int64
+	IntegrationID      pgtype.UUID
+	AppID              pgtype.UUID
+	DailyUsageDate     pgtype.Date
+	DailyRequestCount  int64
+	DailyAiTokenCount  int64
+	MinuteWindowStart  pgtype.Timestamptz
+	MinuteRequestCount int32
+	MinuteAiTokenCount int64
 }
 
 type OutboundIntegration struct {
@@ -5608,6 +5704,11 @@ type OutboundIntegration struct {
 	RetryBudgetPerMinute           int32
 	ResponseCacheTtlSeconds        int32
 	RunsEnabled                    bool
+	AiProvider                     pgtype.Text
+	AiDailyTokenLimit              pgtype.Int8
+	AiDailyCostLimitMillicents     pgtype.Int8
+	AiMonthlyCostLimitMillicents   pgtype.Int8
+	AiRequestLogEnabled            bool
 }
 
 type OutboundIntegrationApp struct {
@@ -5621,6 +5722,15 @@ type OutboundIntegrationCredential struct {
 	AccountID           pgtype.UUID
 	AuthorizationSealed []byte
 	UpdatedAt           pgtype.Timestamptz
+}
+
+type OutboundIntegrationCredentialKey struct {
+	ID                  pgtype.UUID
+	IntegrationID       pgtype.UUID
+	AccountID           pgtype.UUID
+	Label               string
+	AuthorizationSealed []byte
+	CreatedAt           pgtype.Timestamptz
 }
 
 type OutboundIntegrationProbePolicy struct {

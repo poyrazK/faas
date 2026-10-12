@@ -46,10 +46,12 @@ faas_pgbouncer_listen_port: 6432
 # explicit even though both lists are currently derived from the same fleet.
 faas_compute_allowed_cidrs: []
 # Control-plane TCP services reached by compute nodes. AppErrors uses
-# 9093 and githubd branch freshness uses 50053; older inventories can
-# override this list explicitly while single-box hosts leave the CIDR list empty.
+# 9093, the ADR-989 outboundd app relay uses 8096 and githubd branch
+# freshness uses 50053; older inventories can override this list explicitly
+# while single-box hosts leave the CIDR list empty.
 faas_compute_allowed_ports:
   - 8081
+  - 8096
   - 9091
   - 9093
   - 50053

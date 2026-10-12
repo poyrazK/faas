@@ -699,6 +699,52 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
+// AI gateway bounds on outbound integrations (ADR-988). The token limit is a
+// structural bound on a customer-selected spend guard for the customer's own
+// provider key, not a plan allowance. Usage rows are UTC-day rollups; the
+// model cap stops a customer-chosen origin from inflating them.
+const (
+	MaxOutboundAITokensPerDay        int64 = 100_000_000_000
+	OutboundAIUsageRetentionDays           = 90
+	OutboundAIUsageModelsPerDay            = 32
+	OutboundAIModelNameMaxBytes            = 128
+	OutboundAIUsageJSONParseMaxBytes       = 1 << 20
+	OutboundAIUsageEventMaxBytes           = 256 << 10
+	// OutboundAIMaxTokensPerResponse clamps each provider-reported count so
+	// a misbehaving origin cannot overflow the daily rollup counters.
+	OutboundAIMaxTokensPerResponse int64 = 1_000_000_000
+	// OutboundAIRequestBufferMaxBytes bounds the AI POST body the gateway
+	// keeps for retries, exact-match caching and route fallback (ADR-990).
+	// Larger bodies stream unbuffered without those features.
+	OutboundAIRequestBufferMaxBytes int64 = 4 << 20
+	// Customer price lists and cost budgets (ADR-990). Prices are millicents
+	// per million tokens; cost limits are millicents per UTC day or month.
+	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
+	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
+	OutboundAIPriceEntriesMax                 = 64
+	// AI fallback routes (ADR-990).
+	OutboundAIRouteTargetsMax     = 5
+	MaxOutboundAIRoutesPerAccount = 25
+	// Admission-time reservations (ADR-991): the output reserve when a call
+	// names no output ceiling, and the bytes per estimated input token.
+	OutboundAIDefaultOutputReserveTokens int64 = 4096
+	OutboundAIReserveBytesPerToken       int64 = 4
+	// Per-app AI guardrails on a binding (ADR-991).
+	MaxOutboundAIRequestsPerMinute       = 100_000
+	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
+	MaxOutboundAIMaxOutputTokens         = 1_000_000
+	OutboundAIAllowedModelsMax           = 32
+	// Extra sealed provider keys per integration (ADR-991) and the local
+	// cooldown a key gets after a 429 without Retry-After.
+	OutboundIntegrationCredentialKeysMax        = 8
+	OutboundCredentialKeyDefaultCooldownSeconds = 30
+	OutboundAIRequestLogRetentionDays           = 7
+	OutboundAIRequestLogPageMax                 = 200
+	OutboundAIBudgetAlertsPageMax               = 100
+	OutboundAIBudgetAlertWarnPercent            = 80
+	OutboundAIBudgetAlertFullPercent            = 100
+)
+
 // Operator-only managed realtime resume preview safety bounds. These are not
 // plan entitlements or a billing allowance; product limits are decided before
 // the preview is promoted.
@@ -5195,6 +5241,11 @@ const (
 	// no higher than plan default × this multiplier.
 	IdleTimeoutFloorSeconds = 10
 	IdleTimeoutMaxMultiple  = 2
+	// FunctionIdleTimeoutDefaultSeconds is the default idle timeout for
+	// type=function apps on every plan (ADR-974). Parking a function whose
+	// init snapshot already exists only destroys the VM, so functions park
+	// sooner than apps; an explicit idle_timeout_s still applies.
+	FunctionIdleTimeoutDefaultSeconds = 30
 
 	// Liveness probe (issue #554 / ADR-078). The host (cmd/vmmd) polls
 	// the guest's vsock 1028 STREAM on every Period; after N
@@ -8428,6 +8479,17 @@ func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
 	return IdleTimeoutFloorSeconds, l.IdleTimeoutS * IdleTimeoutMaxMultiple
 }
 
+// DefaultIdleTimeoutS is the idle timeout an app gets when it has not
+// configured one: the plan default for apps, and at most
+// FunctionIdleTimeoutDefaultSeconds for functions (ADR-974). The configurable
+// bounds stay those of IdleTimeoutBounds for both types.
+func (l Limits) DefaultIdleTimeoutS(appType string) int {
+	if appType == "function" {
+		return min(l.IdleTimeoutS, FunctionIdleTimeoutDefaultSeconds)
+	}
+	return l.IdleTimeoutS
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -9757,6 +9819,11 @@ const (
 	DataAPIMaxRelations       = 1000
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
+
+	// Data API diagnostics is a bounded CLI analysis of retained request logs,
+	// not a plan quota or a change to runtime log retention.
+	DataAPIDiagnosticsMaxBytes   = 16 << 20
+	DataAPIDiagnosticsMaxRecords = 100000
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

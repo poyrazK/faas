@@ -3000,15 +3000,13 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	limit := app.MaxConcurrency
-	if limit <= 0 {
-		if planLimits, found := api.LimitsFor(acct.Plan); found {
-			limit = planLimits.MaxConcurrency
-		}
-	}
-	if limit <= 0 {
-		limit = 1
-	}
+	// The live set is not bounded by the app's current max_concurrency: a
+	// lowered cap leaves running instances until the reaper parks them, and
+	// a rollout overlap adds RolloutConcurrencyGrant. Capping the listing at
+	// max_concurrency hid running, billed instances from `gregale ps`
+	// (production-us hunt #9, H9-79). Only live rows match, so the history
+	// bound is ample.
+	limit := api.DefaultInstanceHistoryLimit
 	var instances []state.Instance
 	var err error
 	if r.URL.Query().Get("history") == "true" {

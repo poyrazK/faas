@@ -1148,6 +1148,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
 	}
 
+	// §11: restore any per-VM cgroup fence reset outside vmmd.
+	go runCgroupFenceRepair(ctx, log, jailer, cgroupFenceRepairInterval)
+
 	// Orphan sweep — schedule via a context-bound goroutine that
 	// exits cleanly on ctx.Done. Mirrors the schedd watchdog tick
 	// pattern (1s tick + KillStuck), adapted to the configurable
@@ -1344,6 +1347,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer identityRecv.Close()
 	}
+	// ADR-989: apps reach managed outbound integrations through a loopback
+	// relay. An unset target, or one whose mTLS material is missing (for
+	// example before the outboundd-client leaf is issued), leaves the relay
+	// closed instead of failing VM hosting; plaintext TCP is never used.
+	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
+	if relayTargetErr != nil {
+		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		relayDial = nil
+	}
+	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)
+	if relayRecvErr != nil {
+		log.Warn("vmmd: outbound relay receiver unavailable", "err", relayRecvErr, "goos", runtime.GOOS)
+	} else {
+		defer relayRecv.Close()
+	}
+	// ADR-990: Runs stream through the relay only when this vmmd serves it.
+	mgr.SetOutboundRelayEnabled(relayRecvErr == nil && relayDial != nil && identitySigner != nil)
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
 	// for the deployment/app/account attached to the Firecracker stream.
