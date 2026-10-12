@@ -26,6 +26,7 @@
     {"path": "deployments", "source": "docs/deploys.md"},
     {"path": "deploys", "source": "docs/deploys.md"},
     {"path": "dev", "source": "docs/gregale-dev.md"},
+    {"path": "durable-entity-development", "source": "docs/durable-entity-development.md"},
     {"path": "domains", "source": "docs/domains.md"},
     {"path": "dpa", "source": "docs/DPA.md"},
     {"path": "dpa/subprocessors", "source": "docs/compliance/subprocessors.md"},
