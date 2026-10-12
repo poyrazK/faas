@@ -4280,11 +4280,14 @@ CREATE FUNCTION public.apps_streaming_plan_app_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF NEW.streaming_enabled THEN
+    IF NEW.streaming_enabled
+       AND (TG_OP = 'INSERT'
+            OR NOT OLD.streaming_enabled
+            OR OLD.account_id IS DISTINCT FROM NEW.account_id) THEN
         PERFORM 1
           FROM accounts
          WHERE id = NEW.account_id
-         FOR UPDATE;
+         FOR NO KEY UPDATE;
     END IF;
     RETURN NEW;
 END;

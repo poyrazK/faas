@@ -297,6 +297,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` | shared | `default` |  |  | `` | optional comma-separated exact account IDs eligible for managed PostgreSQL staging provisioning; malformed or oversized lists fail closed |
 | `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` |  |  | `` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
+| `FAAS_MANAGED_POSTGRES_GUEST_QUALIFICATION_PATH` | shared | `default` |  |  | `` | optional operator-owned native guest report path; supplying this path requires combined PostgreSQL staging qualification and the approved runtime manifest; reload requires an apid restart (ADR-992) |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` |  |  | `` | legacy explicit staging-only provider qualification approval; used only when no approval artifact path is configured, and provisioning stays disabled unless true and the remaining qualification gates match |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | legacy exact managed PostgreSQL backend ID; used by the fallback env gate when no approval artifact path is configured |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | legacy exact non-secret backend fingerprint; used by the fallback env gate when no approval artifact path is configured |
@@ -304,6 +305,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION` | shared | `default` |  |  | `` | legacy exact qualification artifact version; mismatched or omitted versions fail the fallback staging gate closed |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify and, when configured, apid's authoritative staging provisioning gate; reload requires an apid restart |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
+| `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION` | shared | `default` |  |  | `` | optional staging-canary requirement for combined provider/durable and native guest evidence; unset defaults false, malformed or partial policy fails closed, and production admission remains disabled (ADR-992) |
+| `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"hash"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,6 +37,14 @@ import (
 // already holds. When every file it would write is already there, exactly as
 // its own write would leave it, it writes nothing and records the capture, so
 // later restores of it skip the mount.
+//
+// env.json carries the placement identity schedd appends on every wake
+// (FAAS_INSTANCE_ID, FAAS_NODE_ID). Every restore is a new instance, so a
+// byte-exact comparison never matched: production mounted on 100% of
+// restores. The digest and the on-drive check therefore ignore those keys.
+// A skipped restore keeps the captured instance's identity on the drive,
+// which is the environment the restored processes already hold; guest-init
+// reads env.json only at boot, and app tasks never restore.
 
 // preBootLedgerMaxCaptures bounds the capture map; each entry is two short
 // strings, so the worst case is well under a MiB of vmmd heap.
@@ -165,14 +175,14 @@ func preBootFilesPresent(mountRoot string, writers []preBootFileWriter) bool {
 			return false
 		}
 		rel, err := filepath.Rel(mountRoot, target)
-		if err != nil || !preBootFilePresent(root, rel, w.want, w.mode) {
+		if err != nil || !preBootFilePresent(root, rel, w.want, w.mode, w.same) {
 			return false
 		}
 	}
 	return true
 }
 
-func preBootFilePresent(root *os.Root, rel string, want []byte, mode os.FileMode) bool {
+func preBootFilePresent(root *os.Root, rel string, want []byte, mode os.FileMode, same func([]byte) bool) bool {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	for i := range parts {
 		info, err := root.Lstat(filepath.Join(parts[:i+1]...))
@@ -183,7 +193,7 @@ func preBootFilePresent(root *os.Root, rel string, want []byte, mode os.FileMode
 			return false
 		}
 		if i == len(parts)-1 && (!info.Mode().IsRegular() || info.Mode().Perm() != mode.Perm() ||
-			info.Size() != int64(len(want)) || !ownedBySelf(info)) {
+			(same == nil && info.Size() != int64(len(want))) || !ownedBySelf(info)) {
 			return false
 		}
 	}
@@ -192,8 +202,33 @@ func preBootFilePresent(root *os.Root, rel string, want []byte, mode os.FileMode
 		return false
 	}
 	defer func() { _ = f.Close() }()
+	if same != nil {
+		got, err := io.ReadAll(io.LimitReader(f, preBootSameMaxBytes+1))
+		return err == nil && len(got) <= preBootSameMaxBytes && same(got)
+	}
 	got, err := io.ReadAll(io.LimitReader(f, int64(len(want))+1))
 	return err == nil && bytes.Equal(got, want)
+}
+
+// preBootSameMaxBytes bounds how much of a tenant-writable file a custom
+// comparison reads.
+const preBootSameMaxBytes = 4 << 20
+
+// placementVolatileEnvKeys are the platform identity keys whose values
+// change with every placement of the same capture.
+var placementVolatileEnvKeys = []string{api.PlatformInstanceIDEnv, api.PlatformNodeIDEnv}
+
+// placementStableAPIEnv is env.json without the placement identity, in a
+// canonical form.
+func placementStableAPIEnv(blob []byte) ([]byte, error) {
+	var env map[string]string
+	if err := json.Unmarshal(blob, &env); err != nil {
+		return nil, err
+	}
+	for _, key := range placementVolatileEnvKeys {
+		delete(env, key)
+	}
+	return json.Marshal(env)
 }
 
 // ownedBySelf: a file this process creates is owned by its effective uid,

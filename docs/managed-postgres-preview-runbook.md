@@ -206,7 +206,12 @@ malformed entries and never blocks database deletion or credential revocation.
 
 - `managed_postgres_usage_stale`: stop new reservations, verify the provider
   usage API and the usage collector logs, then wait for a complete window. Do
-  not bypass the gate by raising a plan limit.
+  not bypass the gate by raising a plan limit. Deleting a database also holds
+  the gate for its account until the final usage correction lands (the final
+  window end plus three collection windows); `gregale postgres diagnostics`
+  shows the deleted database's `final_correction` time. Requests for a region
+  without a backend or an unsupported major fail as
+  `managed_postgres_unsupported` before this gate.
 - `managed_postgres_quota_exceeded`: inspect the account's plan allowance and
   the operator usage policy. A plan storage ceiling is an entitlement; the
   monthly compute, history, egress, and spend ceilings are COGS safeguards.

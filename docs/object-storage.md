@@ -1659,7 +1659,9 @@ version listing for Enabled marker preparation and recovery. See the
 and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html).
 
 S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
-invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
+invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
+ID after signing, so an unsigned one is ignored and that delete receives a
+generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
 Enabled deletion returns an owned marker version ID. A dispatched uncertain
 intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact

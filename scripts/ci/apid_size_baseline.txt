@@ -1,3 +1,4 @@
-# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
+# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-982).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-154856
+# PR #4238 adds the application standards management and rollout handlers.
+157203

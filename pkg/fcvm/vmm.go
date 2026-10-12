@@ -1301,6 +1301,9 @@ type preBootFileWriter struct {
 	path  string
 	want  []byte
 	mode  os.FileMode
+	// same, when set, decides whether a file already on the drive is as
+	// good as writing want; otherwise it must equal want byte for byte.
+	same func(got []byte) bool
 }
 
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
@@ -1318,10 +1321,19 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}, path: secretsEnvPath, want: secretsEnvJSON, mode: 0o400})
 	}
 	if len(apiEnvJSON) > 0 {
-		digest.add("env.json", apiEnvJSON)
-		writers = append(writers, preBootFileWriter{what: "stage env.json", write: func(mp string) error {
+		writer := preBootFileWriter{what: "stage env.json", write: func(mp string) error {
 			return writeAPIEnv(mp, apiEnvJSON)
-		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400})
+		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400}
+		if stable, err := placementStableAPIEnv(apiEnvJSON); err == nil {
+			digest.add("env.json", stable)
+			writer.same = func(got []byte) bool {
+				onDrive, err := placementStableAPIEnv(got)
+				return err == nil && bytes.Equal(onDrive, stable)
+			}
+		} else {
+			digest.add("env.json", apiEnvJSON)
+		}
+		writers = append(writers, writer)
 	}
 	if strings.TrimSpace(serviceDiscoveryIP) != "" {
 		ip, err := parseServiceDiscoveryIP(serviceDiscoveryIP)
