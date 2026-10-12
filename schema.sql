@@ -17429,6 +17429,9 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     outcome_only boolean DEFAULT false NOT NULL,
     depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     dependencies_only boolean DEFAULT false NOT NULL,
+    selected_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    change_reason jsonb DEFAULT 'null'::jsonb NOT NULL CONSTRAINT customer_operation_workflow_change_reason_check CHECK (jsonb_typeof(change_reason) IN ('object','null')),
+    CONSTRAINT customer_operation_workflow_selected_paths_check CHECK (((jsonb_typeof(selected_paths) = 'array'::text) AND (jsonb_array_length(selected_paths) <= 8))),
     CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
     CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
     CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
@@ -54663,3 +54666,38 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+CREATE TABLE public.customer_workflow_readiness_subscriptions (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ tenant_id uuid REFERENCES public.platform_tenants(id) ON DELETE CASCADE,
+ operator boolean NOT NULL,
+ scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 40 AND scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
+ payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ next_evaluation_at timestamptz NOT NULL,
+ lease_token uuid,
+ lease_until timestamptz,
+ CHECK (operator OR tenant_id IS NOT NULL),
+ CHECK ((lease_token IS NULL) = (lease_until IS NULL))
+);
+CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_workflow_readiness_subscriptions (next_evaluation_at, id);
+CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions (account_id, app_id, operator, scope);
+CREATE TABLE public.customer_workflow_readiness_notifications (
+ subscription_id uuid NOT NULL REFERENCES public.customer_workflow_readiness_subscriptions(id) ON DELETE CASCADE,
+ sequence bigint NOT NULL CHECK (sequence > 0),
+ payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+ PRIMARY KEY (subscription_id, sequence)
+);
+
+CREATE TABLE public.customer_workflow_playbook_progress (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ tenant_id uuid NOT NULL REFERENCES platform_tenants(id) ON DELETE CASCADE,
+ case_key text NOT NULL,
+ revision bigint NOT NULL CHECK (revision > 0),
+ payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object')
+);
+CREATE INDEX customer_workflow_playbook_progress_case ON public.customer_workflow_playbook_progress (account_id, app_id, tenant_id, case_key, id);

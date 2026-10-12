@@ -20,6 +20,10 @@ import (
 	"time"
 )
 
+// Business condition evidence is bounded independently of milestone payload bytes.
+const OperationBusinessConditionsMax = 16
+const OperationBusinessConditionDescriptionMaxBytes = 1024
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
@@ -509,88 +513,107 @@ const (
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
-	OperationJSONMaxDepth                                   = 64
-	OperationJSONMaxNumberBytes                             = 256
-	OperationJSONMaxExponent                                = 10000
-	OperationWorkflowBlockerEscalationsMax                  = 32
-	OperationWorkflowBlockerEscalationMaxSeconds      int64 = 315360000
-	OperationWorkflowBlockerActorMaxBytes                   = 128
-	OperationWorkflowBlockerActionMaxBytes                  = 512
-	OperationWorkflowBlockerImpactMaxBytes                  = 512
-	OperationWorkflowStateSLAMaxSeconds               int64 = 315360000
-	OperationWorkflowStateSLAWarningMinPercent        int64 = 1
-	OperationWorkflowStateSLAWarningMaxPercent        int64 = 99
-	OperationWorkflowPerformanceCohortMax                   = 100
-	OperationWorkflowBottleneckHistoryMax                   = 1024
-	OperationWorkflowBottleneckGroupsMax                    = 32
-	OperationWorkflowResolutionVerificationPreviewMax       = 16
-	OperationNameMaxBytes                                   = 64
-	OperationSubjectIDMaxBytes                              = 256
-	OperationWorkflowInstanceIDMaxBytes                     = 256
-	OperationWorkflowNameMaxBytes                           = 63
-	OperationMilestoneDeclarationsMax                       = 16
-	OperationMilestoneSchemasMaxBytes                       = 16 << 10
-	OperationMilestonePayloadMaxBytes                       = 8 << 10
-	OperationMilestonesMaxPerOperation                      = 64
-	OperationMilestoneBatchMaxBytes                         = 64 << 10
-	OperationWorkflowsMaxPerApp                             = 32
-	OperationWorkflowStepsMax                               = 32
-	OperationWorkflowStepsMaxPerOperation                   = 32
-	OperationWorkflowStatesMax                              = 32
-	OperationWorkflowTransitionsMax                         = 128
-	OperationWorkflowContractVersionMax                     = 1_000_000
-	OperationWorkflowTransitionEvidenceMax                  = 16
-	OperationWorkflowStateEvidenceMax                       = 16
-	OperationWorkflowStateBatchMaxBytes                     = 131072
-	OperationWorkflowStateMaxBytes                          = 64
-	OperationWorkflowStateReportsMaxPerTransaction          = 64
-	OperationWorkflowTitleMaxBytes                          = 128
-	OperationWorkflowLabelMaxBytes                          = 128
-	OperationPathMaxBytes                                   = 2048
-	OperationIdempotencyKeyMaxBytes                         = 128
-	OperationReportIDMaxBytes                               = 128
-	OperationRecoveryEvidenceMaxBytes                       = 4096
-	OperationEventsPageMax                                  = 100
-	OperationDeliveryRetryMaxBytes                          = 4096
-	OperationDeliveryReceiptMaxBytes                        = 8192
-	OperationDeliveryRetriesMax                             = 32
-	OperationHistoryPageDefault                             = 20
-	OperationHistoryPageMax                                 = 100
-	OperationHistoryCursorMaxBytes                          = 512
-	OperationRetentionPageMax                               = 500
-	OperationDefinitionBodyMaxBytes                         = 160000
-	OperationReportBodyMaxBytes                             = 16384
-	OperationRecoveryBodyOverheadBytes                      = 8192
-	OperationSubmissionMaxBytes                             = 1 << 20
-	OperationStartBodyOverheadBytes                         = 1024
-	OperationDoctorChecksMax                                = 1024
-	OperationDoctorMaxDuration                              = 10 * time.Second
-	OperationSubmissionReceiptMaxBytes                      = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
-	SourceManifestMaxBytes                                  = 1 << 20
-	OperationArtifactNameMaxBytes                           = 128
-	OperationArtifactKeyMaxBytes                            = 1024
-	OperationArtifactURIMaxBytes                            = 2048
-	OperationArtifactSpoolMaxBytes                    int64 = 256 << 20
-	OperationArtifactTransfersPerAccount                    = 4
-	OperationArtifactTransfersPerNode                       = 8
-	OperationArtifactTransferTimeout                        = 30 * time.Second
-	OperationArtifactStagingLifetime                        = 2 * time.Minute
-	OperationArtifactCleanupLease                           = time.Minute
-	OperationArtifactCleanupRetry                           = 5 * time.Minute
-	OperationArtifactCleanupInterval                        = time.Minute
-	OperationArtifactCleanupBatch                           = 20
-	OperationPreviewPolicyMaxBytes                          = 64 << 10
-	OperationPreviewCohortsMax                              = 10
-	OperationPreviewTenantsPerCohortMax                     = 10
-	OperationPreviewWindowMax                               = time.Hour
-	OperationControlPollIntervalMS                          = 1000
-	OperationControlPollMinIntervalMS                       = 100
-	WorkflowStepDefaultTimeout                              = 30 * time.Second
-	OperationSubmissionLookupMaxBytes                       = 4096
-	OperationBrowserReceiptMaxBytes                         = 8192
-	OperationBrowserReceiptReplaySeconds                    = 86400
-	OperationRecoveryReceiptMaxBytes                        = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
-	OperationArtifactUploadDefaultBytes                     = 8 << 20
+	OperationJSONMaxDepth                                    = 64
+	OperationJSONMaxNumberBytes                              = 256
+	OperationJSONMaxExponent                                 = 10000
+	OperationWorkflowBlockerEscalationsMax                   = 32
+	OperationWorkflowBlockerEscalationMaxSeconds       int64 = 315360000
+	OperationWorkflowBlockerActorMaxBytes                    = 128
+	OperationWorkflowBlockerActionMaxBytes                   = 512
+	OperationWorkflowBlockerImpactMaxBytes                   = 512
+	OperationWorkflowStateSLAMaxSeconds                int64 = 315360000
+	OperationWorkflowStateSLAWarningMinPercent         int64 = 1
+	OperationWorkflowStateSLAWarningMaxPercent         int64 = 99
+	OperationWorkflowRuleOverlapExamplesMax                  = 8
+	OperationWorkflowRuleOverlapEvidenceMax                  = 16
+	OperationWorkflowRuleComparisonsMax                      = 16
+	OperationWorkflowRuleVersionsMax                         = 16
+	OperationWorkflowRuleOutcomesMax                         = 16
+	OperationWorkflowDecisionOutcomeGroupsMax                = 64
+	OperationWorkflowReadinessComparisonBodyMaxBytes         = 1 << 20
+	OperationWorkflowPerformanceCohortMax                    = 100
+	OperationWorkflowBottleneckHistoryMax                    = 1024
+	OperationWorkflowBottleneckGroupsMax                     = 32
+	OperationWorkflowResolutionVerificationPreviewMax        = 16
+	OperationNameMaxBytes                                    = 64
+	OperationSubjectIDMaxBytes                               = 256
+	OperationWorkflowInstanceIDMaxBytes                      = 256
+	OperationWorkflowNameMaxBytes                            = 63
+	OperationMilestoneDeclarationsMax                        = 16
+	OperationMilestoneSchemasMaxBytes                        = 16 << 10
+	OperationMilestonePayloadMaxBytes                        = 8 << 10
+	OperationMilestonesMaxPerOperation                       = 64
+	OperationMilestoneBatchMaxBytes                          = 64 << 10
+	OperationWorkflowsMaxPerApp                              = 32
+	OperationWorkflowStepsMax                                = 32
+	OperationWorkflowStepsMaxPerOperation                    = 32
+	OperationWorkflowStatesMax                               = 32
+	OperationWorkflowTransitionsMax                          = 128
+	OperationWorkflowContractVersionMax                      = 1_000_000
+	OperationWorkflowRetainedPathsMax                        = 8
+	OperationWorkflowConditionOutcomeGroupsMax               = 64
+	OperationWorkflowConditionIdentitiesPerWorkflowMax       = 256
+	OperationWorkflowConditionChangesMax                     = 64
+	OperationWorkflowRevisionChangesMax                      = 64
+	OperationWorkflowRevisionEvidenceMax                     = 64
+	OperationWorkflowRetainedGroupsMax                       = 8
+	OperationWorkflowRecoveryStepsMax                        = 3
+	OperationWorkflowFreshnessRulesMax                       = 16
+	OperationWorkflowFreshnessMaxSeconds               int64 = 315360000
+	OperationWorkflowInvalidationRulesMax                    = 16
+	OperationWorkflowRetainedMilestoneLookupMax              = 32
+	OperationWorkflowTransitionEvidenceMax                   = 16
+	OperationWorkflowStateEvidenceMax                        = 16
+	OperationWorkflowStateBatchMaxBytes                      = 131072
+	OperationWorkflowStateMaxBytes                           = 64
+	OperationWorkflowStateReportsMaxPerTransaction           = 64
+	OperationWorkflowTitleMaxBytes                           = 128
+	OperationWorkflowLabelMaxBytes                           = 128
+	OperationPathMaxBytes                                    = 2048
+	OperationIdempotencyKeyMaxBytes                          = 128
+	OperationReportIDMaxBytes                                = 128
+	OperationRecoveryEvidenceMaxBytes                        = 4096
+	OperationEventsPageMax                                   = 100
+	OperationDeliveryRetryMaxBytes                           = 4096
+	OperationDeliveryReceiptMaxBytes                         = 8192
+	OperationDeliveryRetriesMax                              = 32
+	OperationHistoryPageDefault                              = 20
+	OperationHistoryPageMax                                  = 100
+	OperationHistoryCursorMaxBytes                           = 512
+	OperationRetentionPageMax                                = 500
+	OperationDefinitionBodyMaxBytes                          = 160000
+	OperationReportBodyMaxBytes                              = 16384
+	OperationRecoveryBodyOverheadBytes                       = 8192
+	OperationSubmissionMaxBytes                              = 1 << 20
+	OperationStartBodyOverheadBytes                          = 1024
+	OperationDoctorChecksMax                                 = 1024
+	OperationDoctorMaxDuration                               = 10 * time.Second
+	OperationSubmissionReceiptMaxBytes                       = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
+	SourceManifestMaxBytes                                   = 1 << 20
+	OperationArtifactNameMaxBytes                            = 128
+	OperationArtifactKeyMaxBytes                             = 1024
+	OperationArtifactURIMaxBytes                             = 2048
+	OperationArtifactSpoolMaxBytes                     int64 = 256 << 20
+	OperationArtifactTransfersPerAccount                     = 4
+	OperationArtifactTransfersPerNode                        = 8
+	OperationArtifactTransferTimeout                         = 30 * time.Second
+	OperationArtifactStagingLifetime                         = 2 * time.Minute
+	OperationArtifactCleanupLease                            = time.Minute
+	OperationArtifactCleanupRetry                            = 5 * time.Minute
+	OperationArtifactCleanupInterval                         = time.Minute
+	OperationArtifactCleanupBatch                            = 20
+	OperationPreviewPolicyMaxBytes                           = 64 << 10
+	OperationPreviewCohortsMax                               = 10
+	OperationPreviewTenantsPerCohortMax                      = 10
+	OperationPreviewWindowMax                                = time.Hour
+	OperationControlPollIntervalMS                           = 1000
+	OperationControlPollMinIntervalMS                        = 100
+	WorkflowStepDefaultTimeout                               = 30 * time.Second
+	OperationSubmissionLookupMaxBytes                        = 4096
+	OperationBrowserReceiptMaxBytes                          = 8192
+	OperationBrowserReceiptReplaySeconds                     = 86400
+	OperationRecoveryReceiptMaxBytes                         = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
+	OperationArtifactUploadDefaultBytes                      = 8 << 20
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
@@ -4442,6 +4465,13 @@ const (
 	// still books BillableRAMMB. See MeasuredChargeMB.
 	MeasuredChargeFloorMB         = 64
 	MeasuredChargeHeadroomPercent = 25
+	// The sample a measured charge starts from is the larger of an
+	// instance's latest resident memory and its p95 over the last
+	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
+	// (ADR-909 proposal 1).
+	MeasuredChargeWindowSeconds = 600
+	MeasuredChargeSampleSeconds = 5
+	MeasuredChargePercentile    = 95
 	// MeasuredAdmissionMaxOvercommitPercent caps reservations on a node
 	// under measured admission (ADR-909): Σ(ram_mb + 8) may reach this
 	// share of the admission ceiling while measured charges stay under the
@@ -4449,6 +4479,10 @@ const (
 	// measurement may be before admission falls back to reservations.
 	MeasuredAdmissionMaxOvercommitPercent = 200
 	MeasuredAdmissionSampleMaxAgeMillis   = 2000
+	// MeasuredEvictionTargetPercent: under measured admission, when a node's
+	// measured memory exceeds its admission ceiling, schedd evicts until it
+	// is back under this share of the ceiling (ADR-909 proposal 3).
+	MeasuredEvictionTargetPercent = 90
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -10104,3 +10138,82 @@ const EventDeliveryHealthSLOPercentageMax = 100.0
 const EventExecutionLedgerRetention = 30 * 24 * time.Hour
 const EventExecutionLedgerPruneBatchDefault = 500
 const EventExecutionLedgerPruneBatchMax = 5000
+
+// Active condition summaries bound context retention and displayed groups.
+const OperationWorkflowActiveConditionContextsMax = 256
+const OperationWorkflowActiveConditionGroupsMax = 64
+
+// Optional condition evidence budgets allow at most ten years. Zero disables the budget.
+const OperationBusinessConditionEvidenceMaxAgeSeconds int64 = 10 * 365 * 24 * 60 * 60
+
+const OperationBusinessConditionRefreshOwnerMaxBytes = 128
+const OperationBusinessConditionRefreshInstructionsMaxBytes = 1024
+
+const OperationWorkflowConditionRefreshOwnersMax = 64
+const OperationWorkflowConditionRefreshEvidenceMax = 16
+
+// Readiness subscription budgets bound periodic comparison and durable inbox retention.
+const (
+	OperationWorkflowReadinessSubscriptionsPerAppMax        = 20
+	OperationWorkflowReadinessSubscriptionBatchMax          = 5
+	OperationWorkflowReadinessInboxMax                      = 100
+	OperationWorkflowReadinessSubscriptionBodyMaxBytes      = 4096
+	OperationWorkflowReadinessSubscriptionPollInterval      = 30 * time.Second
+	OperationWorkflowReadinessSubscriptionLease             = 5 * time.Minute
+	OperationWorkflowReadinessSubscriptionEvaluationTimeout = time.Minute
+)
+
+// Shared readiness inbox coordination budgets.
+const OperationWorkflowReadinessFollowUpOwnerMaxBytes = 256
+const OperationWorkflowReadinessFollowUpNoteMaxBytes = 1024
+
+// Aggregation reads at most the existing per-app subscription/inbox budgets.
+const OperationWorkflowReadinessFollowUpCandidatesMax = OperationWorkflowReadinessSubscriptionsPerAppMax * OperationWorkflowReadinessInboxMax
+
+// Due reminders use a separate bounded publisher so readiness evaluation cannot delay delivery.
+const OperationWorkflowReadinessReminderBatchMax = 100
+const OperationWorkflowReadinessReminderPollInterval = 30 * time.Second
+const OperationWorkflowReadinessReminderPublishTimeout = 10 * time.Second
+
+// Evidence-backed readiness completion references are bounded per retained notification.
+const OperationWorkflowReadinessCompletionEvidenceMax = 8
+
+// Each subscription pass rotates through a bounded number of retained completion watches.
+const OperationWorkflowReadinessVerificationWatchesPerPassMax = 10
+const OperationWorkflowReadinessVerificationWatchItemsMax = OperationWorkflowResolutionVerificationPreviewMax
+
+// Outcome watch evaluations rotate independently through retained source inbox entries.
+const OperationWorkflowReadinessOutcomeWatchesPerPassMax = 10
+
+// Outcome escalation follow-up delay is positive and bounded to one week.
+const OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds = 7 * 24 * 60 * 60
+
+// Response evaluation rotates through retained escalations; assignment history retains the latest changes.
+const OperationWorkflowReadinessEscalationResponsesPerPassMax = 10
+const OperationWorkflowReadinessAssignmentHistoryMax = 16
+
+// Coordination revisions must remain exactly representable by JSON clients.
+const OperationWorkflowReadinessCoordinationRevisionMax int64 = 1<<53 - 1
+
+// Timeline projections share existing subscription/inbox and page budgets.
+const OperationWorkflowCoordinationTimelineEventsMax = OperationWorkflowReadinessFollowUpCandidatesMax*(OperationWorkflowReadinessAssignmentHistoryMax+12) + OperationWorkflowPlaybookProgressPerCaseMax*(OperationWorkflowPlaybookProgressHistoryMax+OperationWorkflowPlaybookReviewsMax+1)
+const OperationWorkflowCoordinationTimelineOperationLinksMax = 48
+
+const OperationWorkflowCaseFollowUpsMax = OperationHistoryPageMax
+const OperationWorkflowCaseActionsMax = OperationHistoryPageMax
+
+const OperationWorkflowPlaybooksMax = 32
+const OperationWorkflowPlaybookSummaryMaxBytes = 1024
+const OperationWorkflowPlaybookURLMaxBytes = 2048
+const OperationWorkflowPlaybookEvidenceMax = 16
+const OperationWorkflowPlaybookEvidenceMaxBytes = 256
+
+// Durable advisory playbook coordination limits.
+const (
+	OperationWorkflowPlaybookProgressPerCaseMax   = 100
+	OperationWorkflowPlaybookProgressHistoryMax   = 64
+	OperationWorkflowPlaybookProgressBodyMaxBytes = 32768
+)
+
+// Review decisions retain a bounded journal independent of item reviews.
+const OperationWorkflowPlaybookReviewsMax = 32

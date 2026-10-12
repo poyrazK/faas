@@ -1999,6 +1999,7 @@
       "blocker_resolutions",
       "blockers",
       "blockers_only",
+      "change_reason",
       "contract_version",
       "created_at",
       "deadline_at",
@@ -2016,6 +2017,7 @@
       "outcome_description",
       "outcome_only",
       "revision",
+      "selected_paths",
       "state",
       "workflow"
     ],
@@ -2058,6 +2060,45 @@
       "record",
       "state",
       "workflow_run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_workflow_playbook_progress",
+    "columns": [
+      "account_id",
+      "app_id",
+      "case_key",
+      "id",
+      "payload",
+      "revision",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_workflow_readiness_notifications",
+    "columns": [
+      "payload",
+      "sequence",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_workflow_readiness_subscriptions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_evaluation_at",
+      "operator",
+      "payload",
+      "scope",
+      "tenant_id"
     ],
     "kind": "operational"
   },

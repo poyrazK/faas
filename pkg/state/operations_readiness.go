@@ -15,6 +15,9 @@ type OperationWorkflowReadinessStore interface {
 }
 
 func validateOperationWorkflowReadiness(req api.OperationWorkflowReadinessRequest, operator bool) error {
+	if _, err := api.CanonicalOperationWorkflowPathSelections(req.SelectedPaths); err != nil {
+		return ErrInvalidArgument
+	}
 	validName := func(value string) bool {
 		return len(value) > 0 && len(value) <= 64 && operationHistoryName.MatchString(value)
 	}
@@ -64,6 +67,7 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 		return out
 	}
 	out.ContractVersion = instance.ContractVersion
+	attachTransitionReporting(&out, instance, req.Operation)
 	for _, edge := range instance.AllowedTransitions {
 		if edge.Operation == req.Operation && edge.From == req.FromState && edge.To == req.ToState {
 			out.Declared = true
@@ -147,6 +151,44 @@ func evaluateOperationWorkflowReadiness(instance *api.OperationWorkflowInstanceS
 		if state.Overdue {
 			out.Advisories = append(out.Advisories, "deadline_overdue")
 		}
+	}
+	missingRetained, invalidatedRetained, expiredRetained := false, false, false
+	for _, requirement := range out.Transition.RequiredRetainedMilestones {
+		result := evaluateRetainedMilestone(instance, out.Transition, requirement)
+		out.RetainedMilestones = append(out.RetainedMilestones, result)
+		if result.Status == "invalidated" {
+			invalidatedRetained = true
+		} else if result.Status == "expired" {
+			expiredRetained = true
+		} else if result.Status != "verified" {
+			missingRetained = true
+		}
+	}
+	if expiredRetained {
+		reason("retained_milestone_expired")
+	}
+	if missingRetained {
+		reason("retained_milestone_required")
+	}
+	if invalidatedRetained {
+		reason("retained_milestone_invalidated")
+	}
+	selections, selectionErr := api.CanonicalOperationWorkflowPathSelections(req.SelectedPaths)
+	if selectionErr != nil || api.ValidateOperationWorkflowPathSelections(selections, out.Transition.RetainedMilestoneGroups) != nil {
+		reason("path_selection_invalid")
+	}
+	selected := map[string]string{}
+	for _, selection := range selections {
+		selected[selection.GroupID] = selection.PathID
+	}
+	unmetGroup := false
+	for _, group := range out.Transition.RetainedMilestoneGroups {
+		finding := evaluateRetainedMilestoneGroup(instance, out.Transition, group, selected[group.ID], req)
+		unmetGroup = unmetGroup || !finding.Satisfied
+		out.RetainedMilestoneGroups = append(out.RetainedMilestoneGroups, finding)
+	}
+	if unmetGroup {
+		reason("retained_milestone_group_unmet")
 	}
 	planned := map[string]bool{}
 	for _, name := range req.Milestones {
@@ -255,6 +297,12 @@ func checkOperationWorkflowReadiness(ctx context.Context, store OperationMilesto
 		return api.OperationWorkflowReadinessResponse{}, err
 	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
+	if page.WorkflowInstance != nil && page.WorkflowInstance.ConditionReporting != nil {
+		at = page.WorkflowInstance.ConditionReporting.EvaluatedAt
+	}
+	if page.WorkflowInstance != nil && !page.WorkflowInstance.RetainedMilestoneEvaluatedAt.IsZero() {
+		at = page.WorkflowInstance.RetainedMilestoneEvaluatedAt
+	}
 	if page.WorkflowInstance != nil && page.WorkflowInstance.State != nil {
 		state := page.WorkflowInstance.State
 		state.Stale = operationWorkflowStateIsStale(at, *state)

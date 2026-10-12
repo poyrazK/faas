@@ -14,6 +14,21 @@ func (r Rule) IsTCP() bool {
 		r.Kind == KindTCPConnectTimeout || r.Kind == KindTCPConnectRefused
 }
 
+// IsDNS identifies faults applied to private service-name lookups.
+func (r Rule) IsDNS() bool {
+	switch r.Kind {
+	case KindDNSLatency, KindDNSTimeout, KindDNSServFail, KindDNSNXDomain:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDNSTerminalFault identifies DNS faults that replace the resolver result.
+func (r Rule) IsDNSTerminalFault() bool {
+	return r.Kind == KindDNSTimeout || r.Kind == KindDNSServFail || r.Kind == KindDNSNXDomain
+}
+
 func (r Rule) IsTCPConnectFault() bool {
 	return r.Kind == KindTCPConnectTimeout || r.Kind == KindTCPConnectRefused
 }

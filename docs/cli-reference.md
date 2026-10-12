@@ -6184,7 +6184,7 @@ Compare two named environments in the linked project
 
 Run scenario suites, lifecycle profiles, and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--sweep-baseline <PATH>] [--recovery-baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6204,6 +6204,8 @@ Run scenario suites, lifecycle profiles, and bounded local HTTP load tests
 | `--pacing <DURATION>` | pause between each user&#39;s load journeys (0s..1m) |  |
 | `--progress` | print live load progress to stderr |  |
 | `--baseline <PATH>` | compare local load with a saved successful JSON report; apply regression budgets |  |
+| `--sweep-baseline <PATH>` | compare resilience sweeps with a saved JSON report |  |
+| `--recovery-baseline <PATH>` | compare resilience recovery with a saved successful JSON report |  |
 | `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
 | `--repeat <N>` | runs per lifecycle profile or local case (1..20) |  |
 | `--max-workload-minutes <N>` | abort if the estimated VM workload-minute ceiling exceeds N |  |
@@ -6250,6 +6252,94 @@ Examples:
 
 ```sh
 gregale test init --from openapi.yaml --project my-api --source .
+```
+
+### test recovery-trend
+
+Render offline recovery performance trends from ordered campaign reports
+
+`gregale test recovery-trend [--manifest <PATH>] --scenario <NAME> --config <PATH> --html <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest <PATH>` | campaign scenario manifest |  |
+| `--scenario <NAME>` | campaign scenario name | required |
+| `--config <PATH>` | ordered reports and recovery tolerances YAML | required |
+| `--html <PATH>` | standalone HTML recovery trend output | required |
+
+### test coverage-trend
+
+Render offline campaign coverage trends from ordered reports
+
+`gregale test coverage-trend [--manifest <PATH>] --scenario <NAME> --config <PATH> --html <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest <PATH>` | campaign scenario manifest |  |
+| `--scenario <NAME>` | campaign scenario name | required |
+| `--config <PATH>` | ordered report inputs and tolerances YAML | required |
+| `--html <PATH>` | standalone HTML trend output | required |
+
+### test replay
+
+Replay a real-VM failure or passing recovery/duration configuration or sweep run from a saved report
+
+`gregale test replay --from <PATH> --run-id <ID> [--manifest <PATH>] [--validate] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <PATH>` | saved JSON report containing the failed run | required |
+| `--run-id <ID>` | replayable isolated run ID | required |
+| `--manifest <PATH>` | original scenario manifest |  |
+| `--validate` | validate replay without provisioning |  |
+| `--report <PATH>` | write replay JSON report |  |
+| `--junit <PATH>` | write replay JUnit report |  |
+| `--html <PATH>` | write replay HTML report |  |
+
+Examples:
+
+```sh
+gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --validate
+gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --report replay.json
+```
+
+### test minimize
+
+Minimize faults, outage durations, stability observations, or recovery deadlines
+
+`gregale test minimize --from <PATH> --run-id <ID> --assertion <TARGET> [--mode <MODE>] [--rule-index <N>] [--resolution <DURATION>] [--max-rate-kib-per-second <N>] [--rate-resolution-kib-per-second <N>] [--percent-resolution <N>] [--max-recovery-within <DURATION>] [--duration-resolution <DURATION>] [--stability-resolution <DURATION>] [--recovery-resolution <DURATION>] [--manifest <PATH>] [--max-runs <N>] --max-workload-minutes <N> [--validate] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <PATH>` | saved JSON report containing the original failure | required |
+| `--run-id <ID>` | original replayable isolated run ID | required |
+| `--assertion <TARGET>` | recovery assertion: STEP/PHASE or STEP/PHASE/REQUEST | required |
+| `--mode <MODE>` | minimize rules (default), latency, bandwidth, percent, recovery, stability, or duration | one of `rules` · `latency` · `bandwidth` · `percent` · `recovery` · `stability` · `duration` |
+| `--rule-index <N>` | required original zero-based rule index in severity modes |  |
+| `--resolution <DURATION>` | latency search resolution (default 25ms; whole milliseconds) |  |
+| `--max-rate-kib-per-second <N>` | required bandwidth search ceiling (1..1000000 KiB/s) |  |
+| `--rate-resolution-kib-per-second <N>` | bandwidth search resolution (default 1 KiB/s) |  |
+| `--percent-resolution <N>` | percentage search resolution (default 1; 1..100 percentage points) |  |
+| `--max-recovery-within <DURATION>` | required recovery deadline ceiling fitting the existing phase |  |
+| `--duration-resolution <DURATION>` | fault duration search resolution (default 100ms; whole milliseconds) |  |
+| `--stability-resolution <DURATION>` | stability observation search resolution (default 25ms; whole milliseconds) |  |
+| `--recovery-resolution <DURATION>` | recovery deadline search resolution (default 25ms; whole milliseconds) |  |
+| `--manifest <PATH>` | original scenario manifest |  |
+| `--max-runs <N>` | maximum fresh runs including confirmations (2..20; default 10) |  |
+| `--max-workload-minutes <N>` | required maximum estimated VM workload-minutes | required |
+| `--validate` | validate selection and budgets without provisioning |  |
+| `--report <PATH>` | required JSON output for execution |  |
+| `--junit <PATH>` | write minimization JUnit report |  |
+| `--html <PATH>` | write minimization HTML report |  |
+
+Examples:
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode duration --duration-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report duration.json
+gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --max-runs 10 --max-workload-minutes 180 --validate
+gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery/checkout --max-runs 10 --max-workload-minutes 180 --report minimized.json --html minimized.html
+gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode stability --stability-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report stability.json
+gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode recovery --max-recovery-within 10s --recovery-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report deadline.json
 ```
 
 ### test compare
@@ -6340,7 +6430,7 @@ Inject bounded faults into isolated real-VM scenario tests
 
 Run one scenario profile with a scoped service fault
 
-`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--tcp-port <PORT>] [--direction <DIRECTION>] [--bandwidth <N>] [--timeout] [--reset] [--reset-after <DURATION>] [--connect-timeout] [--connect-refused] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
+`gregale chaos inject --scenario <NAME> [--manifest <PATH>] --target <SERVICE> [--from <SERVICE>] [--latency <DURATION>] [--error <CODE>] [--tcp-port <PORT>] [--direction <DIRECTION>] [--bandwidth <N>] [--timeout] [--reset] [--reset-after <DURATION>] [--connect-timeout] [--connect-refused] [--dns-latency <DURATION>] [--dns-timeout] [--dns-servfail] [--dns-nxdomain] [--percent <N>] [--duration <DURATION>] [--profile <PROFILE>] [--seed <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6358,7 +6448,11 @@ Run one scenario profile with a scoped service fault
 | `--reset-after <DURATION>` | delay before a TCP reset |  |
 | `--connect-timeout` | hold new service connections until timeout or fault clear |  |
 | `--connect-refused` | reset new service connections before reaching the target |  |
-| `--percent <N>` | fraction of matching requests or TCP connections affected (1..100) |  |
+| `--dns-latency <DURATION>` | delay private service-name DNS responses |  |
+| `--dns-timeout` | drop private service-name DNS queries |  |
+| `--dns-servfail` | return SERVFAIL for private service-name DNS queries |  |
+| `--dns-nxdomain` | return NXDOMAIN for private service-name DNS queries |  |
+| `--percent <N>` | fraction of matching requests, DNS queries, or TCP connections affected (1..100) |  |
 | `--duration <DURATION>` | maximum fault lease duration (1s..5m) |  |
 | `--profile <PROFILE>` | real-VM lifecycle profile | one of `warm` · `cold` · `restored` |
 | `--seed <N>` | deterministic fault-selection seed |  |
@@ -6369,6 +6463,7 @@ Examples:
 gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --bandwidth 64 --direction downstream
 gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m
 gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored
+gregale chaos inject --scenario customer-export --target inventory --dns-nxdomain --percent 100
 gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-timeout --duration 8s
 gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 --connect-refused
 ```

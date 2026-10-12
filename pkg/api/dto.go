@@ -873,15 +873,15 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
-// calls within one registered scenario run. The server supplies the expiry;
+// InjectScenarioTestChaosRequest installs bounded HTTP, DNS, and TCP faults on
+// service calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
 	DurationMS int64                   `json:"duration_ms"`
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP, DNS, or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
 	From             string `json:"from,omitempty"`
 	To               string `json:"to"`
