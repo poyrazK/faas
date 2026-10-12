@@ -47,6 +47,10 @@ type Config struct {
 	// NativeProcessRecovery; zero disables it; FAAS_PREPARED_NETWORKS
 	// overrides TOML.
 	PreparedNetworks int `toml:"prepared_networks"`
+	// PreparedNetworksExplicit records that vmmd.toml or the environment
+	// chose the size. A default-sized cache yields to a host without the
+	// tenant bridge; an explicit one keeps failing startup.
+	PreparedNetworksExplicit bool `toml:"-"`
 	// RestoreConcurrency bounds simultaneous Firecracker snapshot restores.
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
@@ -547,6 +551,7 @@ func LoadConfig(path string) (*Config, error) {
 	} else {
 		preparedNetworksSet = md.IsDefined("prepared_networks")
 	}
+	c.PreparedNetworksExplicit = preparedNetworksSet
 	// Native recovery refuses the cache until its claims are journaled
 	// (ADR-568), so the default must not stop such a node from starting.
 	if c.NativeProcessRecovery && !preparedNetworksSet {
@@ -696,6 +701,7 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
 		}
 		c.PreparedNetworks = n
+		c.PreparedNetworksExplicit = true
 	}
 	if v := os.Getenv("FAAS_RESTORE_CONCURRENCY"); v != "" {
 		n, perr := strconv.Atoi(v)

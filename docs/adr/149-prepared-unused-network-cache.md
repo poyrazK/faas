@@ -64,7 +64,12 @@
   `prepared_networks = 0` or `FAAS_PREPARED_NETWORKS=0` still disables it.
   Under `native_process_recovery`, which refuses the cache until claims are
   journaled ([ADR-568](568-environment-gitops-contract.md)), the default is 0;
-  an explicit size is kept so vmmd still reports the conflict.
+  an explicit size is kept so vmmd still reports the conflict. On a host
+  without the tenant bridge (`br-tenants`), a default-sized cache is skipped
+  with a warning, and wakes set up their networks inline; an explicitly
+  configured cache still fails vmmd startup there. Production hosts get the
+  bridge from `br-tenants-up.service`, which `faas-vmmd.service` orders
+  before vmmd.
   Evidence, Firecracker 1.17 with guest kernel 6.18, 1 GiB guest, nested
   KVM test node, 20 restores each: restore wall time p50/p90 fell from
   192/208 ms to 130/172 ms. Network setup ran concurrently with drive

@@ -190,16 +190,16 @@ func TestLoadConfig_PreparedNetworksDefaultOnAndOverridable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PreparedNetworks != api.DefaultPreparedNetworkCacheSize || cfg.PreparedNetworks == 0 {
-		t.Errorf("PreparedNetworks = %d, want default %d", cfg.PreparedNetworks, api.DefaultPreparedNetworkCacheSize)
+	if cfg.PreparedNetworks != api.DefaultPreparedNetworkCacheSize || cfg.PreparedNetworks == 0 || cfg.PreparedNetworksExplicit {
+		t.Errorf("PreparedNetworks = %d (explicit %v), want default %d", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, api.DefaultPreparedNetworkCacheSize)
 	}
 
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
 	if err := os.WriteFile(path, []byte("prepared_networks = 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, err = LoadConfig(path); err != nil || cfg.PreparedNetworks != 0 {
-		t.Errorf("TOML prepared_networks = 0: got %d, err %v; want disabled", cfg.PreparedNetworks, err)
+	if cfg, err = LoadConfig(path); err != nil || cfg.PreparedNetworks != 0 || !cfg.PreparedNetworksExplicit {
+		t.Errorf("TOML prepared_networks = 0: got %d (explicit %v), err %v; want explicitly disabled", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, err)
 	}
 
 	// Native recovery refuses the cache (ADR-568): the default yields to
@@ -219,8 +219,8 @@ func TestLoadConfig_PreparedNetworksDefaultOnAndOverridable(t *testing.T) {
 	}
 
 	t.Setenv("FAAS_PREPARED_NETWORKS", "0")
-	if cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err != nil || cfg.PreparedNetworks != 0 {
-		t.Errorf("FAAS_PREPARED_NETWORKS=0: got %d, err %v; want disabled", cfg.PreparedNetworks, err)
+	if cfg, err = LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err != nil || cfg.PreparedNetworks != 0 || !cfg.PreparedNetworksExplicit {
+		t.Errorf("FAAS_PREPARED_NETWORKS=0: got %d (explicit %v), err %v; want explicitly disabled", cfg.PreparedNetworks, cfg.PreparedNetworksExplicit, err)
 	}
 }
 

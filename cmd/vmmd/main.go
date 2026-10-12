@@ -1015,7 +1015,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: recover prepared networks: %w", preparedCleanupErr)
 	}
 	if err := mgr.EnablePreparedNetworks(ctx, cfg.PreparedNetworks); err != nil {
-		return err
+		// ADR-149: the default-on cache must not stop a host without the
+		// tenant bridge from starting; wakes then set up networks inline.
+		if cfg.PreparedNetworksExplicit || !errors.Is(err, fcvm.ErrPreparedNetworkHost) {
+			return err
+		}
+		log.Warn("vmmd: prepared network cache disabled", "err", err)
 	}
 	defer func() {
 		if err := mgr.ClosePreparedNetworks(); err != nil {
