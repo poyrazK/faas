@@ -77,3 +77,23 @@ but contained no measurements distinguishing host mount/unmount from file work.
 It therefore does not justify attributing the interval to either component or
 claiming a measured gain from this instrumentation. In particular, the existing
 whole-capture skip must still miss when a new instance changes `env.json`.
+
+## Amendment (2026-10-12): placement identity does not defeat the skip
+
+Production never skipped. Over seven days, 0 of 2,567 restores skipped the
+pre-boot mount, which cost 42 ms at p50 and 85 ms at p95 on every restore.
+One app was restored 139 times on one vmmd process and mounted every time.
+The cause is the platform identity schedd appends to env.json on every wake.
+`FAAS_INSTANCE_ID` is new for every restore and `FAAS_NODE_ID` changes
+across nodes, so env.json never matched the captured drive byte for byte.
+The metal tests used a fixture without that identity and never saw it.
+
+The skip digest and the on-drive check now ignore those two keys. Any other
+change to env.json still forces the write. A skipped restore keeps the
+captured instance's identity on the drive. This reverses the rule above
+that a new instance must miss. That rule bought nothing:
+
+- guest-init reads env.json only at boot, and app tasks never restore;
+- a restored process holds the environment of the capture, so the captured
+  file is the one consistent with it, and a rewrite made disk and memory
+  disagree.

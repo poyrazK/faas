@@ -112,3 +112,45 @@ func TestAppErrorsRecorderGroupsIdentifierPathsIntoOneIssue(t *testing.T) {
 		}
 	}
 }
+
+// TestAppErrorsRecorderSamplesEachAppsFirstError pins H9-154: the recorder's
+// LRU was keyed by fingerprint (route|status|class) alone, so app B's first
+// 500 on a route app A had already failed on counted as a repeat and was
+// stored without a sample message or headers, permanently.
+func TestAppErrorsRecorderSamplesEachAppsFirstError(t *testing.T) {
+	r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+	failing := func(app string) http.Handler {
+		return r.Middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			api.PlatformIdentity{AppID: app, TenantID: "acct-" + app, DeploymentID: "dep-" + app}.ApplyGuestHeaders(req.Header)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+	}
+	for _, app := range []string{"app-a", "app-b", "app-a"} {
+		req := httptest.NewRequest(http.MethodGet, "/checkout", nil)
+		req.Header.Set("User-Agent", "h9-test")
+		failing(app).ServeHTTP(httptest.NewRecorder(), req)
+	}
+	rows := r.drainBatch(10)
+	if len(rows) != 3 {
+		t.Fatalf("drained %d rows, want 3", len(rows))
+	}
+	for i, wantSample := range []bool{true, true, false} {
+		if got := rows[i].SampleMsg != "" && rows[i].HeadersJSON != ""; got != wantSample {
+			t.Fatalf("row %d (app %s): sampled=%v want %v (sample=%q headers=%q)", i, rows[i].AppID, got, wantSample, rows[i].SampleMsg, rows[i].HeadersJSON)
+		}
+	}
+}
+
+// TestAppErrorsRecorderSkipsUnownedResponses pins the other half of H9-154:
+// a 404 the gateway answers before resolving any app has no owner; apid
+// rejected those rows as invalid and counted them as redaction_failed.
+func TestAppErrorsRecorderSkipsUnownedResponses(t *testing.T) {
+	r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+	unknownHost := r.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	unknownHost.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if rows := r.drainBatch(10); len(rows) != 0 {
+		t.Fatalf("recorded %d rows for a response no app owns: %+v", len(rows), rows)
+	}
+}

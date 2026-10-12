@@ -177,17 +177,20 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
 	}
-	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, err
-		}
-	}
+	// Resolve placement before admission: a region with no backend or an
+	// unsupported major is a request error, and must not surface as an
+	// account-wide usage rejection (production-us hunt #9, H9-P101).
 	backend, err := s.registry.Default(request.Spec.Region)
 	if err != nil {
 		return Database{}, err
 	}
 	if err := backend.Capabilities.Supports(request.Spec); err != nil {
 		return Database{}, err
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, request.AccountID); err != nil {
+			return Database{}, err
+		}
 	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
