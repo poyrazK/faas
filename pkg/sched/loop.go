@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -3627,6 +3628,27 @@ func invocationDoError(ctx context.Context, err error) error {
 	return fmt.Errorf("sched: invocation do: %w", err)
 }
 
+// dispatchProblemSuffix carries a customer-facing problem from a failed
+// gateway dispatch into the invocation's last_error, e.g. " (plan_limit_
+// concurrency: scale app max_concurrency is 2; 2 already live.)". Plain-text
+// bodies are internal and stay out of customer-visible errors.
+func dispatchProblemSuffix(resp *http.Response) string {
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/problem+json") {
+		return ""
+	}
+	var p struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&p); err != nil || p.Code == "" {
+		return ""
+	}
+	if p.Detail == "" {
+		return " (" + safetext.Ellipsis(p.Code, invocationFailureDetailMaxBytes) + ")"
+	}
+	return " (" + safetext.Ellipsis(p.Code+": "+p.Detail, invocationFailureDetailMaxBytes) + ")"
+}
+
 func boolToProtocolVersion(enabled bool) int {
 	if enabled {
 		return api.ManagedOperationResultVersion
@@ -3767,7 +3789,7 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d%s", resp.StatusCode, dispatchProblemSuffix(resp))
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
 		}

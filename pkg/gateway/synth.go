@@ -612,7 +612,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		// runner never received the body. schedd retries transient
 		// (5s); permanent shapes (no such app) end the row.
 		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeSynthDispatchFailure(w, err)
 		return
 	}
 	if statusCode == 0 {
@@ -1177,4 +1177,27 @@ func (s *SynthServer) applyExclusiveServiceAuth(w http.ResponseWriter, r *http.R
 		return true
 	}
 	return false
+}
+
+// writeSynthDispatchFailure answers a dispatch the runner never received. The
+// status stays 502 so schedd keeps treating it as retryable. When the cause is
+// a customer-facing problem (for example plan_limit_concurrency while an older
+// pinned revision cannot get a slot), its code and detail travel as
+// problem+json so the invocation or workflow step can record the reason
+// instead of a bare "gateway returned 502" (production-us hunt #9, H9-153).
+// Other errors keep the plain-text body schedd never surfaces.
+func writeSynthDispatchFailure(w http.ResponseWriter, err error) {
+	var p *api.Problem
+	if !errors.As(err, &p) || p == nil || p.Code == "" {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(struct {
+		Code   string `json:"code"`
+		Title  string `json:"title,omitempty"`
+		Detail string `json:"detail,omitempty"`
+		Status int    `json:"status"`
+	}{Code: p.Code, Title: p.Title, Detail: p.Detail, Status: p.Status})
 }
