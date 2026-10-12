@@ -3,7 +3,7 @@
 -- workload has no live deployment from which to inherit deployment inputs.
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_workload_image_full_rootfs() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_environment_workload_image_full_rootfs() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE reviewed_source jsonb;
 BEGIN
@@ -31,6 +31,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_workload_image_full_rootfs ON deployments;
 CREATE TRIGGER guard_environment_workload_image_full_rootfs
 BEFORE INSERT ON deployments FOR EACH ROW EXECUTE FUNCTION guard_environment_workload_image_full_rootfs();
 
