@@ -1167,6 +1167,11 @@ message DatabaseRuntime {
   // vmmd dial target of the database's node; pgproxyd opens the session
   // there.
   string vmmd_target = 6;
+  // The VM shape the managed-Postgres driver derives the spec from.
+  int32 postgres_major = 7;
+  int32 vcpu_count = 8;
+  int32 mem_mib = 9;
+  int64 volume_bytes = 10;
 }
 
 message TouchDatabaseResponse {}

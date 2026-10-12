@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/dbcreds"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
 
@@ -37,6 +39,13 @@ const testSuffix = "db.test.local"
 type mapCredentials struct {
 	mu        sync.Mutex
 	verifiers map[string]pgscram.Verifier // databaseID|role
+	forgotten []string
+}
+
+func (m *mapCredentials) Forget(databaseID, role string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forgotten = append(m.forgotten, databaseID+"|"+role)
 }
 
 func (m *mapCredentials) Verifier(_ context.Context, databaseID, role string) (pgscram.Verifier, error) {
@@ -215,6 +224,11 @@ func TestProxyAuthenticatesBeforeWaking(t *testing.T) {
 			t.Errorf("%s: woke the database before authenticating", tc.name)
 		}
 	}
+	h.creds.mu.Lock()
+	defer h.creds.mu.Unlock()
+	if !slices.Contains(h.creds.forgotten, databaseID+"|"+role) {
+		t.Errorf("a failed proof must drop the cached verifier (rotation), forgotten = %v", h.creds.forgotten)
+	}
 }
 
 func TestProxyRoutesWithoutSNIAndForwardsBackendErrors(t *testing.T) {
@@ -249,7 +263,7 @@ func TestVerifierStoreRoundTrip(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewVerifierStore(pool, time.Minute)
+	store, err := dbcreds.NewVerifierStore(pool, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +285,11 @@ func TestVerifierStoreRoundTrip(t *testing.T) {
 	if _, err := store.Verifier(ctx, id, "app"); err != nil {
 		t.Fatal("a cached verifier must survive until its TTL")
 	}
-	fresh, _ := NewVerifierStore(pool, time.Minute)
+	store.Forget(id, "app")
+	if _, err := store.Verifier(ctx, id, "app"); !errors.Is(err, ErrNoVerifier) {
+		t.Fatalf("forgotten verifier = %v, want a fresh read", err)
+	}
+	fresh, _ := dbcreds.NewVerifierStore(pool, time.Minute)
 	if _, err := fresh.Verifier(ctx, id, "app"); !errors.Is(err, ErrNoVerifier) {
 		t.Fatalf("deleted verifier = %v", err)
 	}

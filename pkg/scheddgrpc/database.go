@@ -72,6 +72,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 	return &scheddpb.DatabaseRuntime{
 		DatabaseId: vm.DatabaseID, NodeId: vm.NodeID, State: string(vm.State),
 		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
+		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
 	}
 }
 

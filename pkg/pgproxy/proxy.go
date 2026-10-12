@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgproto3"
 
+	"github.com/onebox-faas/faas/pkg/dbcreds"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
 
@@ -37,11 +38,15 @@ const (
 )
 
 // ErrNoVerifier reports that a database has no such role.
-var ErrNoVerifier = errors.New("pgproxy: no verifier for role")
+var ErrNoVerifier = dbcreds.ErrNoVerifier
 
 // Credentials looks up a role's SCRAM verifier.
 type Credentials interface {
 	Verifier(ctx context.Context, databaseID, role string) (pgscram.Verifier, error)
+	// Forget drops a cached verifier after a failed login. A rotated
+	// password has a new salt, so a stale entry cannot be retried within
+	// the handshake; the next attempt reads the current verifier.
+	Forget(databaseID, role string)
 }
 
 // Waker wakes a database through schedd and records activity on it.
@@ -228,6 +233,7 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	verifier := p.verifier(ctx, databaseID, user)
 	clientKey, serverFinal, err := authenticateClient(client, verifier)
 	if err != nil {
+		p.creds.Forget(databaseID, user)
 		return nil, databaseID, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
@@ -245,6 +251,9 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		_ = session.Close()
 		var f *fatal
 		if errors.As(err, &f) {
+			if f.code == "28P01" {
+				p.creds.Forget(databaseID, user)
+			}
 			return nil, databaseID, f
 		}
 		return nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}

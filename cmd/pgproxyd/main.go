@@ -17,6 +17,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/dbcreds"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/pgproxy"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -56,7 +57,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		return fmt.Errorf("pgproxyd: database: %w", err)
 	}
 	defer pool.Close()
-	verifiers, err := pgproxy.NewVerifierStore(pool, cfg.VerifierCacheTTL)
+	verifiers, err := dbcreds.NewVerifierStore(pool, cfg.VerifierCacheTTL)
 	if err != nil {
 		return err
 	}
