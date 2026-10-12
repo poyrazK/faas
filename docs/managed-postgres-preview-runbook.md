@@ -246,6 +246,20 @@ Metering checks complete provider windows and is not an upstream spending cap.
 Supported native guest qualification remains required before expanding the
 rollout beyond operator testing.
 
+For an explicitly requested immediate operator test, an API-only hotfix from
+the deployed release source may instead load
+`FAAS_MANAGED_POSTGRES_OPERATOR_TEST_PATH`. The private JSON approval has
+`version: 1`, `purpose: operator_test`, exact `backend_id`,
+`backend_fingerprint`, `canary_accounts`, `started_at` and `expires_at` with
+a window of at most two hours. It must be regular and not group/world writable.
+Keep the production canary flag, metering and exact allowlist enabled. Record
+the original API binary checksum, hotfix source/checksum and reversible unit
+override; restore the original unit if health fails. This grants operator test
+admission, not v8 qualification. Full qualification continues independently.
+An invalid or expired test file cannot fall back to a qualification artifact;
+transition to qualified admission deliberately by removing the test path and
+restarting after verifying the complete artifact.
+
 ## Admission failures
 
 - `managed_postgres_usage_stale`: stop new reservations, verify the provider

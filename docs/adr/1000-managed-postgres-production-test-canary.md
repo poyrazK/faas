@@ -62,3 +62,22 @@ Regression tests cover default-off production, exact account isolation, missing
 and tampered evidence, old artifact versions, absent durable lifecycle proof,
 expiry without restart, future qualification, oversized approval duration,
 missing prices/ceilings, and preservation of staging account behavior.
+
+## Immediate operator test follow-up
+
+An explicitly requested immediate test may use a separate private
+`OperatorTestApproval` with purpose `operator_test`, exact placement and account
+binding, and a lifetime of at most two hours. Set
+`FAAS_MANAGED_POSTGRES_OPERATOR_TEST_PATH` alongside the explicit production
+canary flag and nonempty allowlist. The file must be regular and not writable
+by group or others. It is authoritative when configured: missing, malformed,
+expired or mismatched operator approval fails closed even if v8 evidence exists.
+
+This approval grants temporary test admission while qualification runs. It is
+rejected by the provider qualification artifact parser and cannot be represented
+as a passing v8 result. Existing entitlements, usage safeguards, authentication,
+credential sealing and cleanup behavior continue to apply. Admission closes at
+expiry without restarting; existing resources must still be drained. An API-only
+component hotfix can apply this gate from the deployed release source, with an
+independently recorded checksum, source patch and rollback, when the operator
+explicitly requests immediate activation instead of the signed fleet workflow.
