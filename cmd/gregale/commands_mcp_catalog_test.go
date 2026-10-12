@@ -81,6 +81,7 @@ func TestProbeMCPCatalogHealth(t *testing.T) {
 func TestProbeMCPCatalogDeploymentCoversRunningReplicas(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	var healthRequests int
+	var expectedHost string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/demo/instances" {
 			_, _ = w.Write([]byte(`[
@@ -97,8 +98,8 @@ func TestProbeMCPCatalogDeploymentCoversRunningReplicas(t *testing.T) {
 			return
 		}
 		instanceID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, probePrefix), "/mcp-health")
-		if r.URL.Query().Get("instance_id") != instanceID || r.URL.Query().Get("deployment_id") != "deployment-a" || r.URL.Query().Get("host") == "" {
-			t.Errorf("probe query = %q, want the exact requested deployment, instance, and host", r.URL.RawQuery)
+		if (instanceID != "instance-a" && instanceID != "instance-b") || r.URL.Query().Get("host") != expectedHost {
+			t.Errorf("probe path/query = %q/%q, want the requested running replica and host %q", r.URL.Path, r.URL.RawQuery, expectedHost)
 		}
 		healthRequests++
 		w.Header().Set("Content-Type", "application/json")
@@ -106,6 +107,7 @@ func TestProbeMCPCatalogDeploymentCoversRunningReplicas(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"app_id":"app-id","deployment_id":"deployment-a","instance_id":%q,"http_status":200,"health_body":%q}`, instanceID, healthBody)
 	}))
 	defer server.Close()
+	expectedHost = strings.TrimPrefix(server.URL, "http://")
 
 	report := probeMCPCatalogDeployment(context.Background(), api.NewClient(server.URL, "token"), "demo", "deployment-a", server.URL, time.Second)
 	if !report.Supported || !report.Healthy || report.ExpectedReplicas != 2 || report.CheckedReplicas != 2 {

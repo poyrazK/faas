@@ -249,7 +249,7 @@ func readMCPTasksObserverSourceConfig(path string) (mcpTasksObserverSourceConfig
 	if strings.TrimSpace(path) == "" {
 		return config, errors.New("config path is required")
 	}
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return config, err
 	}
