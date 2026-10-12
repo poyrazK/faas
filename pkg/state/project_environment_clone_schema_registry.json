@@ -1506,7 +1506,11 @@
       "operation_id",
       "operation_state",
       "payload",
+      "publication_acceptance_id",
+      "publication_event_id",
+      "publication_source",
       "routing",
+      "schema_version",
       "source_id"
     ],
     "kind": "operational"
@@ -1533,6 +1537,7 @@
       "contract_version",
       "created_at",
       "credential_revision",
+      "destination",
       "enabled",
       "id",
       "last_checked_at",
@@ -3200,6 +3205,56 @@
       "account_id",
       "app_id",
       "invocation_id",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_coverage",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline_known",
+      "ledger_baseline_known",
+      "ledger_lost_through_at",
+      "ledger_started_at",
+      "loss_reason",
+      "lost_at",
+      "started_at",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_outcomes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt",
+      "finished_at",
+      "invocation_created_at",
+      "invocation_id",
+      "kind",
+      "latency_seconds",
+      "outcome",
+      "replay_generation",
+      "retain_until",
+      "root_created_at",
+      "root_invocation_id",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_roots",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "outbox_id",
+      "retention_seconds",
+      "root_created_at",
+      "root_invocation_id",
       "subscription_id"
     ],
     "kind": "operational"
