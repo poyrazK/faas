@@ -320,6 +320,10 @@ type StatsReader interface {
 type Server struct {
 	scheddpb.UnimplementedScheddServer
 
+	// databases is the database scheduler (ADR-1027); nil keeps the
+	// database RPCs UNIMPLEMENTED.
+	databases DatabaseScheduler
+
 	engine SchedAPI
 	stats  StatsReader
 	ops    *wire.OpsMetrics

@@ -1616,6 +1616,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if nodeVerifier != nil {
 		grpcHandler.WithPeerNodeResolver(nodeVerifier)
 	}
+	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, vmmTLS, grpcHandler, log)
+	if err != nil {
+		return err
+	}
+	defer stopDatabases()
 	grpcHandler.Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.

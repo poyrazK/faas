@@ -127,6 +127,28 @@ jails take their uid from the same allocator as app VMs, live under their
 own chroot base so the app-VM orphan sweep never touches them, and are
 recovered by jail id after a vmmd restart.
 
+### schedd surface
+
+schedd's database scheduler (`pkg/dbsched`) owns `database_vms`, the runtime
+state of each native database (provisioning, parked, waking, running,
+parking, deleting, failed), and reads `database_nodes`, the database-node
+inventory that app placement never reads. Placement picks the active node
+with the most free volume capacity; wake admission charges the VM's billable
+memory against the node's admission ceiling. Both run in a transaction that
+locks the node row, so concurrent schedd replicas cannot overcommit a node.
+Running databases idle past `idle_timeout` are parked by a sweep; a restart
+settles databases left waking or parking.
+
+The superuser has no password: it authenticates only by peer inside the
+guest, so the control plane manages roles through the host-only `admin_sql`
+control op and no superuser secret is stored anywhere.
+
+schedd exposes `ProvisionDatabase`, `WakeDatabase`, `ParkDatabase`,
+`TouchDatabase`, `DatabaseAdmin`, `DeleteDatabase` and `GetDatabase`.
+Provision, delete, admin and get accept only apid's client certificate;
+wake, park and touch also accept pgproxyd. A `[database_scheduler]` table in
+schedd's config enables the scheduler and lists the database nodes.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through

@@ -1,0 +1,56 @@
+//go:build !no_pg
+
+package migrations_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+)
+
+// adr: 1027
+//
+// TestDatabaseVMsConstraints pins the database scheduler's tables: every
+// state and bound column is checked, a VM must sit on a known node, and
+// last_error only holds stable codes, never free text.
+func TestDatabaseVMsConstraints(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("db.MigrateUp: %v", err)
+	}
+	mustExec(t, pool, `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes) VALUES ('db-1', 'tcp://10.0.2.10:7443', 48000, 3000000000000)`)
+	insertVM := `INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state, last_error)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	mustExec(t, pool, insertVM, uuid.NewString(), "db-1", 17, 1, 384, int64(1<<30), "provisioning", nil)
+
+	rejected := []struct {
+		name string
+		sql  string
+		args []any
+		code string
+	}{
+		{"unknown node", insertVM, []any{uuid.NewString(), "db-9", 17, 1, 384, int64(1 << 30), "parked", nil}, "23503"},
+		{"bad state", insertVM, []any{uuid.NewString(), "db-1", 17, 1, 384, int64(1 << 30), "sleeping", nil}, "23514"},
+		{"old major", insertVM, []any{uuid.NewString(), "db-1", 12, 1, 384, int64(1 << 30), "parked", nil}, "23514"},
+		{"tiny memory", insertVM, []any{uuid.NewString(), "db-1", 17, 1, 64, int64(1 << 30), "parked", nil}, "23514"},
+		{"zero volume", insertVM, []any{uuid.NewString(), "db-1", 17, 1, 384, int64(0), "parked", nil}, "23514"},
+		{"free-text error", insertVM, []any{uuid.NewString(), "db-1", 17, 1, 384, int64(1 << 30), "failed", "boot failed: /srv/db/x"}, "23514"},
+		{"bad node lifecycle", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle) VALUES ('db-2', 'tcp://x:1', 1, 1, 'zombie')`, nil, "23514"},
+		{"bad node id", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes) VALUES ('DB 2', 'tcp://x:1', 1, 1)`, nil, "23514"},
+		{"zero ceiling", `INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes) VALUES ('db-3', 'tcp://x:1', 0, 1)`, nil, "23514"},
+	}
+	for _, tc := range rejected {
+		_, err := pool.Exec(ctx, tc.sql, tc.args...)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != tc.code {
+			t.Errorf("%s: err = %v, want SQLSTATE %s", tc.name, err, tc.code)
+		}
+	}
+}

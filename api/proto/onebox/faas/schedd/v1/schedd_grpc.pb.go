@@ -42,6 +42,13 @@ const (
 	Schedd_ReportLivenessFailed_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
 	Schedd_EnsureWake_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
 	Schedd_ReportWorkloadOOM_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
+	Schedd_ProvisionDatabase_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
+	Schedd_WakeDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/WakeDatabase"
+	Schedd_ParkDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ParkDatabase"
+	Schedd_TouchDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/TouchDatabase"
+	Schedd_DatabaseAdmin_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/DatabaseAdmin"
+	Schedd_DeleteDatabase_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/DeleteDatabase"
+	Schedd_GetDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -326,6 +333,21 @@ type ScheddClient interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(ctx context.Context, in *ReportWorkloadOOMRequest, opts ...grpc.CallOption) (*ReportWorkloadOOMAck, error)
+	// Database VMs (ADR-1027): schedd's database scheduler places native
+	// managed databases on database nodes, wakes them within each node's RAM
+	// ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+	// DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+	// ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+	// database scheduler they return UNIMPLEMENTED.
+	ProvisionDatabase(ctx context.Context, in *ProvisionDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	WakeDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	ParkDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	TouchDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*TouchDatabaseResponse, error)
+	// DatabaseAdmin runs SQL as the superuser, waking the database first.
+	// The SQL can carry role passwords and is never logged.
+	DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error)
+	DeleteDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DeleteDatabaseResponse, error)
+	GetDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 }
 
 type scheddClient struct {
@@ -491,6 +513,76 @@ func (c *scheddClient) ReportWorkloadOOM(ctx context.Context, in *ReportWorkload
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportWorkloadOOMAck)
 	err := c.cc.Invoke(ctx, Schedd_ReportWorkloadOOM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ProvisionDatabase(ctx context.Context, in *ProvisionDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ProvisionDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) WakeDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_WakeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ParkDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ParkDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) TouchDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*TouchDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TouchDatabaseResponse)
+	err := c.cc.Invoke(ctx, Schedd_TouchDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseAdminResponse)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseAdmin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DeleteDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DeleteDatabaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteDatabaseResponse)
+	err := c.cc.Invoke(ctx, Schedd_DeleteDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) GetDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_GetDatabase_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -779,6 +871,21 @@ type ScheddServer interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error)
+	// Database VMs (ADR-1027): schedd's database scheduler places native
+	// managed databases on database nodes, wakes them within each node's RAM
+	// ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+	// DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+	// ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+	// database scheduler they return UNIMPLEMENTED.
+	ProvisionDatabase(context.Context, *ProvisionDatabaseRequest) (*DatabaseRuntime, error)
+	WakeDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	TouchDatabase(context.Context, *DatabaseRef) (*TouchDatabaseResponse, error)
+	// DatabaseAdmin runs SQL as the superuser, waking the database first.
+	// The SQL can carry role passwords and is never logged.
+	DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error)
+	DeleteDatabase(context.Context, *DatabaseRef) (*DeleteDatabaseResponse, error)
+	GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -830,6 +937,27 @@ func (UnimplementedScheddServer) EnsureWake(context.Context, *EnsureWakeRequest)
 }
 func (UnimplementedScheddServer) ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportWorkloadOOM not implemented")
+}
+func (UnimplementedScheddServer) ProvisionDatabase(context.Context, *ProvisionDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ProvisionDatabase not implemented")
+}
+func (UnimplementedScheddServer) WakeDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method WakeDatabase not implemented")
+}
+func (UnimplementedScheddServer) ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ParkDatabase not implemented")
+}
+func (UnimplementedScheddServer) TouchDatabase(context.Context, *DatabaseRef) (*TouchDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TouchDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseAdmin not implemented")
+}
+func (UnimplementedScheddServer) DeleteDatabase(context.Context, *DatabaseRef) (*DeleteDatabaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteDatabase not implemented")
+}
+func (UnimplementedScheddServer) GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDatabase not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1079,6 +1207,132 @@ func _Schedd_ReportWorkloadOOM_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ProvisionDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProvisionDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ProvisionDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ProvisionDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ProvisionDatabase(ctx, req.(*ProvisionDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_WakeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).WakeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_WakeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).WakeDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_ParkDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ParkDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ParkDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ParkDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_TouchDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).TouchDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_TouchDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).TouchDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DatabaseAdmin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseAdminRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseAdmin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseAdmin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseAdmin(ctx, req.(*DatabaseAdminRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DeleteDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DeleteDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DeleteDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DeleteDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_GetDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).GetDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_GetDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).GetDatabase(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1129,6 +1383,34 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportWorkloadOOM",
 			Handler:    _Schedd_ReportWorkloadOOM_Handler,
+		},
+		{
+			MethodName: "ProvisionDatabase",
+			Handler:    _Schedd_ProvisionDatabase_Handler,
+		},
+		{
+			MethodName: "WakeDatabase",
+			Handler:    _Schedd_WakeDatabase_Handler,
+		},
+		{
+			MethodName: "ParkDatabase",
+			Handler:    _Schedd_ParkDatabase_Handler,
+		},
+		{
+			MethodName: "TouchDatabase",
+			Handler:    _Schedd_TouchDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseAdmin",
+			Handler:    _Schedd_DatabaseAdmin_Handler,
+		},
+		{
+			MethodName: "DeleteDatabase",
+			Handler:    _Schedd_DeleteDatabase_Handler,
+		},
+		{
+			MethodName: "GetDatabase",
+			Handler:    _Schedd_GetDatabase_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

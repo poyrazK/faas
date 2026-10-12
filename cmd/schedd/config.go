@@ -19,6 +19,9 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// DatabaseScheduler enables the database scheduler (ADR-1027).
+	DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
 	// ListenAddr is empty (ADR-018, mode 0660 group `faas`). Defaults to
 	// /run/faas/schedd.sock.

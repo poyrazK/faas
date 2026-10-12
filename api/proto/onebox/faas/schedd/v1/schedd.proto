@@ -309,6 +309,22 @@ service Schedd {
   // Additive per ADR-016: new RPC + new messages append at the
   // end; existing field tags are untouched.
   rpc ReportWorkloadOOM(ReportWorkloadOOMRequest) returns (ReportWorkloadOOMAck);
+
+  // Database VMs (ADR-1027): schedd's database scheduler places native
+  // managed databases on database nodes, wakes them within each node's RAM
+  // ceiling and parks idle ones. ProvisionDatabase, DeleteDatabase,
+  // DatabaseAdmin and GetDatabase accept only apid; WakeDatabase,
+  // ParkDatabase and TouchDatabase also accept pgproxyd. Without a
+  // database scheduler they return UNIMPLEMENTED.
+  rpc ProvisionDatabase(ProvisionDatabaseRequest) returns (DatabaseRuntime);
+  rpc WakeDatabase(DatabaseRef) returns (DatabaseRuntime);
+  rpc ParkDatabase(DatabaseRef) returns (DatabaseRuntime);
+  rpc TouchDatabase(DatabaseRef) returns (TouchDatabaseResponse);
+  // DatabaseAdmin runs SQL as the superuser, waking the database first.
+  // The SQL can carry role passwords and is never logged.
+  rpc DatabaseAdmin(DatabaseAdminRequest) returns (DatabaseAdminResponse);
+  rpc DeleteDatabase(DatabaseRef) returns (DeleteDatabaseResponse);
+  rpc GetDatabase(DatabaseRef) returns (DatabaseRuntime);
 }
 
 message LivenessFailedReport {
@@ -1126,3 +1142,40 @@ message FlowSummary {
   string direction = 5;
   int64 count = 6;
 }
+
+// Database VMs (ADR-1027).
+message DatabaseRef {
+  string database_id = 1;
+}
+
+message ProvisionDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  int32 vcpu_count = 3;
+  int32 mem_mib = 4;
+  int64 volume_bytes = 5;
+}
+
+message DatabaseRuntime {
+  string database_id = 1;
+  string node_id = 2;
+  // provisioning, parked, waking, running, parking, deleting or failed.
+  string state = 3;
+  bool bootstrapped = 4;
+  // Stable error code of the last failed transition.
+  string last_error = 5;
+}
+
+message TouchDatabaseResponse {}
+
+message DatabaseAdminRequest {
+  string database_id = 1;
+  string sql = 2;
+}
+
+message DatabaseAdminResponse {
+  string error_code = 1;
+  string sqlstate = 2;
+}
+
+message DeleteDatabaseResponse {}

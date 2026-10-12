@@ -1884,6 +1884,31 @@ type DataUpstreamProbesDefault struct {
 	ProbeNode        pgtype.Text
 }
 
+type DatabaseNode struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	Lifecycle           string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type DatabaseVm struct {
+	DatabaseID     pgtype.UUID
+	NodeID         string
+	PostgresMajor  int32
+	VcpuCount      int32
+	MemMib         int32
+	VolumeBytes    int64
+	State          string
+	Bootstrapped   bool
+	LastError      pgtype.Text
+	LastActiveAt   pgtype.Timestamptz
+	StateChangedAt pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type DeadLetterEvent struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID

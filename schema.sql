@@ -17587,6 +17587,52 @@ CREATE TABLE public.data_upstreams (
 
 
 --
+-- Name: database_nodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_nodes (
+    id text NOT NULL,
+    target_url text NOT NULL,
+    admission_ceiling_mb integer NOT NULL,
+    volume_capacity_bytes bigint NOT NULL,
+    lifecycle text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT database_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
+    CONSTRAINT database_nodes_id_check CHECK ((id ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT database_nodes_lifecycle_check CHECK ((lifecycle = ANY (ARRAY['active'::text, 'draining'::text, 'unavailable'::text]))),
+    CONSTRAINT database_nodes_target_url_check CHECK ((target_url <> ''::text)),
+    CONSTRAINT database_nodes_volume_capacity_bytes_check CHECK ((volume_capacity_bytes > 0))
+);
+
+
+--
+-- Name: database_vms; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_vms (
+    database_id uuid NOT NULL,
+    node_id text NOT NULL,
+    postgres_major integer NOT NULL,
+    vcpu_count integer NOT NULL,
+    mem_mib integer NOT NULL,
+    volume_bytes bigint NOT NULL,
+    state text NOT NULL,
+    bootstrapped boolean DEFAULT false NOT NULL,
+    last_error text,
+    last_active_at timestamp with time zone,
+    state_changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT database_vms_last_error_check CHECK (((last_error IS NULL) OR (last_error ~ '^[a-z_]{1,64}$'::text))),
+    CONSTRAINT database_vms_mem_mib_check CHECK (((mem_mib >= 128) AND (mem_mib <= 65536))),
+    CONSTRAINT database_vms_postgres_major_check CHECK (((postgres_major >= 14) AND (postgres_major <= 18))),
+    CONSTRAINT database_vms_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'deleting'::text, 'failed'::text]))),
+    CONSTRAINT database_vms_vcpu_count_check CHECK (((vcpu_count >= 1) AND (vcpu_count <= 32))),
+    CONSTRAINT database_vms_volume_bytes_check CHECK ((volume_bytes > 0))
+);
+
+
+--
 -- Name: dead_letter_events; Type: TABLE; Schema: public; Owner: -
 --
 

@@ -9287,6 +9287,47 @@ func (q *Queries) CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, tar
 	return err
 }
 
+const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
+SELECT n.id AS node_id,
+    COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id
+GROUP BY n.id ORDER BY n.id
+`
+
+type DatabaseNodeUsageRow struct {
+	NodeID       string
+	VolumeBytes  int64
+	ActiveMemMib int64
+	ActiveVms    int64
+}
+
+func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error) {
+	rows, err := db.Query(ctx, databaseNodeUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseNodeUsageRow{}
+	for rows.Next() {
+		var i DatabaseNodeUsageRow
+		if err := rows.Scan(
+			&i.NodeID,
+			&i.VolumeBytes,
+			&i.ActiveMemMib,
+			&i.ActiveVms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
 UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
 WHERE project_id=$1::uuid AND environment_slug=$2::text AND active
@@ -9668,6 +9709,18 @@ DELETE FROM data_upstreams WHERE id = $1
 func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteDataUpstreamByID, id)
 	return err
+}
+
+const deleteDatabaseVM = `-- name: DeleteDatabaseVM :execrows
+DELETE FROM database_vms WHERE database_id = $1 AND state = 'deleting'
+`
+
+func (q *Queries) DeleteDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseVM, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteDeploymentAlias = `-- name: DeleteDeploymentAlias :execrows
@@ -17251,6 +17304,32 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 	return i, err
 }
 
+const getDatabaseVM = `-- name: GetDatabaseVM :one
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+FROM database_vms WHERE database_id = $1
+`
+
+func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (DatabaseVm, error) {
+	row := db.QueryRow(ctx, getDatabaseVM, databaseID)
+	var i DatabaseVm
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.NodeID,
+		&i.PostgresMajor,
+		&i.VcpuCount,
+		&i.MemMib,
+		&i.VolumeBytes,
+		&i.State,
+		&i.Bootstrapped,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.StateChangedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getDeploymentRuntimeUpgradeAcceptance = `-- name: GetDeploymentRuntimeUpgradeAcceptance :one
 SELECT deployment_id, target_release_id, rootfs_key, instance_id, node_id, wake_id, profile, configuration_fingerprint, secret_fingerprint, qualification_report_sha256, started_at, ready_at FROM deployment_runtime_upgrade_acceptances WHERE deployment_id=$1
 `
@@ -20698,6 +20777,37 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state)
+VALUES ($1, $2, $3, $4,
+    $5, $6, 'provisioning')
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type InsertDatabaseVMParams struct {
+	DatabaseID    pgtype.UUID
+	NodeID        string
+	PostgresMajor int32
+	VcpuCount     int32
+	MemMib        int32
+	VolumeBytes   int64
+}
+
+func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, insertDatabaseVM,
+		arg.DatabaseID,
+		arg.NodeID,
+		arg.PostgresMajor,
+		arg.VcpuCount,
+		arg.MemMib,
+		arg.VolumeBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertDeploymentRuntimeUpgradeAcceptance = `-- name: InsertDeploymentRuntimeUpgradeAcceptance :one
@@ -30145,6 +30255,84 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 	return items, nil
 }
 
+const listDatabaseNodes = `-- name: ListDatabaseNodes :many
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+FROM database_nodes ORDER BY id
+`
+
+type ListDatabaseNodesRow struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	Lifecycle           string
+}
+
+func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabaseNodesRow, error) {
+	rows, err := db.Query(ctx, listDatabaseNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDatabaseNodesRow{}
+	for rows.Next() {
+		var i ListDatabaseNodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetUrl,
+			&i.AdmissionCeilingMb,
+			&i.VolumeCapacityBytes,
+			&i.Lifecycle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
+`
+
+func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []string) ([]DatabaseVm, error) {
+	rows, err := db.Query(ctx, listDatabaseVMsByState, states)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseVm{}
+	for rows.Next() {
+		var i DatabaseVm
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.NodeID,
+			&i.PostgresMajor,
+			&i.VcpuCount,
+			&i.MemMib,
+			&i.VolumeBytes,
+			&i.State,
+			&i.Bootstrapped,
+			&i.LastError,
+			&i.LastActiveAt,
+			&i.StateChangedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentAliases = `-- name: ListDeploymentAliases :many
 SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
   FROM deployment_aliases a
@@ -37331,6 +37519,32 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
+	)
+	return i, err
+}
+
+const lockDatabaseNode = `-- name: LockDatabaseNode :one
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+FROM database_nodes WHERE id = $1 FOR UPDATE
+`
+
+type LockDatabaseNodeRow struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	Lifecycle           string
+}
+
+func (q *Queries) LockDatabaseNode(ctx context.Context, db DBTX, id string) (LockDatabaseNodeRow, error) {
+	row := db.QueryRow(ctx, lockDatabaseNode, id)
+	var i LockDatabaseNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.TargetUrl,
+		&i.AdmissionCeilingMb,
+		&i.VolumeCapacityBytes,
+		&i.Lifecycle,
 	)
 	return i, err
 }
@@ -69902,6 +70116,24 @@ func (q *Queries) TouchCustomerOperationWorkflowStep(ctx context.Context, db DBT
 	return err
 }
 
+const touchDatabaseVM = `-- name: TouchDatabaseVM :execrows
+UPDATE database_vms SET last_active_at = $1
+WHERE database_id = $2 AND state = 'running'
+`
+
+type TouchDatabaseVMParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) TouchDatabaseVM(ctx context.Context, db DBTX, arg TouchDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, touchDatabaseVM, arg.At, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const touchEnvironmentGitOpsIntent = `-- name: TouchEnvironmentGitOpsIntent :exec
 UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
 WHERE id = $1::uuid
@@ -70215,6 +70447,36 @@ func (q *Queries) TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, ar
 		return nil, err
 	}
 	return items, nil
+}
+
+const transitionDatabaseVM = `-- name: TransitionDatabaseVM :execrows
+UPDATE database_vms SET state = $1, state_changed_at = now(),
+    last_error = $2,
+    bootstrapped = bootstrapped OR $3::boolean,
+    last_active_at = CASE WHEN $1 = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = $4 AND state = ANY($5::text[])
+`
+
+type TransitionDatabaseVMParams struct {
+	ToState      string
+	LastError    pgtype.Text
+	Bootstrapped bool
+	DatabaseID   pgtype.UUID
+	FromStates   []string
+}
+
+func (q *Queries) TransitionDatabaseVM(ctx context.Context, db DBTX, arg TransitionDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, transitionDatabaseVM,
+		arg.ToState,
+		arg.LastError,
+		arg.Bootstrapped,
+		arg.DatabaseID,
+		arg.FromStates,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const transitionImagePreparation = `-- name: TransitionImagePreparation :execrows
@@ -71435,6 +71697,37 @@ func (q *Queries) UpsertCustomerOperationWorkflowState(ctx context.Context, db D
 		arg.ReportID,
 		arg.UpdatedAt,
 		arg.OperationID,
+	)
+	return err
+}
+
+const upsertDatabaseNode = `-- name: UpsertDatabaseNode :exec
+
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
+    admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
+    volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
+    lifecycle = EXCLUDED.lifecycle, updated_at = now()
+`
+
+type UpsertDatabaseNodeParams struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	Lifecycle           string
+}
+
+// Database VMs (ADR-1027). database_nodes is inventory; database_vms is
+// written only by schedd's database scheduler (pkg/dbsched).
+func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) error {
+	_, err := db.Exec(ctx, upsertDatabaseNode,
+		arg.ID,
+		arg.TargetUrl,
+		arg.AdmissionCeilingMb,
+		arg.VolumeCapacityBytes,
+		arg.Lifecycle,
 	)
 	return err
 }
