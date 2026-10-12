@@ -19,14 +19,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// TestMetalPmemAccountBase needs FAAS_TEST_PMEM_BASE_DIR on the same
-// reflink-capable filesystem (XFS, Btrfs) as FAAS_TEST_BASE_ROOTFS, whose
+// TestMetalPmemAccountBase needs FAAS_TEST_PMEM_BASE_DIR set to "auto" or to
+// a directory on the same reflink-capable mount (XFS, Btrfs) as
+// FAAS_TEST_BASE_ROOTFS. The base must carry rootfs.BasePmemLabel, and its
 // guest-init must understand a pmem root.
 func TestMetalPmemAccountBase(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	dir := os.Getenv("FAAS_TEST_PMEM_BASE_DIR")
 	if dir == "" {
-		t.Skip("set FAAS_TEST_PMEM_BASE_DIR to a reflink-capable directory beside the base")
+		t.Skip("set FAAS_TEST_PMEM_BASE_DIR to auto or a directory on the base's reflink-capable mount")
 	}
 	ctx := context.Background()
 	fcVersion, err := DetectFirecrackerVersion(ctx)
@@ -74,7 +75,11 @@ func TestMetalPmemAccountBase(t *testing.T) {
 	assertBaseDevice(t, v, "pmem-a", true)
 
 	wake(m, "pmem-b", "acct-b", nil)
-	accounts, err := os.ReadDir(dir)
+	copies, err := v.pmemBase.copyDir(base)
+	if err != nil {
+		t.Fatalf("pmem copy directory: %v", err)
+	}
+	accounts, err := os.ReadDir(copies)
 	if err != nil || len(accounts) != 2 {
 		t.Fatalf("pmem dir holds %d account copies (err %v), want 2", len(accounts), err)
 	}

@@ -204,6 +204,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
 | 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
 | 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
+| 984 | [Scenario resilience campaigns and recovery regression gates](984-scenario-resilience-campaigns.md) | accepted | Leased DNS faults, deterministic campaigns, confirmed recovery evidence, pinned replay and offline trends |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
 | 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
@@ -799,11 +800,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
 
-- [ADR-967: Durable entity developer workflow](967-durable-entity-developer-workflow.md)
-- [ADR-984: Durable entity operational visibility](984-durable-entity-operational-visibility.md)
-- [ADR-985: Durable entity generated clients](985-durable-entity-generated-clients.md)
-- [ADR-986: Reconnectable durable entity sessions](986-reconnectable-durable-entity-sessions.md)
-- [ADR-973: Durable session recovery and lifecycle](973-durable-session-recovery-and-lifecycle.md)
+- [ADR-866: Durable entity developer workflow](866-durable-entity-developer-workflow.md)
+- [ADR-867: Durable entity operational visibility](867-durable-entity-operational-visibility.md)
+- [ADR-868: Durable entity generated clients](868-durable-entity-generated-clients.md)
+- [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
+- [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)

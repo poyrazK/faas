@@ -63,6 +63,9 @@ func TestLoadSecretFile_RejectsOtherReadable(t *testing.T) {
 	if err := os.WriteFile(p, []byte("abc"), 0o604); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(p, 0o604); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := loadSecretFile(p); !errors.Is(err, ErrInsecureSecretPerms) {
 		t.Errorf("0604 must fail closed, got %v", err)
 	}
@@ -126,6 +129,9 @@ func TestLoadSecretFile_Rejects0444(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "tok")
 	if err := os.WriteFile(p, []byte("abc"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadSecretFile(p); !errors.Is(err, ErrInsecureSecretPerms) {

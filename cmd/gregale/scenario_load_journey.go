@@ -11,6 +11,8 @@ import (
 // Both schedulers execute the same complete HTTP journey, with private captures
 // and an identity derived from its iteration or scheduled arrival number.
 type testLoadJourney struct {
+	Shared          *testLoadCollector
+	Indexes         []int
 	Client          *http.Client
 	BaseURL         string
 	RunID           string
@@ -21,6 +23,15 @@ type testLoadJourney struct {
 }
 
 func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, iteration int) {
+	if j.Shared != nil {
+		j.Shared.mu.Lock()
+		j.Shared.started++
+		j.Shared.active++
+		if j.Shared.active > j.Shared.peak {
+			j.Shared.peak = j.Shared.active
+		}
+		j.Shared.mu.Unlock()
+	}
 	values := testHTTPValues(fmt.Sprintf("%s-%d", j.RunID, iteration), j.InitialCaptures, j.Data)
 	captures := make(map[string]string, len(j.InitialCaptures))
 	for name, value := range j.InitialCaptures {
@@ -28,7 +39,11 @@ func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, 
 	}
 	failed, interrupted := false, false
 	for i, step := range j.Steps {
-		if !collector.reserve(ctx, cfg.RequestLimit) {
+		requestCollector := collector
+		if j.Shared != nil {
+			requestCollector = j.Shared
+		}
+		if !requestCollector.reserve(ctx, cfg.RequestLimit) {
 			interrupted = true
 			break
 		}
@@ -39,13 +54,20 @@ func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, 
 		if err != nil {
 			result.Error = err.Error()
 		}
-		collector.record(i, result, time.Since(requestStarted))
+		index := i
+		if j.Shared != nil {
+			index = j.Indexes[i]
+		}
+		requestCollector.recordAt(index, result, time.Since(requestStarted), requestStarted)
 		if err != nil {
 			failed, interrupted = true, ctx.Err() != nil
 			break
 		}
 	}
 	collector.finishIteration(failed, interrupted)
+	if j.Shared != nil {
+		j.Shared.finishIteration(failed, interrupted)
+	}
 }
 
 func runTestConcurrencyLoad(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, started time.Time, runJourney func(int)) {

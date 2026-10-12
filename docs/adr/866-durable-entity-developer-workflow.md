@@ -1,4 +1,4 @@
-# ADR-967: Durable entity developer workflow
+# ADR-866: Durable entity developer workflow
 
 Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 

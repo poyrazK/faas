@@ -1,4 +1,4 @@
-# ADR-973: Durable session recovery and lifecycle
+# ADR-870: Durable session recovery and lifecycle
 
 Status: Implemented and qualified by focused CI; native acceptance pending.
 

@@ -66,7 +66,7 @@ func assessTestPreflight(name string, scenario testScenario, profiles []string, 
 	workloads := 1 + len(scenario.Services)
 	result := testPreflightResult{
 		Scenario: name, Plan: account.Plan, Profiles: profiles, Repeat: repeat,
-		WorkloadsPerRun: workloads, EstimatedDeploys: workloads * len(profiles) * repeat,
+		WorkloadsPerRun: workloads, EstimatedDeploys: workloads * len(profiles) * repeat * testResilienceRuns(scenario),
 		MaxWorkloadMinutes: estimateTestWorkloadMinutes(scenario, len(profiles)*repeat), Ready: true,
 	}
 	add := func(name string, passed bool, detail string) {
@@ -116,6 +116,7 @@ func assessTestPreflight(name string, scenario testScenario, profiles []string, 
 }
 
 func estimateTestWorkloadMinutes(scenario testScenario, runs int) int {
+	runs *= testResilienceRuns(scenario)
 	timeout := 15 * time.Minute
 	if scenario.Timeout != "" {
 		timeout, _ = time.ParseDuration(scenario.Timeout) // manifest validation has already run

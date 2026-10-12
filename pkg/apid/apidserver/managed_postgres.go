@@ -13,12 +13,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}

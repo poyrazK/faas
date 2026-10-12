@@ -1,4 +1,4 @@
-# ADR-986: Reconnectable durable entity sessions
+# ADR-869: Reconnectable durable entity sessions
 
 Status: Implemented and qualified by focused CI; native acceptance pending.
 

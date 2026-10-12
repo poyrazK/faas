@@ -1,4 +1,4 @@
-# ADR-984: Durable entity operational visibility
+# ADR-867: Durable entity operational visibility
 
 Status: Implemented; focused developer-workflow CI passed. Native acceptance pending.
 
