@@ -49,6 +49,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
 	var aiRequestLogEnabled bool
+	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
@@ -61,14 +62,16 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       COALESCE(integration.daily_request_limit, 0),
 		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
 		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
-		       integration.ai_request_log_enabled
+		       integration.ai_request_log_enabled,
+		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0)
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
-			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled)
+			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
+			&aiUserTokenLimitValue, &aiUserCostLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -203,7 +206,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
-		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue)}
+		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
+		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}

@@ -36,7 +36,7 @@ func TestRestoreReconciliationUsesPinnedInspectionAndStillRequiresProof(t *testi
 				t.Fatal(err)
 			}
 			p.provisionStatus = ProviderStatusPending
-			target, err := s.Restore(t.Context(), RestoreDatabaseRequest{AccountID: "account", SourceDatabaseID: source.ID, Name: "target", PointInTime: time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)})
+			target, err := s.Restore(t.Context(), RestoreDatabaseRequest{AccountID: "account", SourceDatabaseID: source.ID, Name: "target", PointInTime: source.CreatedAt})
 			if err != nil || target.State != StateProvisioning {
 				t.Fatalf("restore: %+v %v", target, err)
 			}

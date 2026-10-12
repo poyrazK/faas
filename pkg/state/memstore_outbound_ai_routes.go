@@ -10,12 +10,13 @@ import (
 
 var _ OutboundAIRouteStore = (*MemStore)(nil)
 
-func (m *MemStore) memOutboundAIProviders(accountID string, targets []OutboundAIRouteTarget) map[string]string {
-	providers := make(map[string]string, len(targets))
+func (m *MemStore) memOutboundAIProviders(accountID string, targets []OutboundAIRouteTarget) map[string]outboundAIRouteTarget {
+	providers := make(map[string]outboundAIRouteTarget, len(targets))
 	for _, target := range targets {
 		offer, ok := m.outboundIntegrationOffers[target.IntegrationID]
 		if ok && offer.AccountID == accountID && offer.Enabled {
-			providers[target.IntegrationID] = offer.AIProvider
+			providers[target.IntegrationID] = outboundAIRouteTarget{provider: offer.AIProvider,
+				pathPrefixes: append([]string(nil), offer.AllowedPathPrefixes...)}
 		}
 	}
 	return providers

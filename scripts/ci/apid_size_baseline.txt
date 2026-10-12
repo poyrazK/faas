@@ -1,4 +1,0 @@
-# Includes the existing Issues merge/split HTTP and dashboard adapters (ADRs 1114–1118).
-# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-982).
-# Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-156332

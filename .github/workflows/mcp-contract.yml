@@ -49,9 +49,9 @@ env:
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
-    # Cold sequential race compilation reached 20 minutes despite all seven packages passing.
-    # Preserve the complete contract suite and allow compilation/cleanup to finish.
-    timeout-minutes: 35
+    # Cold race compilation takes about 19 minutes; allow cache finalization
+    # after the complete package suite rather than cancelling a passing run.
+    timeout-minutes: 30
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.

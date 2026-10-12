@@ -64,27 +64,27 @@ func (s *PgStore) GetOutboundAIRoute(ctx context.Context, accountID, routeID str
 
 // outboundAIProviders loads the account's managed AI integrations named by
 // targets, so route validation sees only integrations the account owns.
-func outboundAIProviders(ctx context.Context, tx pgx.Tx, accountID string, targets []OutboundAIRouteTarget) (map[string]string, error) {
+func outboundAIProviders(ctx context.Context, tx pgx.Tx, accountID string, targets []OutboundAIRouteTarget) (map[string]outboundAIRouteTarget, error) {
 	ids := make([]pgtype.UUID, 0, len(targets))
 	for _, target := range targets {
 		ids = append(ids, mustPgUUID(target.IntegrationID))
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT id, COALESCE(ai_provider, '') FROM outbound_integrations
+		SELECT id, COALESCE(ai_provider, ''), allowed_path_prefixes FROM outbound_integrations
 		 WHERE account_id = $1 AND id = ANY($2) AND provider_auth_mode = 'managed' AND enabled
 		 FOR SHARE`, mustPgUUID(accountID), ids)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	defer rows.Close()
-	providers := make(map[string]string, len(ids))
+	providers := make(map[string]outboundAIRouteTarget, len(ids))
 	for rows.Next() {
 		var id pgtype.UUID
-		var provider string
-		if err := rows.Scan(&id, &provider); err != nil {
+		var target outboundAIRouteTarget
+		if err := rows.Scan(&id, &target.provider, &target.pathPrefixes); err != nil {
 			return nil, mapErr(err)
 		}
-		providers[pgUUIDString(id)] = provider
+		providers[pgUUIDString(id)] = target
 	}
 	return providers, mapErr(rows.Err())
 }

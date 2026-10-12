@@ -47,6 +47,9 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
+	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
+
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
@@ -278,6 +281,26 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/apps/{slug}/entities/quotas":                    "InspectDurableEntityTenantQuotas",
+	"GET /v1/apps/{slug}/entities/readiness":                 "GetDurableEntityReadiness",
+	"GET /v1/apps/{slug}/entities/quota-migration/plan":      "PlanDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-migration":           "InspectDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/start":    "StartDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/step":     "StepDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-policy":              "InspectDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/preview":     "PreviewDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/apply":       "ApplyDurableEntityQuotaPolicy",
+	"GET /v1/apps/{slug}/entities/registry":                  "ListDurableEntityRegistry",
+	"POST /v1/apps/{slug}/entities/registry/enable":          "EnableDurableEntityRegistry",
+	"GET /v1/apps/{slug}/entities/registry/cleanup":          "InspectDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/start":   "StartDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/step":    "StepDurableEntityRegistryCleanup",
+	"GET /v1/apps/{slug}/entities/retirement":                "PreviewDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/start":         "StartDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/step":          "StepDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
+	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
+
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -538,6 +561,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
 	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
+	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
 
 	"GET /v1/apps/{slug}/route-requirements/gate":                 "GetCanaryRouteGate",
 	"PUT /v1/apps/{slug}/route-requirements/gate":                 "SetCanaryRouteGate",
