@@ -2052,12 +2052,12 @@ func TestOpsMetrics_WakeSnapshotTierNilSafe(t *testing.T) {
 // fires.
 func TestOpsMetrics_GuestTailSeconds_PreInstantiated(t *testing.T) {
 	m := wire.NewOpsMetrics("vmmd")
-	runtimes := []string{"node22", "node24", "python312", "python313", "go124"}
+	runtimes := []string{"node22", "node24", "python312", "python313", "go124", "binary"}
 	outcomes := []string{"completed", "failed", "timeout"}
 	plans := []string{"free", "hobby", "pro", "scale"}
 
 	// Observe a single sample on every (plan, runtime, outcome) so
-	// the render() helper picks up the 60 series. The values are
+	// the render() helper picks up the 72 series. The values are
 	// arbitrary — the test is about presence, not magnitude.
 	for _, plan := range plans {
 		for _, runtime := range runtimes {
@@ -2085,8 +2085,8 @@ func TestOpsMetrics_GuestTailSeconds_PreInstantiated(t *testing.T) {
 			}
 		}
 	}
-	if seen != 60 {
-		t.Errorf("GuestTailSeconds Cartesian saw %d series, want 60 (4 plans × 5 runtimes × 3 outcomes)", seen)
+	if seen != 72 {
+		t.Errorf("GuestTailSeconds Cartesian saw %d series, want 72 (4 plans × 6 runtimes × 3 outcomes)", seen)
 	}
 }
 

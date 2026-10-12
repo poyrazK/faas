@@ -442,7 +442,7 @@ export class DeploymentsService {
        */
       dev_source_deleted?: string;
       dockerfile?: boolean;
-      runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
+      runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
       handler?: string;
       /**
        * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.

@@ -13728,7 +13728,7 @@ paths:
                   enum: [app, function]
                 runtime:
                   type: string
-                  enum: [node22, python312, go124, go124-alpine, node24, python313]
+                  enum: [node22, python312, go124, go124-alpine, node24, python313, binary]
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
@@ -13926,7 +13926,7 @@ paths:
                   type: boolean
                 runtime:
                   type: string
-                  enum: [node22, python312, go124, go124-alpine, node24, python313]
+                  enum: [node22, python312, go124, go124-alpine, node24, python313, binary]
                 handler:
                   type: string
                 healthcheck:
@@ -50132,7 +50132,7 @@ components:
           enum: [http, graphql, grpc, job, worker]
           description: "Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot may replace it. Distinct from type, which selects the app-vs-function execution contract."
           example: http
-        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
+        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313, binary], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the canonical plan RAM/vCPU pair." }
         cpu_millicores: { type: integer, enum: [250, 500, 1000], example: 500 }
@@ -52240,7 +52240,7 @@ components:
         service_binding_transport:
           $ref: '#/components/schemas/ServiceBindingTransport'
           description: "Standalone canonical URL scheme. Omit to preserve the legacy HTTP contract; choose https to make GREGALE_SERVICE_<NAME>_URL use https://<service>.internal."
-        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
+        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313, binary] }
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default." }
         cpu_millicores:
@@ -52566,7 +52566,7 @@ components:
       type: object
       properties:
         type: { type: string, enum: [app, function], default: app }
-        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
+        runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313, binary] }
         workspace_id:
           type: string
           pattern: '^[a-f0-9]{32}$'
