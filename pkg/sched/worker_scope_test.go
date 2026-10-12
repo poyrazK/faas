@@ -659,7 +659,7 @@ func TestWorkerCustomMetricScalesFromZeroAndBackToZero(t *testing.T) {
 		AccountID: account.ID, Slug: "mcp-worker-zero", Type: state.AppTypeApp,
 		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 5,
 		Manifest: state.AppManifest{
-			ExecutionMode:  api.ExecutionModeWorker,
+			ExecutionMode: api.ExecutionModeWorker,
 			WorkerReplicas: &state.WorkerScaling{
 				Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName,
 				Target: target, ObserverAppSlug: observer.Slug,
@@ -719,6 +719,8 @@ func TestWorkerCustomMetricScalesFromZeroAndBackToZero(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatalf("reconcile with ready observer and fresh heartbeat: %v", err)
 	}
+	// adr: 426 — scale-in uses the background graceful-stop contract.
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 {
 		t.Fatalf("fresh zero metric should return worker pool to zero, got %d", got)
 	}

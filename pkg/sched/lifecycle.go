@@ -533,6 +533,12 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		}
 		switch state.State(fresh.State) {
 		case state.StateRunning:
+			if fresh.Mode == string(state.InstanceModeWorker) {
+				if err := e.beginWorkerStop(ctx, fresh, e.workerStopOptions(app)); err != nil {
+					e.log.Warn("sched: drain superseded worker", "instance", fresh.ID, "err", err)
+				}
+				continue
+			}
 			if preserveSnapshot {
 				if err := e.Park(ctx, fresh.ID); err != nil {
 					e.log.Warn("sched: park superseded deployment instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
