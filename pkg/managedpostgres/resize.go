@@ -146,7 +146,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 			return ResizeOperation{}, err
 		}
 	}
-	if s.admit != nil {
+	if s.admit != nil && computeChangeRaisesCost(database.Spec, target) {
 		if err := s.admit(ctx, request.AccountID); err != nil {
 			return ResizeOperation{}, err
 		}
@@ -160,6 +160,29 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		operation.PolicyChange, operation.TargetScaleToZero = true, *scaleToZero
 	}
 	return store.ReserveResize(ctx, database, operation, now)
+}
+
+// computeChangeRaisesCost reports whether target can consume more than source.
+// Usage admission guards spend, so a smaller or equal class and turning
+// scale-to-zero on stay available while usage is stale or at its guardrail:
+// those are the changes that stop spend (ADR-623 amendment, hunt #9 H9-P201).
+func computeChangeRaisesCost(source, target Spec) bool {
+	return serviceClassRank(target.Class) > serviceClassRank(source.Class) || source.ScaleToZero && !target.ScaleToZero
+}
+
+// serviceClassRank orders the product classes by their compute promise; an
+// unknown class ranks highest so it never skips admission.
+func serviceClassRank(class ServiceClass) int {
+	switch class {
+	case ClassDevelopment:
+		return 0
+	case ClassBurstable:
+		return 1
+	case ClassProduction:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func (s *Service) GetResize(ctx context.Context, account, database, id string) (ResizeOperation, error) {
