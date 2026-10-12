@@ -515,6 +515,10 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 // handleCommitUpload is POST /v1/uploads/{id}/commit. Validates
 // tarball shape over the .part file, enqueues the build, records
 // the dedupe row, and marks the session committed.
+// uploadCommitFinishTimeout bounds the bookkeeping after a commit has created
+// its deployment (outcome, session state, response read).
+const uploadCommitFinishTimeout = 15 * time.Second
+
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
@@ -792,19 +796,27 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	manifestCommitted = true
+	// The deployment now exists. Recording which deployment this upload
+	// produced must not depend on the caller still waiting: on production-us
+	// the request deadline expired inside Enqueue's tail, the outcome write
+	// failed with "context deadline exceeded", the session stayed open, and
+	// the CLI's retry built and released a second deployment from the same
+	// upload (hunt #9, H9-127).
+	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(r.Context()), uploadCommitFinishTimeout)
+	defer cancelFinish()
 
 	// Record the dedupe outcome before flipping the session state so a
 	// retry after a response loss can recover the original deployment.
 	// A conflict is only safe to treat as a retry when the canonical
 	// outcome can actually be read; otherwise returning an error avoids
 	// marking the session with an outcome that belongs to another build.
-	if _, err := s.store.RecordUploadCommitOutcome(r.Context(), sqlc.RecordUploadCommitOutcomeParams{
+	if _, err := s.store.RecordUploadCommitOutcome(finishCtx, sqlc.RecordUploadCommitOutcomeParams{
 		UploadID:     uploadID,
 		DeploymentID: res.DeploymentID,
 		BuildID:      res.BuildID,
 	}); err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
+			if outcome, getErr := s.store.GetUploadCommitOutcome(finishCtx, uploadID); getErr == nil {
 				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 				return
 			} else {
@@ -820,13 +832,13 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	committedRow, err := s.store.MarkUploadSessionCommitted(r.Context(), sqlc.MarkUploadSessionCommittedParams{
+	committedRow, err := s.store.MarkUploadSessionCommitted(finishCtx, sqlc.MarkUploadSessionCommittedParams{
 		ID:           uploadID,
 		DeploymentID: pgtype.Text{String: res.DeploymentID, Valid: true},
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			if outcome, getErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); getErr == nil {
+			if outcome, getErr := s.store.GetUploadCommitOutcome(finishCtx, uploadID); getErr == nil {
 				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 				return
 			}
@@ -845,7 +857,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// Read the deployment created by this commit, not merely the
 	// latest deployment for the app. Another deploy may legitimately
 	// arrive between Enqueue and this response.
-	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
+	d, err := s.store.DeploymentByID(finishCtx, res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
