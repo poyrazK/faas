@@ -18,7 +18,7 @@ also covers the crash-loop gate added to ADR-1160.
 | Branch | `feat/safe-releases-by-default` |
 | Signals | real apid, meterd canary progression, schedd, vmmd, gatewayd-internal; breaker PromQL answered from schedd's and the gateway's real `/metrics` |
 | Verdict | **PASS** — all six drills after the rollback fix (finding 1) |
-| Final full run | run 10 at `ab57a4b03`: `TestSafeReleaseDrillMetal` PASS in 940 s (default 71 s, low-traffic advance 350 s + rollback recovery 8.7 s, bad release 111 s, crash loop 127 s, worker fallback 108 s) |
+| Final full run | run 11 (2026-10-12) at `f7266e3698`, the branch rebased on main `2bf07d55de` with verified rollback outcomes: `TestSafeReleaseDrillMetal` PASS in 1568 s (default 221 s, low-traffic advance 350 s + rollback recovery 11.8 s with a `complete` receipt, bad release 224 s, crash loop 217 s, worker fallback 227 s). Run 10 at `ab57a4b03`, before the rebase: PASS in 940 s |
 
 | Drill | Result | Evidence |
 |---|---|---|
@@ -27,7 +27,7 @@ also covers the crash-loop gate added to ADR-1160.
 | Bad release aborts and restores the predecessor | PASS | `/api` 5xx at a 50% canary; breaker input candidate 26/26 5xx vs stable 0/25; abort `circuit breaker: 5xx error rate regression; restoring predecessor`, predecessor back to 100% (run 8) |
 | Crash-looping release aborts on liveness restarts | PASS | `/livez` failing, `/` healthy; abort `circuit breaker: crash loop (repeated liveness restarts); restoring predecessor` (runs 5, 6) |
 | Defaulted release falls back when the canary worker is down | PASS | meterd killed, lease expired; flag-free deploy went live at 100% with no canary and `rollback_on_5xx=true` (runs 4–6) |
-| Rollback recovery ≤ 60 s | PASS | before the fix the target went `snapshotting` → `superseded` and never served (run 6); with `ab57a4b03` the predecessor served 100% again **8.3 s** after `POST /v1/apps/{slug}/rollback` (run 9) |
+| Rollback recovery ≤ 60 s | PASS | before the fix the target went `snapshotting` → `superseded` and never served (run 6); with `ab57a4b03` the predecessor served 100% again **8.3 s** after `POST /v1/apps/{slug}/rollback` (run 9); at `f7266e3698` it served again in 11.8 s and `GET /v1/apps/{slug}/rollbacks/{id}` returned `status=complete trigger=manual recovery_ms=8961` (run 11) |
 
 ## Findings
 

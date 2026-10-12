@@ -21,7 +21,7 @@ Two things kept this from being the default:
 
 1. **It was opt-in everywhere.** ADR-200 deliberately left `rollback_on_5xx`
    off by default, and GitHub App push deploys
-   ([`cmd/apid/githubd_bridge.go`](../../cmd/apid/githubd_bridge.go)) carried
+   ([`pkg/apid/apidserver/githubd_bridge.go`](../../pkg/apid/apidserver/githubd_bridge.go)) carried
    no rollout fields at all.
 2. **Low-traffic apps never finished.** The breaker holds until both sides
    have `CircuitBreakerMinRequests` (20) requests. At a 1% stage that needs
@@ -34,7 +34,7 @@ Two things kept this from being the default:
 ### Default release policy
 
 apid fills in rollout fields a deploy request left unset
-([`cmd/apid/default_release_policy.go`](../../cmd/apid/default_release_policy.go)).
+([`pkg/apid/release/default_policy.go`](../../pkg/apid/release/default_policy.go)).
 It never overrides an explicit value. The default applies when all hold:
 
 - the app's `release_policy` is `safe` (the unset value);
@@ -118,6 +118,7 @@ one that did. That is how the fence bug above stayed invisible.
 
 Each plain rollback now opens a `deployment_rollbacks` row (`preparing`,
 with its trigger: `manual`, `alert`, or `auto_5xx`). apid's outcome worker
+([`pkg/apid/release/rollback_outcomes.go`](../../pkg/apid/release/rollback_outcomes.go))
 resolves it every `RollbackOutcomeCheckInterval` (5 s):
 
 - `complete` when the target's `rollout_completed_at` is stamped after the

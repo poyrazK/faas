@@ -111,7 +111,7 @@ held until the alert state can be read again). The fleet counter
 Before staging, run the deterministic decision-to-recovery drill:
 
 ```bash
-go test ./cmd/apid -run '^TestCircuitBreakerFaultDrill$' -count=1
+go test ./pkg/apid/apidserver -run '^TestCircuitBreakerFaultDrill$' -count=1
 ```
 
 It injects each health outcome through the real canary progression policy and
