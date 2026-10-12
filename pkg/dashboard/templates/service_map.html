@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; --bad: #b91c1c; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; --bad: #f87171; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .65rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .ranges { display: flex; gap: .75rem; flex-wrap: wrap; } .ranges strong { text-decoration: underline; }
+    .bad { color: var(--bad); font-weight: 600; } code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/projects">Projects</a><a href="/dashboard/service-map">Service map</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Service map</h1>
+{{with .Data}}
+{{if not .Enabled}}
+  <p>The service map is not enabled for this deployment.</p>
+{{else if not .PlanAllowed}}
+  <p>The service map uses per-app metrics, which start on the Hobby plan. <a href="/dashboard/upgrade">View upgrade options →</a></p>
+{{else}}
+  <p>Calls between your apps through Gregale's internal service routing. Counts are unsampled; latency covers successful calls, including any wake.</p>
+  <p class="ranges" aria-label="Time window">{{$current := .Range}}{{range .Ranges}}{{if eq . $current}}<strong>{{.}}</strong>{{else}}<a href="/dashboard/service-map?range={{.}}">{{.}}</a>{{end}}{{end}}</p>
+  {{if .Degraded}}
+  <p class="card" role="status">Metrics are unavailable right now ({{.Degraded}}). Try again shortly.</p>
+  {{else}}{{with .Map}}
+  {{if .Edges}}
+  <div class="scroll"><table><thead><tr><th>Caller</th><th>Target</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">p50</th><th class="num">p95</th></tr></thead><tbody>
+  {{range .Edges}}<tr>
+    <td><a href="/dashboard/apps/{{.CallerAppSlug}}">{{.CallerAppSlug}}</a></td>
+    <td><a href="/dashboard/apps/{{.TargetAppSlug}}">{{.TargetAppSlug}}</a></td>
+    <td class="num">{{.Calls}}</td>
+    <td class="num{{if ge .ErrorRatePct $.Data.HighErrorRatePct}} bad{{end}}">{{.Errors}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
+    <td class="num">{{printf "%.1f" .LatencyP50MS}} ms</td>
+    <td class="num">{{printf "%.1f" .LatencyP95MS}} ms</td>
+  </tr>{{end}}</tbody></table></div>
+  {{if .Truncated}}<p class="muted">Showing the {{len .Edges}} busiest connections; quieter ones are omitted.</p>{{end}}
+  {{else}}<p class="muted">No calls between your apps in the last {{.Range}}. Apps call each other by internal name — see the networking docs.</p>{{end}}
+  {{end}}{{end}}
+  <p class="muted">Also available as <code>gregale metrics --services</code> and <code>GET /v1/service-map</code>.</p>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

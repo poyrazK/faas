@@ -10431,3 +10431,16 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// ServiceMapMaxEdges caps the caller → target edges returned by
+// GET /v1/service-map (ADR-1131). Edges are ranked by call volume before the
+// cap, so the busiest dependencies always survive truncation.
+const ServiceMapMaxEdges = 500
+
+// ServiceMapDefaultRange is the window used when ?range= is omitted. A map
+// needs enough traffic to show quiet edges, so it is longer than the 5m
+// default of the per-app metrics endpoints.
+const ServiceMapDefaultRange = "1h"
+
+// ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
+const ServiceMapHighErrorRatePct = 5.0
