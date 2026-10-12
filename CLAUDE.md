@@ -163,9 +163,12 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   disappears on reboot and eats RAM until then.
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
-- `go test ./pkg/apid/apidserver` compiles two units: the package with its internal tests
-  (~9 GB peak) and the external `apidserver_test` package (~6 GB). Write new apid tests in
-  `package apidserver_test` and reach internals through `export_test.go`; every test added
-  to the internal unit grows the bigger compile. Run these builds one at a time, type-check
-  with `go vet ./pkg/apid/apidserver` while iterating, and keep the default shared GOCACHE:
-  per-job private caches grow to ~11 GB each and have filled developer disks.
+- apidserver's tests compile as two units: the package with its internal tests, and the
+  external `apidserver_test` package. Run them with `make test-apid [RUN='^TestX'] [RACE=1]`,
+  not a bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and
+  `GOMEMLIMIT=6GiB`, which holds a `-race` build near 7.5 GB RSS instead of ~13.5 GB.
+  Write new apid tests in `package apidserver_test` and reach internals through
+  `export_test.go`; `make apid-size-check` fails when internal tests grow. Run these builds
+  one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
+  the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
+  developer disks.
