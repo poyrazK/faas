@@ -6255,6 +6255,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				if mismatchErr := characterizationReadinessMismatch(receipt.report, executionMode, err); mismatchErr != nil {
 					return mismatchErr
 				}
+				if loopbackErr := loopbackBindProblem(receipt.report, err); loopbackErr != nil {
+					return loopbackErr
+				}
 			}
 			return err
 		case <-receiptDone:
@@ -6323,6 +6326,39 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+// loopbackBindProblem names a readiness failure whose only observed listener
+// is bound to loopback: the gateway reaches the guest at 10.0.0.2 (ADR-009),
+// so the app can never answer. Spec §6.4 amendment 1 promises
+// app_loopback_bound from the characterization's listening_addrs, but the
+// refused probes surfaced as app_not_listening (production-us hunt #9: a Node
+// app on 127.0.0.1 waited out the 2 min deadline). Only a readiness failure is
+// reclassified; the report names the first listener only, so a loopback
+// socket alone never fails a boot.
+func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) error {
+	if p := api.AsProblem(readinessErr); p == nil || p.Code != api.CodeAppNotListening || report.ObservedPort <= 0 || len(report.ListeningAddrs) == 0 {
+		return nil
+	}
+	for _, addr := range report.ListeningAddrs {
+		if !loopbackListenAddr(addr) {
+			return nil
+		}
+	}
+	return api.NewProblem(422, api.CodeAppLoopbackBound, "app bound to loopback",
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on %s, which the gateway cannot reach; bind 0.0.0.0 (or ::) instead (%s)",
+			strings.Join(report.ListeningAddrs, ", "), readinessErr))
+}
+
+// loopbackListenAddr reports a host:port bound to a loopback address. An
+// unparsable address is not evidence of a loopback bind.
+func loopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
 func characterizationReadinessMismatch(report api.CharacterizationReport, executionMode string, readinessErr error) error {
