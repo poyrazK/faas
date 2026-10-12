@@ -143,7 +143,9 @@ func TestFunctionLongRequestMetal(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("X-Faas-Deadline-Ms", "86400000") // a client cannot set the guest's deadline
 	started := time.Now()
-	resp, err := h.HTTPClient().Do(req)
+	// The harness client gives up after 30 s; this request is bounded by its
+	// three-minute context instead.
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		t.Fatalf("GET /long: %v", err)
 	}
