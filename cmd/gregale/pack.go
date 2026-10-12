@@ -1320,8 +1320,8 @@ func functionGoBuildOnlyFiles(detectDir, packDir string) (map[string][]byte, err
 //
 // 2 checks:
 //
-//  1. Loopback bind: app.listen("127.0.0.1"...) or bind("127.0.0.1")
-//     patterns in source — would trip app_loopback_bound post-deploy.
+//  1. Loopback bind: listeners bound to 127.0.0.1, localhost or ::1
+//     (loopbackBindRegex) in source — would trip app_loopback_bound post-deploy.
 //  2. Arch mismatch: tarball contains a Mach-O / ARM aarch64 binary
 //     — would trip app_arch_mismatch post-deploy (ENOEXEC in the
 //     build VM's linux/amd64 kernel).

@@ -1,10 +1,10 @@
 # ADR-909: Admission by measured memory
 
-- Status: Proposed. It changes invariant 2 and the node capacity the
-  financial model assumes, so it needs an owner decision first.
+- Status: Accepted (owner decision, 2026-10-12). Measured admission is on
+  by default in schedd.
 - Date: 2026-10-12
 - Related: ADR-906, ADR-907, ADR-193, spec §1, §4.7, §6.2 invariant 2
-- Would amend: spec §6.2 invariant 2
+- Amends: spec §6.2 invariant 2
 
 ## Context
 
@@ -154,7 +154,29 @@ including random admit/release traffic.
   the two least recently used VMs. Destroying them brought the node to
   5,109 MB, under the 5,506 MB target, and the other 14 kept serving.
 
-Still open, and why the flag stays off by default:
+## Decision (accepted 2026-10-12)
+
+The owner accepted this ADR. schedd's `measured_admission` now defaults to
+on, and `measured_admission = false` restores reservation admission.
+Invariant 2 now reads: a node's measured memory stays under its admission
+ceiling, Σ(plan RAM + 8 MB) stays under twice that ceiling, and schedd
+evicts when measured memory crosses the ceiling. Billing is unchanged: plan
+RAM + 8 MB per running second.
+
+What still bounds the risk:
+
+- Every VM keeps `memory.max = plan + 8 MB`, so no VM can grow past its
+  plan.
+- The tenant slice's hard `memory.max` sits above the admission ceiling
+  (57,344 MB against 47,600 MB on the reference box). Pressure eviction
+  runs on the reaper's 10 s tick from vmmd's 1 s capacity reports. A burst
+  that outruns eviction ends in the kernel OOM-killing a tenant VM inside
+  the slice, never the control plane. The app then wakes again from its
+  snapshot.
+- The financial model's node capacity assumes reservations. It now
+  understates how many tenants a node holds, until the owner updates it.
+
+Still open:
 
 - Eviction destroys; it does not freeze. Freezing (ADR-906) would keep the
   evicted VMs a fast thaw away.
@@ -162,8 +184,6 @@ Still open, and why the flag stays off by default:
   pre-warms into the overcommit.
 - Measurements come from vmmd. A vmmd that under-reports can over-admit
   its own node up to the overcommit cap; vmmd already runs as root there.
-- Turning it on changes invariant 2 and the node capacity the financial
-  model assumes. That is the owner's decision this ADR asks for.
 
 ## More reclaim levers, measured (2026-10-12)
 

@@ -22,15 +22,18 @@ import (
 )
 
 type qualificationOutput struct {
-	Version            int                                           `json:"version"`
-	BackendID          string                                        `json:"backend_id"`
-	BackendFingerprint string                                        `json:"backend_fingerprint"`
-	Spec               managedpostgres.Spec                          `json:"spec"`
-	Report             managedpostgres.QualificationReport           `json:"report"`
-	Lifecycle          *managedpostgres.LifecycleQualificationReport `json:"lifecycle,omitempty"`
-	Approval           *managedpostgres.QualificationApproval        `json:"approval,omitempty"`
-	ApprovalEnv        map[string]string                             `json:"approval_env,omitempty"`
-	Readiness          managedpostgres.QualificationReadiness        `json:"readiness"`
+	Version              int                                           `json:"version"`
+	SourceRevision       string                                        `json:"source_revision,omitempty"`
+	SourceClean          bool                                          `json:"source_clean,omitempty"`
+	SourceEvidenceSHA256 string                                        `json:"source_evidence_sha256,omitempty"`
+	BackendID            string                                        `json:"backend_id"`
+	BackendFingerprint   string                                        `json:"backend_fingerprint"`
+	Spec                 managedpostgres.Spec                          `json:"spec"`
+	Report               managedpostgres.QualificationReport           `json:"report"`
+	Lifecycle            *managedpostgres.LifecycleQualificationReport `json:"lifecycle,omitempty"`
+	Approval             *managedpostgres.QualificationApproval        `json:"approval,omitempty"`
+	ApprovalEnv          map[string]string                             `json:"approval_env,omitempty"`
+	Readiness            managedpostgres.QualificationReadiness        `json:"readiness"`
 }
 
 // configurationPreflightOutput is deliberately separate from the live
@@ -55,20 +58,10 @@ func main() {
 		os.Exit(runConfigurationPreflight(os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
-		path := strings.TrimSpace(os.Getenv(managedpostgres.QualificationApprovalPathEnv))
-		for index := 2; index < len(os.Args); index++ {
-			if os.Args[index] == "--approval" && index+1 < len(os.Args) {
-				path = strings.TrimSpace(os.Args[index+1])
-				index++
-				continue
-			}
-			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --verify [--approval PATH]")
-			os.Exit(2)
-		}
-		os.Exit(runVerify(os.Getenv, path, os.Stdout, os.Stderr))
+		os.Exit(runVerificationArguments(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --verify [--approval PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
@@ -342,6 +335,9 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		Approval:           result.Approval,
 		ApprovalEnv:        result.ApprovalEnv,
 	}
+	artifact.SourceRevision, artifact.SourceClean = qualificationExecutableSource()
+	artifact.SourceEvidenceSHA256 = managedpostgres.QualificationSourceDigest(artifact)
+	result.SourceRevision, result.SourceClean, result.SourceEvidenceSHA256 = artifact.SourceRevision, artifact.SourceClean, artifact.SourceEvidenceSHA256
 	result.Readiness = managedpostgres.EvaluateQualificationArtifact(artifact, result.BackendID, result.BackendFingerprint, canaryAccounts, time.Now().UTC())
 	if result.Readiness.Ready && result.Approval != nil {
 		result.ApprovalEnv = approvalEnvironment(*result.Approval)

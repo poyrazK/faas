@@ -133,8 +133,24 @@ jobs:
           GOGC: 50
           GOMAXPROCS: 2
         run: |
-          # shellcheck disable=SC2086 # space-separated package list
-          go vet -p=1 $PKGS
+          # apidserver's external tests (apidserver_test, ADR-982) import its
+          # internal test variant, so vetting them compiles apidserver with its
+          # internal tests: ~5 GB of live heap. Next to three other vet
+          # processes that lost the hosted runner, so vet it alone first under
+          # the full tier's vet bounds, then the rest as before.
+          apid=./pkg/apid/apidserver
+          rest=""
+          for pkg in $PKGS; do
+            if [ "$pkg" = "$apid" ]; then
+              GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go vet -p=1 "$apid"
+            else
+              rest="$rest $pkg"
+            fi
+          done
+          if [ -n "$rest" ]; then
+            # shellcheck disable=SC2086 # space-separated package list
+            go vet -p=1 $rest
+          fi
       # Same linter, rules and per-package invocation as the mega tier's
       # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
       # packages this change touches. The complete tree is linted nightly and
@@ -231,6 +247,12 @@ jobs:
         run: make memstore-stubs-check
       - name: daemon environment contract
         run: make env-contract-check
+      # ADR-982: apidserver source and internal-test ratchets. Feature PRs run
+      # only this workflow, so the gate has to live here to bind them.
+      - name: apid size
+        run: make apid-size-check
+      - name: apid size gate checker tests
+        run: make apid-size-check-test
       - name: restore-drill script contract
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
@@ -462,9 +484,10 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
         run: |
-          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
+          python3 scripts/ci/managed-postgres-native-verdict_test.py
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
       # -race on every tested package: races are the failures hardest to

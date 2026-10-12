@@ -7,6 +7,17 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Combined PostgreSQL rollout readiness — 2026-10-12
+
+[ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
+and durable lifecycle evidence with a separately approved native guest bundle.
+The offline verifier requires the same clean source revision, SQL major, current
+artifact hashes and unexpired evidence. Staging canaries can opt into enforcement;
+partial configuration cannot fall back to legacy approval. Portable race, verdict,
+lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20261012-managed-postgres-rollout-readiness/REPORT.md)
+record the qualification boundary. Supported native execution remains pending; this change
+does not enable production provisioning or alter Neon resources or billing.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires

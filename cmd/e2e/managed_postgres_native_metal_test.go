@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresprobe"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/guestqualification"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -31,6 +35,23 @@ import (
 // serving, task, replacement and restored guests. Only provider management is
 // simulated: the catalog, sealed credentials, daemons and SQL authority are real.
 func TestManagedPostgresNativeMetal(t *testing.T) {
+	var guestIdentity *guestqualification.Identity
+	var artifactPaths map[string]string
+	var artifactsVerified bool
+	// Registered first: emit evidence only after every SQL/daemon cleanup has
+	// succeeded, and recheck artifacts after the workload rather than trusting
+	// a caller-supplied manifest or a reused harness binary directory.
+	t.Cleanup(func() {
+		if t.Failed() || guestIdentity == nil || !artifactsVerified {
+			return
+		}
+		encoded, err := json.Marshal(guestIdentity)
+		if err != nil {
+			t.Error("guest qualification identity encoding failed")
+			return
+		}
+		t.Log(guestqualification.IdentityPrefix + string(encoded))
+	})
 	if os.Getenv("GREGALE_POSTGRES_NATIVE_ACCEPTANCE") != "1" {
 		t.Fatal("use make test-managed-postgres-native for isolated SQL guest acceptance")
 	}
@@ -109,10 +130,58 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			environment = append(environment, name+"="+value)
 		}
 	}
+	if root := os.Getenv("FAAS_STORAGE_ROOT"); root != "" {
+		environment = append(environment, "FAAS_STORAGE_ROOT="+root)
+	}
 	h := e2etest.Start(t, pool, e2etest.All, environment...)
+	revision, err := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal("guest qualification requires a checkout revision")
+	}
+	artifactPaths = map[string]string{"kernel": os.Getenv("FAAS_TEST_KERNEL"), "guest_init": os.Getenv("FAAS_GUEST_INIT"), "builder_base": e2etest.StagedBuilderBasePath()}
+	for _, name := range append(append([]string(nil), e2etest.DaemonBinaries...), e2etest.StaticHelperBinaries...) {
+		artifactPaths[name] = filepath.Join(h.BinDir, name)
+	}
+	for _, name := range []string{"firecracker", "jailer"} {
+		artifactPaths[name], err = exec.LookPath(name)
+		if err != nil {
+			t.Fatal("guest qualification host executable missing")
+		}
+	}
+	artifactPaths["e2e_test"], err = os.Executable()
+	if err != nil {
+		t.Fatal("guest qualification test executable missing")
+	}
+	manifest, err := e2etest.PostgresGuestRuntimeManifest(artifactPaths, strings.TrimSpace(string(revision)), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestIdentity = &guestqualification.Identity{Runtime: manifest, PostgresMajor: fixture.Major}
 	key := h.SeedAccount(t.Context(), api.PlanPro)
 	store := state.NewPgStore(pool)
 	account := accountIDFromKey(t, t.Context(), pool, key)
+	recordRuntime := func(t *testing.T, deploymentID, runtimeName string) {
+		t.Helper()
+		deployment, err := store.DeploymentByID(t.Context(), deploymentID)
+		if err != nil {
+			t.Fatal("guest runtime deployment missing")
+		}
+		release, err := store.RuntimeReleaseForArtifact(t.Context(), account, deployment.RootfsKey)
+		if err != nil || release.Validate() != nil || (runtimeName == "node22" && release.Runtime != runtimeName) || release.Architecture != "amd64" || release.GuestInitSHA256 != guestIdentity.Runtime.Artifacts["guest_init"] {
+			t.Fatal("guest runtime release identity unverified")
+		}
+		storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
+		if storageRoot == "" {
+			storageRoot = "/srv/fc"
+		}
+		path := filepath.Join(storageRoot, release.BaseKey())
+		digest, err := e2etest.PostgresGuestArtifactDigest(path)
+		if err != nil || digest != release.BaseSHA256 {
+			t.Fatal("guest runtime base bytes differ from published release")
+		}
+		artifactPaths[runtimeName+"_base"] = path
+		guestIdentity.Runtime.Artifacts[runtimeName+"_base"] = digest
+	}
 	slug := "postgres-native-" + randHexSuffix()
 	falsy := false
 	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RAMMB: 256, RequireAuthn: &falsy}); status != http.StatusCreated {
@@ -234,6 +303,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			}
 			t.Fatalf("SQL source deployment: %v", err)
 		}
+		recordRuntime(t, deploymentID, "probe")
 		release, err := store.ReleaseAppTaskByDeployment(ctx, deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("normal deployment did not complete its SQL migration release")
@@ -387,8 +457,15 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		rotate(t, true)
 	})
-	postgresNativeStarterPhases(t, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot)
-	phase("independent_cleanup", func(t *testing.T) { cleanup() })
+	postgresNativeStarterPhases(t, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot, recordRuntime)
+	phase("independent_cleanup", func(t *testing.T) {
+		cleanup()
+		after, err := e2etest.PostgresGuestRuntimeManifest(artifactPaths, guestIdentity.Runtime.SourceRevision, true)
+		if err != nil || !reflect.DeepEqual(after, guestIdentity.Runtime) {
+			t.Fatal("guest qualification artifacts changed during acceptance")
+		}
+		artifactsVerified = true
+	})
 }
 
 func postgresNativeWait(t *testing.T, what string, ready func(context.Context) bool) {
