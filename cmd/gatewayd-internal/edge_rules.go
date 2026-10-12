@@ -2000,12 +2000,13 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			continue
 		}
 		// Clamp the budget to the platform ceiling. Non-positive or
-		// > ceiling → api.RequestBudgetMaxMs (a 0 budget would
+		// > ceiling → api.RequestBudgetPlanMax (a 0 budget would
 		// 504 every request, which is worse than the platform
 		// default; the same defence-in-depth posture as
-		// compileLimitRules silently dropping malformed caps).
+		// compileLimitRules silently dropping malformed caps). The
+		// plan's own ceiling clamps again at request time.
 		budgetMs := r.Action.Budget.BudgetMs
-		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
+		maxBudgetMs := int(api.RequestBudgetPlanMax.Milliseconds())
 		if budgetMs <= 0 || budgetMs > maxBudgetMs {
 			budgetMs = maxBudgetMs
 		}

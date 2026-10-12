@@ -13,13 +13,30 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// HandlerTimeout bounds one invocation, a streamed response included.
+// HandlerTimeout is the least time one invocation gets, a streamed response
+// included. The request budget the gateway forwards may extend it.
 const HandlerTimeout = 30 * time.Second
+
+// invocationTimeout bounds one invocation: the request budget the gateway
+// forwarded in X-Faas-Deadline-Ms (ADR-1150), but never less than
+// HandlerTimeout, so existing functions keep their 30 s, and never more than
+// the longest plan budget.
+func invocationTimeout(h http.Header) time.Duration {
+	timeout := HandlerTimeout
+	if ms, err := strconv.ParseInt(h.Get(api.DeadlineHeader), 10, 64); err == nil && ms > 0 {
+		if forwarded := time.Duration(ms) * time.Millisecond; forwarded > timeout {
+			timeout = forwarded
+		}
+	}
+	return min(timeout, api.RequestBudgetPlanMax)
+}
 
 // Envelope is the §4.9 request a runner sends its handler, extended with the
 // waitUntil tail primitive (ADR-078). Default 0/empty = no tail.
@@ -87,7 +104,7 @@ func Serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
 		WaitUntilSec: cfg.WaitUntilSec,
 		TailPipePath: cfg.TailPipePath,
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), HandlerTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), invocationTimeout(r.Header))
 	defer cancel()
 
 	started := time.Now()
