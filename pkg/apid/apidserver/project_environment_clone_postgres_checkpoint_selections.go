@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"filippo.io/age"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpointselection"
 	"github.com/onebox-faas/faas/pkg/state"

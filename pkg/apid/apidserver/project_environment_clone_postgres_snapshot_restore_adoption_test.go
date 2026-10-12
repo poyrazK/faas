@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )

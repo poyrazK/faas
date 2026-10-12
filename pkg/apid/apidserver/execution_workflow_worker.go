@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionworkflow"

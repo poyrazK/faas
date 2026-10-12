@@ -3,11 +3,10 @@ package apidserver
 import (
 	"context"
 	"errors"
-	"slices"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"slices"
 )
 
 type sourceRefEventVersionsChange struct {

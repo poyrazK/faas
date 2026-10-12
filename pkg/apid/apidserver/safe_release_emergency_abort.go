@@ -6,9 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (

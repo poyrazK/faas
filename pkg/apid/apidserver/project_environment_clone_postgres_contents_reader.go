@@ -5,7 +5,6 @@ import (
 	"reflect"
 
 	"github.com/jackc/pgx/v5"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"

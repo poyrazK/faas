@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"fmt"
-
 	"github.com/onebox-faas/faas/pkg/api"
 )
 

@@ -5,14 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/state"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/exclusivework"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type exclusiveJobSubmissionKey struct{}
