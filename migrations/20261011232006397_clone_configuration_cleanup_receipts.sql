@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: private copied-configuration cleanup, retaining workload ownership.
-CREATE TABLE project_environment_clone_configuration_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
  FOREIGN KEY(operation_id) REFERENCES project_environment_clone_checkpoint_workload_retirements(operation_id) ON DELETE RESTRICT,
  ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),

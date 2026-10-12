@@ -1,7 +1,7 @@
 -- ADR-590: close dispatch of previously admitted qualification executions.
 -- +goose Up
-CREATE INDEX clone_qualification_pending_deployment_idx ON environment_qualification_executions((frame->>'deployment_id')) WHERE retired_at IS NULL;
-CREATE INDEX clone_qualification_pending_environment_idx ON environment_qualification_executions((frame->>'environment_id')) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_deployment_idx ON environment_qualification_executions((frame->>'deployment_id')) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_environment_idx ON environment_qualification_executions((frame->>'environment_id')) WHERE retired_at IS NULL;
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -13,12 +13,12 @@ END $$;
 -- Cleanup writes the frame before stopping its instance. Reserve instance
 -- writer intent first so it cannot hold a frame writer while waiting for a
 -- clone transaction that already owns the instance fence.
-CREATE FUNCTION lock_environment_qualification_cleanup_writers() RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION lock_environment_qualification_cleanup_writers() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
  LOCK TABLE instances IN ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION guard_clone_checkpoint_qualification_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_qualification_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE fenced boolean;
 BEGIN
  IF TG_OP='TRUNCATE' THEN
@@ -41,9 +41,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_qualification_dispatch BEFORE INSERT OR UPDATE ON environment_qualification_executions
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_dispatch BEFORE INSERT OR UPDATE ON environment_qualification_executions
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
-CREATE TRIGGER clone_checkpoint_qualification_retention BEFORE TRUNCATE ON environment_qualification_executions
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_retention BEFORE TRUNCATE ON environment_qualification_executions
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
 -- +goose StatementEnd
 

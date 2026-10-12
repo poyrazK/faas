@@ -9,7 +9,7 @@ BEGIN
  LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION guard_clone_checkpoint_migration_lease() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_lease() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE identity uuid; fenced boolean;
 BEGIN
  IF TG_OP='TRUNCATE' THEN
@@ -47,12 +47,12 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_lease BEFORE INSERT OR UPDATE OR DELETE ON migration_leases
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_lease BEFORE INSERT OR UPDATE OR DELETE ON migration_leases
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
-CREATE TRIGGER clone_checkpoint_migration_retention BEFORE TRUNCATE ON migration_leases
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_retention BEFORE TRUNCATE ON migration_leases
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
 
-CREATE FUNCTION guard_clone_checkpoint_migration_instance() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_instance() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'instance deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
  IF EXISTS(SELECT 1 FROM migration_leases WHERE instance_id=OLD.id) AND clone_checkpoint_deployment_fenced(OLD.deployment_id,(SELECT reason FROM deployments WHERE id=OLD.deployment_id)) THEN
@@ -60,9 +60,9 @@ BEGIN
  END IF;
  RETURN OLD;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_instance BEFORE DELETE ON instances
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_instance BEFORE DELETE ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_instance();
-CREATE FUNCTION guard_clone_checkpoint_migration_deployment() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_deployment() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'deployment deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
  IF clone_checkpoint_deployment_fenced(OLD.id,OLD.reason) AND EXISTS(
@@ -71,7 +71,7 @@ BEGIN
  END IF;
  RETURN OLD;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_deployment BEFORE DELETE ON deployments
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_deployment BEFORE DELETE ON deployments
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_deployment();
 -- +goose StatementEnd
 

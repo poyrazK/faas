@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: bounded read-only retained-object/private-target comparison authority.
-CREATE TABLE project_environment_clone_checkpoint_object_verification (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_verification (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),

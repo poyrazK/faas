@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: preserve once-only permanent native cleanup authority and evidence.
-CREATE TABLE project_environment_clone_checkpoint_object_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_retirements (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=17825792),

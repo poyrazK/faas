@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: once-only original source cleanup authority survives source reopening.
-CREATE TABLE project_environment_clone_checkpoint_source_compensations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_source_compensations (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','compensated')),

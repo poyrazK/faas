@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: bounded once-only retained-object/private-target copy authority.
-CREATE TABLE project_environment_clone_checkpoint_object_copies (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_copies (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),

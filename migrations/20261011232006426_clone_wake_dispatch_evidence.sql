@@ -1,6 +1,6 @@
 -- ADR-590: retain ordinary clone wake RPC ownership before dispatch.
 -- +goose Up
-CREATE TABLE project_environment_clone_wake_dispatches (
+CREATE TABLE IF NOT EXISTS project_environment_clone_wake_dispatches (
  instance_id uuid PRIMARY KEY,
  app_id uuid NOT NULL,
  deployment_id uuid NOT NULL,
@@ -10,8 +10,8 @@ CREATE TABLE project_environment_clone_wake_dispatches (
  method text NOT NULL CHECK(method IN ('cold_boot','restore')),
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX clone_wake_dispatch_deployment ON project_environment_clone_wake_dispatches(deployment_id);
-CREATE INDEX clone_wake_dispatch_reason ON project_environment_clone_wake_dispatches(request_reason);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_deployment ON project_environment_clone_wake_dispatches(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_reason ON project_environment_clone_wake_dispatches(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -21,7 +21,7 @@ BEGIN
  LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_wake_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_wake_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone wake dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_wake_dispatch_retained';
@@ -40,11 +40,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_wake_dispatch BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_wake_dispatches
+CREATE OR REPLACE TRIGGER clone_wake_dispatch BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_wake_dispatches
  FOR EACH ROW EXECUTE FUNCTION guard_clone_wake_dispatch();
-CREATE TRIGGER clone_wake_dispatch_truncate BEFORE TRUNCATE ON project_environment_clone_wake_dispatches
+CREATE OR REPLACE TRIGGER clone_wake_dispatch_truncate BEFORE TRUNCATE ON project_environment_clone_wake_dispatches
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_wake_dispatch();
-CREATE FUNCTION record_clone_checkpoint_wake_dispatch(instance uuid, app uuid, deployment uuid, node uuid, wake_method text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_wake_dispatch(instance uuid, app uuid, deployment uuid, node uuid, wake_method text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text;
 BEGIN

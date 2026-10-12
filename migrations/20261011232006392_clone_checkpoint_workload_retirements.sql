@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: original workload retirement authority survives worker handoff.
-CREATE TABLE project_environment_clone_checkpoint_workload_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_workload_retirements (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_source_compensations(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=2097152),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),

@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: preserve once-only native creation authority for original private targets.
-CREATE TABLE project_environment_clone_checkpoint_object_targets (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_targets (
  operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  source_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
  target_bucket_id uuid NOT NULL UNIQUE REFERENCES object_buckets(id) ON DELETE RESTRICT,

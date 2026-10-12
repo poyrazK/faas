@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: original fork SQL closure and private catalogue adoption authority.
-CREATE TABLE project_environment_clone_checkpoint_postgres_isolation (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_isolation (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),

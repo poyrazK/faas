@@ -1,6 +1,6 @@
 -- ADR-590: retain source cancel/resume dispatch before RPC.
 -- +goose Up
-CREATE TABLE project_environment_clone_migration_resumes (
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_resumes (
  dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  instance_id uuid NOT NULL, app_id uuid NOT NULL, deployment_id uuid NOT NULL,
  wake_id uuid NOT NULL, request_reason text NOT NULL CHECK(request_reason LIKE 'environment-clone:%'),
@@ -8,8 +8,8 @@ CREATE TABLE project_environment_clone_migration_resumes (
  lease_created_at timestamptz NOT NULL, lease_expires_at timestamptz NOT NULL,
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(instance_id,lease_token)
 );
-CREATE INDEX clone_migration_resume_deployment ON project_environment_clone_migration_resumes(deployment_id);
-CREATE INDEX clone_migration_resume_reason ON project_environment_clone_migration_resumes(request_reason);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_deployment ON project_environment_clone_migration_resumes(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_reason ON project_environment_clone_migration_resumes(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -21,7 +21,7 @@ BEGIN
  LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_resumes IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_migration_resume() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_migration_resume() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone resume dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_retained';
@@ -42,11 +42,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_migration_resume BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_resumes
+CREATE OR REPLACE TRIGGER clone_migration_resume BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_resumes
  FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_resume();
-CREATE TRIGGER clone_migration_resume_truncate BEFORE TRUNCATE ON project_environment_clone_migration_resumes
+CREATE OR REPLACE TRIGGER clone_migration_resume_truncate BEFORE TRUNCATE ON project_environment_clone_migration_resumes
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_resume();
-CREATE FUNCTION record_clone_checkpoint_migration_resume(instance uuid, source text, token text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_resume(instance uuid, source text, token text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
 BEGIN

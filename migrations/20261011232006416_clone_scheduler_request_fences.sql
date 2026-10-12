@@ -1,19 +1,19 @@
 -- ADR-590: requested native retirement permanently closes catalogue admission.
 -- +goose Up
-CREATE INDEX clone_checkpoint_scheduler_reason_fences
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_reason_fences
  ON project_environment_clone_checkpoint_workload_retirements (('environment-clone:'||operation_id::text))
  WHERE state IN ('requested','retired');
-CREATE INDEX clone_checkpoint_scheduler_target_fences
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_target_fences
  ON project_environment_clone_checkpoint_workload_retirements USING gin(plan jsonb_path_ops)
  WHERE state IN ('requested','retired');
 -- +goose StatementBegin
-CREATE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION clone_checkpoint_deployment_fenced(deployment uuid, request_reason text)
+CREATE OR REPLACE FUNCTION clone_checkpoint_deployment_fenced(deployment uuid, request_reason text)
 RETURNS boolean LANGUAGE sql VOLATILE AS $$
  SELECT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_workload_retirements r
  WHERE r.state IN ('requested','retired') AND
@@ -21,7 +21,7 @@ RETURNS boolean LANGUAGE sql VOLATILE AS $$
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',deployment::text)))))
 $$;
 
-CREATE FUNCTION guard_clone_checkpoint_deployment_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_deployment_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.scope,NEW.reason) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.scope,OLD.reason))
   AND current_setting('transaction_isolation')<>'read committed' THEN
@@ -38,10 +38,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_deployment_admission BEFORE INSERT OR UPDATE ON deployments
+CREATE OR REPLACE TRIGGER clone_checkpoint_deployment_admission BEFORE INSERT OR UPDATE ON deployments
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_deployment_admission();
 
-CREATE FUNCTION guard_clone_checkpoint_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE fenced boolean;
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state))
@@ -64,10 +64,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_instance_admission BEFORE INSERT OR UPDATE ON instances
+CREATE OR REPLACE TRIGGER clone_checkpoint_instance_admission BEFORE INSERT OR UPDATE ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_instance_admission();
 
-CREATE FUNCTION guard_clone_checkpoint_scheduler_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_scheduler_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='TRUNCATE' THEN
   RAISE EXCEPTION 'clone scheduler fences cannot be truncated' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_fence_retained';
@@ -88,10 +88,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_scheduler_fence BEFORE INSERT OR UPDATE OR DELETE
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence BEFORE INSERT OR UPDATE OR DELETE
  ON project_environment_clone_checkpoint_workload_retirements
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
-CREATE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE
  ON project_environment_clone_checkpoint_workload_retirements
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
 -- +goose StatementEnd

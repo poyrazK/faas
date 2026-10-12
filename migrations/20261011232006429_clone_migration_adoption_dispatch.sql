@@ -1,6 +1,6 @@
 -- ADR-590: retain original destination adoption dispatch before RPC.
 -- +goose Up
-CREATE TABLE project_environment_clone_migration_adoptions (
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_adoptions (
  dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  instance_id uuid NOT NULL,
  app_id uuid NOT NULL,
@@ -17,8 +17,8 @@ CREATE TABLE project_environment_clone_migration_adoptions (
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(instance_id,lease_token)
 );
-CREATE INDEX clone_migration_adoption_deployment ON project_environment_clone_migration_adoptions(deployment_id);
-CREATE INDEX clone_migration_adoption_reason ON project_environment_clone_migration_adoptions(request_reason);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_deployment ON project_environment_clone_migration_adoptions(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_reason ON project_environment_clone_migration_adoptions(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -29,7 +29,7 @@ BEGIN
  LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_migration_adoption() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_migration_adoption() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone adoption dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_retained';
@@ -52,11 +52,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_migration_adoption BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_adoptions
+CREATE OR REPLACE TRIGGER clone_migration_adoption BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_adoptions
  FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_adoption();
-CREATE TRIGGER clone_migration_adoption_truncate BEFORE TRUNCATE ON project_environment_clone_migration_adoptions
+CREATE OR REPLACE TRIGGER clone_migration_adoption_truncate BEFORE TRUNCATE ON project_environment_clone_migration_adoptions
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_adoption();
-CREATE FUNCTION record_clone_checkpoint_migration_adoption(instance uuid, app uuid, deployment uuid, destination uuid, mem_key text, state_key text, token text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_adoption(instance uuid, app uuid, deployment uuid, destination uuid, mem_key text, state_key text, token text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
 BEGIN

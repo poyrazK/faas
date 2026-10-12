@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: bounded original snapshot/fork data verification authority.
-CREATE TABLE project_environment_clone_checkpoint_postgres_verification (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_verification (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),

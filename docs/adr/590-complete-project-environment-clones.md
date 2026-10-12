@@ -10289,7 +10289,7 @@ is separate work. Newly authored apid domains still belong in their own package.
 
 Unmerged checkpoint migrations were regenerated after the current main history
 using the migration generator's prerequisite ordering. Their relative dependency
-order and SQL bodies remain intact, while colliding versions from independently
+order is preserved, while colliding versions from independently
 merged qualification changes remain untouched. This renumbering applies only to
 this PR's unmerged migrations, not migrations already released on main.
 
@@ -10297,3 +10297,18 @@ Cold/restore qualification and checkpoint wake ownership exclude one another
 under the same incoming lock. Checkpoint binding can still read its own retained
 record; competing restore claim and recovery entry points reject that record.
 This integration does not enable tagged serving or qualify native closure.
+
+
+The release checks also cover schema/ledger drift: all unmerged checkpoint
+migrations tolerate replay of their existing tables, indexes, functions,
+triggers, columns and constraints. Existing admission and retirement checks are
+retained, with a named activation-owner constraint for repeatable installation.
+Fresh apply-and-walk and full replay of all forty migrations pass against a
+disposable PostgreSQL database; generated SQLC output remains unchanged.
+
+The old-transaction cutover regression accepts either an app-lock wait followed
+by rejection or an immediate PostgreSQL serialization rejection from the current
+snapshot guard. Both paths must refuse admission. Customer-platform acceptance
+retains its entire suite and existing compiler memory bounds, with a forty-five
+minute cold-build budget after the thirty-minute job completed state/API tests
+but expired while compiling remaining packages.

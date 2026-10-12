@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: record original configuration ownership at materialization, never later.
-CREATE TABLE project_environment_clone_configuration_ownership (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_ownership (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_materializations(operation_id) ON DELETE RESTRICT,
  environment_id uuid NOT NULL CHECK(environment_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),

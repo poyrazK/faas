@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: original ownership survives atomic PostgreSQL envelope withdrawal.
-CREATE TABLE project_environment_clone_postgres_secret_withdrawals (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_secret_withdrawals (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
  ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
  publication_plan_sha256 text NOT NULL CHECK(publication_plan_sha256 ~ '^[a-f0-9]{64}$'),

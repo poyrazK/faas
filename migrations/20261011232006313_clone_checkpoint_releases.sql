@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: original successful release authority, independent of mutable source configuration.
-CREATE TABLE project_environment_clone_checkpoint_releases (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_releases (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK (jsonb_typeof(plan)='object'),
  receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt)='object'),

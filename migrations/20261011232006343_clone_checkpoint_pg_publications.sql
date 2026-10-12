@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_environment_clone_checkpoint_pg_publications (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_publications (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=25165824),
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),

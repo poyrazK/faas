@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: immutable fresh credential identities for the complete verified object graph.
-CREATE TABLE project_environment_clone_checkpoint_object_credential_ids (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_credential_ids (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),

@@ -38,9 +38,10 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    # Cold builds of the complete API/state test sources reached the old
-    # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
-    timeout-minutes: 30
+    # Cold Go 1.26 builds passed state and API acceptance but were still
+    # compiling the remaining scheduler tests at thirty minutes. Retain the
+    # proven memory bounds and complete suite with a bounded cold-build budget.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

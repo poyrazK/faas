@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: retain original native proof across atomic artifact removal.
-CREATE TABLE project_environment_clone_deployment_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_deployment_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_workload_cleanups(operation_id) ON DELETE RESTRICT,
  environment_id uuid NOT NULL,
  workload_cleanup_sha256 text NOT NULL CHECK(workload_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
@@ -11,7 +11,7 @@ CREATE TABLE project_environment_clone_deployment_cleanups (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
+CREATE OR REPLACE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
 LANGUAGE plpgsql AS $$ BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;

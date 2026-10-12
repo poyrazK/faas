@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: private terminal compensation preserves original inventory and proof.
-CREATE TABLE project_environment_clone_compensation_receipts (
+CREATE TABLE IF NOT EXISTS project_environment_clone_compensation_receipts (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id) ON DELETE RESTRICT
   REFERENCES project_environment_clone_environment_cleanups(operation_id) ON DELETE RESTRICT
   REFERENCES project_environment_clone_deployment_cleanups(operation_id) ON DELETE RESTRICT,

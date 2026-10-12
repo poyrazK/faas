@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-590: local completion evidence, never a native absence receipt.
-CREATE TABLE project_environment_clone_checkpoint_unused_object_reservations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_unused_object_reservations (
  operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  source_bucket_id uuid NOT NULL,
  target_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,

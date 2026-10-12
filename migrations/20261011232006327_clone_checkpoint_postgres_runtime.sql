@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: original verified fork private runtime readiness.
-CREATE TABLE project_environment_clone_checkpoint_postgres_runtime (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_runtime (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),

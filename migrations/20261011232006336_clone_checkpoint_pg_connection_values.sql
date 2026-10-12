@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: immutable private sealed connection values.
-CREATE TABLE project_environment_clone_checkpoint_pg_connection_values (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_connection_values (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),

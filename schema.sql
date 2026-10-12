@@ -53754,7 +53754,7 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 
 -- ADR-590: original successful release authority, independent of mutable source configuration.
-CREATE TABLE project_environment_clone_checkpoint_releases (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_releases (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK (jsonb_typeof(plan)='object'),
  receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt)='object'),
@@ -53769,7 +53769,7 @@ CREATE TABLE project_environment_clone_checkpoint_releases (
 );
 
 -- ADR-590: preserve once-only native creation authority for original private targets.
-CREATE TABLE project_environment_clone_checkpoint_object_targets (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_targets (
  operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  source_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
  target_bucket_id uuid NOT NULL UNIQUE REFERENCES object_buckets(id) ON DELETE RESTRICT,
@@ -53786,7 +53786,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_targets (
 );
 
 -- ADR-590: original fork SQL closure and private catalogue adoption authority.
-CREATE TABLE project_environment_clone_checkpoint_postgres_isolation (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_isolation (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
@@ -53801,7 +53801,7 @@ CREATE TABLE project_environment_clone_checkpoint_postgres_isolation (
  OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND adopted_database_id IS NULL AND adopted_at IS NULL)
  OR (state='adopted' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND adopted_database_id IS NOT NULL AND adopted_at IS NOT NULL))
 );
-CREATE TABLE project_environment_clone_checkpoint_postgres_verification (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_verification (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
@@ -53815,7 +53815,7 @@ CREATE TABLE project_environment_clone_checkpoint_postgres_verification (
  OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND verified_at IS NULL)
  OR (state='verified' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND verified_at IS NOT NULL))
 );
-CREATE TABLE project_environment_clone_checkpoint_postgres_runtime (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_runtime (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
@@ -53831,7 +53831,7 @@ CREATE TABLE project_environment_clone_checkpoint_postgres_runtime (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND data_resource_id IS NULL AND ready_at IS NULL)
  OR (state='ready' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND data_resource_id IS NOT NULL AND ready_at IS NOT NULL))
 );
-CREATE TABLE project_environment_clone_checkpoint_postgres_credentials (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_credentials (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
@@ -53853,7 +53853,7 @@ CREATE TABLE project_environment_clone_checkpoint_postgres_credentials (
  OR (state='prepared' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND prepared_at IS NOT NULL))
 );
 
-CREATE TABLE project_environment_clone_checkpoint_pg_credential_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_credential_retirements (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
@@ -53869,7 +53869,7 @@ CREATE TABLE project_environment_clone_checkpoint_pg_credential_retirements (
  OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL))
 );
 
-CREATE TABLE project_environment_clone_checkpoint_pg_connection_values (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_connection_values (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
@@ -53884,7 +53884,7 @@ CREATE TABLE project_environment_clone_checkpoint_pg_connection_values (
  OR (state='sealed' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND sealed_at IS NOT NULL))
 );
 
-CREATE TABLE project_environment_clone_checkpoint_pg_activations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_activations (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','active')),
@@ -53896,11 +53896,16 @@ CREATE TABLE project_environment_clone_checkpoint_pg_activations (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND activated_at IS NULL)
  OR (state='active' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND activated_at IS NOT NULL))
 );
-ALTER TABLE project_environment_clone_checkpoint_pg_connection_values
- ADD activation_operation_id uuid REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT,
- ADD CHECK(activation_operation_id IS NULL OR activation_operation_id=operation_id);
+ALTER TABLE project_environment_clone_checkpoint_pg_connection_values ADD COLUMN IF NOT EXISTS activation_operation_id uuid REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_pg_connection_values'::regclass AND conname='clone_checkpoint_pg_connection_activation_owner') THEN
+  ALTER TABLE project_environment_clone_checkpoint_pg_connection_values ADD CONSTRAINT clone_checkpoint_pg_connection_activation_owner CHECK(activation_operation_id IS NULL OR activation_operation_id=operation_id);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
 
-CREATE TABLE project_environment_clone_checkpoint_pg_publications (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_publications (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=25165824),
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
@@ -53911,7 +53916,7 @@ CREATE TABLE project_environment_clone_checkpoint_pg_publications (
 );
 
 -- ADR-590: bounded read-only retained-object/private-target comparison authority.
-CREATE TABLE project_environment_clone_checkpoint_object_verification (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_verification (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
@@ -53927,7 +53932,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_verification (
 );
 
 -- ADR-590: bounded once-only retained-object/private-target copy authority.
-CREATE TABLE project_environment_clone_checkpoint_object_copies (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_copies (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
@@ -53943,7 +53948,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_copies (
 );
 
 -- ADR-590: immutable fresh credential identities for the complete verified object graph.
-CREATE TABLE project_environment_clone_checkpoint_object_credential_ids (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_credential_ids (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
@@ -53951,7 +53956,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_credential_ids (
 );
 
 -- ADR-590: private sealed gateway credentials and runtime values, without publication.
-CREATE TABLE project_environment_clone_checkpoint_object_values (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_values (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_credential_ids(operation_id) ON DELETE RESTRICT,
  payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object' AND octet_length(payload::text)<=16777216),
  payload_sha256 text NOT NULL CHECK(payload_sha256 ~ '^[a-f0-9]{64}$'),
@@ -53959,7 +53964,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_values (
 );
 
 -- ADR-590: atomic private gateway metadata publication, still hidden until ready.
-CREATE TABLE project_environment_clone_checkpoint_object_publications (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_publications (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_values(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
@@ -53967,17 +53972,22 @@ CREATE TABLE project_environment_clone_checkpoint_object_publications (
 );
 
 -- ADR-590: permanently retire owned private gateway metadata during compensation.
-ALTER TABLE project_environment_clone_checkpoint_object_publications
- DROP CONSTRAINT project_environment_clone_checkpoint_object_publica_state_check,
- ADD COLUMN withdrawn_at timestamptz,
- ADD CONSTRAINT clone_checkpoint_object_publications_state_shape CHECK (
+ALTER TABLE project_environment_clone_checkpoint_object_publications DROP CONSTRAINT IF EXISTS project_environment_clone_checkpoint_object_publica_state_check;
+ALTER TABLE project_environment_clone_checkpoint_object_publications ADD COLUMN IF NOT EXISTS withdrawn_at timestamptz;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_object_publications'::regclass AND conname='clone_checkpoint_object_publications_state_shape') THEN
+  ALTER TABLE project_environment_clone_checkpoint_object_publications ADD CONSTRAINT clone_checkpoint_object_publications_state_shape CHECK (
   (state='published' AND withdrawn_at IS NULL) OR
   (state='withdrawn' AND withdrawn_at IS NOT NULL)
  );
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
 
 
 -- ADR-590: preserve once-only permanent native cleanup authority and evidence.
-CREATE TABLE project_environment_clone_checkpoint_object_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_retirements (
  operation_id uuid NOT NULL,
  source_bucket_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=17825792),
@@ -53994,7 +54004,7 @@ CREATE TABLE project_environment_clone_checkpoint_object_retirements (
 );
 
 -- ADR-590: local completion evidence, never a native absence receipt.
-CREATE TABLE project_environment_clone_checkpoint_unused_object_reservations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_unused_object_reservations (
  operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  source_bucket_id uuid NOT NULL,
  target_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
@@ -54113,7 +54123,7 @@ END;
 $$;
 
 -- ADR-590: once-only original source cleanup authority survives source reopening.
-CREATE TABLE project_environment_clone_checkpoint_source_compensations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_source_compensations (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','compensated')),
@@ -54128,7 +54138,7 @@ CREATE TABLE project_environment_clone_checkpoint_source_compensations (
 
 -- ADR-590: permanent native request fencing, not deletion/not-found alone,
 -- authorizes retirement of the original PostgreSQL checkpoint target.
-CREATE TABLE project_environment_clone_checkpoint_pg_target_compensations (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_target_compensations (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=1048576),
@@ -54144,21 +54154,38 @@ CREATE TABLE project_environment_clone_checkpoint_pg_target_compensations (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND compensated_at IS NULL)
  OR (state='compensated' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND compensated_at IS NOT NULL AND compensated_at>=requested_at))
 );
-ALTER TABLE project_environment_clone_postgres_snapshot_restores
- ADD COLUMN checkpoint_compensation_observation_sha256 text,
- ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_fk
+ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD COLUMN IF NOT EXISTS checkpoint_compensation_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='clone_checkpoint_pg_target_terminal_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_fk
  FOREIGN KEY(operation_id,source_database_id,checkpoint_compensation_observation_sha256)
- REFERENCES project_environment_clone_checkpoint_pg_target_compensations(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT,
- ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_shape
- CHECK(checkpoint_compensation_observation_sha256 IS NULL OR state='deleted'),
- DROP CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6,
- ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6
+ REFERENCES project_environment_clone_checkpoint_pg_target_compensations(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='clone_checkpoint_pg_target_terminal_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_shape
+ CHECK(checkpoint_compensation_observation_sha256 IS NULL OR state='deleted');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_snapshot_restores DROP CONSTRAINT IF EXISTS project_environment_clone_postgres_snapshot_restores_check6;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='project_environment_clone_postgres_snapshot_restores_check6') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6
  CHECK(state<>'deleted' OR request_started_at IS NULL
  OR (target_provider_resource_id IS NOT NULL AND jsonb_array_length(delete_operation_ids)>0)
  OR checkpoint_compensation_observation_sha256 IS NOT NULL);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
 
 -- ADR-590: retained native capture cleanup authority survives unknown outcomes.
-CREATE TABLE project_environment_clone_checkpoint_capture_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_capture_retirements (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_source_compensations(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
@@ -54172,8 +54199,14 @@ CREATE TABLE project_environment_clone_checkpoint_capture_retirements (
 );
 
 -- ADR-590: retained catalogue retirement keeps original ownership evidence.
-ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
-CREATE TABLE project_environment_clone_checkpoint_capture_catalogues (
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_capture_retirements'::regclass AND conname='clone_checkpoint_capture_retirement_proof_key') THEN
+  ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_capture_catalogues (
  operation_id uuid NOT NULL,
  source_kind text NOT NULL CHECK(source_kind IN ('managed_postgres','object_storage')),
  source_id uuid NOT NULL,
@@ -54188,7 +54221,7 @@ CREATE TABLE project_environment_clone_checkpoint_capture_catalogues (
 -- ADR-590: permanent native PostgreSQL copy dependency retirement.
 -- +goose Up
 -- ADR-590: native owner-wide fencing closes unknown create/cleanup/writer outcomes.
-CREATE TABLE project_environment_clone_checkpoint_pg_copy_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_copy_retirements (
  operation_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=2097152),
@@ -54204,27 +54237,61 @@ CREATE TABLE project_environment_clone_checkpoint_pg_copy_retirements (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
  OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
 );
-ALTER TABLE project_environment_clone_postgres_copy_readers
- ADD COLUMN checkpoint_retirement_observation_sha256 text,
- ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_fk
+ALTER TABLE project_environment_clone_postgres_copy_readers ADD COLUMN IF NOT EXISTS checkpoint_retirement_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='clone_checkpoint_pg_copy_readers_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_fk
  FOREIGN KEY(operation_id,source_database_id,checkpoint_retirement_observation_sha256)
- REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT,
- ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_shape
- CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired'),
- DROP CONSTRAINT project_environment_clone_postgres_copy_readers_check8,
- ADD CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND cleanup_requested_at IS NOT NULL));
-ALTER TABLE project_environment_clone_postgres_copy_targets
- ADD COLUMN checkpoint_retirement_observation_sha256 text,
- ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_fk
+ REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='clone_checkpoint_pg_copy_readers_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_shape
+ CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_readers DROP CONSTRAINT IF EXISTS project_environment_clone_postgres_copy_readers_check8;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='project_environment_clone_postgres_copy_readers_check8') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND cleanup_requested_at IS NOT NULL));
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_targets ADD COLUMN IF NOT EXISTS checkpoint_retirement_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_checkpoint_pg_copy_targets_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_fk
  FOREIGN KEY(operation_id,source_database_id,checkpoint_retirement_observation_sha256)
- REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT,
- ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_shape
- CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired'),
- DROP CONSTRAINT clone_copy_target_lifecycle_shape,
- ADD CONSTRAINT clone_copy_target_lifecycle_shape CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'deleting'::text) AND (request_started_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NULL) AND (((provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL)) OR ((provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NOT NULL)))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND ((provider_resource_id IS NULL AND provider_created_at IS NULL AND observed_at IS NULL AND prepared_at IS NULL) OR (provider_resource_id IS NOT NULL AND provider_created_at IS NOT NULL AND observed_at IS NOT NULL AND request_started_at IS NOT NULL))));
+ REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_checkpoint_pg_copy_targets_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_shape
+ CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_targets DROP CONSTRAINT IF EXISTS clone_copy_target_lifecycle_shape;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_copy_target_lifecycle_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_copy_target_lifecycle_shape CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'deleting'::text) AND (request_started_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NULL) AND (((provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL)) OR ((provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NOT NULL)))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND ((provider_resource_id IS NULL AND provider_created_at IS NULL AND observed_at IS NULL AND prepared_at IS NULL) OR (provider_resource_id IS NOT NULL AND provider_created_at IS NOT NULL AND observed_at IS NOT NULL AND request_started_at IS NOT NULL))));
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
 
 -- ADR-590: original workload retirement authority survives worker handoff.
-CREATE TABLE project_environment_clone_checkpoint_workload_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_workload_retirements (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_source_compensations(operation_id) ON DELETE RESTRICT,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=2097152),
  state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
@@ -54237,7 +54304,7 @@ CREATE TABLE project_environment_clone_checkpoint_workload_retirements (
  OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
 );
 
-CREATE TABLE project_environment_clone_configuration_ownership (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_ownership (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_materializations(operation_id) ON DELETE RESTRICT,
  environment_id uuid NOT NULL CHECK(environment_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
@@ -54246,7 +54313,7 @@ CREATE TABLE project_environment_clone_configuration_ownership (
 );
 
 -- ADR-590: private copied-configuration cleanup, retaining workload ownership.
-CREATE TABLE project_environment_clone_configuration_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
  FOREIGN KEY(operation_id) REFERENCES project_environment_clone_checkpoint_workload_retirements(operation_id) ON DELETE RESTRICT,
  ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
@@ -54257,7 +54324,7 @@ CREATE TABLE project_environment_clone_configuration_cleanups (
  cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE TABLE project_environment_clone_workload_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_workload_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_cleanups(operation_id) ON DELETE RESTRICT,
  configuration_cleanup_sha256 text NOT NULL CHECK(configuration_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
  manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
@@ -54268,7 +54335,7 @@ CREATE TABLE project_environment_clone_workload_cleanups (
 -- filename: 20261011232006402_clone_postgres_secret_withdrawal_receipts.sql
 
 -- ADR-590: original ownership survives atomic PostgreSQL envelope withdrawal.
-CREATE TABLE project_environment_clone_postgres_secret_withdrawals (
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_secret_withdrawals (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
  ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
  publication_plan_sha256 text NOT NULL CHECK(publication_plan_sha256 ~ '^[a-f0-9]{64}$'),
@@ -54280,7 +54347,7 @@ CREATE TABLE project_environment_clone_postgres_secret_withdrawals (
 );
 
 -- ADR-590: original ownership survives atomic Object-storage envelope withdrawal.
-CREATE TABLE project_environment_clone_object_secret_withdrawals (
+CREATE TABLE IF NOT EXISTS project_environment_clone_object_secret_withdrawals (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
  ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
  postgres_withdrawal_sha256 text NOT NULL CHECK(postgres_withdrawal_sha256='' OR postgres_withdrawal_sha256 ~ '^[a-f0-9]{64}$'),
@@ -54296,7 +54363,7 @@ CREATE TABLE project_environment_clone_object_secret_withdrawals (
 -- filename: 20261011232006408_clone_environment_metadata_cleanups.sql
 
 -- ADR-590: atomic removal of unborrowed original environment metadata.
-CREATE TABLE project_environment_clone_environment_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_environment_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_workload_cleanups(operation_id) ON DELETE RESTRICT,
  environment_id uuid NOT NULL,
  workload_cleanup_sha256 text NOT NULL CHECK(workload_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
@@ -54305,14 +54372,14 @@ CREATE TABLE project_environment_clone_environment_cleanups (
  cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE FUNCTION lock_clone_environment_cleanup_scope_borrowers() RETURNS void
+CREATE OR REPLACE FUNCTION lock_clone_environment_cleanup_scope_borrowers() RETURNS void
 LANGUAGE plpgsql AS $$ BEGIN
  LOCK TABLE app_binding_release_policies,app_environment_secret_ref_suppressions,app_environment_secret_refs,app_envs,app_issues,app_secret_runtime_reload_observations,app_secrets,app_tasks,app_webhooks,customer_operation_definitions,data_upstreams,deployment_openapi_snapshots,deployment_rollback_operations,deployment_route_policy_snapshots,deployment_runtime_environment_owners,deployments,environment_gitops_runtime_effects,environment_management_overrides,exclusive_work_keys,github_deploy_branches,instance_runtime_config_receipts,instances,issue_ingest_tokens,managed_postgres_bindings,managed_postgres_cutovers,managed_postgres_databases,object_buckets,object_storage_s3_credentials,project_environment_approvals,project_environment_cleanup_jobs,project_environment_clone_configuration_ownership,project_environment_clone_materializations,project_environment_clone_operations,project_environment_config_versions,project_environment_promotions,project_environment_workload_heads,queue_bindings,runtime_instance_config_proofs,snapshot_runtime_config_receipts,snapshots,triggers IN SHARE MODE;
 END $$;
 
 -- +goose Up
 -- ADR-590: retain original native proof across atomic artifact removal.
-CREATE TABLE project_environment_clone_deployment_cleanups (
+CREATE TABLE IF NOT EXISTS project_environment_clone_deployment_cleanups (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_workload_cleanups(operation_id) ON DELETE RESTRICT,
  environment_id uuid NOT NULL,
  workload_cleanup_sha256 text NOT NULL CHECK(workload_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
@@ -54323,7 +54390,7 @@ CREATE TABLE project_environment_clone_deployment_cleanups (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
+CREATE OR REPLACE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
 LANGUAGE plpgsql AS $$ BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
@@ -54332,7 +54399,7 @@ END $$;
 
 -- +goose Up
 -- ADR-590: private terminal compensation preserves original inventory and proof.
-CREATE TABLE project_environment_clone_compensation_receipts (
+CREATE TABLE IF NOT EXISTS project_environment_clone_compensation_receipts (
  operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id) ON DELETE RESTRICT
   REFERENCES project_environment_clone_environment_cleanups(operation_id) ON DELETE RESTRICT
   REFERENCES project_environment_clone_deployment_cleanups(operation_id) ON DELETE RESTRICT,
@@ -54344,20 +54411,20 @@ CREATE TABLE project_environment_clone_compensation_receipts (
 
 -- ADR-590: requested native retirement permanently closes catalogue admission.
 -- +goose Up
-CREATE INDEX clone_checkpoint_scheduler_reason_fences
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_reason_fences
  ON project_environment_clone_checkpoint_workload_retirements (('environment-clone:'||operation_id::text))
  WHERE state IN ('requested','retired');
-CREATE INDEX clone_checkpoint_scheduler_target_fences
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_target_fences
  ON project_environment_clone_checkpoint_workload_retirements USING gin(plan jsonb_path_ops)
  WHERE state IN ('requested','retired');
 -- +goose StatementBegin
-CREATE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION clone_checkpoint_deployment_fenced(deployment uuid, request_reason text)
+CREATE OR REPLACE FUNCTION clone_checkpoint_deployment_fenced(deployment uuid, request_reason text)
 RETURNS boolean LANGUAGE sql VOLATILE AS $$
  SELECT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_workload_retirements r
  WHERE r.state IN ('requested','retired') AND
@@ -54365,7 +54432,7 @@ RETURNS boolean LANGUAGE sql VOLATILE AS $$
  r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',deployment::text)))))
 $$;
 
-CREATE FUNCTION guard_clone_checkpoint_deployment_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_deployment_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.scope,NEW.reason) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.scope,OLD.reason))
   AND current_setting('transaction_isolation')<>'read committed' THEN
@@ -54382,10 +54449,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_deployment_admission BEFORE INSERT OR UPDATE ON deployments
+CREATE OR REPLACE TRIGGER clone_checkpoint_deployment_admission BEFORE INSERT OR UPDATE ON deployments
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_deployment_admission();
 
-CREATE FUNCTION guard_clone_checkpoint_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE fenced boolean;
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state))
@@ -54408,10 +54475,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_instance_admission BEFORE INSERT OR UPDATE ON instances
+CREATE OR REPLACE TRIGGER clone_checkpoint_instance_admission BEFORE INSERT OR UPDATE ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_instance_admission();
 
-CREATE FUNCTION guard_clone_checkpoint_scheduler_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_scheduler_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='TRUNCATE' THEN
   RAISE EXCEPTION 'clone scheduler fences cannot be truncated' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_fence_retained';
@@ -54432,18 +54499,18 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_scheduler_fence BEFORE INSERT OR UPDATE OR DELETE
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence BEFORE INSERT OR UPDATE OR DELETE
  ON project_environment_clone_checkpoint_workload_retirements
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
-CREATE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE
  ON project_environment_clone_checkpoint_workload_retirements
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
 -- +goose StatementEnd
 
 -- ADR-590: close dispatch of previously admitted qualification executions.
 -- +goose Up
-CREATE INDEX clone_qualification_pending_deployment_idx ON environment_qualification_executions((frame->>'deployment_id')) WHERE retired_at IS NULL;
-CREATE INDEX clone_qualification_pending_environment_idx ON environment_qualification_executions((frame->>'environment_id')) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_deployment_idx ON environment_qualification_executions((frame->>'deployment_id')) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_environment_idx ON environment_qualification_executions((frame->>'environment_id')) WHERE retired_at IS NULL;
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -54455,12 +54522,12 @@ END $$;
 -- Cleanup writes the frame before stopping its instance. Reserve instance
 -- writer intent first so it cannot hold a frame writer while waiting for a
 -- clone transaction that already owns the instance fence.
-CREATE FUNCTION lock_environment_qualification_cleanup_writers() RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION lock_environment_qualification_cleanup_writers() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
  LOCK TABLE instances IN ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION guard_clone_checkpoint_qualification_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_qualification_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE fenced boolean;
 BEGIN
  IF TG_OP='TRUNCATE' THEN
@@ -54483,9 +54550,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_qualification_dispatch BEFORE INSERT OR UPDATE ON environment_qualification_executions
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_dispatch BEFORE INSERT OR UPDATE ON environment_qualification_executions
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
-CREATE TRIGGER clone_checkpoint_qualification_retention BEFORE TRUNCATE ON environment_qualification_executions
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_retention BEFORE TRUNCATE ON environment_qualification_executions
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
 -- +goose StatementEnd
 
@@ -54500,7 +54567,7 @@ BEGIN
  LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
 END $$;
 
-CREATE FUNCTION guard_clone_checkpoint_migration_lease() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_lease() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE identity uuid; fenced boolean;
 BEGIN
  IF TG_OP='TRUNCATE' THEN
@@ -54538,12 +54605,12 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_lease BEFORE INSERT OR UPDATE OR DELETE ON migration_leases
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_lease BEFORE INSERT OR UPDATE OR DELETE ON migration_leases
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
-CREATE TRIGGER clone_checkpoint_migration_retention BEFORE TRUNCATE ON migration_leases
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_retention BEFORE TRUNCATE ON migration_leases
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
 
-CREATE FUNCTION guard_clone_checkpoint_migration_instance() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_instance() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'instance deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
  IF EXISTS(SELECT 1 FROM migration_leases WHERE instance_id=OLD.id) AND clone_checkpoint_deployment_fenced(OLD.deployment_id,(SELECT reason FROM deployments WHERE id=OLD.deployment_id)) THEN
@@ -54551,9 +54618,9 @@ BEGIN
  END IF;
  RETURN OLD;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_instance BEFORE DELETE ON instances
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_instance BEFORE DELETE ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_instance();
-CREATE FUNCTION guard_clone_checkpoint_migration_deployment() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_deployment() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'deployment deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
  IF clone_checkpoint_deployment_fenced(OLD.id,OLD.reason) AND EXISTS(
@@ -54562,11 +54629,11 @@ BEGIN
  END IF;
  RETURN OLD;
 END $$;
-CREATE TRIGGER clone_checkpoint_migration_deployment BEFORE DELETE ON deployments
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_deployment BEFORE DELETE ON deployments
  FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_deployment();
 -- +goose StatementEnd
 
-CREATE TABLE project_environment_clone_wake_dispatches (
+CREATE TABLE IF NOT EXISTS project_environment_clone_wake_dispatches (
  instance_id uuid PRIMARY KEY,
  app_id uuid NOT NULL,
  deployment_id uuid NOT NULL,
@@ -54576,8 +54643,8 @@ CREATE TABLE project_environment_clone_wake_dispatches (
  method text NOT NULL CHECK(method IN ('cold_boot','restore')),
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX clone_wake_dispatch_deployment ON project_environment_clone_wake_dispatches(deployment_id);
-CREATE INDEX clone_wake_dispatch_reason ON project_environment_clone_wake_dispatches(request_reason);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_deployment ON project_environment_clone_wake_dispatches(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_reason ON project_environment_clone_wake_dispatches(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -54587,7 +54654,7 @@ BEGIN
  LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_wake_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_wake_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone wake dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_wake_dispatch_retained';
@@ -54606,11 +54673,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_wake_dispatch BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_wake_dispatches
+CREATE OR REPLACE TRIGGER clone_wake_dispatch BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_wake_dispatches
  FOR EACH ROW EXECUTE FUNCTION guard_clone_wake_dispatch();
-CREATE TRIGGER clone_wake_dispatch_truncate BEFORE TRUNCATE ON project_environment_clone_wake_dispatches
+CREATE OR REPLACE TRIGGER clone_wake_dispatch_truncate BEFORE TRUNCATE ON project_environment_clone_wake_dispatches
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_wake_dispatch();
-CREATE FUNCTION record_clone_checkpoint_wake_dispatch(instance uuid, app uuid, deployment uuid, node uuid, wake_method text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_wake_dispatch(instance uuid, app uuid, deployment uuid, node uuid, wake_method text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text;
 BEGIN
@@ -54636,7 +54703,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TABLE project_environment_clone_migration_adoptions (
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_adoptions (
  dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  instance_id uuid NOT NULL,
  app_id uuid NOT NULL,
@@ -54653,8 +54720,8 @@ CREATE TABLE project_environment_clone_migration_adoptions (
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(instance_id,lease_token)
 );
-CREATE INDEX clone_migration_adoption_deployment ON project_environment_clone_migration_adoptions(deployment_id);
-CREATE INDEX clone_migration_adoption_reason ON project_environment_clone_migration_adoptions(request_reason);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_deployment ON project_environment_clone_migration_adoptions(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_reason ON project_environment_clone_migration_adoptions(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -54665,7 +54732,7 @@ BEGIN
  LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_migration_adoption() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_migration_adoption() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone adoption dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_retained';
@@ -54688,11 +54755,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_migration_adoption BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_adoptions
+CREATE OR REPLACE TRIGGER clone_migration_adoption BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_adoptions
  FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_adoption();
-CREATE TRIGGER clone_migration_adoption_truncate BEFORE TRUNCATE ON project_environment_clone_migration_adoptions
+CREATE OR REPLACE TRIGGER clone_migration_adoption_truncate BEFORE TRUNCATE ON project_environment_clone_migration_adoptions
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_adoption();
-CREATE FUNCTION record_clone_checkpoint_migration_adoption(instance uuid, app uuid, deployment uuid, destination uuid, mem_key text, state_key text, token text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_adoption(instance uuid, app uuid, deployment uuid, destination uuid, mem_key text, state_key text, token text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
 BEGIN
@@ -54722,7 +54789,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TABLE project_environment_clone_migration_resumes (
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_resumes (
  dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  instance_id uuid NOT NULL, app_id uuid NOT NULL, deployment_id uuid NOT NULL,
  wake_id uuid NOT NULL, request_reason text NOT NULL CHECK(request_reason LIKE 'environment-clone:%'),
@@ -54730,8 +54797,8 @@ CREATE TABLE project_environment_clone_migration_resumes (
  lease_created_at timestamptz NOT NULL, lease_expires_at timestamptz NOT NULL,
  dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(instance_id,lease_token)
 );
-CREATE INDEX clone_migration_resume_deployment ON project_environment_clone_migration_resumes(deployment_id);
-CREATE INDEX clone_migration_resume_reason ON project_environment_clone_migration_resumes(request_reason);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_deployment ON project_environment_clone_migration_resumes(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_reason ON project_environment_clone_migration_resumes(request_reason);
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -54743,7 +54810,7 @@ BEGIN
  LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_resumes IN SHARE ROW EXCLUSIVE MODE;
 END $$;
-CREATE FUNCTION guard_clone_migration_resume() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_clone_migration_resume() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   RAISE EXCEPTION 'original clone resume dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_retained';
@@ -54764,11 +54831,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER clone_migration_resume BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_resumes
+CREATE OR REPLACE TRIGGER clone_migration_resume BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_resumes
  FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_resume();
-CREATE TRIGGER clone_migration_resume_truncate BEFORE TRUNCATE ON project_environment_clone_migration_resumes
+CREATE OR REPLACE TRIGGER clone_migration_resume_truncate BEFORE TRUNCATE ON project_environment_clone_migration_resumes
  FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_resume();
-CREATE FUNCTION record_clone_checkpoint_migration_resume(instance uuid, source text, token text)
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_resume(instance uuid, source text, token text)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
 BEGIN

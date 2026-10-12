@@ -2,8 +2,14 @@
 
 -- +goose Up
 -- ADR-590: retained catalogue retirement keeps original ownership evidence.
-ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
-CREATE TABLE project_environment_clone_checkpoint_capture_catalogues (
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_capture_retirements'::regclass AND conname='clone_checkpoint_capture_retirement_proof_key') THEN
+  ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_capture_catalogues (
  operation_id uuid NOT NULL,
  source_kind text NOT NULL CHECK(source_kind IN ('managed_postgres','object_storage')),
  source_id uuid NOT NULL,

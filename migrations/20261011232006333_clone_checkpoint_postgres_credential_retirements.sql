@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: permanent native preparation fences before fork compensation.
-CREATE TABLE project_environment_clone_checkpoint_pg_credential_retirements (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_credential_retirements (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),

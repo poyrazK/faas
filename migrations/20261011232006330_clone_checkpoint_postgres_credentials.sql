@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-590: sealed pre-dispatch inactive stage credential ownership.
-CREATE TABLE project_environment_clone_checkpoint_postgres_credentials (
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_credentials (
  operation_id uuid NOT NULL,
  source_binding_id uuid NOT NULL,
  source_database_id uuid NOT NULL,
