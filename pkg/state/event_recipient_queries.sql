@@ -381,3 +381,37 @@ SELECT generation, state FROM event_fanout_recipients
 WHERE outbox_id = sqlc.arg(outbox_id)::bigint AND app_id = sqlc.arg(app_id)::uuid
   AND subscription_id = sqlc.arg(subscription_id)::text
 FOR UPDATE;
+-- name: EventRecoveryPublishedVersion :one
+SELECT published_version FROM workflow_automation_definitions
+WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text;
+
+-- name: EventRecoveryReplayCount :one
+WITH locked AS MATERIALIZED (
+ SELECT id FROM event_fanout_attempt_history
+ WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text AND action='operator_replay'
+ FOR SHARE
+) SELECT count(*)::bigint FROM locked;
+
+-- name: EventRecoveryRoutingGeneration :one
+SELECT generation, state FROM event_fanout_recipients
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text
+FOR UPDATE;
+
+-- name: EventRecoveryLegacySettled :one
+SELECT state='delivered' AS settled FROM event_fanout_outbox WHERE id=$1;
+
+-- name: EventWorkflowRecoveryCandidate :one
+SELECT o.id AS outbox_id, o.source AS event_source,o.event_id,o.event_type,
+ (r.recipient->>'id')::text AS subscription_id,
+ coalesce((p.progress->>'updated_at')::timestamptz,o.created_at)::timestamptz AS failed_at,
+ coalesce(nullif(p.progress->>'failure_code',''),'unknown')::text AS failure_code,
+ coalesce((p.progress->>'retryable')::boolean,false)::boolean AS retryable,
+ event_recovery_failure_identity(p.progress)::jsonb AS expected_progress
+FROM event_fanout_outbox o
+JOIN apps a ON a.id=sqlc.arg(app_id)::uuid AND a.account_id=o.account_id AND a.status<>'deleted'
+CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r(recipient)
+CROSS JOIN LATERAL (SELECT o.recipient_progress->(r.recipient->>'id') AS progress) p
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text AND o.event_id=sqlc.arg(event_id)::text
+ AND r.recipient->>'app_id'=a.id::text AND r.recipient->>'id'=sqlc.arg(subscription_id)::text
+ AND r.recipient->'workflow'->>'name'=sqlc.arg(workflow_name)::text
+ AND p.progress->>'state'='failed';

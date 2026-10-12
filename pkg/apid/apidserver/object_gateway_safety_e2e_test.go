@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -25,18 +26,18 @@ import (
 
 // adr: 627
 func TestObjectGatewaySafetyE2EMem(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	objectGatewaySafetyE2E(t, e.s, e.store, e.acct, e.key)
+	e := apidserver.Setup(t, api.PlanScale)
+	objectGatewaySafetyE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()))
 }
 
 // adr: 627
 func TestObjectGatewaySafetyE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanScale)
-	objectGatewaySafetyE2E(t, e.s, e.store, e.acct, e.key)
+	e := apidserver.SetupPGHandler(t, api.PlanScale)
+	objectGatewaySafetyE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()))
 }
 
-func objectGatewaySafetyE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string) {
-	identity, teardown := withTestIdentities(t)
+func objectGatewaySafetyE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string) {
+	identity, teardown := apidserver.WithTestIdentities(t)
 	t.Cleanup(teardown)
 	native := &signedURLNative{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +84,7 @@ func objectGatewaySafetyE2E(t *testing.T, s *server, st state.Store, acct state.
 		t.Fatal(err)
 	}
 	s.WithObjectStorage(registry)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	gateway, err = s3gateway.New(s3gateway.Config{Registry: registry, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
@@ -96,7 +97,7 @@ func objectGatewaySafetyE2E(t *testing.T, s *server, st state.Store, acct state.
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := httptest.NewServer(s.handler())
+	control := httptest.NewServer(s.Handler())
 	t.Cleanup(control.Close)
 	client := api.NewClient(control.URL, bearer)
 	app, err := client.CreateApp(t.Context(), api.CreateAppRequest{Slug: "gateway-safety"})
@@ -129,7 +130,7 @@ func objectGatewaySafetyE2E(t *testing.T, s *server, st state.Store, acct state.
 	if err := accounting.ClaimObjectInventory(t.Context(), bucket.ID, "initial"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.object.ScanObjectInventory(t.Context(), accounting, catalog, "initial"); err != nil {
+	if err := (*s.Object()).ScanObjectInventory(t.Context(), accounting, catalog, "initial"); err != nil {
 		t.Fatal(err)
 	}
 	size := int64(3)
@@ -239,21 +240,21 @@ func runGatewaySafetyCLI(t *testing.T, cli, endpoint, bearer string, args ...str
 
 // adr: 627
 func TestGatewaySafetyRejectsUnmeteredNativePaths(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	provider := &fakeObjectProvider{}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	e := apidserver.Setup(t, api.PlanScale)
+	provider := &apidserver.FakeObjectProvider{}
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, &apidserver.FakeObjectProvider{}, "external"))
 	since := time.Now().UTC().Add(-time.Second)
-	e.s.objectStorage.Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
-	e.s.objectStorage.Accounting.GatewayMeteringSince = &since
-	e.s.objectStorage.Accounting.MaxMonthlyCostMillicents = 0
-	setS3Flag(t, e, true)
+	(*(*e.S()).ObjectStorage()).Accounting.AccountingMode = api.ObjectStorageGatewaySafetyV1
+	(*(*e.S()).ObjectStorage()).Accounting.GatewayMeteringSince = &since
+	(*(*e.S()).ObjectStorage()).Accounting.MaxMonthlyCostMillicents = 0
+	apidserver.SetS3Flag(t, e, true)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/fixture", nil)
 	uri := "obj://" + uuid.NewString() + "/" + uuid.NewString() + "/file"
-	if _, _, _, ok := e.s.loadJobManagedObject(w, r, e.acct, uri); ok || len(provider.accessed) != 0 || w.Code < 400 {
+	if _, _, _, ok := (*e.S()).LoadJobManagedObject(w, r, (*e.Acct()), uri); ok || len((*provider.Accessed())) != 0 || w.Code < 400 {
 		t.Fatal("unmetered native job path remained enabled", w.Code)
 	}
-	if _, err := e.s.ensureProjectEnvironmentObjectStorageCloneBucket(t.Context(), e.acct, "test", projectEnvironmentBindingClone{}, nil); !errors.Is(err, errIsolatedObjectStorageCloneUnsupported) {
+	if _, err := (*e.S()).EnsureProjectEnvironmentObjectStorageCloneBucket(t.Context(), (*e.Acct()), "test", apidserver.ProjectEnvironmentBindingClone{}, nil); !errors.Is(err, (*apidserver.ErrIsolatedObjectStorageCloneUnsupported)) {
 		t.Fatal("unmetered full-copy clone remained enabled", err)
 	}
 }

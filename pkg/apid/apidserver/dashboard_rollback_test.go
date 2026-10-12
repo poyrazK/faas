@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,13 +11,14 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.MemStore, state.App, state.Deployment, *http.Cookie, string) {
 	t.Helper()
-	h, sid, store, _ := newAuthedDashboardServerFull(t)
+	h, sid, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("account: %v", err)
@@ -77,7 +78,7 @@ func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.Mem
 	}
 	var csrfCookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardRollbackCSRFCookie {
+		if c.Name == apidserver.DashboardRollbackCSRFCookie {
 			csrfCookie = c
 			break
 		}
@@ -85,7 +86,7 @@ func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.Mem
 	if csrfCookie == nil {
 		t.Fatal("app detail did not set rollback CSRF cookie")
 	}
-	token := extractInputValue(rec.Body.String(), middleware.FormFieldName, "/dashboard/apps/rollbackapp/rollback")
+	token := apidserver.ExtractInputValue(rec.Body.String(), middleware.FormFieldName, "/dashboard/apps/rollbackapp/rollback")
 	if token == "" || token != csrfCookie.Value {
 		t.Fatalf("rollback form token/cookie mismatch: token=%q cookie=%q", token, csrfCookie.Value)
 	}
@@ -94,7 +95,7 @@ func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.Mem
 
 func TestDashboardRollback_HappyPath(t *testing.T) {
 	h, sid, store, app, prior, csrfCookie, token := seedDashboardRollback(t)
-	rec := dashboardPOST(t, h, sid, "/dashboard/apps/rollbackapp/rollback", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/apps/rollbackapp/rollback", map[string]string{
 		middleware.FormFieldName: token,
 		"deployment_id":          prior.ID,
 	}, csrfCookie)
@@ -138,7 +139,7 @@ func TestDashboardRollback_HappyPath(t *testing.T) {
 	if err := store.MarkDeploymentLive(t.Context(), prior.ID); err != nil {
 		t.Fatalf("complete rollback readiness: %v", err)
 	}
-	if _, err := drainOrgActivityOutboxOnce(context.Background(), store, nil); err != nil {
+	if _, err := apidserver.DrainOrgActivityOutboxOnce(context.Background(), store, nil); err != nil {
 		t.Fatalf("deliver rollback completion: %v", err)
 	}
 	activity, err = store.ListOrgActivity(t.Context(), state.OrgActivityFilter{OrgID: orgID, Limit: 10})
@@ -169,13 +170,13 @@ func TestDashboardDeploymentDetail_RendersRollbackAction(t *testing.T) {
 	if !strings.Contains(body, `class="deploy-rollback-form"`) {
 		t.Fatalf("superseded deployment detail missing rollback form\nbody=%s", body)
 	}
-	token := extractInputValue(body, middleware.FormFieldName, "/dashboard/apps/rollbackapp/rollback")
+	token := apidserver.ExtractInputValue(body, middleware.FormFieldName, "/dashboard/apps/rollbackapp/rollback")
 	if token == "" {
 		t.Fatal("deployment detail rollback form missing csrf token")
 	}
 	var rollbackCookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardRollbackCSRFCookie {
+		if c.Name == apidserver.DashboardRollbackCSRFCookie {
 			rollbackCookie = c
 			break
 		}
@@ -190,7 +191,7 @@ func TestDashboardDeploymentDetail_RendersRollbackAction(t *testing.T) {
 
 func TestDashboardRollback_RejectsInvalidCSRF(t *testing.T) {
 	h, sid, _, _, prior, csrfCookie, _ := seedDashboardRollback(t)
-	rec := dashboardPOST(t, h, sid, "/dashboard/apps/rollbackapp/rollback", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, sid, "/dashboard/apps/rollbackapp/rollback", map[string]string{
 		middleware.FormFieldName: "wrong-token",
 		"deployment_id":          prior.ID,
 	}, csrfCookie)

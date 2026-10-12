@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -25,14 +26,14 @@ func privateNetworkRequest(networkID, region string, cidrs []string) api.AppPriv
 
 func TestPrivateNetwork_FlagOffBlocksAllHandlers(t *testing.T) {
 	withPrivateNetworkEnabled(t, false)
-	e := setup(t, api.PlanScale)
-	mustSeedApp(t, e, "private-off")
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "private-off")
 	for _, verb := range []string{"GET", "PUT", "DELETE"} {
 		var body any
 		if verb == "PUT" {
 			body = privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.0.0/16"})
 		}
-		rec := e.do(t, verb, "/v1/apps/private-off/network/private", body, nil)
+		rec := e.Do(t, verb, "/v1/apps/private-off/network/private", body, nil)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s status = %d, want 503; body=%s", verb, rec.Code, rec.Body.String())
 		}
@@ -41,10 +42,10 @@ func TestPrivateNetwork_FlagOffBlocksAllHandlers(t *testing.T) {
 
 func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 	withPrivateNetworkEnabled(t, true)
-	e := setup(t, api.PlanScale)
-	appID := mustSeedApp(t, e, "private-life")
+	e := apidserver.Setup(t, api.PlanScale)
+	appID := apidserver.MustSeedApp(t, e, "private-life")
 
-	rec := e.do(t, "PUT", "/v1/apps/private-life/network/private",
+	rec := e.Do(t, "PUT", "/v1/apps/private-life/network/private",
 		privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.1.1/16", "10.30.0.0/16"}), nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("PUT status = %d, want 202; body=%s", rec.Code, rec.Body.String())
@@ -60,7 +61,7 @@ func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 		t.Fatalf("canonical CIDRs = %q", got)
 	}
 
-	rec = e.do(t, "GET", "/v1/apps/private-life/network/private", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/private-life/network/private", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -70,18 +71,18 @@ func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 	if resp.Attachment == nil || resp.Attachment.NetworkID != "prod-vpc" || resp.MaxCIDRs != 64 {
 		t.Fatalf("GET response = %+v", resp)
 	}
-	healthStore := state.PrivateNetworkAttachmentHealthStore(e.store)
-	attachment, err := e.store.GetAppPrivateNetworkAttachment(t.Context(), e.acct.ID, appID)
+	healthStore := state.PrivateNetworkAttachmentHealthStore((*e.Store()))
+	attachment, err := (*e.Store()).GetAppPrivateNetworkAttachment(t.Context(), (*e.Acct()).ID, appID)
 	if err != nil {
 		t.Fatalf("read attachment for health seed: %v", err)
 	}
 	if err := healthStore.UpsertPrivateNetworkAttachmentNodeStatus(t.Context(), state.PrivateNetworkAttachmentNodeStatus{
-		AccountID: e.acct.ID, AppID: appID, NetworkID: attachment.NetworkID, NodeID: "node-a",
+		AccountID: (*e.Acct()).ID, AppID: appID, NetworkID: attachment.NetworkID, NodeID: "node-a",
 		FabricStatus: "ready", FabricDetail: "bridge ready", RouteStatus: "error", RouteDetail: "route update failed",
 	}); err != nil {
 		t.Fatalf("seed node health: %v", err)
 	}
-	rec = e.do(t, "GET", "/v1/apps/private-life/network/private", nil, nil)
+	rec = e.Do(t, "GET", "/v1/apps/private-life/network/private", nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode GET health: %v", err)
 	}
@@ -89,11 +90,11 @@ func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 		t.Fatalf("GET node health = %#v", resp.Attachment.Nodes)
 	}
 
-	rec = e.do(t, "DELETE", "/v1/apps/private-life/network/private", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/private-life/network/private", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
-	rec = e.do(t, "DELETE", "/v1/apps/private-life/network/private", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/apps/private-life/network/private", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("idempotent DELETE status = %d, want 204", rec.Code)
 	}
@@ -101,22 +102,22 @@ func TestPrivateNetwork_PutGetDeleteLifecycle(t *testing.T) {
 
 func TestPrivateNetwork_PlanAndCIDRGates(t *testing.T) {
 	withPrivateNetworkEnabled(t, true)
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "private-free")
-	rec := e.do(t, "PUT", "/v1/apps/private-free/network/private",
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "private-free")
+	rec := e.Do(t, "PUT", "/v1/apps/private-free/network/private",
 		privateNetworkRequest("prod-vpc", "fra1", []string{"10.20.0.0/16"}), nil)
 	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), api.CodePlanPrivateNetworkNotAllowed) {
 		t.Fatalf("Free PUT status/body = %d/%s", rec.Code, rec.Body.String())
 	}
 
-	e = setup(t, api.PlanScale)
-	mustSeedApp(t, e, "private-bad")
+	e = apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "private-bad")
 	for _, req := range []api.AppPrivateNetworkAttachmentRequest{
 		privateNetworkRequest("Bad_VPC", "fra1", []string{"10.20.0.0/16"}),
 		privateNetworkRequest("prod-vpc", "fra1", []string{"10.0.0.0/8"}),
 		privateNetworkRequest("prod-vpc", "fra1", []string{"172.16.0.0/12", "172.16.0.0/16"}),
 	} {
-		rec := e.do(t, "PUT", "/v1/apps/private-bad/network/private", req, nil)
+		rec := e.Do(t, "PUT", "/v1/apps/private-bad/network/private", req, nil)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), api.CodePrivateNetworkInvalid) {
 			t.Errorf("bad request status/body = %d/%s", rec.Code, rec.Body.String())
 		}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -21,7 +22,7 @@ func TestUpdateAccountBillingInfo_NormalizesAndAuditsFieldNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, nil, nil, 15*24, "")
+	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 15*24, "")
 	body, _ := json.Marshal(api.UpdateAccountBillingInfoRequest{
 		BusinessName:   stringPtr("  Acme GmbH  "),
 		BillingAddress: stringPtr("  Hauptstrasse 1, Berlin  "),
@@ -29,7 +30,7 @@ func TestUpdateAccountBillingInfo_NormalizesAndAuditsFieldNames(t *testing.T) {
 	})
 	req := httptest.NewRequest(http.MethodPatch, "/v1/account/billing", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
-	srv.updateAccountBillingInfo(rec, req, acct)
+	srv.UpdateAccountBillingInfo(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -54,7 +55,7 @@ func TestUpdateAccountBillingInfo_NormalizesAndAuditsFieldNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	found := findEventByKind(rows, "account.billing_info_updated")
+	found := apidserver.FindEventByKind(rows, "account.billing_info_updated")
 	if found == nil {
 		t.Fatalf("billing identity audit event missing; rows = %+v", rows)
 	}
@@ -64,14 +65,14 @@ func TestUpdateAccountBillingInfo_NormalizesAndAuditsFieldNames(t *testing.T) {
 }
 
 func TestUpdateAccountBillingInfo_HTTPRoute(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	rec := e.doAdmin(t, http.MethodPatch, "/v1/account/billing", map[string]string{
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.DoAdmin(t, http.MethodPatch, "/v1/account/billing", map[string]string{
 		"business_name": "Acme GmbH",
 	}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	updated, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	updated, err := (*e.Store()).AccountByID(context.Background(), (*e.Acct()).ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,13 +82,13 @@ func TestUpdateAccountBillingInfo_HTTPRoute(t *testing.T) {
 }
 
 func TestNormalizeBillingField(t *testing.T) {
-	if got, ok := normalizeBillingField("  Acme  ", 10); !ok || got != "Acme" {
+	if got, ok := apidserver.NormalizeBillingField("  Acme  ", 10); !ok || got != "Acme" {
 		t.Fatalf("normalizeBillingField = %q, %v", got, ok)
 	}
-	if _, ok := normalizeBillingField(strings.Repeat("x", 11), 10); ok {
+	if _, ok := apidserver.NormalizeBillingField(strings.Repeat("x", 11), 10); ok {
 		t.Fatal("oversized billing value accepted")
 	}
-	if got, ok := normalizeBillingField("   ", 10); !ok || got != "" {
+	if got, ok := apidserver.NormalizeBillingField("   ", 10); !ok || got != "" {
 		t.Fatalf("empty billing value = %q, %v", got, ok)
 	}
 }

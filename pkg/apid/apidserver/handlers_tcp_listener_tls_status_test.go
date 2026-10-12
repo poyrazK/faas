@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,13 +37,13 @@ func TestTCPListenerTLSStatusStorageFailureAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &failingTLSObservationStore{MemStore: memory}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	request := func(account state.Account) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.SetPathValue("slug", app.Slug)
 		r.SetPathValue("name", "echo")
 		w := httptest.NewRecorder()
-		srv.appTCPListenerTLSStatus(w, r, account)
+		srv.AppTCPListenerTLSStatus(w, r, account)
 		return w
 	}
 	foreign := state.Account{ID: "foreign-account"}
@@ -117,7 +118,7 @@ func TestTCPListenerTLSStatusAPI(t *testing.T) {
 	}
 	request("/v1/apps/tls-status-other/tcp-listeners/echo/tls-status", key, http.StatusNotFound)
 	request("/v1/apps/tls-status/tcp-listeners/missing/tls-status", key, http.StatusNotFound)
-	stale := tcpListenerTLSStatusResponse(listener, []state.TCPListenerTLSObservation{observation}, observation.ObservedAt.Add(api.TCPListenerTLSObservationMaxAge))
+	stale := apidserver.TcpListenerTLSStatusResponse(listener, []state.TCPListenerTLSObservation{observation}, observation.ObservedAt.Add(api.TCPListenerTLSObservationMaxAge))
 	if stale.Observations[0].Status != "unknown" || stale.Observations[0].NotAfter != nil {
 		t.Fatalf("stale evidence exposed expiry as current: %+v", stale)
 	}

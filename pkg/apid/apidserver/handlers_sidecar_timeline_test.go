@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestListSidecarTimeline_HappyPathAndLatestStatus(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "sidecar-timeline-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "sidecar-timeline-app")
 	ctx := context.Background()
 	appendEvent := func(kind string, payload map[string]any) {
 		t.Helper()
@@ -22,7 +23,7 @@ func TestListSidecarTimeline_HappyPathAndLatestStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := e.store.AppendEvent(ctx, "vmmd", kind, nil, data); err != nil {
+		if err := (*e.Store()).AppendEvent(ctx, "vmmd", kind, nil, data); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(time.Millisecond)
@@ -32,7 +33,7 @@ func TestListSidecarTimeline_HappyPathAndLatestStatus(t *testing.T) {
 	appendEvent("wake.sidecar_restart", map[string]any{"attempt": 1, "previous_exit_code": 1})
 	appendEvent("wake.sidecar_health", map[string]any{"status": "healthy", "reason": "healthcheck_ok"})
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -55,26 +56,26 @@ func TestListSidecarTimeline_HappyPathAndLatestStatus(t *testing.T) {
 }
 
 func TestListSidecarTimeline_CrossAccountRowsAreInvisible(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "sidecar-timeline-forge")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "sidecar-timeline-forge")
 	data := []byte(`{"app_id":"00000000-0000-0000-0000-000000000000","sidecar_name":"metrics","status":"healthy"}`)
-	if err := e.store.AppendEvent(context.Background(), "vmmd", "wake.sidecar_health", nil, data); err != nil {
+	if err := (*e.Store()).AppendEvent(context.Background(), "vmmd", "wake.sidecar_health", nil, data); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("code=%d body=%s, want 404 for foreign-only timeline", rec.Code, rec.Body.String())
 	}
 }
 
 func TestListSidecarTimeline_FreePlanAndLimitValidation(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	rec := e.do(t, http.MethodGet, "/v1/apps/unknown/sidecars/metrics/timeline", nil, nil)
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+	e := apidserver.Setup(t, api.PlanFree)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/unknown/sidecars/metrics/timeline", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
 
-	e = setup(t, api.PlanPro)
-	app := seedAppForTimeline(t, e, "sidecar-timeline-limit")
-	rec = e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline?limit=2000", nil, nil)
+	e = apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedAppForTimeline(t, e, "sidecar-timeline-limit")
+	rec = e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/sidecars/metrics/timeline?limit=2000", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d body=%s, want 400", rec.Code, rec.Body.String())
 	}

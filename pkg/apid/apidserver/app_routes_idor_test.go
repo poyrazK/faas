@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,15 +20,15 @@ import (
 // Slugs are public (they are the app's hostname), so every route must
 // refuse without reflecting the other account's data.
 func TestAppRoutesRefuseAnotherAccountsSlug(t *testing.T) {
-	e := setupWithScopes(t, api.ScopesAdminOnly)
-	if err := e.store.MarkAccountEmailVerified(context.Background(), e.acct.ID); err != nil {
+	e := apidserver.SetupWithScopes(t, api.ScopesAdminOnly)
+	if err := (*e.Store()).MarkAccountEmailVerified(context.Background(), (*e.Acct()).ID); err != nil {
 		t.Fatal(err)
 	}
-	victim, err := e.store.CreateAccount(context.Background(), "victim@example.com", api.PlanPro)
+	victim, err := (*e.Store()).CreateAccount(context.Background(), "victim@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateApp(context.Background(), state.App{AccountID: victim.ID, Slug: "victim-app", Status: state.AppActive, RAMMB: 256}); err != nil {
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: victim.ID, Slug: "victim-app", Status: state.AppActive, RAMMB: 256}); err != nil {
 		t.Fatal(err)
 	}
 	routes := scanSessionAuthRoutes(t)
@@ -44,10 +45,10 @@ func TestAppRoutesRefuseAnotherAccountsSlug(t *testing.T) {
 		req := httptest.NewRequest(method, concrete, strings.NewReader("{}")).WithContext(ctx)
 		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:4000", i%250+1)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+e.key)
+		req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 		req.Header.Set("Idempotency-Key", uuid.NewString())
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		cancel()
 		if rec.Code < 400 || strings.Contains(rec.Body.String(), victim.ID) {
 			t.Errorf("%s against another account's app = %d: %.200s", route, rec.Code, rec.Body.String())
@@ -62,13 +63,13 @@ func TestAppRoutesRefuseAnotherAccountsSlug(t *testing.T) {
 // deployment, cron and app IDs into every ID-keyed cookie/bearer route.
 // None may succeed or reflect the other account's data.
 func TestIDRoutesRefuseAnotherAccountsResources(t *testing.T) {
-	e := setupWithScopes(t, api.ScopesAdminOnly)
+	e := apidserver.SetupWithScopes(t, api.ScopesAdminOnly)
 	ctx := context.Background()
-	_ = e.store.MarkAccountEmailVerified(ctx, e.acct.ID)
-	victim, _ := e.store.CreateAccount(ctx, "victim@example.com", api.PlanPro)
-	app, _ := e.store.CreateApp(ctx, state.App{AccountID: victim.ID, Slug: "victim-app", Status: state.AppActive, RAMMB: 256})
-	dep, _ := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployPending, SourceSHA256: "x"})
-	cron, _ := e.store.CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true)
+	_ = (*e.Store()).MarkAccountEmailVerified(ctx, (*e.Acct()).ID)
+	victim, _ := (*e.Store()).CreateAccount(ctx, "victim@example.com", api.PlanPro)
+	app, _ := (*e.Store()).CreateApp(ctx, state.App{AccountID: victim.ID, Slug: "victim-app", Status: state.AppActive, RAMMB: 256})
+	dep, _ := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployPending, SourceSHA256: "x"})
+	cron, _ := (*e.Store()).CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true)
 	ids := map[string]string{"deployment": dep.ID, "cron": cron.ID, "app": app.ID}
 	routes := scanSessionAuthRoutes(t)
 	for i, route := range routes {
@@ -84,10 +85,10 @@ func TestIDRoutesRefuseAnotherAccountsResources(t *testing.T) {
 			req := httptest.NewRequest(method, concrete, strings.NewReader("{}")).WithContext(rctx)
 			req.RemoteAddr = fmt.Sprintf("198.51.100.%d:4000", i%250+1)
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+e.key)
+			req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 			req.Header.Set("Idempotency-Key", uuid.NewString())
 			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, req)
+			(*e.H()).ServeHTTP(rec, req)
 			cancel()
 			if rec.Code < 400 || strings.Contains(rec.Body.String(), victim.ID) || strings.Contains(rec.Body.String(), "victim-app") {
 				t.Errorf("%s with another account's %s ID = %d: %.200s", route, kind, rec.Code, rec.Body.String())

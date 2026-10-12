@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,17 +7,18 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetAppLogDrainAnalyticsReturnsHourlyCustomerSafeSummary(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "analytics-app", Status: state.AppActive})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "analytics-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	drain, err := e.store.CreateAppLogDrain(t.Context(), state.AppLogDrain{
-		AppID: app.ID, AccountID: e.acct.ID, Kind: state.AppLogDrainKindHTTPJSON,
+	drain, err := (*e.Store()).CreateAppLogDrain(t.Context(), state.AppLogDrain{
+		AppID: app.ID, AccountID: (*e.Acct()).ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/analytics", Enabled: true,
 	})
 	if err != nil {
@@ -29,12 +30,12 @@ func TestGetAppLogDrainAnalyticsReturnsHourlyCustomerSafeSummary(t *testing.T) {
 		{DrainID: drain.ID, DeliveredTotal: 15, FailedTotal: 2, DroppedTotal: 1, RetriesTotal: 3, DeliveryLatencyNanosTotal: int64(2 * time.Second), DeliveryLatencySamples: 15, UpdatedAt: now.Add(-time.Hour)},
 		{DrainID: drain.ID, DeliveredTotal: 20, FailedTotal: 2, DroppedTotal: 1, RetriesTotal: 4, DeliveryLatencyNanosTotal: int64(3 * time.Second), DeliveryLatencySamples: 20, UpdatedAt: now},
 	} {
-		if err := e.store.UpsertAppLogDrainHealth(t.Context(), sample); err != nil {
+		if err := (*e.Store()).UpsertAppLogDrainHealth(t.Context(), sample); err != nil {
 			t.Fatalf("UpsertAppLogDrainHealth: %v", err)
 		}
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/analytics-app/log-drains/"+drain.ID+"/analytics?window=24h", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/analytics-app/log-drains/"+drain.ID+"/analytics?window=24h", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -60,19 +61,19 @@ func TestGetAppLogDrainAnalyticsReturnsHourlyCustomerSafeSummary(t *testing.T) {
 }
 
 func TestGetAppLogDrainAnalyticsRejectsUnknownWindow(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "analytics-invalid-app", Status: state.AppActive})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "analytics-invalid-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	drain, err := e.store.CreateAppLogDrain(t.Context(), state.AppLogDrain{
-		AppID: app.ID, AccountID: e.acct.ID, Kind: state.AppLogDrainKindHTTPJSON,
+	drain, err := (*e.Store()).CreateAppLogDrain(t.Context(), state.AppLogDrain{
+		AppID: app.ID, AccountID: (*e.Acct()).ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/analytics-invalid", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain: %v", err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/analytics-invalid-app/log-drains/"+drain.ID+"/analytics?window=90d", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/analytics-invalid-app/log-drains/"+drain.ID+"/analytics?window=90d", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

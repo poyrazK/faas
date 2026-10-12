@@ -7,7 +7,7 @@
 // "missing id" from "cross-account id" via either status code or
 // response body. The same body MUST appear for both 404
 // branches: "no such cron" verbatim.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -17,13 +17,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetCron_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "get-cron-happy", "*/5 * * * *")
-	rec := e.do(t, "GET", "/v1/crons/"+cronID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/crons/"+cronID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET cron = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -44,8 +45,8 @@ func TestGetCron_HappyPath(t *testing.T) {
 // different copy on this branch would leak the existence
 // oracle.
 func TestGetCron_NotFound_NoSuchID(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/crons/00000000000000000000000000000000", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/crons/00000000000000000000000000000000", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET cron 404 = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -60,10 +61,10 @@ func TestGetCron_NotFound_NoSuchID(t *testing.T) {
 // branch — never 200, never a 403 that distinguishes "exists on
 // another account" from "missing entirely".
 func TestGetCron_NotFound_CrossAccount(t *testing.T) {
-	eA := setup(t, api.PlanPro)
+	eA := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, eA, "get-cron-idor", "*/5 * * * *")
-	eB := setup(t, api.PlanPro)
-	rec := eB.do(t, "GET", "/v1/crons/"+cronID, nil, nil)
+	eB := apidserver.Setup(t, api.PlanPro)
+	rec := eB.Do(t, "GET", "/v1/crons/"+cronID, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET cron cross-account = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -82,8 +83,8 @@ func TestGetCron_NotFound_CrossAccount(t *testing.T) {
 // different status code, and a probe scanning for valid cron id
 // formats gets no information either.
 func TestGetCron_BadID_BitIdentical404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/crons/not-a-uuid", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/crons/not-a-uuid", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET cron bad-id = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -105,16 +106,16 @@ func TestGetCron_CrossApp_SameAccount(t *testing.T) {
 	// the same call site are different accounts. The matrix below
 	// is functionally equivalent to the cross-account test above;
 	// this test exists to lock the (account_id, app_id) probe in.
-	eA := setup(t, api.PlanPro)
+	eA := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, eA, "get-cron-cross-app", "*/5 * * * *")
-	eB := setup(t, api.PlanPro)
+	eB := apidserver.Setup(t, api.PlanPro)
 	_ = cronID
 	_ = eB
 	// Same assertion body — the API contract is identical whether
 	// the cron lives on a different account OR a different app
 	// within the same account. Both are 404 with "no such cron".
 	e := eB
-	rec := e.do(t, "GET", "/v1/crons/"+cronID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/crons/"+cronID, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET cron same-account = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}

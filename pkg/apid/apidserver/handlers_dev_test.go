@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDevSessionCreateRefreshAndDestroy(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	project := "gregale-api"
-	wantSlug := devSessionSlug(e.acct.ID, project, "")
+	wantSlug := apidserver.DevSessionSlug((*e.Acct()).ID, project, "")
 
-	created := e.do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{}, nil)
+	created := e.Do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{}, nil)
 	if created.Code != 201 {
 		t.Fatalf("create status = %d, want 201: %s", created.Code, created.Body.String())
 	}
@@ -30,7 +31,7 @@ func TestDevSessionCreateRefreshAndDestroy(t *testing.T) {
 	if until := time.Until(first.ExpiresAt); until < 23*time.Hour || until > 25*time.Hour {
 		t.Fatalf("lease duration = %s, want about 24h", until)
 	}
-	row, err := e.store.AppBySlug(t.Context(), wantSlug)
+	row, err := (*e.Store()).AppBySlug(t.Context(), wantSlug)
 	if err != nil {
 		t.Fatalf("load developer app: %v", err)
 	}
@@ -38,7 +39,7 @@ func TestDevSessionCreateRefreshAndDestroy(t *testing.T) {
 		t.Fatalf("developer preview metadata = %+v", row)
 	}
 
-	refreshed := e.do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{}, nil)
+	refreshed := e.Do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{}, nil)
 	if refreshed.Code != 200 {
 		t.Fatalf("refresh status = %d, want 200: %s", refreshed.Code, refreshed.Body.String())
 	}
@@ -50,26 +51,26 @@ func TestDevSessionCreateRefreshAndDestroy(t *testing.T) {
 		t.Fatalf("refresh changed app id: first=%s second=%s", first.App.ID, second.App.ID)
 	}
 
-	destroyed := e.do(t, "DELETE", "/v1/dev/sessions/"+project, nil, nil)
+	destroyed := e.Do(t, "DELETE", "/v1/dev/sessions/"+project, nil, nil)
 	if destroyed.Code != 204 {
 		t.Fatalf("destroy status = %d, want 204: %s", destroyed.Code, destroyed.Body.String())
 	}
-	if _, err := e.store.AppBySlug(t.Context(), wantSlug); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).AppBySlug(t.Context(), wantSlug); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("developer app after destroy: err=%v, want ErrNotFound", err)
 	}
 }
 
 func TestDevSessionRejectsFunctionWithoutRuntime(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	rec := e.do(t, "PUT", "/v1/dev/sessions/my-function", api.UpsertDevSessionRequest{Type: "function"}, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.Do(t, "PUT", "/v1/dev/sessions/my-function", api.UpsertDevSessionRequest{Type: "function"}, nil)
 	if rec.Code != 400 {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	created := e.do(t, http.MethodPut, "/v1/dev/sessions/scenario-auth", api.UpsertDevSessionRequest{}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	created := e.Do(t, http.MethodPut, "/v1/dev/sessions/scenario-auth", api.UpsertDevSessionRequest{}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
 	}
@@ -77,7 +78,7 @@ func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testin
 	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	before, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	before, err := (*e.Store()).AppBySlug(t.Context(), session.App.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testin
 	}
 	closed := false
 	mode := api.ConsumerAuthModeRequired
-	updated := e.do(t, http.MethodPatch, "/v1/apps/"+session.App.Slug, api.UpdateAppRequest{
+	updated := e.Do(t, http.MethodPatch, "/v1/apps/"+session.App.Slug, api.UpdateAppRequest{
 		RequireAuthn:     &closed,
 		PublicAuth:       &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen},
 		ConsumerAuthMode: &mode,
@@ -94,7 +95,7 @@ func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testin
 	if updated.Code != http.StatusOK {
 		t.Fatalf("test access update status = %d: %s", updated.Code, updated.Body.String())
 	}
-	after, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	after, err := (*e.Store()).AppBySlug(t.Context(), session.App.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,20 +105,20 @@ func TestDevSessionCanUseConsumerAuthenticationWithoutPlanDefaultGates(t *testin
 }
 
 func TestDevSessionUsesSeparateQuota(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 
-	first := e.do(t, "PUT", "/v1/dev/sessions/first-app", api.UpsertDevSessionRequest{}, nil)
+	first := e.Do(t, "PUT", "/v1/dev/sessions/first-app", api.UpsertDevSessionRequest{}, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first developer session status = %d, want 201: %s", first.Code, first.Body.String())
 	}
 	// A Free account can still create its normal deployed-app slot while the
 	// developer environment is live: the two budgets are intentionally split.
-	production := state.App{AccountID: e.acct.ID, Slug: "production-app", Status: state.AppActive}
-	if _, err := e.store.CreateAppIfUnderQuota(t.Context(), production, api.MustLimitsFor(api.PlanFree)); err != nil {
+	production := state.App{AccountID: (*e.Acct()).ID, Slug: "production-app", Status: state.AppActive}
+	if _, err := (*e.Store()).CreateAppIfUnderQuota(t.Context(), production, api.MustLimitsFor(api.PlanFree)); err != nil {
 		t.Fatalf("production app was blocked by developer session: %v", err)
 	}
 
-	second := e.do(t, "PUT", "/v1/dev/sessions/second-app", api.UpsertDevSessionRequest{}, nil)
+	second := e.Do(t, "PUT", "/v1/dev/sessions/second-app", api.UpsertDevSessionRequest{}, nil)
 	if second.Code != http.StatusForbidden {
 		t.Fatalf("second developer session status = %d, want 403: %s", second.Code, second.Body.String())
 	}
@@ -131,9 +132,9 @@ func TestDevSessionUsesSeparateQuota(t *testing.T) {
 }
 
 func TestDevSessionSlugStableAndBounded(t *testing.T) {
-	a := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
-	b := devSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
-	c := devSessionSlug("account-b", "a-very-long-project-name-that-needs-truncation", "")
+	a := apidserver.DevSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
+	b := apidserver.DevSessionSlug("account-a", "a-very-long-project-name-that-needs-truncation", "")
+	c := apidserver.DevSessionSlug("account-b", "a-very-long-project-name-that-needs-truncation", "")
 	if a != b {
 		t.Fatalf("slug is not stable: %q != %q", a, b)
 	}
@@ -143,13 +144,13 @@ func TestDevSessionSlugStableAndBounded(t *testing.T) {
 	if len(a) > 40 {
 		t.Fatalf("slug length = %d, want <= 40: %q", len(a), a)
 	}
-	if legacy := devSessionSlug("account-a", "gregale-api", ""); legacy != "dev-gregale-api-ef301a416b46" {
+	if legacy := apidserver.DevSessionSlug("account-a", "gregale-api", ""); legacy != "dev-gregale-api-ef301a416b46" {
 		t.Fatalf("legacy slug changed: %q", legacy)
 	}
 }
 
 func TestDevSessionsAreIsolatedByWorkspace(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	const (
 		project    = "gregale-api"
 		workspaceA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -158,7 +159,7 @@ func TestDevSessionsAreIsolatedByWorkspace(t *testing.T) {
 
 	create := func(workspaceID string) api.DevSessionResponse {
 		t.Helper()
-		rec := e.do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspaceID}, nil)
+		rec := e.Do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspaceID}, nil)
 		if rec.Code != 201 {
 			t.Fatalf("create workspace %s status = %d, want 201: %s", workspaceID, rec.Code, rec.Body.String())
 		}
@@ -174,29 +175,29 @@ func TestDevSessionsAreIsolatedByWorkspace(t *testing.T) {
 	if first.App.ID == second.App.ID || first.App.Slug == second.App.Slug {
 		t.Fatalf("workspace sessions collided: first=%+v second=%+v", first.App, second.App)
 	}
-	if first.App.Slug != devSessionSlug(e.acct.ID, project, workspaceA) || second.App.Slug != devSessionSlug(e.acct.ID, project, workspaceB) {
+	if first.App.Slug != apidserver.DevSessionSlug((*e.Acct()).ID, project, workspaceA) || second.App.Slug != apidserver.DevSessionSlug((*e.Acct()).ID, project, workspaceB) {
 		t.Fatalf("unexpected workspace slugs: first=%q second=%q", first.App.Slug, second.App.Slug)
 	}
 
-	destroyed := e.do(t, "DELETE", "/v1/dev/sessions/"+project+"?workspace_id="+workspaceA, nil, nil)
+	destroyed := e.Do(t, "DELETE", "/v1/dev/sessions/"+project+"?workspace_id="+workspaceA, nil, nil)
 	if destroyed.Code != 204 {
 		t.Fatalf("destroy workspace A status = %d, want 204: %s", destroyed.Code, destroyed.Body.String())
 	}
-	if _, err := e.store.AppBySlug(t.Context(), first.App.Slug); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).AppBySlug(t.Context(), first.App.Slug); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("workspace A after destroy: err=%v, want ErrNotFound", err)
 	}
-	if _, err := e.store.AppBySlug(t.Context(), second.App.Slug); err != nil {
+	if _, err := (*e.Store()).AppBySlug(t.Context(), second.App.Slug); err != nil {
 		t.Fatalf("workspace B was removed with workspace A: %v", err)
 	}
 }
 
 func TestDevSessionRejectsInvalidWorkspaceID(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	rec := e.do(t, "PUT", "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "not-a-workspace"}, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.Do(t, "PUT", "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "not-a-workspace"}, nil)
 	if rec.Code != 400 {
 		t.Fatalf("PUT status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	rec = e.do(t, "DELETE", "/v1/dev/sessions/gregale-api?workspace_id=ABCDEF0123456789ABCDEF0123456789", nil, nil)
+	rec = e.Do(t, "DELETE", "/v1/dev/sessions/gregale-api?workspace_id=ABCDEF0123456789ABCDEF0123456789", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("DELETE status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
@@ -224,8 +225,8 @@ func TestDevSessionLeaseBoundedByPlan(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, tc.plan)
-			rec := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: tc.leaseSeconds}, nil)
+			e := apidserver.Setup(t, tc.plan)
+			rec := e.Do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: tc.leaseSeconds}, nil)
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
@@ -251,7 +252,7 @@ func TestDevSessionLeaseBoundedByPlan(t *testing.T) {
 				t.Fatalf("lease limit problem = %+v", problem)
 			}
 			// A rejected lease never creates the environment.
-			if _, err := e.store.AppBySlug(t.Context(), devSessionSlug(e.acct.ID, "lease-app", "")); !errors.Is(err, state.ErrNotFound) {
+			if _, err := (*e.Store()).AppBySlug(t.Context(), apidserver.DevSessionSlug((*e.Acct()).ID, "lease-app", "")); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("rejected lease created an app: err=%v", err)
 			}
 		})
@@ -259,12 +260,12 @@ func TestDevSessionLeaseBoundedByPlan(t *testing.T) {
 }
 
 func TestDevSessionRefreshAppliesRequestedLease(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	first := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 3600}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	first := e.Do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 3600}, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", first.Code, first.Body.String())
 	}
-	refreshed := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 7 * 24 * 3600}, nil)
+	refreshed := e.Do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 7 * 24 * 3600}, nil)
 	if refreshed.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d: %s", refreshed.Code, refreshed.Body.String())
 	}
@@ -272,7 +273,7 @@ func TestDevSessionRefreshAppliesRequestedLease(t *testing.T) {
 	if err := json.Unmarshal(refreshed.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	row, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	row, err := (*e.Store()).AppBySlug(t.Context(), session.App.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,12 +283,12 @@ func TestDevSessionRefreshAppliesRequestedLease(t *testing.T) {
 }
 
 func TestDevSessionGetIsReadOnly(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	const (
 		project   = "gregale-api"
 		workspace = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	)
-	created := e.do(t, http.MethodPut, "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspace}, nil)
+	created := e.Do(t, http.MethodPut, "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspace}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
 	}
@@ -297,11 +298,11 @@ func TestDevSessionGetIsReadOnly(t *testing.T) {
 	}
 	// Shorten the lease so a renewal by the GET would be visible.
 	expiry := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	if _, err := e.store.RefreshDevSession(t.Context(), session.App.ID, expiry); err != nil {
+	if _, err := (*e.Store()).RefreshDevSession(t.Context(), session.App.ID, expiry); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/dev/sessions/"+project+"?workspace_id="+workspace, nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/dev/sessions/"+project+"?workspace_id="+workspace, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -312,7 +313,7 @@ func TestDevSessionGetIsReadOnly(t *testing.T) {
 	if got.App.Slug != session.App.Slug || !got.ExpiresAt.Equal(expiry) || got.Postgres != nil {
 		t.Fatalf("get = slug %q expires %s postgres %+v; want %q %s nil", got.App.Slug, got.ExpiresAt, got.Postgres, session.App.Slug, expiry)
 	}
-	row, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	row, err := (*e.Store()).AppBySlug(t.Context(), session.App.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,8 +323,8 @@ func TestDevSessionGetIsReadOnly(t *testing.T) {
 }
 
 func TestDevSessionGetRejectsUnknownOrInvalidSelection(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	created := e.do(t, http.MethodPut, "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	created := e.Do(t, http.MethodPut, "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
 	}
@@ -338,7 +339,7 @@ func TestDevSessionGetRejectsUnknownOrInvalidSelection(t *testing.T) {
 		{"invalid project", "/v1/dev/sessions/A?workspace_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rec := e.do(t, http.MethodGet, test.path, nil, nil)
+			rec := e.Do(t, http.MethodGet, test.path, nil, nil)
 			if rec.Code != test.want {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, test.want, rec.Body.String())
 			}

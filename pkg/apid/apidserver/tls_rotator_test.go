@@ -5,7 +5,7 @@
 // confirm the apid-shaped wiring is correct — including the
 // three-rotator fan-out (advisory server, githubd-bridge server,
 // githubd client) which is unique to apid.
-package apidserver
+package apidserver_test
 
 import (
 	"context"

@@ -18307,6 +18307,10 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND source_id=sqlc.arg(source_
  AND (accepted_at,id) < (sqlc.arg(before_at)::timestamptz,sqlc.arg(before_id)::text::uuid)
 ORDER BY accepted_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;
 
+-- name: FinishWorkflowRunCancellation :one
+UPDATE workflow_runs SET status='failed',last_error=sqlc.arg(reason)::text,
+ finished_at=now(),updated_at=now(),cancelled_at=now()
+WHERE id=sqlc.arg(run_id)::uuid RETURNING *;
 -- name: ListCustomerOperationRetainedMilestonePrerequisites :many
 WITH matching AS (
 SELECT

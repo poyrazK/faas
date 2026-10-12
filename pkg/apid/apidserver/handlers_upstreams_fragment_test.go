@@ -1,10 +1,12 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,7 +20,7 @@ func TestDeriveLast4FromHash_UsesCanonicalEightHexFragment(t *testing.T) {
 		{name: "short hash", hash: "abc", want: "abc"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := deriveLast4FromHash(tc.hash); got != tc.want {
+			if got := apidserver.DeriveLast4FromHash(tc.hash); got != tc.want {
 				t.Fatalf("deriveLast4FromHash(%q) = %q, want %q", tc.hash, got, tc.want)
 			}
 		})
@@ -37,7 +39,7 @@ func TestDataUpstreamResponseFromState_UsesEightHexFragment(t *testing.T) {
 		CreatedAt:        now,
 		LastSeenAt:       now,
 	}
-	got := dataUpstreamResponseFromState(row)
+	got := apidserver.DataUpstreamResponseFromState(row)
 	if got.HostLast4 != "fedcba98" {
 		t.Fatalf("HostLast4 = %q, want first 8 hash chars", got.HostLast4)
 	}

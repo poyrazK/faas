@@ -1,0 +1,13 @@
+# 941: Saved workflow recovery response plans
+
+Operators need to review several cancellation and saved-failure retry actions, apply them explicitly, and reconcile interrupted commands without selecting newer generations.
+
+Gregale saves a local versioned response plan containing the app identity, parent recovery job, explicit item positions, run identities, generations, reasons and deterministic action UUIDs. Plans contain at most 25 unique targets and use exclusive creation with private file permissions and synced writes. Preview uses retained receipts first, then read-only generation checks. Apply requires `--yes`; each independent action uses its original saved request. It never refreshes target counts. Status performs only reads and reports missing evidence as unresolved.
+
+Cancellation accepts an optional canonical nonzero `request_id`. The store serializes on the recovery job, reads an existing receipt before inspecting the live run, and rejects changed requests under the same identifier. Every keyed apply decision, including refusal, is retained. Cancellation, its successful audit event and its action receipt commit in one transaction. Memory storage mirrors this under its mutex and serializes receipt payloads to prevent callers mutating retained pointer values. Preview never writes receipts. Legacy requests without identifiers retain the existing generation-fenced behavior.
+
+Receipts carry the trusted actor and capture time, are scoped by account and job, cascade with job retention, and are bounded at 100 per retained job. Existing receipts remain readable/reusable at that limit. A refusal stays frozen; a new reviewed action requires a new plan key. Migration rollback refuses to discard retained action receipts.
+
+Retry actions use existing durable child-job request identifiers. A read-only app-scoped lookup by request identifier lets interrupted clients discover child jobs without submitting work. Returned selections and item lineage must match the saved plan. Child admission is distinct from execution completion: queued or running work remains unresolved; a retained terminal execution result is shown as its final outcome. Missing/pruned evidence remains unresolved. An admitted retry that subsequently fails is reported as failed, not as successful recovery.
+
+The plan is a client-side orchestration artifact, not an automatically executing policy or an atomic multi-target transaction. Failures are reported per action; other explicitly reviewed actions can proceed. Transport errors remain unknown until reconciliation or reapplying the same saved plan. Cancellation remains cooperative and does not undo external effects.

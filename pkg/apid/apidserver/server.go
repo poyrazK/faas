@@ -2460,6 +2460,25 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/event-recoveries/{jobID}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.CancelEventRecovery))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetEventConsumerDeliveryHealth))))
 
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryPolicyHealth))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryHistory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/report", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryReport))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/change-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.PreviewWorkflowRecoveryPolicyChange))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/evaluate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.EvaluateWorkflowRecoveryPolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/recovery-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.SetWorkflowRecoveryPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.ControlWorkflowRecoveryPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.SuppressWorkflowRecoveryAutomaticAction))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/queue", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryAutomaticQueue))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.ListWorkflowRecoveryPolicyReviews))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.DecideWorkflowRecoveryPolicyReview))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryReviewStatus))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryPolicyReview))))
+	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryActionReceipt))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetEventRecoveryByRequest))))
+	mux.HandleFunc("POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.PreviewWorkflowRecoveryCancellation))))
+	mux.HandleFunc("POST /v1/event-recoveries/{jobID}/workflow-cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.CancelWorkflowRecoveryExecution))))
+
 	// Workflow creation owns input-aware idempotency in the workflow store. The
 	// generic response cache is keyed only by Idempotency-Key and would replay a
 	// prior response for a different input before that conflict can be detected.

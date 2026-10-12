@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,11 +21,11 @@ func TestDrainAuditOutboxOnceDeliversMissedNotification(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	platform := events.NewPlatform("apid", store, log, nil, nil)
 
-	count, err := drainAuditOutboxOnce(ctx, store, log, platform)
+	count, err := apidserver.DrainAuditOutboxOnce(ctx, store, log, platform)
 	if err != nil || count != 1 {
 		t.Fatalf("drain = (%d, %v), want (1, nil)", count, err)
 	}
-	count, err = drainAuditOutboxOnce(ctx, store, log, platform)
+	count, err = apidserver.DrainAuditOutboxOnce(ctx, store, log, platform)
 	if err != nil || count != 0 {
 		t.Fatalf("second drain = (%d, %v), want (0, nil)", count, err)
 	}

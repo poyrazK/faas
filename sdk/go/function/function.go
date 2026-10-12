@@ -25,9 +25,13 @@
 // os.Stdout (fmt.Println, loggers configured with os.Stdout) are redirected to
 // stderr, which reaches `gregale logs`.
 //
-// The envelope carries one value per header. Only the first value of a
-// multi-value request header reaches the handler; multi-value response headers
-// are joined with ", ", except Set-Cookie, where only the first value is sent.
+// A handler that calls Flush (through http.Flusher or http.ResponseController)
+// streams: the status and headers go out at the first Flush and each later
+// Flush sends the body written since, so server-sent events and long outputs
+// reach the client as they are produced. A handler that never flushes sends
+// one complete response, as before. Every value of a response header is sent,
+// several Set-Cookie headers included; a repeated request header arrives as
+// one value joined with ", " ("; " for Cookie).
 package function
 
 import (
@@ -71,10 +75,39 @@ type envelope struct {
 	BodyB64 string            `json:"body_b64"`
 }
 
+// response is one line to the runner: a complete response, or with Frame a
+// streamed response's head, a body chunk, its end or an error (ADR-999).
 type response struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	BodyB64 string            `json:"body_b64"`
+	Frame   string         `json:"frame,omitempty"`
+	Status  int            `json:"status,omitempty"`
+	Headers map[string]any `json:"headers,omitempty"`
+	BodyB64 string         `json:"body_b64,omitempty"`
+	Message string         `json:"message,omitempty"`
+}
+
+// frameWriter sends response lines to the runner. The first failure is kept
+// and stops further writes; serve returns it.
+type frameWriter struct {
+	w   *bufio.Writer
+	err error
+}
+
+func (f *frameWriter) emit(resp response) {
+	if f.err != nil {
+		return
+	}
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		f.err = fmt.Errorf("encode response: %w", err)
+		return
+	}
+	if _, err := f.w.Write(append(payload, '\n')); err != nil {
+		f.err = fmt.Errorf("write response: %w", err)
+		return
+	}
+	if err := f.w.Flush(); err != nil {
+		f.err = fmt.Errorf("write response: %w", err)
+	}
 }
 
 // Serve answers runner requests with h until the runner closes stdin. It does
@@ -98,20 +131,14 @@ func serve(h http.Handler, in io.Reader, out io.Writer, persistent bool) error {
 			return fmt.Errorf("write ready handshake: %w", err)
 		}
 	}
+	frames := &frameWriter{w: w}
 	r := bufio.NewReader(in)
 	for {
 		line, readErr := r.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
-			resp := handle(h, line)
-			payload, err := json.Marshal(resp)
-			if err != nil {
-				return fmt.Errorf("encode response: %w", err)
-			}
-			if _, err := w.Write(append(payload, '\n')); err != nil {
-				return fmt.Errorf("write response: %w", err)
-			}
-			if err := w.Flush(); err != nil {
-				return fmt.Errorf("write response: %w", err)
+			handle(h, line, frames)
+			if frames.err != nil {
+				return frames.err
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
@@ -123,33 +150,36 @@ func serve(h http.Handler, in io.Reader, out io.Writer, persistent bool) error {
 	}
 }
 
-// handle runs one envelope through h. A malformed envelope or a handler panic
-// becomes a 500 handler_error response; the worker keeps serving.
-func handle(h http.Handler, line []byte) (resp response) {
+// handle runs one envelope through h and sends its response. A malformed
+// envelope or a handler panic becomes a 500 handler_error response, or an
+// error frame once a stream has started; the worker keeps serving.
+func handle(h http.Handler, line []byte, out *frameWriter) {
 	var env envelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		return handlerError("", fmt.Errorf("decode request envelope: %w", err))
+		out.emit(handlerError("", fmt.Errorf("decode request envelope: %w", err)))
+		return
 	}
 	invocationID := headerValue(env.Headers, "X-Faas-Invocation-Id")
 	req, err := newRequest(env)
 	if err != nil {
-		return handlerError(invocationID, err)
+		out.emit(handlerError(invocationID, err))
+		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rec := newRecorder()
+	rec := newRecorder(out)
 	defer func() {
 		if p := recover(); p != nil {
-			if p == http.ErrAbortHandler {
-				resp = handlerError(invocationID, errors.New("handler aborted"))
-				return
+			failure := errors.New("handler aborted")
+			if err, ok := p.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+				fmt.Fprintf(os.Stderr, "function: handler panic: %v\n%s", p, debug.Stack())
+				failure = fmt.Errorf("%v", p)
 			}
-			fmt.Fprintf(os.Stderr, "function: handler panic: %v\n%s", p, debug.Stack())
-			resp = handlerError(invocationID, fmt.Errorf("%v", p))
+			rec.fail(invocationID, failure)
 		}
 	}()
 	h.ServeHTTP(rec, req.WithContext(ctx))
-	return rec.result()
+	rec.finish()
 }
 
 func newRequest(env envelope) (*http.Request, error) {
@@ -211,21 +241,24 @@ func handlerError(invocationID string, err error) response {
 	})
 	return response{
 		Status:  http.StatusInternalServerError,
-		Headers: map[string]string{"Content-Type": "application/json; charset=utf-8"},
+		Headers: map[string]any{"Content-Type": "application/json; charset=utf-8"},
 		BodyB64: base64.StdEncoding.EncodeToString(body),
 	}
 }
 
-// recorder buffers one response. The envelope protocol is not streamed, so
-// Flush is accepted and has no effect until the handler returns.
+// recorder collects one response. Until the handler flushes it is buffered
+// and sent whole; the first Flush sends the status and headers, and each Flush
+// after that sends the body written since (ADR-999).
 type recorder struct {
+	out         *frameWriter
 	header      http.Header
 	status      int
 	wroteHeader bool
+	streaming   bool
 	body        bytes.Buffer
 }
 
-func newRecorder() *recorder { return &recorder{header: http.Header{}} }
+func newRecorder(out *frameWriter) *recorder { return &recorder{out: out, header: http.Header{}} }
 
 func (r *recorder) Header() http.Header { return r.header }
 
@@ -242,32 +275,64 @@ func (r *recorder) Write(p []byte) (int, error) {
 	return r.body.Write(p)
 }
 
-func (r *recorder) Flush() {}
+// Flush streams what the handler has written so far.
+func (r *recorder) Flush() {
+	if !r.streaming {
+		r.streaming = true
+		status, headers := r.head()
+		r.out.emit(response{Frame: "head", Status: status, Headers: headers})
+	}
+	r.sendChunk()
+}
 
-func (r *recorder) result() response {
+func (r *recorder) sendChunk() {
+	if r.body.Len() == 0 {
+		return
+	}
+	r.out.emit(response{Frame: "chunk", BodyB64: base64.StdEncoding.EncodeToString(r.body.Bytes())})
+	r.body.Reset()
+}
+
+// finish sends the response once the handler returns.
+func (r *recorder) finish() {
+	if r.streaming {
+		r.sendChunk()
+		r.out.emit(response{Frame: "end"})
+		return
+	}
+	status, headers := r.head()
+	r.out.emit(response{Status: status, Headers: headers, BodyB64: base64.StdEncoding.EncodeToString(r.body.Bytes())})
+}
+
+// fail reports a handler failure: a 500 when nothing has been sent, or an
+// error frame that aborts a stream already under way.
+func (r *recorder) fail(invocationID string, err error) {
+	if r.streaming {
+		r.out.emit(response{Frame: "error", Message: err.Error()})
+		return
+	}
+	r.out.emit(handlerError(invocationID, err))
+}
+
+// head is the response status and headers. A header with several values is
+// sent as a list, one header line each.
+func (r *recorder) head() (int, map[string]any) {
 	status := r.status
 	if status == 0 {
 		status = http.StatusOK
 	}
-	body := r.body.Bytes()
-	headers := make(map[string]string, len(r.header))
+	headers := make(map[string]any, len(r.header))
 	for k, values := range r.header {
-		if len(values) == 0 {
-			continue
-		}
-		if k == "Set-Cookie" && len(values) > 1 {
-			fmt.Fprintln(os.Stderr, "function: only the first Set-Cookie header is sent")
+		switch len(values) {
+		case 0:
+		case 1:
 			headers[k] = values[0]
-			continue
+		default:
+			headers[k] = append([]string(nil), values...)
 		}
-		headers[k] = strings.Join(values, ", ")
 	}
-	if _, ok := r.header["Content-Type"]; !ok && len(body) > 0 {
-		headers["Content-Type"] = http.DetectContentType(body)
+	if _, ok := r.header["Content-Type"]; !ok && r.body.Len() > 0 {
+		headers["Content-Type"] = http.DetectContentType(r.body.Bytes())
 	}
-	return response{
-		Status:  status,
-		Headers: headers,
-		BodyB64: base64.StdEncoding.EncodeToString(body),
-	}
+	return status, headers
 }

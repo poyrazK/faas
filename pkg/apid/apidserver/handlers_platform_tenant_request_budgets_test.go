@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,21 +7,22 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 240
 func TestPlatformTenantRequestBudgetAPI(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID,
-		"budget-api-customer", "Budget API customer", 250)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "budget-api-customer", "Budget API customer", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/account/platform-tenants/" + tenant.ID + "/request-budget"
 	read := func() api.PlatformTenantRequestBudgetResponse {
 		t.Helper()
-		resp := e.do(t, http.MethodGet, path, nil, nil)
+		resp := e.Do(t, http.MethodGet, path, nil, nil)
 		if resp.Code != http.StatusOK {
 			t.Fatalf("get budget: %d %s", resp.Code, resp.Body.String())
 		}
@@ -36,7 +37,7 @@ func TestPlatformTenantRequestBudgetAPI(t *testing.T) {
 	}
 	minute, day := int64(8), int64(100)
 	input := api.SetPlatformTenantRequestBudgetRequest{MaxRequestsPerMinute: &minute, MaxRequestsPerDay: &day}
-	put := e.do(t, http.MethodPut, path, input, nil)
+	put := e.Do(t, http.MethodPut, path, input, nil)
 	if put.Code != http.StatusOK {
 		t.Fatalf("put budget: %d %s", put.Code, put.Body.String())
 	}
@@ -44,7 +45,7 @@ func TestPlatformTenantRequestBudgetAPI(t *testing.T) {
 	if !first.Configured || first.MaxRequestsPerMinute != 8 || first.MaxRequestsPerDay != 100 || first.UpdatedAt == nil {
 		t.Fatalf("configured budget=%+v", first)
 	}
-	if replay := e.do(t, http.MethodPut, path, input, nil); replay.Code != http.StatusOK {
+	if replay := e.Do(t, http.MethodPut, path, input, nil); replay.Code != http.StatusOK {
 		t.Fatalf("idempotent put: %d %s", replay.Code, replay.Body.String())
 	}
 	if got := read(); !got.UpdatedAt.Equal(*first.UpdatedAt) {
@@ -52,14 +53,14 @@ func TestPlatformTenantRequestBudgetAPI(t *testing.T) {
 	}
 	for _, invalid := range []api.SetPlatformTenantRequestBudgetRequest{
 		{MaxRequestsPerMinute: &minute},
-		{MaxRequestsPerMinute: ptrInt64(-1), MaxRequestsPerDay: &day},
-		{MaxRequestsPerMinute: ptrInt64(api.MaxPlatformTenantRequestsPerMinute + 1), MaxRequestsPerDay: &day},
+		{MaxRequestsPerMinute: apidserver.PtrInt64(-1), MaxRequestsPerDay: &day},
+		{MaxRequestsPerMinute: apidserver.PtrInt64(api.MaxPlatformTenantRequestsPerMinute + 1), MaxRequestsPerDay: &day},
 	} {
-		if resp := e.do(t, http.MethodPut, path, invalid, nil); resp.Code != http.StatusUnprocessableEntity {
+		if resp := e.Do(t, http.MethodPut, path, invalid, nil); resp.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("invalid budget status=%d body=%s", resp.Code, resp.Body.String())
 		}
 	}
-	if resp := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+uuid.NewString()+"/request-budget", nil, nil); resp.Code != http.StatusNotFound {
+	if resp := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+uuid.NewString()+"/request-budget", nil, nil); resp.Code != http.StatusNotFound {
 		t.Fatalf("unknown tenant status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }

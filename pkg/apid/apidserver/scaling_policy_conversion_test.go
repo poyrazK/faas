@@ -1,10 +1,11 @@
-package apidserver
+package apidserver_test
 
 import (
 	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // The two conversions between api.ScalingPolicy and state.ScalingPolicy are
@@ -55,11 +56,11 @@ func TestPolicyRoundTrip_CarriesEveryField(t *testing.T) {
 		},
 	}
 
-	statePolicy := policyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in})
+	statePolicy := apidserver.PolicyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in})
 	if statePolicy == nil {
 		t.Fatal("policyPtrFromReq returned nil for a non-nil policy")
 	}
-	got := statePolicyToDTO(statePolicy)
+	got := apidserver.StatePolicyToDTO(statePolicy)
 	if got == nil {
 		t.Fatal("statePolicyToDTO returned nil")
 	}
@@ -94,7 +95,7 @@ func TestPolicyConversion_CoversEveryWireField(t *testing.T) {
 			if !setDistinctiveValue(v) {
 				t.Skipf("no distinctive value for %s (%s)", field.Name, field.Type)
 			}
-			got := statePolicyToDTO(policyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: policy}))
+			got := apidserver.StatePolicyToDTO(apidserver.PolicyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: policy}))
 			if got == nil {
 				t.Fatalf("conversion returned nil with only %s set", field.Name)
 			}
@@ -176,7 +177,7 @@ func TestPolicyConversion_InnerTargetNameSurvives(t *testing.T) {
 		Target:  &api.ScalingTarget{Metric: api.ScalingMetricCustom, Name: "singular", Value: 1},
 		Targets: []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: "plural", Value: 2}},
 	}
-	got := statePolicyToDTO(policyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in}))
+	got := apidserver.StatePolicyToDTO(apidserver.PolicyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in}))
 	if got.Target == nil || got.Target.Name != "singular" {
 		t.Errorf("singular target name = %+v, want \"singular\": the name selects WHICH "+
 			"pushed metric the scheduler reads, so losing it disconnects the app from its signal",
@@ -194,7 +195,7 @@ func TestPolicyConversion_ScheduleFieldsSurvive(t *testing.T) {
 		Timezone:  "Europe/Istanbul",
 		Schedules: []api.ScalingSchedule{{Cron: "0 8 * * 1-5", DurationS: 43200, MinInstances: 3}},
 	}
-	statePolicy := policyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in})
+	statePolicy := apidserver.PolicyPtrFromReq(&api.UpdateAppRequest{ScalingPolicy: in})
 	// Assert through the helper the scheduler actually uses, not just the
 	// struct: a schedule that survives as data but does not raise the floor
 	// is still a broken feature.

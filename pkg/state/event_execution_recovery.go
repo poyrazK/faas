@@ -13,6 +13,9 @@ import (
 
 // Execution selection shares the durable job budget, never routing checkpoints.
 func eventRecoveryCoverage(req api.EventRecoveryRequest) string {
+	if req.WorkflowRuns != nil {
+		return "reviewed_workflow_runs"
+	}
 	if req.Mode == "execution" {
 		return "retained_application_executions"
 	}
@@ -167,7 +170,7 @@ func processEventExecutionRecoveryTx(ctx context.Context, q *sqlc.Queries, tx pg
 	if parent.WorkExpiresAt != nil && !parent.WorkExpiresAt.After(now) || parent.StartDeadlineAt != nil && !parent.StartDeadlineAt.After(now) {
 		return "skipped", "expired", nil
 	}
-	if _, err = q.EventExecutionRecoveryReceipt(ctx, replayTx, sqlc.EventExecutionRecoveryReceiptParams{OutboxID: item.OutboxID, AccountID: job.AccountID, AppID: job.AppID, SubscriptionID: item.SubscriptionID}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err = q.EventExecutionRecoveryReceipt(ctx, replayTx, sqlc.EventExecutionRecoveryReceiptParams{OutboxID: item.OutboxID.Int64, AccountID: job.AccountID, AppID: job.AppID, SubscriptionID: item.SubscriptionID}); errors.Is(err, pgx.ErrNoRows) {
 		return "skipped", "receipt_expired", nil
 	} else if err != nil {
 		return "", "", err

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,9 +27,9 @@ func TestParseAppTenantAndMirrorPaths(t *testing.T) {
 			var got string
 			var ok bool
 			if strings.Contains(tc.path, "tenant-surfaces") {
-				got, ok = parseAppTenantSurfacesPath(tc.path)
+				got, ok = apidserver.ParseAppTenantSurfacesPath(tc.path)
 			} else {
-				got, ok = parseAppMirrorsPath(tc.path)
+				got, ok = apidserver.ParseAppMirrorsPath(tc.path)
 			}
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("path %q = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
@@ -39,7 +40,7 @@ func TestParseAppTenantAndMirrorPaths(t *testing.T) {
 
 func TestDashboardHandler_TenantSurfacesFixture(t *testing.T) {
 	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -71,13 +72,13 @@ func TestDashboardHandler_TenantSurfacesFixture(t *testing.T) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}
 	}
-	if findDashboardCookie(rec.Result().Cookies(), dashboardTenantSurfacesCSRFCookie) == nil {
-		t.Fatalf("GET tenant surfaces: missing %s cookie", dashboardTenantSurfacesCSRFCookie)
+	if apidserver.FindDashboardCookie(rec.Result().Cookies(), apidserver.DashboardTenantSurfacesCSRFCookie) == nil {
+		t.Fatalf("GET tenant surfaces: missing %s cookie", apidserver.DashboardTenantSurfacesCSRFCookie)
 	}
 }
 
 func TestDashboardHandler_MirrorsFixture(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -118,7 +119,7 @@ func TestDashboardHandler_MirrorsFixture(t *testing.T) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}
 	}
-	if findDashboardCookie(rec.Result().Cookies(), dashboardMirrorsCSRFCookie) == nil {
-		t.Fatalf("GET mirrors: missing %s cookie", dashboardMirrorsCSRFCookie)
+	if apidserver.FindDashboardCookie(rec.Result().Cookies(), apidserver.DashboardMirrorsCSRFCookie) == nil {
+		t.Fatalf("GET mirrors: missing %s cookie", apidserver.DashboardMirrorsCSRFCookie)
 	}
 }

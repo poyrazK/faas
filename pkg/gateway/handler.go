@@ -2644,6 +2644,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		// cases to a single "don't stamp" path so
 		// the hot path is a single non-nil test.
 		if app.CORSDefaultEnabled != nil && *app.CORSDefaultEnabled && len(app.CORSDefaultOrigins) > 0 {
+			rec.installHeaderOps(corsVaryOps)
 			origin := r.Header.Get("Origin")
 			allowedOrigin := matchOrigin(app.CORSDefaultOrigins, origin)
 			if origin != "" && allowedOrigin != "" && rec != nil {
@@ -2668,6 +2669,9 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		}
 		return false
 	}
+	// From here the response depends on the request's Origin whatever it
+	// is, including when the request has none.
+	rec.installHeaderOps(corsVaryOps)
 	if requestedMethod != "" {
 		allowed := false
 		for _, method := range rule.AllowMethods {
@@ -2780,6 +2784,16 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 	}
 	return origin[:idx], origin[idx+3:], true
 }
+
+// corsVaryOps marks a response whose CORS headers depend on the request's
+// Origin. The gateway stamps Access-Control-Allow-Origin only for an allowed
+// origin and omits it when the request has none, so without Vary: Origin a
+// browser or shared cache that stored one answer (for example a direct page
+// load of a Cache-Control: public resource) replays it to a cross-origin
+// fetch from an allowed origin, which the browser then blocks (production-us
+// hunt #9, H9-130). The platform response cache is unaffected: it captures
+// the response before these ops run and re-applies CORS on every hit.
+var corsVaryOps = []EdgeRuleHeaderOp{{Action: "vary", Name: "Vary", Value: "Origin"}}
 
 // corsDefaultOps is the per-app default CORS header op set (CORS
 // improvements D1). Mirrors the shape of corsResponseOps above
@@ -4619,11 +4633,29 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			return
 		}
 		hdr.Set(op.Name, op.Value)
+	case "vary":
+		// Platform-only (customer header ops validate to add/set/remove):
+		// add one field name to the list unless it is already covered.
+		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
 			hdr.Add(op.Name, op.Value)
 		}
 	}
+}
+
+// addVaryField appends field to the response's Vary list unless the list
+// already names it or is "*".
+func addVaryField(hdr http.Header, field string) {
+	for _, value := range hdr.Values("Vary") {
+		for _, existing := range strings.Split(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
+	}
+	hdr.Add("Vary", field)
 }
 
 // bearerTokenFromHeader is the per-deployment authz branch's

@@ -8,6 +8,16 @@ import (
 )
 
 func (s *Service) applyEventAgeReplay(r *http.Request, store state.EventFanoutReplayStore, account, app string, req api.ReplayEventFanoutFailureRequest) error {
+	if req.RecoveryExpectation != nil {
+		if !req.RecoveryExpectation.Valid() || req.AllowExpired || req.ExpectedGeneration != nil || req.ExpectedAcceptedAt != nil {
+			return state.ErrInvalidArgument
+		}
+		guarded, ok := store.(state.EventRoutingRecoveryStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		return guarded.ReplayFailedWorkflowEventRecipient(r.Context(), account, app, req.EventSource, req.EventID, req.SubscriptionID, *req.RecoveryExpectation)
+	}
 	if req.ExpectedGeneration != nil {
 		if req.ExpectedAcceptedAt == nil || *req.ExpectedGeneration < 0 {
 			return state.ErrInvalidArgument

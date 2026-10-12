@@ -1,12 +1,13 @@
 // spec: §6 — a failed restart request leaves the app active.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -25,13 +26,13 @@ func TestReleaseAppRestartClaimSurvivesTheRequestDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := claimAppRestart(ctx, store, app.ID)
+	claimed, err := apidserver.ClaimAppRestart(ctx, store, app.ID)
 	if err != nil || !claimed {
 		t.Fatalf("claim: %v %v", claimed, err)
 	}
 	expired, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := releaseAppRestartClaim(expired, store, app.ID); err != nil {
+	if err := apidserver.ReleaseAppRestartClaim(expired, store, app.ID); err != nil {
 		t.Fatalf("release on an expired request context: %v", err)
 	}
 	got, err := store.AppByID(ctx, app.ID)

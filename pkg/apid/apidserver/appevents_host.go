@@ -19,6 +19,8 @@ func (h appEventsHost) LoadApp(w http.ResponseWriter, r *http.Request, acct stat
 	return h.s.loadApp(w, r, acct, slug)
 }
 
+func (h appEventsHost) WorkflowRuntimeEnabled() bool { return h.s.workflowRuntimeEnabled }
+
 func (h appEventsHost) Store() state.Store { return h.s.store }
 
 func (h appEventsHost) Logger() *slog.Logger { return h.s.log }

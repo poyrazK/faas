@@ -1,9 +1,10 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAnnotateDeploymentCPURegressionsUsesChronologyAndSampleThreshold(t *testing.T) {
@@ -15,7 +16,7 @@ func TestAnnotateDeploymentCPURegressionsUsesChronologyAndSampleThreshold(t *tes
 		{DeploymentID: "v2-id", DeploymentTag: "v2", DeploymentCreatedAt: "2026-03-02T12:00:00Z", GuestCPUAvgMS: cpu(12), GuestCPUMeasuredRequests: 20},
 	}
 
-	annotateDeploymentCPURegressions(deployments)
+	apidserver.AnnotateDeploymentCPURegressions(deployments)
 
 	if deployments[1].GuestCPUChangePct != nil || deployments[1].GuestCPURegression {
 		t.Fatalf("baseline deployment unexpectedly has a CPU comparison: %+v", deployments[1])
@@ -45,7 +46,7 @@ func TestAnnotateDeploymentCPURegressionsSkipsAmbiguousCreationTimes(t *testing.
 		{DeploymentID: "later", DeploymentCreatedAt: "2026-03-02T12:00:00Z", GuestCPUAvgMS: cpu(30), GuestCPUMeasuredRequests: 25},
 	}
 
-	annotateDeploymentCPURegressions(deployments)
+	apidserver.AnnotateDeploymentCPURegressions(deployments)
 
 	for _, deployment := range deployments {
 		if deployment.GuestCPUChangePct != nil || deployment.GuestCPURegression {

@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -36,6 +38,6 @@ func TestPGCapturedCloneObjectWorkerResumesDurableManifestAndCopies(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	capturedCloneObjectWorkerContract(t, srv, store, account, project, app)
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	apidserver.CapturedCloneObjectWorkerContract(t, srv, store, account, project, app)
 }

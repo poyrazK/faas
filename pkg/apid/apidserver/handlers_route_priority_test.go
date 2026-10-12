@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func routePrioritiesFrom(t *testing.T, code int, body string) api.RoutePrioritiesResponse {
@@ -21,27 +22,27 @@ func routePrioritiesFrom(t *testing.T, code int, body string) api.RoutePrioritie
 }
 
 func TestRoutePrioritiesLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "api")
-	res := e.do(t, "GET", "/v1/apps/api/route-priorities", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "api")
+	res := e.Do(t, "GET", "/v1/apps/api/route-priorities", nil, nil)
 	if got := routePrioritiesFrom(t, res.Code, res.Body.String()); got.Source != api.RoutePrioritySourceNone || len(got.Routes) != 0 {
 		t.Fatalf("default = %+v", got)
 	}
 	rules := []api.RoutePriorityRule{{Method: "POST", Path: "/checkout", Class: "critical"}, {Path: "/exports/*", Class: "bulk"}}
-	res = e.do(t, "PUT", "/v1/apps/api/route-priorities", api.SetRoutePrioritiesRequest{Routes: rules}, nil)
+	res = e.Do(t, "PUT", "/v1/apps/api/route-priorities", api.SetRoutePrioritiesRequest{Routes: rules}, nil)
 	got := routePrioritiesFrom(t, res.Code, res.Body.String())
 	if got.Source != api.RoutePrioritySourceConfigured || len(got.Routes) != 2 || got.Routes[0] != rules[0] || got.UpdatedAt == "" {
 		t.Fatalf("after put = %+v", got)
 	}
-	res = e.do(t, "DELETE", "/v1/apps/api/route-priorities", nil, nil)
+	res = e.Do(t, "DELETE", "/v1/apps/api/route-priorities", nil, nil)
 	if got := routePrioritiesFrom(t, res.Code, res.Body.String()); got.Source != api.RoutePrioritySourceNone || got.UpdatedAt != "" {
 		t.Fatalf("after delete = %+v", got)
 	}
 }
 
 func TestRoutePrioritiesRejects(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "api")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "api")
 	tooMany := make([]api.RoutePriorityRule, api.RoutePriorityMaxRules+1)
 	for i := range tooMany {
 		tooMany[i] = api.RoutePriorityRule{Path: "/a", Class: "bulk"}
@@ -53,7 +54,7 @@ func TestRoutePrioritiesRejects(t *testing.T) {
 		"bad path":       api.SetRoutePrioritiesRequest{Routes: []api.RoutePriorityRule{{Path: "a", Class: "bulk"}}},
 		"too many":       api.SetRoutePrioritiesRequest{Routes: tooMany},
 	} {
-		if res := e.do(t, "PUT", "/v1/apps/api/route-priorities", body, nil); res.Code != http.StatusBadRequest {
+		if res := e.Do(t, "PUT", "/v1/apps/api/route-priorities", body, nil); res.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", name, res.Code, res.Body.String())
 		}
 	}
@@ -62,7 +63,7 @@ func TestRoutePrioritiesRejects(t *testing.T) {
 		if method == "PUT" {
 			body = api.SetRoutePrioritiesRequest{Routes: []api.RoutePriorityRule{}}
 		}
-		if res := e.do(t, method, "/v1/apps/missing/route-priorities", body, nil); res.Code != http.StatusNotFound {
+		if res := e.Do(t, method, "/v1/apps/missing/route-priorities", body, nil); res.Code != http.StatusNotFound {
 			t.Fatalf("%s missing app: %d", method, res.Code)
 		}
 	}

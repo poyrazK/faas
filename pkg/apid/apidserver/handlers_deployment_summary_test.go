@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,35 +8,36 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "summary-app")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "summary-app")
 	base := time.Now().UTC().Add(-time.Minute)
-	previous, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	previous, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID: appID, BuildID: "build-v1", SourceSHA256: "1111111111111111111111111111111111111111111111111111111111111111", ImageDigest: "sha256:previous", CommitSHA: "1111111", SourceURL: "https://github.com/acme/app",
 		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base, Scope: "production", TrafficPercent: 100,
 	})
 	if err != nil {
 		t.Fatalf("create previous: %v", err)
 	}
-	if err := e.store.MarkDeploymentLive(context.Background(), previous.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(context.Background(), previous.ID); err != nil {
 		t.Fatalf("promote previous: %v", err)
 	}
-	current, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	current, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID: appID, BuildID: "build-v2", SourceSHA256: "2222222222222222222222222222222222222222222222222222222222222222", ImageDigest: "sha256:current", CommitSHA: "2222222", SourceURL: "https://github.com/acme/app",
 		Kind: state.DeploymentKindImage, Status: state.DeployPending, CreatedAt: base.Add(time.Second), Scope: "production", TrafficPercent: 50,
 	})
 	if err != nil {
 		t.Fatalf("create current: %v", err)
 	}
-	if err := e.store.MarkDeploymentLive(context.Background(), current.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(context.Background(), current.ID); err != nil {
 		t.Fatalf("promote current: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/summary-app/deployments/"+current.ID+"/summary", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/summary-app/deployments/"+current.ID+"/summary", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -71,16 +72,16 @@ func TestGetAppDeploymentSummaryIncludesDiffAndRollbackTarget(t *testing.T) {
 }
 
 func TestGetAppDeploymentSummaryInitialRelease(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "summary-initial")
-	deployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "summary-initial")
+	deployment, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID: appID, ImageDigest: "sha256:first", Kind: state.DeploymentKindImage, Status: state.DeployLive,
 		CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodGet, "/v1/apps/summary-initial/deployments/"+deployment.ID+"/summary", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/summary-initial/deployments/"+deployment.ID+"/summary", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -94,13 +95,13 @@ func TestGetAppDeploymentSummaryInitialRelease(t *testing.T) {
 }
 
 func TestGetAppDeploymentSummaryRejectsMismatchedDeployment(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "summary-owned")
-	deployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{AppID: appID, ImageDigest: "sha256:x"})
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "summary-owned")
+	deployment, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{AppID: appID, ImageDigest: "sha256:x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustSeedApp(t, e, "summary-other")
-	rec := e.do(t, http.MethodGet, "/v1/apps/summary-other/deployments/"+deployment.ID+"/summary", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	apidserver.MustSeedApp(t, e, "summary-other")
+	rec := e.Do(t, http.MethodGet, "/v1/apps/summary-other/deployments/"+deployment.ID+"/summary", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }

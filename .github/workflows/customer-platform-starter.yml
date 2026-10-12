@@ -38,9 +38,9 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    # Cold builds of the complete API/state test sources reached the old
-    # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
-    timeout-minutes: 30
+    # Cold builds of the complete API/state test sources can consume thirty
+    # minutes. Leave bounded time for the full suite and container cleanup.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

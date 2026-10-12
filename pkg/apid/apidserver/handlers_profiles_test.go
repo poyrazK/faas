@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -46,22 +48,22 @@ func (b *profileCoverageCapture) QueryCoverage(_ context.Context, tenant, app, s
 }
 
 func TestCPUProfileCoverageFailurePreservesCPUResponse(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	backend := &profileCoverageCapture{}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "coverage-owned", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "coverage-owned", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
+	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := url.Values{"deployment_id": {dep.ID}, "runtime": {"node24"}, "start": {time.Now().Add(-time.Minute).Format(time.RFC3339Nano)}, "end": {time.Now().Format(time.RFC3339Nano)}}
 	for _, unavailable := range []bool{false, true} {
 		backend.unavailable = unavailable
-		response := e.do(t, "GET", "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
+		response := e.Do(t, "GET", "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
 		var out api.ProfileResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
@@ -73,15 +75,15 @@ func TestCPUProfileCoverageFailurePreservesCPUResponse(t *testing.T) {
 }
 
 func TestCPUProfileDashboardIntervalScopesQueryAndPreservesOverview(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	backend := &profileCoverageCapture{}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "cpu-drilldown", Runtime: "node24", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "cpu-drilldown", Runtime: "node24", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
+	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +98,11 @@ func TestCPUProfileDashboardIntervalScopesQueryAndPreservesOverview(t *testing.T
 		_, _ = fmt.Fprintf(w, `{"data":{"resultType":"matrix","result":[{"metric":{},"values":[[%d,"0.2"],[%d,"1.5"]]}]}}`, now.Add(-time.Minute).Unix(), now.Unix())
 	}))
 	defer prom.Close()
-	e.s.promqlClient = promql.NewClient(prom.URL, prom.Client())
+	(*(*e.S()).PromqlClient()) = promql.NewClient(prom.URL, prom.Client())
 	values := url.Values{"deployment_id": {dep.ID}, "runtime": {"node24"}, "start": {now.Add(-5 * time.Minute).Format(time.RFC3339Nano)}, "end": {now.Format(time.RFC3339Nano)}, "app_id": {"forged-app"}}
 	request := httptest.NewRequest("GET", "/dashboard/apps/"+app.Slug+"/profiles?"+values.Encode(), nil)
 	response := httptest.NewRecorder()
-	e.s.renderAppProfiles(response, request, e.s.log, e.acct, app.Slug)
+	(*e.S()).RenderAppProfiles(response, request, (*(*e.S()).Log()), (*e.Acct()), app.Slug)
 	if response.Code != 200 || cpuQueries != 1 || !strings.Contains(response.Body.String(), "App CPU — all deployments") {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -119,15 +121,15 @@ func TestCPUProfileDashboardIntervalScopesQueryAndPreservesOverview(t *testing.T
 	q.Set("chart_start", "invalid")
 	request = httptest.NewRequest("GET", link.Path+"?"+q.Encode(), nil)
 	response = httptest.NewRecorder()
-	e.s.renderAppProfiles(response, request, e.s.log, e.acct, app.Slug)
+	(*e.S()).RenderAppProfiles(response, request, (*(*e.S()).Log()), (*e.Acct()), app.Slug)
 	if cpuQueries != 1 || !strings.Contains(response.Body.String(), "Enter valid CPU chart timestamps") {
 		t.Fatal("invalid overview reached Prometheus")
 	}
 	request = httptest.NewRequest("GET", "/dashboard/apps/"+app.Slug+"/profiles?"+values.Encode(), nil)
 	response = httptest.NewRecorder()
-	foreign := e.acct
+	foreign := (*e.Acct())
 	foreign.ID = "foreign-account"
-	e.s.renderAppProfiles(response, request, e.s.log, foreign, app.Slug)
+	(*e.S()).RenderAppProfiles(response, request, (*(*e.S()).Log()), foreign, app.Slug)
 	if response.Code != 404 || cpuQueries != 1 {
 		t.Fatal("foreign owner reached CPU chart")
 	}
@@ -152,11 +154,11 @@ func (b *profileQueryCapture) Query(_ context.Context, tenant, app, scope string
 }
 
 func TestCPUProfileDifferentialCompareEndpoint(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	backend := &profileQueryCapture{profiles: map[string]*profile.Profile{}}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "differential-owned", Type: state.AppTypeFunction, Runtime: "node24", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "differential-owned", Type: state.AppTypeFunction, Runtime: "node24", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,19 +171,19 @@ func TestCPUProfileDifferentialCompareEndpoint(t *testing.T) {
 	request := api.ProfileCompareRequest{}
 	for i, query := range []*api.ProfileQuery{&request.Baseline, &request.Candidate} {
 		sha := strings.Repeat(string(rune('a'+i)), 40)
-		dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub, SourceURL: "github://acme/service@" + sha, CommitSHA: sha, SourceRoot: "apps/api", Scope: "prod"})
+		dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub, SourceURL: "github://acme/service@" + sha, CommitSHA: sha, SourceRoot: "apps/api", Scope: "prod"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		*query = api.ProfileQuery{DeploymentID: dep.ID, Runtime: "node24", Start: now.Add(-time.Duration((i+1)*10) * time.Second), End: now}
 		backend.profiles[dep.ID] = makeProfile(int64(1+i*5)*1e9, int64(10+i*20))
 	}
-	response := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
+	response := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
 	var out api.ProfileCompareResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != 200 || !out.Comparable || out.Flamegraph == nil || len(out.Flamegraph.Children) != 1 || backend.queries != 2 || backend.tenant != e.acct.ID || backend.app != app.ID || backend.scope != "prod" {
+	if response.Code != 200 || !out.Comparable || out.Flamegraph == nil || len(out.Flamegraph.Children) != 1 || backend.queries != 2 || backend.tenant != (*e.Acct()).ID || backend.app != app.ID || backend.scope != "prod" {
 		t.Fatal("differential response lost scope or call paths", response.Code, response.Body.String())
 	}
 	frame := out.Flamegraph.Children[0]
@@ -189,35 +191,35 @@ func TestCPUProfileDifferentialCompareEndpoint(t *testing.T) {
 		t.Fatal("normalized delta or revision-specific source incorrect", frame)
 	}
 	backend.profiles[request.Candidate.DeploymentID] = nil
-	response = e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
+	response = e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
 	// Decode into a fresh value: an omitted optional tree must stay absent.
 	var missing api.ProfileCompareResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &missing); err != nil || response.Code != 200 || missing.Comparable || missing.Flamegraph != nil || missing.Reason == "" {
 		t.Fatal("missing profile produced a measured delta", response.Body.String(), err)
 	}
-	other, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "differential-other", Status: state.AppActive})
+	other, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "differential-other", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: other.ID, SourceURL: "github://secret/repo@" + strings.Repeat("c", 40)})
+	foreign, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: other.ID, SourceURL: "github://secret/repo@" + strings.Repeat("c", 40)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Candidate.DeploymentID = foreign.ID
-	response = e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
+	response = e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/profiles/compare", request, nil)
 	if response.Code != 404 || backend.queries != 5 || strings.Contains(response.Body.String(), "secret/repo") {
 		t.Fatal("comparison queried an unrelated deployment", response.Code, response.Body.String(), backend.queries)
 	}
 }
 
 func TestCPUProfileSourceUsesOwnedDeploymentProvenance(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	fn := &profile.Function{ID: 1, Name: "hot", Filename: "/app/server.js"}
 	location := &profile.Location{ID: 1, Line: []profile.Line{{Function: fn, Line: 12}}}
 	backend := &profileQueryCapture{profile: &profile.Profile{SampleType: []*profile.ValueType{{Type: "cpu", Unit: "nanoseconds"}}, Function: []*profile.Function{fn}, Location: []*profile.Location{location}, Sample: []*profile.Sample{{Location: []*profile.Location{location}, Value: []int64{1e8}}}}}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "source-owned", RootDir: "new-root", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "source-owned", RootDir: "new-root", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,12 +228,12 @@ func TestCPUProfileSourceUsesOwnedDeploymentProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub, SourceURL: "github://acme/old-repo@" + sha, CommitSHA: sha, SourceRoot: "old-root", InferredProfile: buildProfile})
+	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindGitHub, SourceURL: "github://acme/old-repo@" + sha, CommitSHA: sha, SourceRoot: "old-root", InferredProfile: buildProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := url.Values{"deployment_id": {dep.ID}, "runtime": {"node24"}, "start": {time.Now().Add(-time.Minute).Format(time.RFC3339Nano)}, "end": {time.Now().Format(time.RFC3339Nano)}, "source_url": {"https://evil.test"}, "commit_sha": {strings.Repeat("b", 40)}, "source_root": {"forged-root"}}
-	response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
+	response := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
 	var out api.ProfileResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -240,11 +242,11 @@ func TestCPUProfileSourceUsesOwnedDeploymentProvenance(t *testing.T) {
 	if response.Code != 200 || out.Source == nil || !out.Source.Available || len(out.Functions) != 1 || out.Functions[0].Source == nil || out.Functions[0].Source.URL != want || out.Flamegraph.Children[0].Source.URL != want {
 		t.Fatal("source did not use the frozen owned deployment", response.Code, response.Body.String())
 	}
-	other, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "source-other", Status: state.AppActive})
+	other, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "source-other", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	response = e.do(t, http.MethodGet, "/v1/apps/"+other.Slug+"/profiles?"+values.Encode(), nil, nil)
+	response = e.Do(t, http.MethodGet, "/v1/apps/"+other.Slug+"/profiles?"+values.Encode(), nil, nil)
 	if response.Code != 404 || backend.queries != 1 || strings.Contains(response.Body.String(), "old-repo") {
 		t.Fatal("another app exposed deployment source", response.Code, response.Body.String())
 	}
@@ -276,7 +278,7 @@ func TestCPUProfileSourceLayoutRequiresKnownBuild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			origin := profileSourceProvenance(app, state.Deployment{Kind: tc.kind, InferredProfile: profile})
+			origin := apidserver.ProfileSourceProvenance(app, state.Deployment{Kind: tc.kind, InferredProfile: profile})
 			if origin.ManagedPaths != tc.want || origin.Function != tc.function {
 				t.Fatal("incorrect source mapping", origin)
 			}
@@ -285,61 +287,61 @@ func TestCPUProfileSourceLayoutRequiresKnownBuild(t *testing.T) {
 }
 
 func TestCPUProfileAPIIsolationAndMissingSamples(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	backend := &profileQueryCapture{}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "profile-owned", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "profile-owned", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
+	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := url.Values{"deployment_id": {dep.ID}, "runtime": {"go124"}, "start": {time.Now().Add(-time.Minute).Format(time.RFC3339Nano)}, "end": {time.Now().Format(time.RFC3339Nano)}, "account_id": {"forged"}}
-	response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
-	if response.Code != 200 || backend.queries != 1 || backend.tenant != e.acct.ID || backend.app != app.ID || backend.scope != "prod" {
+	response := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
+	if response.Code != 200 || backend.queries != 1 || backend.tenant != (*e.Acct()).ID || backend.app != app.ID || backend.scope != "prod" {
 		t.Fatal("owned query failed", response.Code, response.Body.String())
 	}
 	if response.Body.String() == "" {
 		t.Fatal("empty response instead of empty profile")
 	}
-	other, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "profile-other", Status: state.AppActive})
+	other, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "profile-other", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: other.ID})
+	foreign, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: other.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	values.Set("deployment_id", foreign.ID)
-	response = e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
+	response = e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/profiles?"+values.Encode(), nil, nil)
 	if response.Code != 404 || backend.queries != 1 {
 		t.Fatal("another app deployment reached backend", response.Code)
 	}
-	another, err := e.store.CreateAccount(t.Context(), "profile-other@example.com", api.PlanHobby)
+	another, err := (*e.Store()).CreateAccount(t.Context(), "profile-other@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stolen, err := e.store.CreateApp(t.Context(), state.App{AccountID: another.ID, Slug: "profile-stolen", Status: state.AppActive})
+	stolen, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: another.ID, Slug: "profile-stolen", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	response = e.do(t, http.MethodGet, "/v1/apps/"+stolen.Slug+"/profiles?"+values.Encode(), nil, nil)
+	response = e.Do(t, http.MethodGet, "/v1/apps/"+stolen.Slug+"/profiles?"+values.Encode(), nil, nil)
 	if response.Code != 404 || backend.queries != 1 {
 		t.Fatal("cross-account query reached backend", response.Code)
 	}
 }
 
 func TestCPUProfileAPIPlanAndInstallationGates(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	response := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-free", Profiling: &api.ProfilingConfig{Enabled: true}}, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	response := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-free", Profiling: &api.ProfilingConfig{Enabled: true}}, nil)
 	if response.Code < 400 {
 		t.Fatal("enabled profiling accepted without operator backend")
 	}
-	e.s.profileBackend = &profileQueryCapture{}
-	response = e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-free", Profiling: &api.ProfilingConfig{Enabled: true}}, nil)
+	(*(*e.S()).ProfileBackend()) = &profileQueryCapture{}
+	response = e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "profile-free", Profiling: &api.ProfilingConfig{Enabled: true}}, nil)
 	if response.Code < 400 {
 		t.Fatal("Free enabled profiling accepted")
 	}

@@ -161,10 +161,15 @@ type ProfilingLimits struct {
 }
 
 const (
-	EventReplayPreviewPageDefault    = 50
-	EventReplayPreviewPageMax        = 100
-	EventReplayPreviewCursorMaxBytes = 4096
-	EventReplayPreviewReadTimeout    = 5 * time.Second
+	AutomationEventRecoveryReceiptMaxPages = 25
+	AutomationRecoveryPlanMaxBytes         = 64 << 10
+	AutomationRecoveryBatchMaxRuns         = 25
+	AutomationRecoveryPreviewDefaultLimit  = 10
+	AutomationRecoveryPreviewMaxLimit      = 25
+	EventReplayPreviewPageDefault          = 50
+	EventReplayPreviewPageMax              = 100
+	EventReplayPreviewCursorMaxBytes       = 4096
+	EventReplayPreviewReadTimeout          = 5 * time.Second
 )
 
 // Historical backfills pin only the bounded settled-receipt retention window.
@@ -1135,6 +1140,32 @@ var VCPUPerPlan = map[Plan]int{
 	PlanPro:   2,
 	PlanScale: 4,
 }
+
+// BlockRateLimit is a VM's sustained limit on its writable app-layer drive
+// (ADR-910): Firecracker token buckets on bandwidth and on operations. It
+// keeps one tenant's disk flood from starving its neighbours' I/O; the
+// one-time bursts below keep startup unthrottled.
+type BlockRateLimit struct {
+	BandwidthMBps int
+	IOPS          int
+}
+
+// BlockRateLimitPerPlan is each plan's BlockRateLimit. Every value was
+// measured on the n2 node to keep a neighbour's fdatasync latency at its
+// unloaded p50 (ADR-910).
+var BlockRateLimitPerPlan = map[Plan]BlockRateLimit{
+	PlanFree:  {BandwidthMBps: 50, IOPS: 2000},
+	PlanHobby: {BandwidthMBps: 100, IOPS: 4000},
+	PlanPro:   {BandwidthMBps: 200, IOPS: 8000},
+	PlanScale: {BandwidthMBps: 200, IOPS: 8000},
+}
+
+// BlockRateLimitBurstMB and BlockRateLimitBurstOps are the one-time bursts a
+// VM may use above its BlockRateLimit before the sustained rate applies.
+const (
+	BlockRateLimitBurstMB  = 256
+	BlockRateLimitBurstOps = 20000
+)
 
 // PlanResourceShapeFor returns the canonical joint shape for p. The bool is
 // false for an unknown plan so callers fail closed instead of inheriting a
@@ -9907,6 +9938,7 @@ const (
 	EventRecoveryActiveJobsMax       = 3
 	EventRecoveryJobLifetime         = 24 * time.Hour
 	EventRecoveryJobRetention        = 30 * 24 * time.Hour
+	EventRecoveryRequestMaxBytes     = 64 << 10
 	EventRecoveryRequestTimeout      = 5 * time.Second
 )
 
@@ -10138,6 +10170,52 @@ const EventDeliveryHealthSLOPercentageMax = 100.0
 const EventExecutionLedgerRetention = 30 * 24 * time.Hour
 const EventExecutionLedgerPruneBatchDefault = 500
 const EventExecutionLedgerPruneBatchMax = 5000
+
+// Native recovery execution monitoring is advisory (ADR-1006).
+const (
+	WorkflowRecoveryExecutionStallDefaultSeconds   = 900
+	WorkflowRecoveryExecutionMonitorMinSeconds     = 60
+	WorkflowRecoveryExecutionMonitorMaxSeconds     = 604800
+	WorkflowRecoveryExecutionAttentionPollInterval = time.Minute
+)
+
+// WorkflowRecoveryActionReceiptsMax bounds durable decisions per recovery job.
+const WorkflowRecoveryActionReceiptsMax = 100
+
+// Preview policies bound scheduler work and retained review evidence.
+const (
+	WorkflowRecoveryPolicyPauseFailuresMax        = 10
+	WorkflowRecoveryPolicyFiltersMax              = 10
+	WorkflowRecoveryHealthDefaultStallSeconds     = 300
+	WorkflowRecoveryHistoryCursorMaxBytes         = 2048
+	WorkflowRecoveryHistoryDefaultPage            = 25
+	WorkflowRecoveryHistoryEventsMax              = 10000
+	WorkflowRecoveryPolicyEvaluationFailuresMax   = 500
+	WorkflowRecoveryFailureObserverTxnAttempts    = 4
+	WorkflowRecoveryFailureObserverBatch          = 100
+	WorkflowRecoveryFailureObserverRefresh        = 5 * time.Minute
+	WorkflowRecoveryFailureObservationFreshness   = 15 * time.Minute
+	WorkflowRecoveryFailureEvidenceMax            = 10000
+	WorkflowRecoveryFailurePruneBatch             = 1000
+	WorkflowRecoveryFailureRetention              = 30 * 24 * time.Hour
+	WorkflowRecoveryPolicyEvaluationReviewsMax    = 100
+	WorkflowRecoveryPolicyEvaluationCandidatesMax = 500
+	WorkflowRecoveryPolicyEvaluationExecutionsMax = 10000
+
+	WorkflowRecoveryReportEntriesMax         = 10000
+	WorkflowRecoveryReportEvidenceMax        = 5
+	WorkflowRecoveryHistoryPruneBatch        = 1000
+	WorkflowRecoveryHistoryRetention         = 30 * 24 * time.Hour
+	WorkflowRecoveryHealthMinStallSeconds    = 1
+	WorkflowRecoveryHealthMaxStallSeconds    = 86400
+	WorkflowRecoveryPolicyMinCooldownSeconds = 60
+	WorkflowRecoveryPolicyMaxCooldownSeconds = 604800
+	WorkflowRecoveryPolicyHourlyActionsMax   = 100
+	WorkflowRecoveryPolicyReviewsMax         = 1000
+	WorkflowRecoveryPolicyJobsPerPoll        = 5
+	WorkflowRecoveryPolicyPollBatch          = 10
+	WorkflowRecoveryPolicyPollInterval       = time.Minute
+)
 
 // Active condition summaries bound context retention and displayed groups.
 const OperationWorkflowActiveConditionContextsMax = 256

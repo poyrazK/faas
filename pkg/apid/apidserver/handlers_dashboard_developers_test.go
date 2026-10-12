@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,15 +11,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedDeveloperEnvironmentForDashboard(t *testing.T, e testEnv, slug, parent string) state.App {
+func seedDeveloperEnvironmentForDashboard(t *testing.T, e apidserver.TestEnv, slug, parent string) state.App {
 	t.Helper()
 	expires := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID:        e.acct.ID,
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID:        (*e.Acct()).ID,
 		Slug:             slug,
 		Type:             state.AppTypeApp,
 		Runtime:          "node22",
@@ -39,10 +40,10 @@ func seedDeveloperEnvironmentForDashboard(t *testing.T, e testEnv, slug, parent 
 }
 
 func TestRenderDeveloperEnvironments_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	app := seedDeveloperEnvironmentForDashboard(t, e, "dev-acme", "acme")
 	createdAt := time.Date(2026, 9, 17, 9, 30, 0, 0, time.UTC)
-	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID:     app.ID,
 		Kind:      state.DeploymentKindImage,
 		Status:    state.DeployLive,
@@ -51,7 +52,7 @@ func TestRenderDeveloperEnvironments_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	if _, err := e.store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 256, "node-1", "wake-1"); err != nil {
+	if _, err := (*e.Store()).CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 256, "node-1", "wake-1"); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
@@ -59,7 +60,7 @@ func TestRenderDeveloperEnvironments_HappyPath(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/developers", nil)
 	r = r.WithContext(httpsec.WithNonce(r.Context(), "test-nonce"))
 	w := httptest.NewRecorder()
-	e.s.renderDeveloperEnvironments(w, r, log, e.acct)
+	(*e.S()).RenderDeveloperEnvironments(w, r, log, (*e.Acct()))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200\nbody = %s", w.Code, w.Body.String())
@@ -84,10 +85,10 @@ func TestRenderDeveloperEnvironments_HappyPath(t *testing.T) {
 }
 
 func TestRenderDeveloperEnvironments_FiltersPreviewAndOtherAccounts(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	seedDeveloperEnvironmentForDashboard(t, e, "dev-visible", "visible")
-	if _, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID:       e.acct.ID,
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID:       (*e.Acct()).ID,
 		Slug:            "pr-preview",
 		Type:            state.AppTypeApp,
 		Status:          state.AppActive,
@@ -96,11 +97,11 @@ func TestRenderDeveloperEnvironments_FiltersPreviewAndOtherAccounts(t *testing.T
 	}); err != nil {
 		t.Fatalf("CreateApp(PR preview): %v", err)
 	}
-	other, err := e.store.CreateAccount(context.Background(), "other-dashboard@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other-dashboard@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount(other): %v", err)
 	}
-	if _, err := e.store.CreateApp(context.Background(), state.App{
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID:       other.ID,
 		Slug:            "dev-other",
 		Type:            state.AppTypeApp,
@@ -115,7 +116,7 @@ func TestRenderDeveloperEnvironments_FiltersPreviewAndOtherAccounts(t *testing.T
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/developers", nil)
 	r = r.WithContext(httpsec.WithNonce(r.Context(), "test-nonce"))
 	w := httptest.NewRecorder()
-	e.s.renderDeveloperEnvironments(w, r, log, e.acct)
+	(*e.S()).RenderDeveloperEnvironments(w, r, log, (*e.Acct()))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -132,12 +133,12 @@ func TestRenderDeveloperEnvironments_FiltersPreviewAndOtherAccounts(t *testing.T
 }
 
 func TestRenderDeveloperEnvironments_EmptyState(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/developers", nil)
 	r = r.WithContext(httpsec.WithNonce(r.Context(), "test-nonce"))
 	w := httptest.NewRecorder()
-	e.s.renderDeveloperEnvironments(w, r, log, e.acct)
+	(*e.S()).RenderDeveloperEnvironments(w, r, log, (*e.Acct()))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)

@@ -1046,6 +1046,18 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx contex
 func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expected *time.Time, generation *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID, allowExpired, nil, expected, generation)
+}
+
+func (m *MemStore) replayFailedEventRecipientLocked(accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expectation *api.EventRoutingRecoveryExpectation, observedAt ...time.Time) error {
+	return m.replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID, allowExpired, expectation, nil, nil, observedAt...)
+}
+
+func (m *MemStore) replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expectation *api.EventRoutingRecoveryExpectation, expected *time.Time, generation *int64, observedAt ...time.Time) error {
+	now := time.Now().UTC()
+	if len(observedAt) > 0 {
+		now = observedAt[0]
+	}
 	for key, work := range m.eventFanout {
 		if expected != nil && key != canonicalMemUUID(accountID)+"\x00"+eventSource+"\x00"+eventID {
 			continue
@@ -1069,7 +1081,6 @@ func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accoun
 		if !recipientFound {
 			continue
 		}
-
 		if generation != nil {
 			own := work.routingRecipients[subscriptionID]
 			if !work.RecipientClaims || own == nil {
@@ -1085,6 +1096,11 @@ func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accoun
 				return ErrConflict
 			}
 		}
+		if expectation != nil {
+			if err := m.checkEventRecoveryLocked(work, replayRecipient, *expectation); err != nil {
+				return err
+			}
+		}
 		progress, failed := work.RecipientProgress[subscriptionID]
 		if !failed || progress.State != PublishedEventRecipientFailed {
 			return ErrNotFound
@@ -1092,13 +1108,13 @@ func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accoun
 		if !work.Delivered && !work.RecipientClaims {
 			return ErrConflict
 		}
-		if !allowExpired && EventDeliveryExpired(replayRecipient, work.CreatedAt, PublishedEventRecipientProgress{}, time.Now().UTC()) {
+		if !allowExpired && EventDeliveryExpired(replayRecipient, work.CreatedAt, PublishedEventRecipientProgress{}, now) {
 			return ErrEventDeliveryExpired
 		}
 		progress.DeliveryAgeOverride = allowExpired
 		replay := progress
 		replay.State = PublishedEventRecipientPending
-		replay.UpdatedAt = time.Now().UTC()
+		replay.UpdatedAt = now
 		m.appendEventFanoutAttemptLocked(work, subscriptionID, EventFanoutAttemptActionReplay, replay)
 		progress.RetryStopReason = ""
 		progress.State = PublishedEventRecipientPending
@@ -1107,14 +1123,14 @@ func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accoun
 		progress.LastError = ""
 		progress.CapacityScope = ""
 		progress.NextAttemptAt = nil
-		progress.UpdatedAt = time.Now().UTC()
+		progress.UpdatedAt = now
 		work.RecipientProgress[subscriptionID] = progress
 		if work.RecipientClaims {
 			resetEventRecipientForReplay(work, subscriptionID, progress.UpdatedAt)
 		}
 		work.Delivered = false
 		work.DeliveredAt = time.Time{}
-		work.AvailableAt = time.Now().UTC()
+		work.AvailableAt = now
 		work.ClaimToken = ""
 		work.LeaseUntil = time.Time{}
 		return nil

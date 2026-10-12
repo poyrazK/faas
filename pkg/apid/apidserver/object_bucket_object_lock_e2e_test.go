@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -15,22 +15,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 564
 func TestBucketObjectLockControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var offset atomic.Int64
 	now := time.Now().UTC()
-	e.store.SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-	bucketObjectLockControlE2E(t, e.s, e.store, e.acct, e.key, nil, func() { offset.Add(int64(20 * time.Minute)) })
+	(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
+	bucketObjectLockControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func() { offset.Add(int64(20 * time.Minute)) })
 }
 func TestBucketObjectLockControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	bucketObjectLockControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func() {
-		if _, err := e.pool.Exec(t.Context(), `UPDATE object_bucket_object_lock SET retry_at=clock_timestamp(); UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state='propagating' THEN clock_timestamp()-interval '1 second' ELSE propagation_until END`); err != nil {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	bucketObjectLockControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func() {
+		if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE object_bucket_object_lock SET retry_at=clock_timestamp(); UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state='propagating' THEN clock_timestamp()-interval '1 second' ELSE propagation_until END`); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -46,7 +47,7 @@ func objectLockTestRegistry(t *testing.T, endpoint string, policy api.ObjectStor
 	return r
 }
 
-func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func()) {
+func bucketObjectLockControlE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func()) {
 	t.Helper()
 	var mu sync.Mutex
 	configuration, versioning := "", ""
@@ -111,10 +112,10 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	_, b, _, policy := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
 	flags := objectstorage.ObjectLockConfig{Enabled: true, EventHolds: true}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, flags))
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	management := httptest.NewServer(s.handler())
+	management := httptest.NewServer(s.Handler())
 	defer management.Close()
 	client := api.NewClient(management.URL, bearer)
 	caps, err := client.GetObjectBucketObjectLockCapabilities(t.Context(), "encrypted-journal", b.ID)
@@ -127,27 +128,27 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.State != "waiting" || j.Revision != 1 || !j.EnabledRequired || j.DesiredConfiguration == nil || !j.DesiredConfiguration.Equal(cfg) {
 		t.Fatal("accept intent", j, err)
 	}
-	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 0 {
+	if err = (*s.Object()).ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 0 {
 		t.Fatal("versioning drain bypassed", err, puts.Load())
 	}
 	if _, err = st.(state.ObjectBucketVersioningStore).RequestObjectBucketVersioning(t.Context(), acct.ID, b.AppID, b.ID, "Suspended"); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("suspension allowed", err)
 	}
-	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	advance()
-	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectCapacity(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectCapacity(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	advance()
-	if err = s.object.ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketVersioning(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 1 {
+	if err = (*s.Object()).ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil || puts.Load() != 1 {
 		t.Fatal("lost ACK not dispatched", err, puts.Load())
 	}
 	durable, err := st.(state.ObjectBucketObjectLockStore).GetObjectBucketObjectLock(t.Context(), acct.ID, b.AppID, b.ID)
@@ -156,10 +157,10 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	}
 	advance()
 	if pool != nil {
-		s.store = state.NewPgStore(pool)
+		(*s.Store()) = state.NewPgStore(pool)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{}))
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	before := calls.Load()
@@ -167,7 +168,7 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.State != "waiting" || calls.Load() != before {
 		t.Fatal("disabled progress read contacted native", j, err)
 	}
-	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 		t.Fatal("disabled recovery", err)
 	}
 	j, err = client.GetObjectBucketObjectLock(t.Context(), "encrypted-journal", b.ID)
@@ -179,7 +180,7 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 		t.Fatal("disabled capabilities advertised", caps, err)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, flags))
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	clear := api.ObjectBucketObjectLockConfiguration{Enabled: true}
@@ -187,7 +188,7 @@ func bucketObjectLockControlE2E(t *testing.T, s *server, st state.Store, acct st
 	if err != nil || j.Revision != 2 {
 		t.Fatal("accept clear", j, err)
 	}
-	if err = s.object.ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketObjectLock(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	j, err = client.GetObjectBucketObjectLock(t.Context(), "encrypted-journal", b.ID)

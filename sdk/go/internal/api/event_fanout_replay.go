@@ -6,13 +6,21 @@ import (
 	"time"
 )
 
+type EventRoutingRecoveryExpectation struct {
+	WorkflowName     string `json:"workflow_name"`
+	PublishedVersion int64  `json:"published_version"`
+	ReplayCount      int64  `json:"replay_count"`
+	Generation       *int64 `json:"generation,omitempty"`
+}
+
 type ReplayEventFanoutFailureRequest struct {
-	ExpectedGeneration *int64     `json:"expected_generation,omitempty"`
-	ExpectedAcceptedAt *time.Time `json:"expected_accepted_at,omitempty"`
-	AllowExpired       bool       `json:"allow_expired,omitempty"`
-	EventID            string     `json:"event_id"`
-	EventSource        string     `json:"event_source"`
-	SubscriptionID     string     `json:"subscription_id"`
+	RecoveryExpectation *EventRoutingRecoveryExpectation `json:"recovery_expectation,omitempty"`
+	ExpectedGeneration  *int64                           `json:"expected_generation,omitempty"`
+	ExpectedAcceptedAt  *time.Time                       `json:"expected_accepted_at,omitempty"`
+	AllowExpired        bool                             `json:"allow_expired,omitempty"`
+	EventID             string                           `json:"event_id"`
+	EventSource         string                           `json:"event_source"`
+	SubscriptionID      string                           `json:"subscription_id"`
 }
 type ReplayEventFanoutFailureResponse struct {
 	EventID        string `json:"event_id"`

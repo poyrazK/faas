@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -37,31 +39,31 @@ func newDashboardFailedEventsTestEnv(t *testing.T) dashboardFailedEventsTestEnv 
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	sessions, err := session.NewEphemeralManager(sessionCookieLifetime)
+	sessions, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	sessionToken, err := mintDashboardSession(t.Context(), store, sessions, account.ID)
+	sessionToken, err := apidserver.MintDashboardSession(t.Context(), store, sessions, account.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	ops := wire.NewOpsMetrics("apid_failed_events_dashboard_test")
-	srv := newServerWithDeps(
+	srv := apidserver.NewServerWithDeps(
 		store,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev",
-		noopNotifier{},
+		apidserver.NoopNotifier{},
 		"",
-		noopMailer{},
-		stubGithubdClient{},
+		apidserver.NoopMailer{},
+		apidserver.StubGithubdClient{},
 		sessions,
 		nil,
 		15*60_000_000_000,
 		"",
 	).WithOpsMetrics(context.Background(), ops)
 	return dashboardFailedEventsTestEnv{
-		h: srv.handler(), store: store, sessions: sessions, account: account,
-		session: &http.Cookie{Name: sessionCookie, Value: sessionToken}, ops: ops,
+		h: srv.Handler(), store: store, sessions: sessions, account: account,
+		session: &http.Cookie{Name: apidserver.SessionCookie, Value: sessionToken}, ops: ops,
 	}
 }
 
@@ -91,14 +93,14 @@ func dashboardFailedEventsCSRF(t *testing.T, env dashboardFailedEventsTestEnv) *
 	t.Helper()
 	token, err := middleware.IssueForAuthenticatedNamed(
 		env.sessions,
-		dashboardFailedEventsAction,
+		apidserver.DashboardFailedEventsAction,
 		env.account.ID,
-		dashboardFailedEventsCSRFCookie,
+		apidserver.DashboardFailedEventsCSRFCookie,
 	)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	return &http.Cookie{Name: dashboardFailedEventsCSRFCookie, Value: token}
+	return &http.Cookie{Name: apidserver.DashboardFailedEventsCSRFCookie, Value: token}
 }
 
 func dashboardPOSTForm(t *testing.T, h http.Handler, sid *http.Cookie, path string, values url.Values, extraCookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -178,14 +180,14 @@ func TestDashboardFailedEvents_ReplayIsCSRFProtectedScopedAndObserved(t *testing
 	}
 	inv, eventID := seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
 
-	missingCSRF := dashboardPOST(t, env.h, env.session,
+	missingCSRF := apidserver.DashboardPOST(t, env.h, env.session,
 		"/dashboard/failed-events/dashboard-replay/"+eventID+"/replay", nil)
 	if missingCSRF.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400", missingCSRF.Code)
 	}
 
 	csrf := dashboardFailedEventsCSRF(t, env)
-	wrongApp := dashboardPOST(t, env.h, env.session,
+	wrongApp := apidserver.DashboardPOST(t, env.h, env.session,
 		"/dashboard/failed-events/dashboard-other/"+eventID+"/replay",
 		map[string]string{middleware.FormFieldName: csrf.Value}, csrf)
 	if wrongApp.Code != http.StatusSeeOther || !strings.Contains(wrongApp.Header().Get("Location"), "action=error") {
@@ -198,12 +200,12 @@ func TestDashboardFailedEvents_ReplayIsCSRFProtectedScopedAndObserved(t *testing
 	if stillDead.State != state.InvocationDeadLetter {
 		t.Fatalf("wrong-app replay changed state to %q", stillDead.State)
 	}
-	wrongAppMetrics := scrapeOpsMetrics(t, env.ops)
+	wrongAppMetrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(wrongAppMetrics, `faas_dlq_replayed_total{app="dashboard-other",status="not_found"} 1`) {
 		t.Fatalf("missing scoped not-found replay metric:\n%s", wrongAppMetrics)
 	}
 
-	replayed := dashboardPOST(t, env.h, env.session,
+	replayed := apidserver.DashboardPOST(t, env.h, env.session,
 		"/dashboard/failed-events/dashboard-replay/"+eventID+"/replay",
 		map[string]string{middleware.FormFieldName: csrf.Value}, csrf)
 	if replayed.Code != http.StatusSeeOther {
@@ -223,7 +225,7 @@ func TestDashboardFailedEvents_ReplayIsCSRFProtectedScopedAndObserved(t *testing
 	if data["surface"] != "dashboard" || data["source"] != "invocation" {
 		t.Fatalf("replay audit data = %+v, want dashboard surface and invocation source", data)
 	}
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="dashboard-replay",status="success"} 1`) {
 		t.Fatalf("missing dashboard replay metric:\n%s", metrics)
 	}
@@ -241,7 +243,7 @@ func TestDashboardFailedEvents_DiscardIsAuditedAndObserved(t *testing.T) {
 	inv, eventID := seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
 	csrf := dashboardFailedEventsCSRF(t, env)
 
-	discarded := dashboardPOST(t, env.h, env.session,
+	discarded := apidserver.DashboardPOST(t, env.h, env.session,
 		"/dashboard/failed-events/dashboard-discard/"+eventID+"/discard",
 		map[string]string{middleware.FormFieldName: csrf.Value}, csrf)
 	if discarded.Code != http.StatusSeeOther {
@@ -261,7 +263,7 @@ func TestDashboardFailedEvents_DiscardIsAuditedAndObserved(t *testing.T) {
 		t.Fatalf("discard changed source state to %q", stillDead.State)
 	}
 	dashboardFailedEventsAudit(t, env.store, env.account.ID, "app.dlq.purged", eventID)
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_purged_total{app="dashboard-discard",status="success"} 1`) {
 		t.Fatalf("missing dashboard purge metric:\n%s", metrics)
 	}
@@ -294,7 +296,7 @@ func TestDashboardFailedEvents_AccountJobReplayIsAuditedAndObserved(t *testing.T
 	eventID := dashboardDeadLetterEventID("job_run", run.ID)
 	csrf := dashboardFailedEventsCSRF(t, env)
 
-	replayed := dashboardPOST(t, env.h, env.session,
+	replayed := apidserver.DashboardPOST(t, env.h, env.session,
 		"/dashboard/failed-events/account/"+eventID+"/replay",
 		map[string]string{middleware.FormFieldName: csrf.Value}, csrf)
 	if replayed.Code != http.StatusSeeOther {
@@ -314,7 +316,7 @@ func TestDashboardFailedEvents_AccountJobReplayIsAuditedAndObserved(t *testing.T
 	if data["surface"] != "dashboard" || data["account_scope"] != true || data["source"] != "job_run" {
 		t.Fatalf("account replay audit data = %+v, want dashboard/account/job_run", data)
 	}
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="account",status="success"} 1`) {
 		t.Fatalf("missing account replay metric:\n%s", metrics)
 	}
@@ -345,7 +347,7 @@ func TestDashboardFailedEvents_BulkReplayIsScopedAndAudited(t *testing.T) {
 	invocations = append(invocations, otherInv)
 
 	csrf := dashboardFailedEventsCSRF(t, env)
-	replayed := dashboardPOST(t, env.h, env.session, "/dashboard/failed-events/replay-all", map[string]string{
+	replayed := apidserver.DashboardPOST(t, env.h, env.session, "/dashboard/failed-events/replay-all", map[string]string{
 		middleware.FormFieldName: csrf.Value,
 		"app":                    app.Slug,
 	}, csrf)
@@ -371,7 +373,7 @@ func TestDashboardFailedEvents_BulkReplayIsScopedAndAudited(t *testing.T) {
 	if audit["surface"] != "dashboard" || audit["app_id"] != app.ID {
 		t.Fatalf("bulk replay audit = %+v, want dashboard/app scope", audit)
 	}
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="dashboard-bulk-replay",status="success"} 2`) {
 		t.Fatalf("missing bulk replay metric:\n%s", metrics)
 	}
@@ -418,7 +420,7 @@ func TestDashboardFailedEvents_SelectedActionsOnlyTouchChosenEvents(t *testing.T
 	if audit["surface"] != "dashboard" || audit["app_id"] != app.ID || audit["selection"] != "selected" {
 		t.Fatalf("selected replay audit = %+v, want dashboard/app scope", audit)
 	}
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="dashboard-selected",status="success"} 1`) {
 		t.Fatalf("missing selected replay metric:\n%s", metrics)
 	}
@@ -508,7 +510,7 @@ func TestDashboardFailedEvents_BulkDiscardLeavesSourcesDeadLettered(t *testing.T
 		invocations = append(invocations, inv)
 	}
 	csrf := dashboardFailedEventsCSRF(t, env)
-	discarded := dashboardPOST(t, env.h, env.session, "/dashboard/failed-events/discard-all", map[string]string{
+	discarded := apidserver.DashboardPOST(t, env.h, env.session, "/dashboard/failed-events/discard-all", map[string]string{
 		middleware.FormFieldName: csrf.Value,
 		"app":                    app.Slug,
 	}, csrf)
@@ -534,7 +536,7 @@ func TestDashboardFailedEvents_BulkDiscardLeavesSourcesDeadLettered(t *testing.T
 	if audit["surface"] != "dashboard" || audit["app_id"] != app.ID {
 		t.Fatalf("bulk discard audit = %+v, want dashboard/app scope", audit)
 	}
-	metrics := scrapeOpsMetrics(t, env.ops)
+	metrics := apidserver.ScrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_purged_total{app="dashboard-bulk-discard",status="success"} 2`) {
 		t.Fatalf("missing bulk discard metric:\n%s", metrics)
 	}
@@ -549,7 +551,7 @@ func TestDashboardFailedEvents_PaginatesAtPageSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	for i := 0; i < dashboardFailedEventsPageSize+1; i++ {
+	for i := 0; i < apidserver.DashboardFailedEventsPageSize+1; i++ {
 		seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
 	}
 	rec := httptest.NewRecorder()
@@ -563,7 +565,7 @@ func TestDashboardFailedEvents_PaginatesAtPageSize(t *testing.T) {
 	if !strings.Contains(body, "Older events") || !strings.Contains(body, "before=") {
 		t.Fatalf("paginated page missing older-events link:\n%s", body)
 	}
-	if rows := strings.Count(body, "<tr>"); rows != dashboardFailedEventsPageSize+1 {
-		t.Fatalf("rendered table rows = %d, want %d including header", rows, dashboardFailedEventsPageSize+1)
+	if rows := strings.Count(body, "<tr>"); rows != apidserver.DashboardFailedEventsPageSize+1 {
+		t.Fatalf("rendered table rows = %d, want %d including header", rows, apidserver.DashboardFailedEventsPageSize+1)
 	}
 }

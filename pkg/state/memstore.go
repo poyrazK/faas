@@ -142,6 +142,9 @@ type MemStore struct {
 	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
 	eventExecutionCoverage               map[string]executionCoverage
 	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
+	workflowFailureEvidence              map[string][]workflowFailureEvidence
+	workflowFailureCaptureStartedAt      time.Time
+	recoveryPolicies                     map[string]*memWorkflowRecoveryPolicy
 	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
 	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
 	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
@@ -1269,32 +1272,33 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		deploymentDependencyGates:   map[string]DeploymentDependencyGate{},
-		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
-		financialRetainedFrom:       time.Now().UTC(),
-		revisionPins:                map[string]time.Time{},
-		operationCodePins:           map[string]time.Time{},
-		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:         map[string]ObjectS3Credential{},
-		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:          map[string]ObjectUploadRoute{},
-		objectUploadCompletions:     map[string]ObjectUploadCompletion{},
-		outboundIntegrationOffers:   map[string]OutboundIntegrationOffer{},
-		outboundAppBindings:         map[string]OutboundAppBinding{},
-		outboundCredentials:         map[string][]byte{},
-		outboundCredentialRevisions: map[string]int64{},
-		outboundProbePolicies:       map[string]api.OutboundBindingProbePolicy{},
-		accounts:                    map[string]Account{},
-		freeQuotaSuspended:          map[string]bool{},
-		accountDeployRates:          map[string]accountDeployRateRow{},
-		keys:                        map[string]APIKey{},
-		keyByHash:                   map[string]APIKey{},
-		deployTokens:                map[string]DeployToken{},
-		deployTokenByHash:           map[string]DeployToken{},
-		apps:                        map[string]App{},
-		scenarioTestChaosPlans:      map[string]chaos.Lease{},
-		scenarioTestChaosMatches:    map[string]map[string]int64{},
-		privateNetworkAttachments:   map[string]AppPrivateNetworkAttachment{},
+		workflowFailureCaptureStartedAt: time.Now().UTC(),
+		deploymentDependencyGates:       map[string]DeploymentDependencyGate{},
+		qualificationExecutions:         map[string]EnvironmentQualificationExecutionStatus{},
+		financialRetainedFrom:           time.Now().UTC(),
+		revisionPins:                    map[string]time.Time{},
+		operationCodePins:               map[string]time.Time{},
+		objectAccessGrants:              map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:             map[string]ObjectS3Credential{},
+		objectMultipartUploads:          map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:              map[string]ObjectUploadRoute{},
+		objectUploadCompletions:         map[string]ObjectUploadCompletion{},
+		outboundIntegrationOffers:       map[string]OutboundIntegrationOffer{},
+		outboundAppBindings:             map[string]OutboundAppBinding{},
+		outboundCredentials:             map[string][]byte{},
+		outboundCredentialRevisions:     map[string]int64{},
+		outboundProbePolicies:           map[string]api.OutboundBindingProbePolicy{},
+		accounts:                        map[string]Account{},
+		freeQuotaSuspended:              map[string]bool{},
+		accountDeployRates:              map[string]accountDeployRateRow{},
+		keys:                            map[string]APIKey{},
+		keyByHash:                       map[string]APIKey{},
+		deployTokens:                    map[string]DeployToken{},
+		deployTokenByHash:               map[string]DeployToken{},
+		apps:                            map[string]App{},
+		scenarioTestChaosPlans:          map[string]chaos.Lease{},
+		scenarioTestChaosMatches:        map[string]map[string]int64{},
+		privateNetworkAttachments:       map[string]AppPrivateNetworkAttachment{},
 
 		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
 
