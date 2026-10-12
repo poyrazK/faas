@@ -79750,6 +79750,8 @@ components:
           minimum: 1
         source:
           $ref: '#/components/schemas/OperationWorkflowReadinessSnapshotEntry'
+        playbook:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookEvidenceEvent'
         checked_at:
           type: string
           description: OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment
@@ -79771,7 +79773,6 @@ components:
       required:
       - escalation_notification_id
       - escalation_sequence
-      - source
       - checked_at
       - deadline_at
       - owner
@@ -81195,6 +81196,16 @@ components:
       description: OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an external destination.
       required: [after_seconds, owner, follow_up_after_seconds]
       properties:
+        acknowledge_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.acknowledge_after_seconds. Optional response window from actual assigned escalation delivery; zero disables monitoring.
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookOutcomeDeadlinePolicy.fallback_owner. Optional distinct fallback team; requires a response window and never overrides manual assignments.
         after_seconds:
           type: integer
           format: int64
@@ -81222,6 +81233,8 @@ components:
       description: OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and completion remain human coordination.
       required: [watch_id, progress_id, deadline_at, current]
       properties:
+        response:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponse'
         watch_id:
           type: string
           format: uuid

@@ -1679,3 +1679,9 @@ Deadlines represent observed need for attention, not inferred business failure,
 historical timeliness, causation or execution authority. No new storage table,
 migration or worker is introduced. Dashboard, OpenAPI and SDKs expose the frozen
 policy, pinned clock, one-time marker/reference and separate live evidence.
+
+### Playbook escalation acknowledgment targets
+
+Pinned playbook deadline policies may configure a bounded acknowledgment window and distinct fallback owner. The window begins at assigned escalation delivery, separately from the original business deadline and reminder due time. Both escalation families use the same retained response model, publication-lock recheck, first-acknowledgment semantics, and bounded assignment history. A missed target emits one durable response notice; fallback changes ownership only while the initial assignment has never been manually changed. Completion or clearing the follow-up closes monitoring; later business success does not.
+
+Response monitoring reads retained inbox rows, so it remains available when application evidence fails or the originating checklist watch stops. Retention and subscription deletion bound its lifetime. Playbook response notices carry exact playbook case identity rather than inventing a transition-readiness snapshot. The response event's readiness source is therefore optional; existing readiness response notices continue to include it.

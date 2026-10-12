@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookEvidenceEvent } from './OperationWorkflowPlaybookEvidenceEvent.js';
 import type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
 /**
  * Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity. Does not automatically schedule a second follow-up or indicate business failure.
@@ -15,7 +16,8 @@ export type OperationWorkflowReadinessEscalationResponseEvent = {
    * OperationWorkflowReadinessEscalationResponseEvent.escalation_sequence. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */
   escalation_sequence: number;
-  source: OperationWorkflowReadinessSnapshotEntry;
+  source?: OperationWorkflowReadinessSnapshotEntry;
+  playbook?: OperationWorkflowPlaybookEvidenceEvent;
   /**
    * OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */

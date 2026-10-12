@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowPlaybookOutcomeDeadlinePolicy = {
   /**
+   * OperationWorkflowPlaybookOutcomeDeadlinePolicy.acknowledge_after_seconds. Optional response window from actual assigned escalation delivery; zero disables monitoring.
+   */
+  acknowledge_after_seconds?: number;
+  /**
+   * OperationWorkflowPlaybookOutcomeDeadlinePolicy.fallback_owner. Optional distinct fallback team; requires a response window and never overrides manual assignments.
+   */
+  fallback_owner?: string;
+  /**
    * OperationWorkflowPlaybookOutcomeDeadlinePolicy.after_seconds. Expected wait from checklist creation, bounded to ten years.
    */
   after_seconds: number;

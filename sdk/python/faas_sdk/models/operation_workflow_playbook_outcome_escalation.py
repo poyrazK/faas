@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+    from ..models.operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookOutcomeEscalation")
@@ -36,6 +37,10 @@ class OperationWorkflowPlaybookOutcomeEscalation:
     """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
     changes the expected outcome."""
+    response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
+    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
+    Assignment history retains the latest 16 changes."""
     success_observed_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation,
     retained through corrections or evidence loss; does not prove when the business result occurred."""
@@ -48,6 +53,10 @@ class OperationWorkflowPlaybookOutcomeEscalation:
         deadline_at = self.deadline_at.isoformat()
 
         current = self.current.to_dict()
+
+        response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.response, Unset):
+            response = self.response.to_dict()
 
         success_observed_at: str | Unset = UNSET
         if not isinstance(self.success_observed_at, Unset):
@@ -63,6 +72,8 @@ class OperationWorkflowPlaybookOutcomeEscalation:
                 "current": current,
             }
         )
+        if response is not UNSET:
+            field_dict["response"] = response
         if success_observed_at is not UNSET:
             field_dict["success_observed_at"] = success_observed_at
 
@@ -71,6 +82,9 @@ class OperationWorkflowPlaybookOutcomeEscalation:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+        from ..models.operation_workflow_readiness_escalation_response import (
+            OperationWorkflowReadinessEscalationResponse,
+        )
 
         d = dict(src_dict)
         watch_id = UUID(d.pop("watch_id"))
@@ -80,6 +94,13 @@ class OperationWorkflowPlaybookOutcomeEscalation:
         deadline_at = datetime.datetime.fromisoformat(d.pop("deadline_at"))
 
         current = OperationWorkflowPlaybookBusinessOutcome.from_dict(d.pop("current"))
+
+        _response = d.pop("response", UNSET)
+        response: OperationWorkflowReadinessEscalationResponse | Unset
+        if isinstance(_response, Unset):
+            response = UNSET
+        else:
+            response = OperationWorkflowReadinessEscalationResponse.from_dict(_response)
 
         _success_observed_at = d.pop("success_observed_at", UNSET)
         success_observed_at: datetime.datetime | Unset
@@ -93,6 +114,7 @@ class OperationWorkflowPlaybookOutcomeEscalation:
             progress_id=progress_id,
             deadline_at=deadline_at,
             current=current,
+            response=response,
             success_observed_at=success_observed_at,
         )
 

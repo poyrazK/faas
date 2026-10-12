@@ -11,7 +11,7 @@ import (
 func readinessEscalationResponseUpdates(items []api.OperationWorkflowReadinessNotification, r *readinessSubscriptionRecord) []readinessWatchUpdate {
 	candidates := []api.OperationWorkflowReadinessNotification{}
 	for _, n := range items {
-		if n.OutcomeEscalation != nil && n.OutcomeEscalation.Response != nil && n.OutcomeEscalation.Response.Status == "awaiting" && readinessNotificationBaseline(n) != nil {
+		if _, response := escalationResponse(n); response != nil && response.Status == "awaiting" {
 			candidates = append(candidates, n)
 		}
 	}
@@ -27,7 +27,7 @@ func readinessEscalationResponseUpdates(items []api.OperationWorkflowReadinessNo
 	}
 	updates := []readinessWatchUpdate{}
 	for _, n := range candidates {
-		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ResponseWatchID: n.OutcomeEscalation.WatchID})
+		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, ResponseWatchID: escalationResponseWatchID(n)})
 		r.ResponseCursor = n.Sequence
 	}
 	return updates
@@ -35,10 +35,10 @@ func readinessEscalationResponseUpdates(items []api.OperationWorkflowReadinessNo
 
 // Called under the subscription and exact notification lock; recheck live coordination before taking action.
 func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
-	if n.ID != u.SourceID || n.OutcomeEscalation == nil || n.OutcomeEscalation.WatchID != u.ResponseWatchID || n.OutcomeEscalation.Response == nil || n.Coordination == nil {
+	watchID, response := escalationResponse(n)
+	if n.ID != u.SourceID || watchID != u.ResponseWatchID || response == nil || n.Coordination == nil {
 		return n, nil, false
 	}
-	response := n.OutcomeEscalation.Response
 	if response.Status != "awaiting" || response.DeadlineNotifiedAt != nil {
 		return n, nil, false
 	}
@@ -51,11 +51,9 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 	if now.Before(response.DeadlineAt) {
 		return n, nil, false
 	}
-	e := *n.OutcomeEscalation
 	copied := *response
 	copied.Status, copied.DeadlineNotifiedAt = "deadline_missed", &now
-	e.Response = &copied
-	n.OutcomeEscalation = &e
+	n = withEscalationResponse(n, &copied)
 	reassigned := false
 	if copied.FallbackOwner != "" && n.Coordination.Owner == copied.InitialOwner && len(copied.History) == 0 && !copied.HistoryTruncated && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
 		c := *n.Coordination
@@ -66,7 +64,14 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 		reassigned = true
 	}
 	notice := readinessSubscriptionNotify(r, "escalation_response_overdue", "The assigned escalation was not acknowledged by its response deadline. Consult coordination history; business execution remains application-owned.", nil)
-	notice.EscalationResponse = &api.OperationWorkflowReadinessEscalationResponseEvent{EscalationNotificationID: n.ID, EscalationSequence: n.Sequence, Source: *readinessNotificationBaseline(n), CheckedAt: now, DeadlineAt: copied.DeadlineAt, Owner: n.Coordination.Owner, Reassigned: reassigned}
+
+	if n.PlaybookEvidence != nil {
+		source := *n.PlaybookEvidence
+		source.Changes = []api.OperationWorkflowPlaybookEvidenceChange{}
+		source.OutcomeChange = nil
+		notice.PlaybookEvidence = &source
+	}
+	notice.EscalationResponse = &api.OperationWorkflowReadinessEscalationResponseEvent{EscalationNotificationID: n.ID, EscalationSequence: n.Sequence, Source: readinessNotificationBaseline(n), Playbook: notice.PlaybookEvidence, CheckedAt: now, DeadlineAt: copied.DeadlineAt, Owner: n.Coordination.Owner, Reassigned: reassigned}
 	return n, []api.OperationWorkflowReadinessNotification{notice}, true
 }
 
@@ -80,11 +85,11 @@ func appendReadinessAssignment(response *api.OperationWorkflowReadinessEscalatio
 
 // Human coordination updates record assignment history and fulfill or stop the original response target.
 func readinessEscalationCoordination(n api.OperationWorkflowReadinessNotification, c *api.OperationWorkflowReadinessCoordination, actor string, at time.Time) api.OperationWorkflowReadinessNotification {
-	if n.OutcomeEscalation == nil || n.OutcomeEscalation.Response == nil {
+	_, current := escalationResponse(n)
+	if current == nil {
 		return n
 	}
-	e := *n.OutcomeEscalation
-	response := *e.Response
+	response := *current
 	if n.Coordination != nil && n.Coordination.Owner != c.Owner {
 		appendReadinessAssignment(&response, api.OperationWorkflowReadinessAssignmentChange{FromOwner: n.Coordination.Owner, ToOwner: c.Owner, At: at, Actor: actor, Reason: "manual_assignment"})
 	}
@@ -96,7 +101,33 @@ func readinessEscalationCoordination(n api.OperationWorkflowReadinessNotificatio
 	} else if response.FirstAcknowledgedAt != nil {
 		response.Status = "acknowledged"
 	}
-	e.Response = &response
-	n.OutcomeEscalation = &e
+	n = withEscalationResponse(n, &response)
+	return n
+}
+
+// Both escalation families share human response semantics, without inventing a readiness baseline.
+func escalationResponse(n api.OperationWorkflowReadinessNotification) (string, *api.OperationWorkflowReadinessEscalationResponse) {
+	if n.PlaybookEscalation != nil {
+		return n.PlaybookEscalation.WatchID, n.PlaybookEscalation.Response
+	}
+	if n.OutcomeEscalation != nil {
+		return n.OutcomeEscalation.WatchID, n.OutcomeEscalation.Response
+	}
+	return "", nil
+}
+func escalationResponseWatchID(n api.OperationWorkflowReadinessNotification) string {
+	id, _ := escalationResponse(n)
+	return id
+}
+func withEscalationResponse(n api.OperationWorkflowReadinessNotification, response *api.OperationWorkflowReadinessEscalationResponse) api.OperationWorkflowReadinessNotification {
+	if n.PlaybookEscalation != nil {
+		e := *n.PlaybookEscalation
+		e.Response = response
+		n.PlaybookEscalation = &e
+	} else if n.OutcomeEscalation != nil {
+		e := *n.OutcomeEscalation
+		e.Response = response
+		n.OutcomeEscalation = &e
+	}
 	return n
 }

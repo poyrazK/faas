@@ -277,6 +277,9 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 		n.Coordination.FollowUpAt = &due
 		n.Coordination.UpdatedBy = "system:playbook-outcome-deadline"
 		n.PlaybookEscalation = &api.OperationWorkflowPlaybookOutcomeEscalation{WatchID: w.ID, ProgressID: w.ProgressID, DeadlineAt: *w.DeadlineAt, Current: *w.BusinessOutcome}
+		if policy := w.OutcomeDeadline; policy.AcknowledgeAfterSeconds > 0 {
+			n.PlaybookEscalation.Response = &api.OperationWorkflowReadinessEscalationResponse{DeadlineAt: n.CreatedAt.Add(time.Duration(policy.AcknowledgeAfterSeconds) * time.Second), InitialOwner: policy.Owner, FallbackOwner: policy.FallbackOwner, Status: "awaiting", History: []api.OperationWorkflowReadinessAssignmentChange{}}
+		}
 		r.Subscription.PlaybookEvidenceWatches[index].Escalation = &api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: n.ID, Sequence: n.Sequence, CreatedAt: n.CreatedAt}
 	}
 	return []api.OperationWorkflowReadinessNotification{n}, true

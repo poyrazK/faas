@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
+import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
 /**
  * OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and completion remain human coordination.
  */
 export type OperationWorkflowPlaybookOutcomeEscalation = {
+  response?: OperationWorkflowReadinessEscalationResponse;
   /**
    * OperationWorkflowPlaybookOutcomeEscalation.watch_id. Exact durable watch identity for fenced evidence refresh.
    */

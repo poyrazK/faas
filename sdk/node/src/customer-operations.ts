@@ -806,7 +806,7 @@ export interface OperationWorkflowReadinessOutcomeEscalation { response?: Operat
 
 export interface OperationWorkflowReadinessEscalationResponse { deadline_at: string; initial_owner: string; fallback_owner?: string; status: 'awaiting' | 'acknowledged' | 'closed' | 'deadline_missed'; first_acknowledged_at?: string; deadline_notified_at?: string; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
 export interface OperationWorkflowReadinessAssignmentChange { from_owner: string; to_owner: string; at: string; actor: string; reason: 'manual_assignment' | 'response_deadline_fallback' }
-export interface OperationWorkflowReadinessEscalationResponseEvent { escalation_notification_id: string; escalation_sequence: number; source: OperationWorkflowReadinessSnapshotEntry; checked_at: string; deadline_at: string; owner: string; reassigned: boolean }
+export interface OperationWorkflowReadinessEscalationResponseEvent { escalation_notification_id: string; escalation_sequence: number; source?: OperationWorkflowReadinessSnapshotEntry; playbook?: OperationWorkflowPlaybookEvidenceEvent; checked_at: string; deadline_at: string; owner: string; reassigned: boolean }
 
 export interface OperationWorkflowCoordinationTimelineOptions extends OperationWorkflowReadinessSubscriptionOptions { subjectType: string; subjectID: string; workflow: string; instanceID: string; offset?: number; limit?: number }
 export interface OperationWorkflowCoordinationTimelineEvent { playbook_progress_id?: string; id: string; at: string; kind: string; summary: string; subscription_id?: string; subscription_name?: string; subscription_tenant_id?: string; notification_id?: string; sequence?: number; actor?: string; owner?: string; status?: string; note?: string; follow_up_at?: string; expected_outcome_code?: string; reported_outcome_code?: string; state_revision?: number; reporting_operation_ids: string[] }
@@ -841,5 +841,5 @@ export interface OperationWorkflowPlaybookEvidenceEvent { deadline_at?: string; 
 export interface OperationWorkflowPlaybookBusinessOutcome { deadline_at?: string; deadline_reached?: boolean; status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable'; reason: string; evidence: OperationWorkflowReadinessBusinessOutcome }
 export interface OperationWorkflowPlaybookOutcomeChange { before_status: string; before_reason: string; before_reported_outcome_code?: string; after: OperationWorkflowPlaybookBusinessOutcome }
 
-export interface OperationWorkflowPlaybookOutcomeDeadlinePolicy { after_seconds: number; owner: string; follow_up_after_seconds: number; note?: string }
-export interface OperationWorkflowPlaybookOutcomeEscalation { watch_id: string; progress_id: string; deadline_at: string; current: OperationWorkflowPlaybookBusinessOutcome; success_observed_at?: string }
+export interface OperationWorkflowPlaybookOutcomeDeadlinePolicy { acknowledge_after_seconds?: number; fallback_owner?: string; after_seconds: number; owner: string; follow_up_after_seconds: number; note?: string }
+export interface OperationWorkflowPlaybookOutcomeEscalation { response?: OperationWorkflowReadinessEscalationResponse; watch_id: string; progress_id: string; deadline_at: string; current: OperationWorkflowPlaybookBusinessOutcome; success_observed_at?: string }

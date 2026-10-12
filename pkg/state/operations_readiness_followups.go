@@ -161,7 +161,7 @@ func readinessNotificationBaseline(n api.OperationWorkflowReadinessNotification)
 		return &n.BusinessOutcome.Source
 	}
 	if n.EscalationResponse != nil {
-		return &n.EscalationResponse.Source
+		return n.EscalationResponse.Source
 	}
 	return nil
 }

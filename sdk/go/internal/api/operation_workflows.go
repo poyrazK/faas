@@ -279,17 +279,20 @@ type OperationWorkflowPlaybookOutcomeChange struct {
 
 // Outcome deadlines are attention policies, not business failure assertions or execution instructions.
 type OperationWorkflowPlaybookOutcomeDeadlinePolicy struct {
-	AfterSeconds         int64  `json:"after_seconds" yaml:"after_seconds" toml:"after_seconds"`
-	Owner                string `json:"owner" yaml:"owner" toml:"owner"`
-	FollowUpAfterSeconds int64  `json:"follow_up_after_seconds" yaml:"follow_up_after_seconds" toml:"follow_up_after_seconds"`
-	Note                 string `json:"note,omitempty" yaml:"note,omitempty" toml:"note"`
+	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty" yaml:"acknowledge_after_seconds,omitempty" toml:"acknowledge_after_seconds"`
+	FallbackOwner           string `json:"fallback_owner,omitempty" yaml:"fallback_owner,omitempty" toml:"fallback_owner"`
+	AfterSeconds            int64  `json:"after_seconds" yaml:"after_seconds" toml:"after_seconds"`
+	Owner                   string `json:"owner" yaml:"owner" toml:"owner"`
+	FollowUpAfterSeconds    int64  `json:"follow_up_after_seconds" yaml:"follow_up_after_seconds" toml:"follow_up_after_seconds"`
+	Note                    string `json:"note,omitempty" yaml:"note,omitempty" toml:"note"`
 }
 
 // Current evidence may refresh; delivery evidence and human coordination remain immutable to the worker.
 type OperationWorkflowPlaybookOutcomeEscalation struct {
-	WatchID           string                                   `json:"watch_id"`
-	ProgressID        string                                   `json:"progress_id"`
-	DeadlineAt        time.Time                                `json:"deadline_at"`
-	Current           OperationWorkflowPlaybookBusinessOutcome `json:"current"`
-	SuccessObservedAt *time.Time                               `json:"success_observed_at,omitempty"`
+	Response          *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
+	WatchID           string                                        `json:"watch_id"`
+	ProgressID        string                                        `json:"progress_id"`
+	DeadlineAt        time.Time                                     `json:"deadline_at"`
+	Current           OperationWorkflowPlaybookBusinessOutcome      `json:"current"`
+	SuccessObservedAt *time.Time                                    `json:"success_observed_at,omitempty"`
 }

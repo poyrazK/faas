@@ -27,6 +27,12 @@ class OperationWorkflowPlaybookOutcomeDeadlinePolicy:
     follow_up_after_seconds: int
     """OperationWorkflowPlaybookOutcomeDeadlinePolicy.follow_up_after_seconds. Assigned follow-up delay from actual
     notice delivery, independently bounded to one week."""
+    acknowledge_after_seconds: int | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.acknowledge_after_seconds. Optional response window from
+    actual assigned escalation delivery; zero disables monitoring."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.fallback_owner. Optional distinct fallback team; requires a
+    response window and never overrides manual assignments."""
     note: str | Unset = UNSET
     """OperationWorkflowPlaybookOutcomeDeadlinePolicy.note. Optional initial plain-text follow-up note; subsequent
     human notes are preserved."""
@@ -37,6 +43,10 @@ class OperationWorkflowPlaybookOutcomeDeadlinePolicy:
         owner = self.owner
 
         follow_up_after_seconds = self.follow_up_after_seconds
+
+        acknowledge_after_seconds = self.acknowledge_after_seconds
+
+        fallback_owner = self.fallback_owner
 
         note = self.note
 
@@ -49,6 +59,10 @@ class OperationWorkflowPlaybookOutcomeDeadlinePolicy:
                 "follow_up_after_seconds": follow_up_after_seconds,
             }
         )
+        if acknowledge_after_seconds is not UNSET:
+            field_dict["acknowledge_after_seconds"] = acknowledge_after_seconds
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
         if note is not UNSET:
             field_dict["note"] = note
 
@@ -63,12 +77,18 @@ class OperationWorkflowPlaybookOutcomeDeadlinePolicy:
 
         follow_up_after_seconds = d.pop("follow_up_after_seconds")
 
+        acknowledge_after_seconds = d.pop("acknowledge_after_seconds", UNSET)
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
         note = d.pop("note", UNSET)
 
         operation_workflow_playbook_outcome_deadline_policy = cls(
             after_seconds=after_seconds,
             owner=owner,
             follow_up_after_seconds=follow_up_after_seconds,
+            acknowledge_after_seconds=acknowledge_after_seconds,
+            fallback_owner=fallback_owner,
             note=note,
         )
 

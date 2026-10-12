@@ -44,7 +44,7 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 		}
 		if r.OutcomeDeadline != nil {
 			policy := *r.OutcomeDeadline
-			if r.ExpectedOutcomeCode == "" || policy.AfterSeconds < 1 || policy.AfterSeconds > OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds || policy.FollowUpAfterSeconds < 1 || policy.FollowUpAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || !text(policy.Note, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
+			if policy.AcknowledgeAfterSeconds < 0 || policy.AcknowledgeAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (policy.FallbackOwner != "" && (policy.AcknowledgeAfterSeconds == 0 || policy.FallbackOwner == policy.Owner || !text(policy.FallbackOwner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true))) || r.ExpectedOutcomeCode == "" || policy.AfterSeconds < 1 || policy.AfterSeconds > OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds || policy.FollowUpAfterSeconds < 1 || policy.FollowUpAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || !text(policy.Note, OperationWorkflowReadinessFollowUpNoteMaxBytes, false) {
 				return nil, fmt.Errorf("workflow playbook outcome deadline policy is invalid")
 			}
 			r.OutcomeDeadline = &policy

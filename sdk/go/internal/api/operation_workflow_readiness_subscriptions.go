@@ -310,13 +310,14 @@ type OperationWorkflowReadinessAssignmentChange struct {
 	Reason    string    `json:"reason"`
 }
 type OperationWorkflowReadinessEscalationResponseEvent struct {
-	EscalationNotificationID string                                  `json:"escalation_notification_id"`
-	EscalationSequence       int64                                   `json:"escalation_sequence"`
-	Source                   OperationWorkflowReadinessSnapshotEntry `json:"source"`
-	CheckedAt                time.Time                               `json:"checked_at"`
-	DeadlineAt               time.Time                               `json:"deadline_at"`
-	Owner                    string                                  `json:"owner"`
-	Reassigned               bool                                    `json:"reassigned"`
+	EscalationNotificationID string                                   `json:"escalation_notification_id"`
+	EscalationSequence       int64                                    `json:"escalation_sequence"`
+	Source                   *OperationWorkflowReadinessSnapshotEntry `json:"source,omitempty"`
+	Playbook                 *OperationWorkflowPlaybookEvidenceEvent  `json:"playbook,omitempty"`
+	CheckedAt                time.Time                                `json:"checked_at"`
+	DeadlineAt               time.Time                                `json:"deadline_at"`
+	Owner                    string                                   `json:"owner"`
+	Reassigned               bool                                     `json:"reassigned"`
 }
 
 // Timeline is a live projection of retained inbox observations, not a complete workflow audit.

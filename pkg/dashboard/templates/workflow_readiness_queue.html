@@ -265,7 +265,7 @@
  };
  window.renderReadinessVerification = (parent, notification, scope) => {
   if(notification.playbook_evidence){const event=notification.playbook_evidence;
-   text(parent,'Playbook observation changed · '+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
+   text(parent,(notification.kind==='escalation_response_overdue' ? 'Playbook acknowledgment target missed · ' : 'Playbook observation changed · ')+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
    text(parent,'Checklist '+event.progress_id+' · Checked '+new Date(event.checked_at).toLocaleString());
    if(event.deadline_at)text(parent,'Pinned expected-result deadline: '+new Date(event.deadline_at).toLocaleString());
    if(event.business_outcome&&!event.outcome_change)text(parent,'Expected '+event.business_outcome.evidence.expected_outcome_code+' · Observed '+event.business_outcome.status.replace(/_/g,' ')+' · '+event.business_outcome.evidence.explanation);
@@ -300,8 +300,12 @@
   if(outcome.reporting_operation_id){const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(outcome.reporting_operation_id)+'?scope='+encodeURIComponent(scope);a.textContent='Business outcome reporting Operation';parent.append(a,document.createElement('br'));}
   if(outcome.report_id)text(parent,'Outcome report: '+outcome.report_id);
  };
+ window.renderEscalationResponse = (parent,response) => {
+  if(response){text(parent,'Acknowledgment target: '+response.status+' · deadline '+new Date(response.deadline_at).toLocaleString());if(response.first_acknowledged_at)text(parent,'First acknowledged '+new Date(response.first_acknowledged_at).toLocaleString());if(response.deadline_notified_at)text(parent,'Missed acknowledgment deadline notice delivered '+new Date(response.deadline_notified_at).toLocaleString());if(response.fallback_owner)text(parent,'Configured fallback owner: '+response.fallback_owner);for(const change of response.history || [])text(parent,'Assignment changed: '+(change.from_owner || 'unassigned')+' → '+(change.to_owner || 'unassigned')+' · '+new Date(change.at).toLocaleString()+' · '+change.actor+' · '+change.reason);if(response.history_truncated)text(parent,'Assignment history is partial; only the latest 16 changes are retained.');}
+ };
  window.renderPlaybookEscalation = (parent,escalation,scope) => {
   if(!escalation)return;const result=escalation.current;
+  window.renderEscalationResponse(parent,escalation.response);
   text(parent,'Assigned playbook outcome follow-up · Deadline '+new Date(escalation.deadline_at).toLocaleString()+' · Checklist '+escalation.progress_id);
   text(parent,'Current business result: '+result.status.replace(/_/g,' ')+' · '+result.evidence.explanation);
   window.renderReadinessBusinessOutcome(parent,result.evidence,scope,'Latest playbook escalation evidence');
@@ -311,8 +315,7 @@
  window.renderReadinessEscalation = (parent, escalation, scope) => {
   if(!escalation)return;
   text(parent,'Assigned business outcome escalation · source notification '+escalation.source_sequence);
-  const response=escalation.response;
-  if(response){text(parent,'Acknowledgment target: '+response.status+' · deadline '+new Date(response.deadline_at).toLocaleString());if(response.first_acknowledged_at)text(parent,'First acknowledged '+new Date(response.first_acknowledged_at).toLocaleString());if(response.deadline_notified_at)text(parent,'Missed acknowledgment deadline notice delivered '+new Date(response.deadline_notified_at).toLocaleString());if(response.fallback_owner)text(parent,'Configured fallback owner: '+response.fallback_owner);for(const change of response.history || [])text(parent,'Assignment changed: '+(change.from_owner || 'unassigned')+' → '+(change.to_owner || 'unassigned')+' · '+new Date(change.at).toLocaleString()+' · '+change.actor+' · '+change.reason);if(response.history_truncated)text(parent,'Assignment history is partial; only the latest 16 changes are retained.');}
+  window.renderEscalationResponse(parent,escalation.response);
 
   window.renderReadinessBusinessOutcome(parent,escalation.current,scope,'Latest escalation watch evidence');
   if(escalation.success_observed_at)text(parent,'Application success first observed '+new Date(escalation.success_observed_at).toLocaleString()+'; acknowledgment and completion remain manual.');
@@ -322,7 +325,7 @@
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   const missed=notification.escalation_response;
-  if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));text(parent,missed.source.workflow+' / '+missed.source.instance_id+' · '+missed.source.subject.type+': '+missed.source.subject.id);}
+  if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));const source=missed.source || missed.playbook;if(source)text(parent,source.workflow+' / '+source.instance_id+' · '+source.subject.type+': '+source.subject.id);}
   const watch=notification.business_outcome_watch;
   if(watch){if(watch.escalation_policy)text(parent,'Deadline escalation owner: '+watch.escalation_policy.owner+' · follow-up '+watch.escalation_policy.follow_up_after_seconds+' seconds after delivery');if(watch.escalation)text(parent,'Escalation follow-up notification: '+watch.escalation.sequence);text(parent,'Business outcome watch started '+new Date(watch.started_at).toLocaleString());window.renderReadinessBusinessOutcome(parent,watch.current,scope,'Latest watched business result');if(watch.deadline_at)text(parent,'Outcome deadline: '+new Date(watch.deadline_at).toLocaleString()+(watch.deadline_notified ? ' · deadline notice delivered' : ''));text(parent,'Monitoring ends when the source notification expires or its subscription is deleted. Refresh the inbox for the latest observation.');}
   const event=notification.business_outcome;
@@ -717,7 +720,7 @@
    const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
    section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
    mountPlaybookEvidenceWatch(section,p);
-   if(p.outcome_deadline_at&&p.playbook.outcome_deadline){const policy=p.playbook.outcome_deadline;section.append(node('p','Expected-result deadline: '+clock(p.outcome_deadline_at)+' · Assigned team: '+policy.owner+' · Follow-up due '+policy.follow_up_after_seconds+' seconds after delivery.'));section.append(node('p','Enable monitoring to deliver one follow-up when the deadline is reached without the expected result. The deadline stays pinned to this checklist’s start.'));}
+   if(p.outcome_deadline_at&&p.playbook.outcome_deadline){const policy=p.playbook.outcome_deadline;if(policy.acknowledge_after_seconds)section.append(node('p','Escalation acknowledgment requested within '+policy.acknowledge_after_seconds+' seconds after delivery'+(policy.fallback_owner ? '; fallback team '+policy.fallback_owner : '')+'. Manual assignments are preserved.'));section.append(node('p','Expected-result deadline: '+clock(p.outcome_deadline_at)+' · Assigned team: '+policy.owner+' · Follow-up due '+policy.follow_up_after_seconds+' seconds after delivery.'));section.append(node('p','Enable monitoring to deliver one follow-up when the deadline is reached without the expected result. The deadline stays pinned to this checklist’s start.'));}
 
    if(p.business_outcome){const result=p.business_outcome,evidence=result.evidence;section.append(node('p','Business result: '+result.status.replace(/_/g,' ')+' · Expected: '+evidence.expected_outcome_code+' · Reported: '+(evidence.reported_outcome_code||'none')),node('p',evidence.explanation),node('p','Observed '+clock(evidence.checked_at)+' · '+result.reason.replace(/_/g,' ')));if(evidence.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(evidence.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Business-result reporting operation');link.href=url.href;section.append(link);}section.append(node('p','This application result does not close the checklist or establish that the playbook caused it.'));}
 

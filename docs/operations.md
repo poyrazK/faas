@@ -3288,3 +3288,11 @@ is not recreated and its lost evidence/history cannot be reconstructed. Refresh
 ends when the watch stops or subscription is deleted. Dashboard, follow-up queues
 and all SDKs show the deadline and separate current evidence/human coordination.
 No migration, additional worker, external delivery or application action is added.
+
+### Require acknowledgment of a playbook deadline escalation
+
+A playbook's `outcome_deadline` can set `acknowledge_after_seconds` (1–604800 seconds) and an optional `fallback_owner`, distinct from `owner`. For example, use `owner: payments`, `acknowledge_after_seconds: 900`, and `fallback_owner: operations` to request acknowledgment within 15 minutes of the assigned escalation's actual delivery. Omission or zero disables this response target; a fallback requires a positive target. These fields are frozen with the playbook policy.
+
+The existing subscription worker monitors the retained assigned inbox row independently of live business reports or checklist-watch retirement. It sends one `escalation_response_overdue` notice when the response deadline passes. Fallback assignment occurs only if the owner is still the initial team and no manual assignment history exists. It increments the coordination revision and records assignment history, preserving notes, scheduled follow-up time, reminders, and completion. Human acknowledgment or completion takes precedence under the publication lock. Clearing the follow-up closes response monitoring; rescheduling it does not reset the original acknowledgment clock.
+
+The first acknowledgment fulfills the target even if someone later marks the notice unread. Business success neither acknowledges nor closes the assigned escalation. Inbox expiration or subscription deletion ends response monitoring. The dashboard and SDKs expose the response status, original target, first acknowledgment, overdue notice time, and bounded assignment history. An overdue event identifies either its readiness `source` or its exact scoped `playbook`; playbook events do not manufacture a readiness baseline.
