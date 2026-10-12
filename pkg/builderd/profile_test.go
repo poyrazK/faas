@@ -75,6 +75,7 @@ func TestFunctionRuntimeFramework(t *testing.T) {
 		{runtime: "node22", want: FrameworkNode},
 		{runtime: "python313", want: FrameworkPython},
 		{runtime: "go124-alpine", want: FrameworkGo},
+		{runtime: "binary", want: FrameworkDocker}, // ADR-987: built from the Dockerfile
 	} {
 		t.Run(tt.runtime, func(t *testing.T) {
 			got, ok := functionRuntimeFramework(state.App{Type: state.AppTypeFunction, Runtime: tt.runtime})

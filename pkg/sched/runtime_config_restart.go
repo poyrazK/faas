@@ -68,6 +68,18 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	if len(live) == 0 {
 		return CoordOutcome{}, errors.New("sched: runtime config restart: no resident live deployment in selected environment")
 	}
+	// A live deployment staged at 0% traffic (deploy --no-traffic) serves no
+	// production requests. Replacing it boots a VM nothing routes to and, under
+	// the concurrency cap, takes the one temporary slot the serving
+	// deployment's replacement needs: production-us rc.251 retried such a
+	// restart forever, cold-booting the 0% revision on every attempt. Its stale
+	// instances are retired first instead; its next request boots fresh.
+	live, unrouted := splitRoutedDeployments(live)
+	unroutedIDs := make(map[string]bool, len(unrouted))
+	for _, deployment := range unrouted {
+		unroutedIDs[deployment.ID] = true
+		delete(liveByID, deployment.ID)
+	}
 	if app.Status == state.AppEvictedCold {
 		if changed, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil || !changed {
 			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: activate app %s: %w", appID, errors.Join(err, state.ErrConflict))
@@ -120,6 +132,12 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		case state.StateWaking, state.StateColdBooting, state.StateWarm:
 			if err := e.destroyStaleRuntimeConfigInstance(ctx, instance); err != nil {
 				return CoordOutcome{}, err
+			}
+		case state.StateRunning, state.StateDraining:
+			if unroutedIDs[instance.DeploymentID] {
+				if err := e.retireRuntimeConfigInstance(ctx, appID, instance.DeploymentID, instance); err != nil {
+					return CoordOutcome{}, err
+				}
 			}
 		}
 	}
@@ -299,6 +317,23 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, errors.New("sched: runtime config restart completed without a ready replacement")
 	}
 	return CoordOutcome{Instance: firstReady}, nil
+}
+
+// splitRoutedDeployments separates live deployments that carry production
+// traffic from those staged at 0%. When none carries traffic (rows without a
+// traffic weight), every deployment counts as routed.
+func splitRoutedDeployments(live []state.Deployment) (routed, unrouted []state.Deployment) {
+	for _, deployment := range live {
+		if deployment.TrafficPercent > 0 {
+			routed = append(routed, deployment)
+		} else {
+			unrouted = append(unrouted, deployment)
+		}
+	}
+	if len(routed) == 0 {
+		return live, nil
+	}
+	return routed, unrouted
 }
 
 func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) bool {

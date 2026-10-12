@@ -54,7 +54,8 @@ type InstanceInfo struct {
 	// reserved instance eventually parks after its idle timeout
 	// (the "idle-still-park" guarantee).
 	EvictionPriority string
-	IdleTimeoutS     int // app-configured; 0 => plan default
+	IdleTimeoutS     int // app-configured; 0 => type default (Limits.DefaultIdleTimeoutS)
+	AppType          string
 	// NodeID is the compute_node the instance lives on
 	// (issue #97 / ADR-025 axis 3). Informational today: the
 	// reaper's selectors (ReapIdle, SelectEvictions) work on the
@@ -138,6 +139,10 @@ type InstanceInfo struct {
 	// serves. The reaper drains its live rows directly instead of selecting
 	// them by idleness, and its deployment floor never raises the app's floor.
 	DeploymentSuperseded bool
+	// DeploymentEnded marks an instance whose deployment was cancelled or
+	// failed. The reaper evicts its live rows without a snapshot: nothing
+	// will ever wake that deployment again.
+	DeploymentEnded bool
 	// WorkloadClass is the apps-row workload class
 	// (ADR-051 PR-D). Workers (background jobs / cron workers /
 	// long-running consumers) are reaper-exempt: they have no
@@ -179,23 +184,12 @@ func (i InstanceInfo) admissionMB() int {
 	return api.BillableRAMMBWithSidecars(i.RAMMB, i.SidecarMBs)
 }
 
-// EffectiveIdleTimeoutS resolves an app's idle timeout: the plan default unless
+// EffectiveIdleTimeoutS resolves an app's idle timeout: the default for its
+// type (plan default for apps, ADR-974's shorter default for functions) unless
 // the app configured one within bounds (floor 10 s, ceiling plan default × 2,
 // spec §4.3).
-func EffectiveIdleTimeoutS(plan api.Plan, configured int) int {
-	l := api.MustLimitsFor(plan)
-	if configured <= 0 {
-		return l.IdleTimeoutS
-	}
-	floor, ceiling := l.IdleTimeoutBounds()
-	switch {
-	case configured < floor:
-		return floor
-	case configured > ceiling:
-		return ceiling
-	default:
-		return configured
-	}
+func EffectiveIdleTimeoutS(plan api.Plan, appType string, configured int) int {
+	return api.MustLimitsFor(plan).EffectiveIdleTimeoutS(appType, configured)
 }
 
 // idleReference returns the safest timestamp for idle decisions. The database
@@ -426,7 +420,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			// this is safer than interpreting unknown age as stale.
 			continue
 		}
-		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS)) * time.Second
+		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.AppType, in.IdleTimeoutS)) * time.Second
 		if now.Sub(lastActivity) > timeout {
 			if in.State == state.StateWarm {
 				g.warmCands = append(g.warmCands, in)
@@ -717,7 +711,55 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 	if residentMB <= EvictionThresholdMB {
 		return nil
 	}
+	// Greedily evict until resident drops to the threshold.
+	var evict []string
+	remaining := residentMB
+	for _, in := range evictionCandidates(now, instances) {
+		if remaining <= EvictionThresholdMB {
+			break
+		}
+		evict = append(evict, in.Instance)
+		remaining -= in.admissionMB()
+	}
+	return evict
+}
 
+// SelectMemoryEvictions is RAM-pressure eviction under measured admission
+// (ADR-909): reservations may then exceed a node's ceiling, so pressure is
+// the node's measured memory, not its reservations. On every node whose
+// usedMB exceeds its ceiling it returns instances to evict, in
+// SelectEvictions' order, until the node is back under
+// MeasuredEvictionTargetPercent of the ceiling. Each eviction frees the
+// instance's measured memory, or its reservation when unmeasured.
+func SelectMemoryEvictions(now time.Time, instances []InstanceInfo, usedMB, ceilingMB, residentMB map[string]int) []string {
+	remaining := make(map[string]int, len(usedMB))
+	for node, used := range usedMB {
+		if ceiling := ceilingMB[node]; ceiling > 0 && used > ceiling {
+			remaining[node] = used
+		}
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	var evict []string
+	for _, in := range evictionCandidates(now, instances) {
+		used, pressured := remaining[in.NodeID]
+		if !pressured || used <= ceilingMB[in.NodeID]*api.MeasuredEvictionTargetPercent/100 {
+			continue
+		}
+		evict = append(evict, in.Instance)
+		freed, ok := residentMB[in.Instance]
+		if !ok || freed <= 0 {
+			freed = in.admissionMB()
+		}
+		remaining[in.NodeID] = used - freed
+	}
+	return evict
+}
+
+// evictionCandidates returns the instances RAM-pressure eviction may park, in
+// eviction order.
+func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo {
 	// Candidates: running instances old enough to evict.
 	var cands []InstanceInfo
 	for _, in := range instances {
@@ -762,16 +804,5 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 		}
 		return cands[a].Instance < cands[b].Instance
 	})
-
-	// Greedily evict until resident drops to the threshold.
-	var evict []string
-	remaining := residentMB
-	for _, in := range cands {
-		if remaining <= EvictionThresholdMB {
-			break
-		}
-		evict = append(evict, in.Instance)
-		remaining -= in.admissionMB()
-	}
-	return evict
+	return cands
 }

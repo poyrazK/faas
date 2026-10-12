@@ -42,6 +42,7 @@ func (o Operation) specification() api.OperationDefinitionSpec {
 // OperationWorkflow declares a read-only business process assembled from
 // milestone facts reported by one or more customer Operations.
 type OperationWorkflow struct {
+	Playbooks              []api.OperationWorkflowPlaybook                         `yaml:"playbooks,omitempty" toml:"playbooks"`
 	BlockerEscalations     map[string]api.OperationWorkflowBlockerEscalationPolicy `yaml:"blocker_escalations,omitempty" toml:"blocker_escalations"`
 	App                    string                                                  `yaml:"app,omitempty" toml:"app"`
 	Name                   string                                                  `yaml:"name" toml:"name"`
@@ -56,25 +57,35 @@ type OperationWorkflow struct {
 	Steps                  []OperationWorkflowStepSource                           `yaml:"steps" toml:"steps"`
 }
 
+type OperationWorkflowRetainedMilestoneFreshnessSource struct {
+	Prerequisite api.OperationWorkflowRetainedMilestoneRequirement `yaml:"prerequisite" toml:"prerequisite"`
+	MaxAge       string                                            `yaml:"max_age" toml:"max_age"`
+}
+
 type OperationWorkflowTransitionSource struct {
-	From                 string                                      `yaml:"from" toml:"from"`
-	To                   string                                      `yaml:"to" toml:"to"`
-	Operation            string                                      `yaml:"operation,omitempty" toml:"operation"`
-	RequiresDependencies *[]string                                   `yaml:"requires_dependencies,omitempty" toml:"requires_dependencies"`
-	RequiresEffects      []api.OperationWorkflowEffectRequirement    `yaml:"requires_effects,omitempty" toml:"requires_effects"`
-	RequiresInvariants   []api.OperationWorkflowInvariantRequirement `yaml:"requires_invariants,omitempty" toml:"requires_invariants"`
-	RequiresPolicies     []api.OperationWorkflowPolicyRequirement    `yaml:"requires_policies,omitempty" toml:"requires_policies"`
-	RequiresMilestones   []string                                    `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
+	RetainedMilestoneGroups        []api.OperationWorkflowRetainedMilestoneGroup            `yaml:"retained_milestone_groups,omitempty" toml:"retained_milestone_groups"`
+	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessSource      `yaml:"retained_milestone_freshness,omitempty" toml:"retained_milestone_freshness"`
+	RetainedMilestoneInvalidations []api.OperationWorkflowRetainedMilestoneInvalidationRule `yaml:"retained_milestone_invalidations,omitempty" toml:"retained_milestone_invalidations"`
+	RequiresRetainedMilestones     []api.OperationWorkflowRetainedMilestoneRequirement      `yaml:"requires_retained_milestones,omitempty" toml:"requires_retained_milestones"`
+	From                           string                                                   `yaml:"from" toml:"from"`
+	To                             string                                                   `yaml:"to" toml:"to"`
+	Operation                      string                                                   `yaml:"operation,omitempty" toml:"operation"`
+	RequiresDependencies           *[]string                                                `yaml:"requires_dependencies,omitempty" toml:"requires_dependencies"`
+	RequiresEffects                []api.OperationWorkflowEffectRequirement                 `yaml:"requires_effects,omitempty" toml:"requires_effects"`
+	RequiresInvariants             []api.OperationWorkflowInvariantRequirement              `yaml:"requires_invariants,omitempty" toml:"requires_invariants"`
+	RequiresPolicies               []api.OperationWorkflowPolicyRequirement                 `yaml:"requires_policies,omitempty" toml:"requires_policies"`
+	RequiresMilestones             []string                                                 `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
 }
 
 type OperationWorkflowStepSource struct {
-	Reconciliation bool   `yaml:"reconciliation,omitempty" toml:"reconciliation"`
-	Name           string `yaml:"name" toml:"name"`
-	Label          string `yaml:"label" toml:"label"`
-	Operation      string `yaml:"operation" toml:"operation"`
-	Milestone      string `yaml:"milestone" toml:"milestone"`
-	InstanceIDFrom string `yaml:"instance_id_from" toml:"instance_id_from"`
-	Position       int    `yaml:"position" toml:"position"`
+	DecisionConditions []api.OperationBusinessConditionDefinition `yaml:"decision_conditions,omitempty" toml:"decision_conditions"`
+	Reconciliation     bool                                       `yaml:"reconciliation,omitempty" toml:"reconciliation"`
+	Name               string                                     `yaml:"name" toml:"name"`
+	Label              string                                     `yaml:"label" toml:"label"`
+	Operation          string                                     `yaml:"operation" toml:"operation"`
+	Milestone          string                                     `yaml:"milestone" toml:"milestone"`
+	InstanceIDFrom     string                                     `yaml:"instance_id_from" toml:"instance_id_from"`
+	Position           int                                        `yaml:"position" toml:"position"`
 }
 
 func (m *Manifest) validateOperations(plan api.Plan) error {
@@ -231,6 +242,10 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 		if workflow.App != "" && workflow.App != slug {
 			continue
 		}
+		playbooks, err := api.CanonicalOperationWorkflowPlaybooks(workflow.Playbooks)
+		if err != nil {
+			return nil, fmt.Errorf("operation workflow %q playbooks: %w", workflow.Name, err)
+		}
 		workflowCount++
 		if workflowCount > api.OperationWorkflowsMaxPerApp {
 			return nil, fmt.Errorf("operation workflows exceed the per-app limit")
@@ -328,7 +343,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 				if _, exists := operationsByName[transition.Operation]; !exists {
 					return nil, fmt.Errorf("operation workflow %q transition references unknown operation %q", workflow.Name, transition.Operation)
 				}
-			} else if len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
+			} else if len(transition.RetainedMilestoneGroups) > 0 || len(transition.RetainedMilestoneFreshness) > 0 || len(transition.RetainedMilestoneInvalidations) > 0 || len(transition.RequiresRetainedMilestones) > 0 || len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
 				return nil, fmt.Errorf("operation workflow %q transition evidence requires an operation target", workflow.Name)
 			}
 			if len(transition.RequiresMilestones) > api.OperationWorkflowTransitionEvidenceMax {
@@ -357,7 +372,50 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 					return nil, fmt.Errorf("operation workflow %q has a duplicate transition", workflow.Name)
 				}
 			}
-			apiTransition := api.OperationWorkflowTransition{From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
+			retained, err := api.CanonicalOperationWorkflowRetainedMilestones(transition.RequiresRetainedMilestones)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			groups, err := api.CanonicalOperationWorkflowRetainedMilestoneGroups(transition.RetainedMilestoneGroups)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			selectors := api.OperationWorkflowRetainedSelectors(retained, groups)
+			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transition.RetainedMilestoneInvalidations, selectors)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			if len(transition.RetainedMilestoneFreshness) > api.OperationWorkflowFreshnessRulesMax {
+				return nil, fmt.Errorf("operation workflow %q freshness rules exceed limit", workflow.Name)
+			}
+			var freshnessInput []api.OperationWorkflowRetainedMilestoneFreshnessRule
+			for _, rule := range transition.RetainedMilestoneFreshness {
+				age, err := time.ParseDuration(rule.MaxAge)
+				if err != nil || age <= 0 || age%time.Second != 0 {
+					return nil, fmt.Errorf("operation workflow %q freshness max_age must be a positive whole-second duration", workflow.Name)
+				}
+				freshnessInput = append(freshnessInput, api.OperationWorkflowRetainedMilestoneFreshnessRule{Prerequisite: rule.Prerequisite, MaxAgeSeconds: int64(age / time.Second)})
+			}
+			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(freshnessInput, selectors)
+			if err != nil {
+				return nil, fmt.Errorf("operation workflow %q: %w", workflow.Name, err)
+			}
+			sources := append([]api.OperationWorkflowRetainedMilestoneRequirement(nil), selectors...)
+			for _, rule := range invalidations {
+				sources = append(sources, rule.InvalidatedBy)
+			}
+			for _, requirement := range sources {
+				bound := false
+				for _, step := range workflow.Steps {
+					if step.Operation == requirement.Operation && step.Milestone == requirement.Milestone {
+						bound = true
+					}
+				}
+				if !bound {
+					return nil, fmt.Errorf("operation workflow %q retained prerequisite must reference a declared workflow step", workflow.Name)
+				}
+			}
+			apiTransition := api.OperationWorkflowTransition{RetainedMilestoneGroups: groups, RetainedMilestoneFreshness: freshness, RetainedMilestoneInvalidations: invalidations, RequiredRetainedMilestones: retained, From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
 			if transition.Operation == "" {
 				for operationName := range stepOperations {
 					transitionTargets[operationName] = append(transitionTargets[operationName], apiTransition)
@@ -397,9 +455,9 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			}
 			seenNames[step.Name], seenPositions[step.Position], seenBindings[binding] = true, true, true
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
-				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
+				Playbooks: playbooks, Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateSLABudgetSeconds: stateSLABudgets, StateSLAWarningPercent: stateSLAWarnings, StateStaleAfterSeconds: stateStaleAfter, BlockerEscalations: workflow.BlockerEscalations,
 				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0, Step: step.Name, Label: step.Label,
-				AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
+				DecisionConditions: step.DecisionConditions, AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})
 		}
 	}

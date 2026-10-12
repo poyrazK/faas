@@ -1406,6 +1406,105 @@ contain run inputs, outputs, errors, or tenant identities. Resume is recorded
 in history without a separate webhook. Failure alert rules remain independent
 and can be enabled alongside the pause policy.
 
+### Unified recovery preview
+
+Inspect recovery candidates without clearing a pause, admitting events, moving
+schedule cursors or resuming runs:
+
+```sh
+gregale automations recovery-preview --app billing --name paid-invoice \
+  --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z
+gregale --json automations recovery-preview --app billing --name paid-invoice \
+  --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --limit 10
+```
+
+The report combines current admission intent and failure-pause generation with
+separate failed/dead run pages. Each run includes its server-observed status,
+resume eligibility, expected resume count, blocker codes, and steps that would
+be reopened or preserved. Run inputs, outputs, errors and tenant identities are
+omitted. Failed/dead pages cover retained history regardless of creation time;
+`--from` and `--until` apply only to event acceptance and schedule evaluation.
+
+For a published event trigger, the report includes captured retained event
+metadata, per-event admission reasons, existing admissions, potential admissions,
+retention coverage and an
+opaque continuation cursor. Potential admission is advisory: pauses, routing,
+quotas, retention and current execution gates still apply. A retained-event
+count does not guarantee that every event will produce a run.
+
+For a published schedule trigger, it includes the existing schedule policy
+preview from `--from` through the evaluation time `--until`. A failure-pause
+resume **re-arms without catch-up**, even if the schedule's ordinary policy is
+`latest`; the report explicitly labels this distinction. Disabled schedules
+may report `disabled` rather than a count of missed fires. Other trigger types
+have no retained trigger-work preview, but still show failed/dead run recovery.
+
+The default limit is 10 and the maximum is 25 per run status and event scan
+page. The command performs one page request per failed/dead status, one
+metadata-only diagnostic request per returned run, and one applicable trigger
+preview. Use `--run-offset` for additional run pages and `--event-after` for an
+additional event scan page; preserve the same explicit `--from` and `--until`
+when continuing events. `--until` defaults to the current time.
+
+All requests use existing authenticated read APIs. Any required read failure
+or scope mismatch fails the command instead of emitting a partial report.
+`started_at`, `completed_at` and per-run observation times describe the multiple
+reads; this is not an atomic snapshot, a complete archive, or a reservation.
+Recovery actions recheck their own eligibility and generation fences.
+
+### Controlled recovery of selected runs
+
+Use the run IDs and `expected_resume_count` values from recovery-preview to
+resume a bounded explicit selection:
+
+```sh
+gregale automations recover --app billing --name paid-invoice \
+  --run aaaaaaaa-0000-4000-8000-000000000001:2 \
+  --run bbbbbbbb-0000-4000-8000-000000000001:5 \
+  --idempotency-key invoice-outage-batch-1
+```
+
+Repeat `--run UUID:COUNT` for at most 25 distinct runs. The count is required
+and must be the original count reviewed for that run. The batch key is required;
+keep it with the selection if the command may need to be retried. The CLI derives
+an independent stable request key from the batch key, app identity, automation,
+run ID and original count, so reordering the selection preserves those keys.
+
+Before its first write, the command verifies that every selected run belongs to
+the chosen app and automation. It then reads each run and its diagnostics again,
+checks the original count and failed/dead state, and submits only eligible runs
+to the existing resume API. The server rechecks admission and continuation safety
+when committing. Completed steps and captured definitions retain the existing
+resume semantics; the CLI does not construct a replacement run or workflow.
+
+Each run commits independently. The command continues after an individual
+blocked, changed or failed outcome and emits a human or `--json` report with:
+
+- `resumed`: the API accepted the continuation with the next resume count.
+- `blocked`: diagnostics or the resume API rejected safety, quota, plan or deployment gates.
+- `changed`: run status or count changed, or the server rejected a stale count.
+- `failed`: a required read, scope check, or resume request could not be confirmed.
+
+Exit status is 0 only when every selected run reports `resumed`; mixed outcomes
+return 1 after writing the report. A scope/read failure during the initial full
+selection check exits before any write. Reports include metadata and blocker
+codes, not run inputs, outputs, error details or tenant identities. Status and
+resume count are the last observations, rather than a final execution result.
+
+A `resume_unconfirmed` or `resume_response_unconfirmed` result can mean the
+server committed but its response was lost or unusable. Retry the **same run
+IDs, original counts and batch key**. The CLI never refreshes an expected count
+to make an interrupted request pass. If the previous request advanced the run,
+the retry reports `changed` and does not issue another resume for it. A changed
+run might have been resumed by another operator; inspect `gregale workflows
+resumes RUN_ID` for the recorded actor and continuation history. To request a
+later intentional continuation, inspect a fresh preview and select its new
+count with a new batch key.
+
+This action does not clear manual/failure pauses, replay events, change schedule
+cursors or replay missed schedule fires. Existing run continuations use their
+own diagnostics and server admission checks independently of automatic starts.
+
 The API provides `GET` and `PUT /v1/apps/{slug}/automations/{name}/failure-policy`
 and `POST /v1/apps/{slug}/automations/{name}/failure-policy/resume`. Reads require
 app read scope; configuration and resume require deploy write scope. Apply
@@ -1756,3 +1855,551 @@ Receipts expire after 30 minutes and are bound to the app, automation name, draf
 Only the receipt hash and safe evidence metadata are saved with the receipt. Sample inputs, mocks, expected values and trace payloads are processed transiently and are not saved there. Published revision evidence uses `server_verified: true` when it came from a stored receipt; clients cannot set that flag on plain publication. Revision inspection labels trusted evidence as **Server-verified** and older evidence as **Client-reported**. Server verification establishes what the supplied simulations demonstrate; it does not execute or verify external service behavior. Keep scenario names and exclusion reasons free of secrets.
 
 The check endpoint accepts at most 32 scenarios, 24 MiB total and 3 MiB per simulation, with the existing simulation/value/loop limits. A request cannot supply a definition different from the saved draft or override stored server evidence during publication.
+
+### Saved run recovery plans
+
+Save an explicit reviewed selection without resuming any runs:
+
+```sh
+gregale automations recover --app billing --name paid-invoice \
+  --run RUN_UUID:2 --idempotency-key outage-batch-1 --plan-out recovery.json
+gregale automations recovery-plan --plan recovery.json --journal attempt-1.jsonl
+```
+
+The versioned JSON plan pins the app identity, automation, original resume counts,
+run IDs and stable batch key. Creation checks current scope and run state. Review
+this file before execution; it contains no run inputs, outputs or error details.
+Execution checks every run's scope before any resume, then rechecks eligibility
+and counts immediately before each independently committed request.
+
+Plan and journal paths must be new files; both use owner-only permissions. The
+journal syncs a start record, an attempted record before each run, its result,
+and a completion record. Failure to persist stops further attempts. An attempt
+without a result may have committed; a completion record means all selections
+were processed, not that all resumed or that their workflows completed.
+
+Retry an interrupted batch with the same plan and a **new** journal path. Original
+counts and keys remain fixed, including after a lost response. Advanced runs are
+reported as changed and never automatically resumed at a newer count. A changed
+result does not establish who resumed the run; inspect its resume history.
+Plans are limited to 25 runs and 64 KiB. Each execution has a two-minute timeout.
+The journal is local recovery evidence, not a server-side transaction or audit log.
+
+### Reviewed recovery of automation event routing
+
+Save selected retained events whose captured automation recipient currently has
+one supported routing replay action:
+
+```sh
+gregale automations event-recovery-plan --app billing --name paid-invoice \
+  --source billing --event invoice-42 --event invoice-43 \
+  --idempotency-key incident-1 --out event-recovery.json
+gregale automations event-recover --plan event-recovery.json --journal events-attempt-1.jsonl
+```
+
+Export is read-only. The plan pins the app identity, published automation version,
+source/event IDs, captured subscription, routing generation/replay count, exact
+routing replay action and stable batch key. It excludes event payloads and error
+text. Creation fails for ambiguous recipients or unavailable actions. Execution
+rechecks each event immediately before requesting replay and journals attempted
+and outcome records with disk sync before continuing. Files must be new and use
+owner-only permissions. Both commands have a two-minute timeout; selections are
+limited to 25 events, plans to 64 KiB, and each receipt scan to 25 pages.
+
+Outcomes distinguish queued, changed, blocked and failed. Expired retained events
+are blocked without an age override. Missing retained evidence is unavailable;
+it cannot establish whether an event expired or never existed. Changed revisions,
+routing generations or actions require a new review. Already admitted workflows
+use run recovery rather than routing replay. Admission pauses and other server
+rules remain authoritative when the routing queue processes the replay.
+
+Retry with the **original plan** and a new journal path. Per-event idempotency keys
+remain stable and advanced routing generations are never adopted. A lost reply
+is unconfirmed; consult the journal and receipt. The journal completion record
+means all selected events were processed, not that all were queued or completed.
+Saved plans send `recovery_expectation` with the published automation version,
+routing replay count and generation (when present). The server compares these
+values while holding the publication lock and routing receipt locks, then queues
+the replay in the same transaction. Changes return HTTP 409
+`event_recovery_changed` without mutating the receipt. Existing replay requests
+that omit expectations retain their behavior. Guarded replay supports acceptance
+recipients; historical backfill recovery uses its separate job controls.
+Admission rules still apply when the queued recipient is processed.
+
+### Durable recovery of reviewed automation events
+
+Submit a saved event plan as a server-managed job:
+
+```sh
+gregale automations event-recovery-start --plan event-recovery.json --rate 5 --reason "invoice routing incident"
+gregale events recovery-status JOB_ID
+gregale events recovery-items JOB_ID
+gregale events recovery-pause JOB_ID --yes
+gregale events recovery-resume JOB_ID --yes
+gregale events recovery-rate JOB_ID --rate 2 --yes
+gregale events recovery-cancel JOB_ID --yes
+```
+
+The job continues after the CLI disconnects. It protects pending retained receipts
+within the existing job lifetime and shares existing account job quotas and rate
+limits. Pause and cancel stop future routing admissions; already queued workflows
+continue. Each item uses the saved published version, replay count and routing
+generation, checked atomically before admission. Changed items are skipped rather
+than following newer failures. Delivery deadlines still apply; historical
+backfills use their separate job controls.
+
+Retry an uncertain submission with the original plan and rate. Its stable plan
+key identifies the retained job, including after completion; changing the plan or
+initial rate with the same key conflicts. Use the rate control to adjust an
+existing job. Idempotency lasts for job retention. Preview only confirms retained
+selection and preflight reports workflow fence eligibility as unknown; the worker
+performs the authoritative checks. `queued` records routing admission, not
+workflow success. Saved **run** recovery plans can also be submitted with `recovery-start`.
+
+### Server-managed run recovery
+
+Submit a reviewed saved run plan to continue recovery after the CLI disconnects:
+
+```sh
+gregale automations recovery-start --plan recovery.json --rate 2 --reason "incident recovery"
+gregale events recovery-status JOB_ID
+gregale events recovery-items JOB_ID
+gregale events recovery-pause JOB_ID --yes
+gregale events recovery-resume JOB_ID --yes
+gregale events recovery-rate JOB_ID --rate 1 --yes
+gregale events recovery-cancel JOB_ID --yes
+```
+
+The plan's original run IDs, workflow name and resume counts are frozen. The server checks each count and safe continuation atomically with resume admission. Changed or unsafe runs are skipped; concurrency pressure leaves the item pending for a bounded retry. Cancelling stops pending admissions and preserves admitted resumes. Items expose `workflow_run_id` and `expected_resume_count`; `queued` means the resume was admitted, so inspect the workflow run for its execution outcome.
+
+Retry submission with the original plan and original rate after a lost reply. The retained job is returned even after completion; changing the selection or initial rate with the same plan key conflicts. Change the running job's rate through `recovery-rate`. The shared recovery quota applies across modes. Jobs expire after 24 hours and remain retained for 30 days; pausing does not extend expiry. Preflight is advisory and reports native resume eligibility as unknown. The local `recovery-plan --journal` command remains available.
+
+### Observe resumed workflow execution
+
+`events recovery-status JOB_ID` includes an execution summary for native run recovery jobs. `events recovery-items JOB_ID` includes each admitted run's execution observation, with `source: workflow_run`. The job and item admission counters keep their existing meaning: completing admission does not mean resumed execution succeeded.
+
+Observations track the original reviewed resume count plus one, supported by the retained resume record. Pending runs report queued, running or awaiting-event runs report running, succeeded runs report succeeded, and failed/dead runs report failed. Operator-cancelled terminal runs report cancelled. Without an earlier saved terminal result, a later resume reports superseded and never contributes its completion time or success to this recovery job. Missing or pruned run/resume history reports unknown.
+
+Native observations are read-only. The first confirmed terminal outcome is saved with its recovery item and survives workflow-history pruning for the recovery job retention period. Saved observations use `source: recovery_result`, `evidence_source: workflow_run`, and a `recorded_at` timestamp. `saved_results` counts these outcomes; invocation dispatch `attempts` stays zero. Once saved, an earlier failure remains authoritative if the run is resumed again. A later resume is superseded only when no earlier terminal outcome was saved. Use job status for execution summaries; recovery discovery lists remain admission metadata only.
+
+### Native recovery execution-finished notifications
+
+Subscribe an application webhook to `event_recovery.execution_finished`. After admission completes, is cancelled, or expires, the scheduler captures one notification when all admitted resumes have saved terminal results. `all_succeeded` means every admitted resume succeeded; otherwise the outcome is `finished_with_non_success`. Admission counters remain separate. Unknown or active outcomes block capture; jobs admitting no resumes produce no execution notification.
+
+The payload includes outcome counts, `execution_finished_at`, and `items_url`, an authenticated relative API link to paginated recovery items. Items retain run IDs even when workflow history is gone; retained runs can be inspected through `/v1/workflows/runs/{id}`. Inspect `events recovery-notifications JOB_ID` for recipient and delivery evidence. Existing outbox retries apply; receivers should deduplicate by `event_id`.
+
+### Retry saved native workflow recovery failures
+
+Preview a terminal native recovery job's saved outcomes and current resume eligibility:
+
+```sh
+gregale automations recovery-retry-plan --app worker --job JOB_ID
+```
+
+Review the displayed positions, then save only the eligible failures you intend to retry:
+
+```sh
+gregale automations recovery-retry-plan --app worker --job JOB_ID \
+  --position 2 --position 4 --key incident-retry-1 --plan-out retry.json
+gregale automations recovery-start --plan retry.json --rate 2
+```
+
+Preview and plan creation use read-only calls. Saving requires explicit positions, a key, and a new file. A target retains the resume count of the saved failed outcome; it never follows a newer resume. Succeeded, cancelled, unsaved, pruned, changed, or unsafe runs cannot be selected. The server verifies the parent result when creating the child and rechecks count and safety at admission. Changed or unsafe targets are skipped. Use a new key for a different reviewed selection; repeating the same retained request returns the existing job.
+
+Retry plans require durable `recovery-start` submission; `recovery-plan` cannot execute them locally. An admitted child retains parent job/item lineage and can continue after its parent is pruned. Creating a new child requires retained parent evidence. Retries remain explicit operator actions.
+
+The retry preview now uses server-side preflight. It reports `eligible`, temporary `waiting` capacity pressure, and permanent blockers separately. A capacity-only wait remains selectable: the durable worker will wait for admission capacity. Safety blockers, missing saved outcomes, changed generations, missing runs, and exhausted resume limits cannot be selected. Permanent blockers take priority when capacity is also full.
+
+API clients can use `GET /v1/event-recoveries/JOB_ID/preflight?retry=true` to review a terminal native parent's saved outcomes in one consistent read-only snapshot. `reviewed_count` counts parent items and `sample` contains all of them (at most 25); `pending_count` is zero in this view. Timing fields describe the parent job. Ordinary preflight also reports pending native workflow eligibility. Neither view reserves capacity or replaces the checks at durable creation and admission.
+
+Recovery execution deadlines and stalls are advisory. When submitting a reviewed native workflow recovery plan, use `--execution-deadline 1h --execution-stall 15m` on `gregale automations recovery-start` to select thresholds. The deadline includes scheduled and capacity waits; the stall threshold excludes those waits. Without flags, deadlines are disabled and stalls use 15 minutes. Health observes only the admitted generation, and `event_recovery.execution_attention` captures the first attention signal per job through the normal durable notification pipeline. Inspect the linked run diagnostics before explicitly cancelling or preparing another retry.
+
+To resolve an execution attention finding, inspect `gregale automations recovery-health --app billing`. Its run and diagnostics links identify the admitted generation. Preview one cancellation with `gregale automations recovery-cancel-preview --app billing --job JOB --position 1 --resume-count 1 --reason 'provider incident'`. To apply that reviewed action, use `recovery-cancel` with the same arguments and `--yes`. The server rechecks the frozen generation at commit time; a newer resume is refused. Cancellation is cooperative and does not undo external effects. Successful actions appear in `gregale events recovery-history JOB` with the actor, reason and target generation. Use `recovery-retry-plan --app billing --job JOB` to review confirmed failed results after admission ends.
+
+### Saved recovery response plans
+
+Save a reviewed mixture of cancellations and retries from one native recovery job:
+
+```sh
+gregale automations recovery-response-plan --app consumer --job JOB_UUID \
+  --key incident-20261011 --reason 'provider incident' \
+  --cancel-position 1 --retry-position 2 --plan-out response.json
+gregale automations recovery-response-preview --plan response.json
+gregale automations recovery-response-apply --plan response.json --yes
+gregale automations recovery-response-status --plan response.json
+```
+
+Positions are explicit and repeatable; a target can appear only once. Cancellation requires an admitted active generation. Retry requires a retained failed execution and unchanged eligible generation. Plan creation and preview do not apply actions. The saved file pins the app, parent job, run generations, reasons and action IDs; protect and review it before applying.
+
+Reapply the same saved plan after interruption. Cancellation receipts retain the original decision, including refusals, even after the run advances. Retry actions reuse the original child job. Status only reads retained receipts and outcomes. Retry admission does not imply completed execution. Unresolved, refused, pending and unknown outcomes return exit code 5; terminal retry execution outcomes are explicitly reported, including failures. Missing or expired evidence remains unresolved. A newly reviewed action needs a new plan key; editing an existing action's payload under its identifier conflicts with its retained request. Actions commit individually.
+
+### Preview recovery policies
+
+An app can opt into scheduled preparation of response plans from retained native recovery jobs. Policies match explicit workflow names and saved failures, stalls or deadline overruns. The initial mode is `preview`; operators still preview and apply exported plans explicitly.
+
+Inspect the current version with `gregale automations recovery-policy --app consumer`. Save this configuration as `policy.json`, using the version you observed (`0` for a new policy):
+
+```json
+{
+  "expected_version": 0,
+  "policy": {
+    "enabled": true,
+    "mode": "preview",
+    "workflow_names": ["invoice-notification"],
+    "triggers": ["saved_failure", "deadline_exceeded"],
+    "failure_statuses": ["failed", "dead"],
+    "max_resume_count": 3,
+    "cooldown_seconds": 300,
+    "hourly_action_budget": 10,
+    "rate_per_second": 1,
+    "reason": "Review invoice delivery recovery"
+  }
+}
+```
+
+```sh
+gregale automations recovery-policy --app consumer --file policy.json
+gregale automations recovery-policy-reviews --app consumer
+gregale automations recovery-policy-reviews --app consumer \
+  --review REVIEW_UUID --plan-out prepared.json
+gregale automations recovery-response-preview --plan prepared.json
+gregale automations recovery-response-apply --plan prepared.json --yes
+gregale automations recovery-response-status --plan prepared.json
+```
+
+Policies are disabled by default and only `preview` mode is supported. A stale `expected_version` conflicts; read the policy before changing it. Set `enabled` to false to stop future preparation. Existing plans remain available for explicit application.
+
+`max_resume_count` bounds total resumes of a run, including manual resumes. The hourly budget counts prepared actions, and the cooldown applies across the app's selected workflows. Preparing a plan consumes budget even if it is never applied. These policy controls do not limit separate manually submitted recovery work. Repeated matches for the same run, generation and action reuse preparation evidence across policy versions. Matching failures use retained outcomes and existing retry eligibility; attention cancellation uses the original admitted generation.
+
+Reviews freeze settings and explain each matched target's prepared or suppressed outcome. Evidence follows recovery-job retention. At most 1000 reviews are retained per app; `review_limit` stops new preparation until retention frees capacity. Evaluation scans five jobs per policy per minute in a cycling identifier order, so large backlogs can delay review. Unknown or changed generations are never substituted with newer targets. Native recovery monitoring is the source of attention thresholds; a policy does not introduce its own deadline or stall timer.
+
+### Review policy-generated recovery plans
+
+Record an operator decision on a retained prepared plan:
+
+```sh
+gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
+gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
+gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --status
+```
+
+Use one operation per command. Decisions require a prepared plan and a reason.
+The first decision is immutable; repeating the same decision and reason returns
+its original actor and timestamp. A different decision or reason conflicts.
+Approval records review only. Preview and explicitly apply the exported plan
+using the existing recovery-response commands. Dismissal retains the original
+plan, target deduplication and preparation budget evidence; manual apply remains
+possible. Decisions share the parent recovery job's retention.
+
+`--status` checks live generations and terminal targets without changing the plan.
+It reports ready, stale, unknown, partially_applied, applied or no_plan, with
+per-action reasons. Durable action receipts take precedence over live changes.
+Applied means cancellation succeeded or a retry child was created; inspect retry
+execution with `recovery-response-status`. Capacity waits remain eligible retries.
+Review disposition is separate from freshness: approved plans can become stale.
+
+### Recovery review-ready notifications
+
+Subscribe an enabled app webhook to `automation.recovery_review_ready` (an empty
+filter also receives it). Schedd captures one logical event per prepared plan,
+including existing retained plans that still need review. The payload includes the
+app, recovery job, frozen run IDs and generations, trigger, action, review/status
+links, and CLI inspection/export commands. Review inspection shows capture status,
+reason, receiver count and event ID; use webhook deliveries for HTTP outcomes.
+
+Capture freezes the recipient list. No matching receivers produces `no_receivers`;
+adding a webhook later does not replay old reviews. Capture is durable across
+restarts, and failed HTTP deliveries reuse the existing retry/backoff machinery.
+Receivers should deduplicate by payload `event_id`, since a lost acknowledgement
+can result in another HTTP request for the same event.
+
+Approval or dismissal, application, stale targets, and pruned reviews suppress
+pending transmissions. Unknown freshness or temporary check errors retain work for
+retry. Suppressed deliveries appear as dead with a suppression reason; retrying
+manually still checks the review. An already started request cannot be recalled.
+Approval and applying actions remain separate explicit operations.
+
+
+Recovery review status also reports `outcome` and `complete` separately from
+application `status`. An applied retry can still be pending or running. Each
+action includes its workflow run, exact execution generation, retry child and
+items link, and proof source and timestamp when final. Saved terminal retry
+results prove success, failure or cancellation. Terminal skipped admission is a
+failed action; cancelled admission is cancelled. Missing or superseded execution
+evidence stays unknown. All actions must be final before the plan is complete;
+mixed success and cancellation reports `completed`, and any failure reports
+`failed`.
+
+Subscribe an enabled app webhook to `automation.recovery_review_finished` to
+receive one durable completion event per prepared plan. It carries the frozen
+final status, proof for every action, app and parent job identifiers, review and
+status links, and a CLI status command. Inspect `completion_notification` on the
+review for the captured result, event ID and receiver list. A capture without
+receivers is retained and does not replay to later subscriptions. Later review
+decisions or workflow retries cannot change the captured result. Retention follows
+the parent recovery job. Check the webhook delivery ledger for HTTP attempts and
+acknowledgement; deduplicate deliveries by `event_id`.
+
+
+### Bounded automatic recovery retries
+
+Opt in with `mode: "automatic_retry"` using the existing versioned recovery-policy
+configuration command. This mode requires `saved_failure` as its only trigger,
+explicit workflow names and failure statuses, `hourly_execution_budget` (1..100),
+and `pause_after_failures` (1..10). Preview remains the default and cancellation
+remains manual.
+
+```json
+{
+  "expected_version": 0,
+  "policy": {
+    "enabled": true,
+    "mode": "automatic_retry",
+    "workflow_names": ["paid"],
+    "triggers": ["saved_failure"],
+    "failure_statuses": ["failed", "dead"],
+    "max_resume_count": 3,
+    "cooldown_seconds": 300,
+    "hourly_action_budget": 10,
+    "hourly_execution_budget": 3,
+    "pause_after_failures": 2,
+    "rate_per_second": 1,
+    "reason": "bounded incident recovery"
+  }
+}
+```
+
+```bash
+gregale automations recovery-policy --app consumer --file automatic-policy.json
+gregale automations recovery-policy --app consumer
+gregale automations recovery-policy-reviews --app consumer
+```
+
+Automatic retries use the same exact-target, keyed child recovery path as manual
+application. One automatic retry per app must reach a proven final result before
+another starts. Unknown evidence defers progress. The hourly execution budget
+counts child creation separately from the preparation budget, and spent execution
+budget and cooldown survive policy updates. Inspect `automatic_execution` on each
+review for its pending, applied or suppressed actions, child IDs and saved results.
+Manual application is recognized and does not consume the automatic budget.
+
+After the configured consecutive proven failure threshold, the policy reports
+`status: "paused"` and `automatic_execution` contains the failure count, pause
+time and reason. Both preparation and automatic execution stop. Subscribe an app
+webhook to `automation.recovery_policy_paused` for a durable notification carrying
+the policy version and inspection link. Receivers deduplicate by `event_id`; the
+webhook ledger records delivery attempts. Existing `automation.recovery_review_finished`
+notifications report completed plan results. Automatic plans do not send a
+review-ready notification.
+
+To resume while retaining queued retries, use `recovery-policy --control resume`
+with an operator reason, as described below. A full policy replacement with the
+observed `expected_version` also clears the pause and failure streak, but
+suppresses older pending automatic intents.
+Disabling or replacing the policy suppresses older pending automatic intents;
+already created child jobs use the existing recovery controls. Only newly prepared
+plans under the current enabled version execute automatically. Older preview or
+superseded plans remain available for manual review and application. Cancellation
+is never automatic.
+
+### Inspecting and controlling the automatic retry queue
+
+```sh
+gregale automations recovery-policy --app consumer --queue
+gregale automations recovery-policy --app consumer --control pause --reason "Investigating provider errors"
+gregale automations recovery-policy --app consumer --control resume --reason "Provider recovered"
+```
+
+The queue shows total pending retries, unresolved applied children, remaining hourly execution budget, cooldown expiry, and each returned action's last waiting reason. `outstanding` means final proof has not been recorded; it does not assert the child is running. Use `recovery-policy-reviews --app consumer --review REVIEW_ID --status` for live execution evidence. JSON output includes the observed policy, review IDs and policy versions. The first 100 entries are returned in review order; `truncated` indicates more retained entries. Charges survive policy changes and review pruning.
+
+Pause stops preparation and automatic application while retaining the current policy version and queued retries. Already committed children continue. Resume clears the pause and consecutive failure streak, then rechecks each frozen target; spent budgets and cooldowns remain in effect. Controls require an enabled `automatic_retry` policy, a reason, deploy write access and MFA. The CLI reads the current policy and sends the observed version, update timestamp and pause timestamp to `POST /v1/apps/{slug}/recovery-policy/control`. Concurrent changes produce a conflict. Each accepted operation retains its trusted actor and reason in durable control audit storage.
+
+`GET /v1/apps/{slug}/recovery-policy/queue` requires read access and MFA. Queue reasons are observations from the last worker evaluation and do not authorize a retry. Operator pauses do not emit the automatic repeated-failure webhook; that event remains a historical failure fact once per configuration version.
+
+### Suppressing a queued retry and receiving blocked-queue notifications
+
+Inspect `gregale automations recovery-policy --app consumer --queue`, then suppress one pending intent using the returned review, action and current policy version:
+
+```sh
+gregale automations recovery-suppress --app consumer --review REVIEW_ID --action ACTION_ID --policy-version 4 --reason "Recovery handled externally"
+```
+
+Suppression requires deploy write and MFA. It records the operator reason, trusted identity and timestamp on the retained action, and removes that intent from automatic execution. Repeating the same reason returns the original receipt while the policy version remains current. Changed reasons, stale versions and applied intents conflict. Manual recovery remains available. No child is cancelled, no execution slot is released for an unresolved applied child, and no spent budget is refunded. Inspect the retained review to read the suppression receipt; suppressed intents no longer appear in the pending queue.
+
+Subscribe an app webhook to `automation.recovery_queue_blocked` to receive a historical notification when fresh inspection finds missing or superseded evidence blocking a pending or applied automatic retry. Capture occurs once per action, with a stable `event_id`, frozen recipients and queue/review status links. Normal admission waits, running retries, budget or quota waits, inspection errors, dismissed pending reviews, and paused or disabled policies stay quiet. If no receiver exists at capture, `blocked_notification.status` is `no_receivers`, with no replay to later subscribers. `queued` means admitted to the webhook ledger; use the ledger for delivery results. The event may arrive after the block resolves or the intent is suppressed. Its receipt remains visible on the retained review and, for still-pending or unresolved actions, the queue.
+
+### Queue age and last worker evaluation
+
+Use `gregale automations recovery-policy --app consumer --queue` to see when each retained retry was prepared, its age, the last execution-worker check, and how long the current observed wait has persisted. JSON queue entries expose `queued_at`, `queued_age_seconds`, optional `waiting_age_seconds`, and `action.last_evaluation` (`evaluated_at`, `reason`, optional `waiting_since`). Ages are whole nonnegative seconds relative to the response's `observed_at`; future timestamps from clock skew produce zero age.
+
+Queue age starts at frozen review preparation and includes time after child creation. Waiting age starts with the worker's first observation of the current consecutive reason, survives repeated checks and restarts, and resets when the reason changes. Reasons distinguish `hourly_budget`, `cooldown`, `execution_quota`, `evidence_unknown`, `outstanding_retry`, `admission_wait`, `execution_wait`, `retry_running` and `inspection_error`. Child creation, saved final proof and selected-intent worker suppression record `child_created`, `result_recorded` and `suppressed` without a waiting start. `retry_running` describes the last observed execution outcome; its wait measures time awaiting final proof.
+
+These are historical observations. Reads, blocked-notification capture, policy replacement and operational pause/resume do not refresh them. A paused or disabled policy can retain an old reason even when circumstances have changed; compare its evaluation time and current policy state. Legacy intents and pending retries not yet selected have no evaluation or waiting age, displayed as “not recorded.” The worker evaluates the next pending intent when a committed child holds the slot; later pending entries may remain uninspected. Missing evidence never completes a child, releases its slot or refunds spent budget.
+
+### Previewing a policy replacement
+
+Save the proposed policy and the currently observed `expected_version` in the existing policy update JSON format, then inspect its impact:
+
+```sh
+gregale automations recovery-policy --app consumer --file policy-update.json --preview
+```
+
+The CLI sends only `POST /v1/apps/{slug}/recovery-policy/change-preview`. This endpoint requires read access and MFA, and returns conflict if the configuration version changed. Version zero previews initial configuration without creating a policy. Preview never rewrites your file or advances the policy version, worker evaluations, scheduling cursors, budgets, retries or notifications. Apply the reviewed file separately with the same command without `--preview`; deploy write access, MFA and the existing version check still apply.
+
+Every full replacement suppresses old pending automatic retries, even with unchanged filters. The preview identifies them as `would_suppress`. Unresolved applied retries from any version remain `retain_slot`; changing filters, disabling automation or lowering budgets neither cancels nor completes them. Spent execution charges remain counted against the proposed hourly execution budget and cooldown. Retained preparation targets and preparation history also remain in effect: suppressed generations can still be `already_prepared`, so replacement does not necessarily create another plan. Existing preview-mode plans are not converted to automatic retries. Replacement clears an automatic pause and failure streak; inspect `current.automatic_execution` before applying.
+
+The snapshot reports current/proposed settings, pending/outstanding counts, up to 100 queue effects, proposed preparation/execution headroom and cooldowns. It inspects up to five newest retained recovery jobs matching proposed workflow names, and returns up to 25 matching candidate decisions. `entries_truncated`, `jobs_truncated` and `candidates_truncated` explicitly indicate omitted results. `would_prepare` simulates preparation; it does not create an executable plan or guarantee quota, admission or immediate execution. Eligible disabled-policy targets report `policy_disabled`.
+
+This sample describes retained recent evidence rather than all historical failures or the scheduler's next UUID-ordered poll. Queue progress, operational controls and failure pauses can change while the configuration version stays the same. Use the observation timestamp, review current queue state before applying, and rely on execution-time evidence and quota checks. Preview grants no additional write or retry authority.
+
+### App recovery automation health
+
+Use `gregale automations health --app APP` to inspect recovery policy health, or
+add `--name NAME` for the existing named automation run statistics. App-wide
+health accepts `--stall-after-seconds SECONDS` (default 300; range 1–86400) and
+`--json`. This request-local threshold is not a saved notification setting.
+
+The read-only `/v1/apps/{slug}/recovery-policy/health` endpoint requires app read
+access and MFA. It returns `healthy`, `inactive`, `paused`, `blocked`, `stalled`
+or `unknown`, a reason, and the consistent bounded recovery queue snapshot.
+Paused takes precedence. Stalled means a child evaluation is overdue, or
+pending work lacks recent worker evaluation while execution is permitted. A
+fresh pending evaluation demonstrates activity across the pending queue; an
+untouched backlog entry alone does not imply a stall. Pending work behind an
+unresolved child, active cooldown and exhausted execution budget are expected
+blocks. Fresh evidence
+that a child is running does not imply a stall based on its execution age.
+Disabled policies still expose unresolved applied children.
+
+Queue inspection is bounded. An incomplete sample without a known blocker
+reports unknown. `sample_last_progress_at` describes progress in retained queue
+entries only; it can disappear after completion and is not an app-wide last
+success. Healthy means no blocker observed, not proof of scheduler liveness.
+Use `gregale automations recovery-policy --app APP --queue` for individual
+worker observations. No health read sends alerts, changes policy or releases
+an execution slot.
+
+### Health alert and recovery webhooks
+
+Opt in by adding `health_alerts` to your recovery policy JSON, then use the
+existing preview and version-checked full replacement commands:
+
+```json
+"health_alerts": {
+  "enabled": true,
+  "stall_after_seconds": 300,
+  "alert_after_seconds": 300
+}
+```
+
+Both durations must be explicit integers from 1 to 86400 seconds. These saved
+monitor settings are independent of `automations health --stall-after-seconds`.
+Changing them uses a full policy replacement, which also suppresses old pending
+retries; preview the file first.
+
+Subscribe an app-scoped webhook to `automation.recovery_health_alert` and
+`automation.recovery_health_recovered` (or use an empty filter). The scheduler
+observes recovery health once per minute in bounded batches. A sustained
+paused, blocked or stalled condition opens one incident and emits one alert.
+Reason changes and repeated polls do not send more alerts for that incident.
+Healthy or inactive health closes it and emits recovery after alert capture.
+An inactive recovery reports disabled automatic execution, not child success.
+Incomplete/unknown snapshots cannot declare recovery and defer an uncaptured
+alert. Disabling health alerts closes an incident silently.
+
+Alert receivers are frozen at capture. Recovery goes only to original alert
+receivers still enabled and subscribed to recovery. No-receiver captures are
+terminal and stay quiet when a webhook is added later. The signed delivery
+payload has stable `event_id` and `episode_id`, app and policy identity, health
+reason, observation times, queue counts and a health URL. Deduplicate by event
+ID and correlate by episode ID; historical deliveries can arrive after health
+changes or out of order.
+
+`gregale automations health --app APP` displays the saved monitor settings and
+latest incident receipts. Its JSON response includes `queue.health_incident`.
+These reads do not advance monitoring. The monitor does not retry or cancel
+workflows, refund charges or release a child's slot. Because it runs in the
+scheduler, complete scheduler outage requires a separate external heartbeat.
+
+### Recovery history
+
+Use `gregale automations history --app APP` to connect retained review outcomes, operator controls, retry children, worker observations and health notification captures. Filter with `--workflow NAME`, `--run UUID`, or `--policy-version N`. `--created-after` and `--created-before` accept RFC3339 timestamps; the default window is seven days and the maximum is 30 days. Pages default to 25 entries and cap at 100. Pass `--after` the returned cursor with the same filters to continue; `--json` exports one page.
+
+The timeline combines durable events (`durable: true` in JSON) and retained observations. New policy replacements preserve the accepted configuration, actor and reason. Automatic failure pauses, worker reason changes, incident openings/changes/closings and health notification captures preserve their original associations. `policy` contains the frozen configuration on `policy_changed` events; `episode_id` correlates incident events. `evaluation_reason` records the worker classification, while `reason` preserves the actual suppression cause. Result-recorded transitions retain the child outcome and its outcome reason. Repeated unchanged polls do not append events. Events survive removal of their source review/job and later health episodes.
+
+Durable recording starts with installation of this feature; earlier transitions are not backfilled. Durable events retain 30 days from recording and cap at 10,000 per app. Writes enforce those bounds, reads omit expired events, and the scheduler removes expired rows in batches of 1,000 each minute. Scheduler outage or backlog can delay physical deletion. The cursor fixes the original time window and durable sequence ceiling, excluding later appends. Retention can still remove events during pagination.
+
+Legacy policy, worker and health observation entries remain snapshots of the latest state. Legacy health receipts do not infer historical policy versions or reasons. Target-specific filters omit records lacking that association. Latest observations can move or disappear across pages. Reads never execute retries or refresh worker evaluations.
+
+### Recovery effectiveness report
+
+Run `gregale automations report --app APP --since 7d` to inspect observed retry
+applications, successes, failures, cancellations, missing results and pauses.
+Use `--workflow NAME`, `--policy-version VERSION`, or RFC3339 `--created-after`
+and `--created-before` boundaries (maximum 30 days). `--since` accepts whole days
+such as `7d`, or Go durations such as `24h`; it cannot accompany `--created-after`.
+Global `--json` exports the full report, including evidence and coverage notes.
+
+The report groups by workflow and policy version and lists distinct actions per
+observed blocker, with links into history. Timing is application-to-recorded-result
+for matched child jobs, including polling delay. Missing results mean missing
+proof in the chosen window, not proof of a running retry. Results can come from
+attempts preceding the window. Counts summarize at most 10000 newest entries in
+one consistent snapshot and explicitly flag truncation. Durable capture is
+prospective, without backfill, and retains 30 days / 10000 events per app. Small
+samples and retention gaps limit comparisons; these counts do not prove a policy
+caused a recovery. Reading the report does not change automation state.
+
+### Historical recovery policy evaluation
+
+Use `gregale automations recovery-policy-evaluate --app APP --file POLICY.json
+--since 7d` to compare current configuration settings with a proposed policy
+against retained historical review decisions. The file uses the existing
+`{"expected_version": VERSION, "policy": {...}}` update shape; evaluation rejects
+stale versions and does not update the policy. Use `--workflow NAME`, RFC3339
+`--created-after` / `--created-before`, or global `--json` for a structured export.
+The default window is seven days and maximum is 30 days. `--since` cannot accompany
+`--created-after`.
+
+The output separates exclusions, unknown eligibility, conditional preparation
+results and observed execution pressure. Historical reviews don't capture each
+run's failure status. Their policy filters prove a possible status set; narrowing
+an overlapping status filter is unknown. The evaluator never uses a run's current
+status as past evidence. Captured saved-failure decisions can establish workflow,
+trigger and generation constraints. Other historical triggers and unproven
+preflight conditions remain unknown.
+
+Preparation replay starts with empty budgets, cooldown and deduplication state at
+the window start and leaves unknown candidates uncharged. It models conditional
+preparations in chronological review/position order, including same-review batches,
+rolling hourly budgets and generation deduplication. Operational policy pauses are
+not replayed. Recorded app-wide retry applications can establish execution budget
+or cooldown pressure; an absence of that proof remains `insufficient_history`.
+No hypothetical execution, admission, retry success or failure pause is predicted.
+
+Sampling is bounded to the oldest 100 matching reviews, 500 decisions and 10000
+recorded applications, with separate truncation flags. Application warmup reaches
+back the longer policy cooldown or one hour and is still subject to durable
+retention. Only candidates reviewed under past settings and still retained are
+available: unseen failures, pruned reviews/jobs and pre-recording events cannot be
+reconstructed. Follow review links and application evidence identifiers to inspect
+the basis for each decision. The read-only API is
+`POST /v1/apps/{slug}/recovery-policy/evaluate`, requiring read access and MFA.
+
+New policy reviews capture durable candidate evidence: exact observed run status,
+preflight outcome, generation, trigger and policy version. Historical evaluation
+uses this evidence even after source reviews/jobs are removed, within the shared
+30-day/10,000-event history limits. Older reviews retain uncertain status-filter
+inference. Capture is prospective and does not include execution inputs/outputs.
+
+Terminal workflow failures are now captured independently of recovery-policy
+filters, including while no policy exists or a policy is disabled. Historical
+policy evaluation includes this inventory when you widen workflow/status filters.
+The CLI reports capture start, sampled failures, review coverage, missing retry
+checks and failure-sample truncation. Never-reviewed failures have unknown retry
+eligibility: a saved failure alone does not prove a recovery parent or safe resume.
+The inventory has a separate 30-day/10,000-entry per-app retention budget and
+survives run pruning. Capture excludes cancellations, inputs, outputs and error
+text, creates no reviews, and never executes recovery actions.
+
+Recovery policy evaluation includes separately timed `later_eligibility` checks for unreviewed failures. A bounded background observer runs even without a recovery policy and checks retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and become stale after 15 minutes. These observations do not change historical preparation totals or authorize retries. See [ADR-1026](adr/1026-workflow-failure-eligibility-observer.md).

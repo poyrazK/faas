@@ -35,7 +35,7 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"menu", "start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
@@ -233,6 +233,8 @@ func run(args []string) (status int) {
 		return cmdDeployTarball(args[1:])
 	case "start":
 		return cmdStart(args[1:])
+	case "menu":
+		return cmdMenu(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":
@@ -403,6 +405,8 @@ func run(args []string) (status int) {
 		return cmdPark(args[1:])
 	case "wake":
 		return cmdWake(args[1:])
+	case "wake-ahead":
+		return cmdWakeAhead(args[1:])
 	case "test":
 		return cmdTest(args[1:])
 	case "chaos":
@@ -473,6 +477,9 @@ func run(args []string) (status int) {
 		// list|set|rm dispatcher shape; cmdRegistry lives in
 		// commands_registry.go.
 		return cmdRegistry(args[1:])
+	case "ai":
+		// ADR-988/989/990/991 — AI gateway settings, prices, usage and routes.
+		return cmdAI(args[1:])
 	case "webhooks":
 		// Issue #476 / ADR-076 — outbound webhook subscriptions
 		// and delivery ledger. Mirrors the crons surface (list /

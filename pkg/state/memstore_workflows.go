@@ -45,6 +45,7 @@ func (m *MemStore) insertWorkflowRunLocked(r *WorkflowRun) error {
 	stored.Output = cloneWorkflowJSON(r.Output)
 	stored.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
 	m.workflowRuns[r.ID] = stored
+	m.captureWorkflowFailureLocked(stored, now)
 	return nil
 }
 
@@ -1494,6 +1495,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 	for id, r := range m.workflowRuns {
 		_, retainedByOperation := m.operationForWorkflowLocked(id)
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
+			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)

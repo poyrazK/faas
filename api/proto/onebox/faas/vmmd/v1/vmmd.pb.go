@@ -1155,7 +1155,12 @@ type SnapshotRef struct {
 	// networkless is set only for snapshots captured from the execution runtime
 	// catalog. Ordinary app snapshots leave it false and cannot cross the
 	// dedicated execution restore RPC.
-	Networkless   bool `protobuf:"varint,7,opt,name=networkless,proto3" json:"networkless,omitempty"`
+	Networkless bool `protobuf:"varint,7,opt,name=networkless,proto3" json:"networkless,omitempty"`
+	// mem_bytes is the guest memory length the snapshot was taken with. vmmd
+	// refuses to restore a companion (sidecar) snapshot whose length differs
+	// from the requested guest memory; without it every companion wake fell
+	// back to cold boot. 0 means unknown (older schedd).
+	MemBytes      int64 `protobuf:"varint,8,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1230,6 +1235,13 @@ func (x *SnapshotRef) GetNetworkless() bool {
 		return x.Networkless
 	}
 	return false
+}
+
+func (x *SnapshotRef) GetMemBytes() int64 {
+	if x != nil {
+		return x.MemBytes
+	}
+	return 0
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -11059,7 +11071,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"F\n" +
 	"\x12WorkloadDependency\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\tcondition\x18\x02 \x01(\tR\tcondition\"\xed\x01\n" +
+	"\tcondition\x18\x02 \x01(\tR\tcondition\"\x8a\x02\n" +
 	"\vSnapshotRef\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1d\n" +
@@ -11068,7 +11080,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x06 \x01(\tR\x11vmstateStorageKey\x12 \n" +
-	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\xd3\x06\n" +
+	"\vnetworkless\x18\a \x01(\bR\vnetworkless\x12\x1b\n" +
+	"\tmem_bytes\x18\b \x01(\x03R\bmemBytesJ\x04\b\x02\x10\x03\"\xd3\x06\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +

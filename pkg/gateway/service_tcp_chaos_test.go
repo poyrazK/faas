@@ -1,4 +1,4 @@
-// adr: 686 — exercise scenario-scoped TCP chaos on private service streams.
+// adr: 981 — exercise scenario-scoped TCP chaos on private service streams.
 package gateway
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -140,5 +141,79 @@ func TestServiceTCPChaosWatcherOutlivesFirstSocketAndSharesPorts(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServiceTCPAttemptsIncludeFailedConnectionsAndExcludeDeniedRoutes(t *testing.T) {
+	for _, kind := range []string{chaos.KindTCPConnectRefused, chaos.KindTCPTimeout} {
+		t.Run(kind, func(t *testing.T) {
+			h := newTCPTestHarness(t)
+			target := h.targets[netip.MustParseAddr("198.19.0.7")]
+			target.ScenarioTestRunID, target.ScenarioWorkload = "run", "database"
+			h.targets[netip.MustParseAddr("198.19.0.7")] = target
+			rule := chaos.Rule{From: "api", To: "database", Kind: kind, Percent: 100, Port: 5432}
+			h.proxy.chaos.resolve = func(context.Context, string, string) (chaos.Lease, error) {
+				return chaos.Lease{Generation: "generation", ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{rule}}, nil
+			}
+			attempts := 0
+			h.proxy.chaos.observeAttempt = func(run, caller, generation string, observed chaos.Rule) {
+				if run != "run" || caller != "api" || generation != "generation" || observed.Port != 5432 {
+					t.Fatalf("wrong attempt scope: %s %s %s %+v", run, caller, generation, observed)
+				}
+				attempts++
+			}
+			h.provider.set("db", ServiceEndpoint{InstanceID: "dead", NodeID: "n1", Port: 8080})
+			h.dead["dead"] = true
+			outcome, reason := h.serve(t, "caller", "198.19.0.7:5432")
+			wantOutcome, wantReason := "error", ""
+			if kind == chaos.KindTCPTimeout {
+				wantOutcome, wantReason = "", "no_replica"
+			}
+			if reason != wantReason || outcome != wantOutcome || attempts != 1 {
+				t.Fatalf("failed connection missing: %s %s attempts=%d", outcome, reason, attempts)
+			}
+			h.authzErr = ErrServiceProxyDenied
+			h.serve(t, "caller", "198.19.0.7:5432")
+			if attempts != 1 {
+				t.Fatal("counted denied route")
+			}
+		})
+	}
+}
+
+func TestServiceTCPAttemptsCountOnceWithoutPayloadOrPoolRefresh(t *testing.T) {
+	h := newTCPTestHarness(t)
+	lease := chaos.Lease{Generation: "one", ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{{From: "api", To: "database", Kind: chaos.KindTCPTimeout, Percent: 100, Port: 5432}}}
+	h.proxy.chaos.resolve = func(context.Context, string, string) (chaos.Lease, error) { return lease, nil }
+	attempts := 0
+	h.proxy.chaos.observeAttempt = func(string, string, string, chaos.Rule) { attempts++ }
+	client, server := net.Pipe()
+	defer client.Close()
+	conn, cleanup, err := h.proxy.chaosConn(context.Background(), server, "api", ServiceTCPTarget{AppID: "db", ScenarioTestRunID: "run"}, 5432)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if attempts != 1 {
+		t.Fatal("idle connection not counted")
+	}
+	for i := 0; i < 3; i++ {
+		if err := conn.(*chaos.TCPConn).Update(lease); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if attempts != 1 {
+		t.Fatal("pool refresh counted as reconnect")
+	}
+	// A different port must not count toward this rule.
+	otherClient, otherServer := net.Pipe()
+	defer otherClient.Close()
+	_, otherCleanup, err := h.proxy.chaosConn(context.Background(), otherServer, "api", ServiceTCPTarget{AppID: "db", ScenarioTestRunID: "run"}, 5433)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer otherCleanup()
+	if attempts != 1 {
+		t.Fatal("wrong port counted")
 	}
 }

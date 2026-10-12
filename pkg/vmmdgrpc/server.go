@@ -334,6 +334,9 @@ type Server struct {
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.
 	streamBridges *streamBridgeManager
+	// forwardSessions lets instance teardown end the instance's open
+	// WebSocket and private TCP forward streams (H9-129).
+	forwardSessions forwardSessions
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil
@@ -670,7 +673,7 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		}, ready.Netns)
 	})
 	if err != nil {
-		s.streamBridges.forget(context.WithoutCancel(ctx), wr.Instance)
+		s.forgetForwarding(ctx, wr.Instance)
 	}
 	return inst, err
 }
@@ -964,7 +967,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
+	s.forgetForwarding(ctx, req.GetInstance())
 	return &vmmdpb.SnapshotResponse{
 		MemBytes:                  info.MemBytes,
 		VmstateBytes:              info.VMStateBytes,
@@ -1224,7 +1227,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
+	s.forgetForwarding(ctx, req.GetInstance())
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())
@@ -1256,7 +1259,7 @@ func (s *Server) StopInstance(ctx context.Context, req *vmmdpb.StopInstanceReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
+	s.forgetForwarding(ctx, req.GetInstance())
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())

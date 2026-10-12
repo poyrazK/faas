@@ -40,7 +40,7 @@ type Runner struct {
 	interval           time.Duration
 	maxTick            int
 	leaseRenewInterval time.Duration
-	// memory shares snapshot memory pages with image blocks (ADR-911); nil
+	// memory shares snapshot memory pages with image blocks (ADR-956); nil
 	// disables it.
 	memory *memorySharer
 }

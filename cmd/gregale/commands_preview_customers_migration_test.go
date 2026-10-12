@@ -417,10 +417,12 @@ func TestPreviewCustomersMigrationReviewLoadsAndWritesJoinedReport(t *testing.T)
 	firstPath := filepath.Join(base, "snapshot-1.json")
 	secondPath := filepath.Join(base, "snapshot-2.json")
 	outputPath := filepath.Join(base, "cutover-review.json")
-	// The CLI evaluates freshness against wall time; keep its evidence recent.
+	// Keep telemetry fixtures fresh for the command wall-clock freshness check.
 	now := time.Now().UTC()
 	snapshots := cutoverProgressFixtures(t, now)
-	contractBody, err := json.Marshal(cutoverContractFixture("no_supported_breaks"))
+	contracts := cutoverContractFixture("no_supported_breaks")
+	contracts.GeneratedAt = now.Add(-time.Hour)
+	contractBody, err := json.Marshal(contracts)
 	if err != nil {
 		t.Fatal(err)
 	}

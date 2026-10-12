@@ -835,7 +835,7 @@ func (b *Builder) buildBaseFromStaging(ctx context.Context, staging string, in B
 // path mkfs-es directly into OutImage (matches the pre-#96 behaviour).
 func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, staging string, sizeMB int) error {
 	if in.OutImage != "" {
-		if err := b.runBaseMkfs(ctx, staging, in.OutImage, sizeMB); err != nil {
+		if err := b.runBaseMkfs(ctx, staging, in.OutImage, sizeMB, in.GuestInitPath != ""); err != nil {
 			return fmt.Errorf("rootfs: base mkfs: %w", err)
 		}
 		return nil
@@ -847,7 +847,7 @@ func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, stagin
 		return err
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
-	if err := b.runBaseMkfs(ctx, staging, tmpPath, sizeMB); err != nil {
+	if err := b.runBaseMkfs(ctx, staging, tmpPath, sizeMB, in.GuestInitPath != ""); err != nil {
 		return fmt.Errorf("rootfs: base mkfs: %w", err)
 	}
 	return b.publishBaseFile(ctx, in.Storage, in.StorageKey, tmpPath)
@@ -915,7 +915,7 @@ const (
 	baseMkfsGrowthFloor = 16
 )
 
-func (b *Builder) runBaseMkfs(ctx context.Context, staging, outImage string, sizeMB int) error {
+func (b *Builder) runBaseMkfs(ctx context.Context, staging, outImage string, sizeMB int, pmemReady bool) error {
 	if sizeMB < MinLayerMB {
 		sizeMB = MinLayerMB
 	}
@@ -923,7 +923,7 @@ func (b *Builder) runBaseMkfs(ctx context.Context, staging, outImage string, siz
 	var lastErr error
 	for attempt := 0; attempt < baseMkfsMaxAttempts; attempt++ {
 		lastSize = sizeMB
-		if err := b.run.Run(ctx, MkfsCommand(staging, outImage, sizeMB)); err == nil {
+		if err := b.run.Run(ctx, BaseMkfsCommand(staging, outImage, sizeMB, pmemReady)); err == nil {
 			return nil
 		} else {
 			lastErr = err

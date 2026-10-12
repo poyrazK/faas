@@ -1442,28 +1442,39 @@ groups:
   # headroom. clamp_min(...) guards against /0 when a route has zero
   # recent traffic — the small 0.001 floor lets the ratio formula
   # produce a numeric value rather than a NaN.
+  #
+  # The 3d baselines live in faas_anomaly_baseline_3d below. They used to
+  # be `avg_over_time(<rate over raw series>[3d:5m])` subqueries in this
+  # 30s group, recomputing 864 rate() steps over the raw counters twice a
+  # minute: on production-us the group took 15s of every 30s and, with
+  # the account alerts repeating the same subquery inline, made
+  # Prometheus the largest CPU consumer on the control plane (hunt #9,
+  # H9-132). A three-day average moves imperceptibly in two minutes.
   # ────────────────────────────────────────────────────────────────────
+  - name: faas_anomaly_baseline_3d
+    # 2m keeps every baseline sample inside the 5m instant-vector
+    # lookback the ratio rules read it with, even if one evaluation is
+    # skipped.
+    interval: 2m
+    rules:
+      - record: faas_apid_request_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_apid_request_rate_5m:by_route[3d])
+
+      - record: faas_apid_error_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_apid_error_rate_5m:by_route[3d])
+
+      # Reads the raw counter: faas_apid_request_rate_5m:by_account is
+      # recorded only since this group existed, so averaging it would
+      # start every account's baseline from minutes of history.
+      - record: faas_apid_request_rate_3d_baseline:by_account
+        expr: avg_over_time(sum by (account_id) (rate(apid_request_total[5m]))[3d:5m])
+
+      - record: faas_gateway_request_rate_3d_baseline:by_route
+        expr: avg_over_time(faas_gateway_request_rate_5m:by_route[3d])
+
   - name: faas_anomaly_baseline
     interval: 30s
     rules:
-      - record: faas_apid_request_rate_3d_baseline:by_route
-        expr: avg_over_time( sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])) [3d:5m] )
-
-      - record: faas_apid_error_rate_3d_baseline:by_route
-        expr: |
-          avg_over_time(
-              (
-                  (
-                      sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
-                  )
-                  /
-                  clamp_min(
-                      sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
-                      1
-                  )
-              )[3d:5m]
-          )
-
       - record: faas_apid_request_rate_5m:by_route
         expr: sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m]))
 
@@ -1497,16 +1508,14 @@ groups:
       # every alert evaluation. Bounded by the accountLabelSet admission
       # primitive (10 000 + "__other__") — the per-account fan-out is
       # O(active customers), not unbounded.
+      - record: faas_apid_request_rate_5m:by_account
+        expr: sum by (account_id) (rate(apid_request_total[5m]))
+
       - record: faas_apid_anomaly_score:by_account
         expr: |
-          sum by (account_id) (rate(apid_request_total[5m]))
+          faas_apid_request_rate_5m:by_account
           /
-          clamp_min(
-            avg_over_time(
-              sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-            ),
-            0.001
-          )
+          clamp_min(faas_apid_request_rate_3d_baseline:by_account, 0.001)
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-093 — per-route observability (gatewayd-internal)
@@ -1525,11 +1534,6 @@ groups:
       # opted-in app. Off-apps still emit the pre-ADR-042
       # {app, code} / {app, class} series; the recording
       # rules below simply have zero data points to aggregate.
-      - record: faas_gateway_request_rate_3d_baseline:by_route
-        expr: |
-          avg_over_time(
-            sum by (app, route) (rate(gateway_requests_by_route_total[5m]))[3d:5m]
-          )
       - record: faas_gateway_request_rate_5m:by_route
         expr: sum by (app, route) (rate(gateway_requests_by_route_total[5m]))
       - record: faas_gateway_request_rate_ratio:by_route
@@ -1785,7 +1789,12 @@ groups:
       # Prometheus retains 15 days.
       #
       # Eligible platform outcomes are 2xx and 5xx. Client/application 4xx
-      # responses do not consume the fleet availability budget. The
+      # responses do not consume the fleet availability budget, and neither
+      # does a 5xx the customer's app returned itself: the error numerator is
+      # gateway_platform_errors_total (5xx produced before any guest response
+      # byte). Counting app-authored 5xx let one tenant's failing handler
+      # page on-call (production-us hunt #9: 554 deliberate 500s from a test
+      # app fired FaasApiAvailabilityBurnRateHigh). The
       # `sum(rate(...[5m])) > 0` guard keeps an idle box from alerting. Do not
       # clamp a rate denominator to 1: at less than one request per second
       # that changes the ratio and makes successful low-volume traffic look
@@ -1793,9 +1802,9 @@ groups:
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasApiAvailabilityLow
         expr: |
-          ((sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0))
+          (1 - ((sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0))
             /
-          sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])))
+          sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))))
             < 0.995
           and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
         for: 10m
@@ -1805,14 +1814,14 @@ groups:
           family: api_availability
         annotations:
           summary: "API availability < 99.5% (rolling 5m)"
-          description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
+          description: "The share of eligible requests the platform answered (everything except platform-produced 5xx) over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
       - alert: FaasApiAvailabilityBurnRateHigh
         expr: |
           (
             (
-              sum(rate(gateway_requests_total{app!="-",code=~"5.."}[1h]))
+              (sum(rate(gateway_platform_errors_total{app!="-"}[1h])) or vector(0))
               / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
             ) > 0.072
             and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) > 0
@@ -1820,7 +1829,7 @@ groups:
           and
           (
             (
-              sum(rate(gateway_requests_total{app!="-",code=~"5.."}[6h]))
+              (sum(rate(gateway_platform_errors_total{app!="-"}[6h])) or vector(0))
               / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
             ) > 0.03
             and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) > 0
@@ -1832,7 +1841,7 @@ groups:
           family: api_availability
         annotations:
           summary: "API availability is consuming its monthly error budget rapidly"
-          description: "The API error rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+          description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
       - alert: FaasBuildSuccessLow
@@ -2419,16 +2428,7 @@ groups:
 
       - alert: FaasTrafficSpikeAccount
         expr: |
-          (
-            sum by (account_id) (rate(apid_request_total[5m]))
-            /
-            clamp_min(
-              avg_over_time(
-                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-              ),
-              0.001
-            )
-          ) > 10
+          faas_apid_anomaly_score:by_account > 10
         for: 15m
         labels:
           severity: warn
@@ -2443,18 +2443,9 @@ groups:
 
       - alert: FaasTrafficDropAccount
         expr: |
-          (
-            sum by (account_id) (rate(apid_request_total[5m]))
-            /
-            clamp_min(
-              avg_over_time(
-                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
-              ),
-              0.001
-            )
-          ) < 0.1
+          faas_apid_anomaly_score:by_account < 0.1
           and on (account_id)
-          sum by (account_id) (rate(apid_request_total[5m])) > 0.1
+          faas_apid_request_rate_5m:by_account > 0.1
         for: 30m
         labels:
           severity: warn

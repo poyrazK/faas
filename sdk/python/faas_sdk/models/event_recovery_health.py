@@ -44,8 +44,9 @@ class EventRecoveryHealth:
     separate from phase evidence completeness. Counts describe jobs and can overlap; reads do not capture or retry
     notifications."""
     execution: EventRecoveryExecutionHealth | Unset = UNSET
-    """Oldest retained terminal admission jobs still missing exact saved execution results. Counts overlap and are
-    lower bounds when counts_complete is false. Reads do not capture results or notifications."""
+    """Oldest retained admission jobs including active native recovery jobs still missing exact saved execution
+    results. Counts overlap and are lower bounds when counts_complete is false. Reads do not capture results or
+    notifications."""
 
     def to_dict(self) -> dict[str, Any]:
         capacity_wait_warning_seconds = self.capacity_wait_warning_seconds

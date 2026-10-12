@@ -653,6 +653,39 @@ func (r hostRuntime) ensureRunFaasOwnership(ctx context.Context) error {
 	return runCommand(ctx, "chmod", "0775", "/run/faas")
 }
 
+// RunningFrom reports whether every release daemon's main process runs a
+// binary from releaseRoot. A daemon that is not running, or still runs a
+// binary from another release, needs the restart a completed activation
+// would have done.
+func (r hostRuntime) RunningFrom(ctx context.Context, manifest releasebundle.Manifest, releaseRoot string) (bool, error) {
+	services, err := r.restartServices(manifest)
+	if err != nil {
+		return false, err
+	}
+	prefix := filepath.Clean(releaseRoot) + string(os.PathSeparator)
+	for _, service := range services {
+		out, err := commandOutput(ctx, "systemctl", "show", serviceFilePrefix+service+serviceFileSuffix, "-p", "MainPID", "--value")
+		if err != nil {
+			return false, err
+		}
+		pid := strings.TrimSpace(out)
+		if pid == "" || pid == "0" {
+			return false, nil
+		}
+		exe, err := os.Readlink(filepath.Join(procRoot, pid, "exe"))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, fmt.Errorf("read %s binary: %w", service, err)
+		}
+		if !strings.HasPrefix(exe, prefix) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (r hostRuntime) Healthy(ctx context.Context, manifest releasebundle.Manifest) error {
 	address, err := healthAddressForManifest(manifest)
 	if err != nil {
@@ -793,6 +826,17 @@ func sleepReady(ctx context.Context) error {
 // Replacing via a package var (not a struct field) preserves the
 // call-site readability at runtime.go:Restart — the body still
 // reads `runCommand(ctx, ...)` with no `r.` prefix.
+// commandOutput and procRoot are test seams for RunningFrom.
+var commandOutput = func(ctx context.Context, name string, args ...string) (string, error) {
+	output, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return string(output), nil
+}
+
+var procRoot = "/proc"
+
 var runCommand = func(ctx context.Context, name string, args ...string) error {
 	command := exec.CommandContext(ctx, name, args...)
 	output, err := command.CombinedOutput()

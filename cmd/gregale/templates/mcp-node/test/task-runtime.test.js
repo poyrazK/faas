@@ -101,6 +101,7 @@ test('dedicated workers enable the optional metrics publisher with the scoped ap
   assert.equal(publishedSettings.token, 'metrics-write-secret');
   assert.equal(publishedSettings.apiURL, 'https://api.staging.gregale.dev');
   assert.equal(typeof publishedSettings.store.queueMetrics, 'function');
+  assert.equal(publishedSettings.observer, false);
   await service.close();
   assert.equal(publisherCloseCount, 1);
 });

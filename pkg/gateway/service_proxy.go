@@ -278,6 +278,10 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
+	// ObserveCall is the optional ADR-977 learner seam. It receives every
+	// call that reached the target's guest from a production caller, with
+	// woken true when the call itself restored the target.
+	ObserveCall func(callerAppID, targetAppID string, woken bool)
 	// WakeDeployment is the optional deployment-scoped wake seam used by
 	// version-affinity calls. It prevents a warm sibling from suppressing the
 	// selected cohort's restore.
@@ -287,6 +291,7 @@ type ServiceProxyConfig struct {
 	ValidateDeployment ServiceProxyDeploymentValidator
 	ResolveChaos       ServiceProxyChaosResolver
 	ObserveChaosMatch  ServiceProxyChaosObserver
+	ObserveTCPAttempt  ServiceProxyChaosObserver
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
@@ -333,7 +338,6 @@ type ServiceProxy struct {
 	resolveCaller             ServiceProxyCallerResolver
 	resolveCallerIdentity     ServiceProxyCallerIdentityResolver
 	resolveRelease            ServiceProxyReleaseResolver
-	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
 	devBridge                 ServiceProxyDevBridge
 	forward                   func(Target) http.Handler
 	rawForward                func(Target) http.Handler
@@ -342,11 +346,14 @@ type ServiceProxy struct {
 	validateDeployment        ServiceProxyDeploymentValidator
 	resolveChaos              ServiceProxyChaosResolver
 	observeChaosMatch         ServiceProxyChaosObserver
+	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
 	metrics                   *Metrics
 	endpointTTL               time.Duration
 	now                       func() time.Time
 	log                       *slog.Logger
+	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
+	observeCall               func(callerAppID, targetAppID string, woken bool)
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -435,7 +442,6 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:             cfg.ResolveCaller,
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
 		resolveRelease:            cfg.ResolveRelease,
-		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,
@@ -444,6 +450,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		validateDeployment:        cfg.ValidateDeployment,
 		resolveChaos:              cfg.ResolveChaos,
 		observeChaosMatch:         cfg.ObserveChaosMatch,
+		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
 		metrics:                   cfg.Metrics,
 		endpointTTL:               ttl,
@@ -455,6 +462,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		snapshots:                 make(map[string]serviceProxySnapshot),
 		next:                      make(map[string]uint64),
 		nextSeen:                  make(map[string]time.Time),
+		observeCall:               cfg.ObserveCall,
+		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
 	}
 }
 
@@ -887,7 +896,7 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
 			return true
 		}
-		if rule.IsTCP() {
+		if rule.IsTCP() || rule.IsDNS() {
 			continue
 		}
 		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {
@@ -1035,11 +1044,21 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 			return
 		}
 		p.countForward(woken)
+		p.observeWakeAheadCall(caller, target, woken)
 		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
 	p.countForward(woken)
+	p.observeWakeAheadCall(caller, target, woken)
 	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
+}
+
+// observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
+// out: their calls must not teach production wake-ahead.
+func (p *ServiceProxy) observeWakeAheadCall(caller ServiceCaller, target ServiceTarget, woken bool) {
+	if p.observeCall != nil && caller.PreviewOfSlug == "" {
+		p.observeCall(caller.AppID, target.AppID, woken)
+	}
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold

@@ -54,7 +54,7 @@ export type CreateAppRequest = {
    * Standalone canonical URL scheme. Omit to preserve the legacy HTTP contract; choose https to make GREGALE_SERVICE_<NAME>_URL use https://<service>.internal.
    */
   service_binding_transport?: ServiceBindingTransport;
-  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
+  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
   ram_mb?: number;
   /**
    * Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default.

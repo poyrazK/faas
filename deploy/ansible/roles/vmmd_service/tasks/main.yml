@@ -84,6 +84,15 @@
     group: root
     mode: "0644"
 
+- name: vmmd_service — install prepared wake networks drop-in (ADR-149)
+  ansible.builtin.template:
+    src: 99-faas-prepared-networks.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-prepared-networks.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
 - name: vmmd_service — remove legacy schedd target override
   ansible.builtin.file:
     path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
@@ -99,10 +108,19 @@
     mode: "0644"
   notify: restart faas-vmmd
 
-- name: vmmd_service — install guest trace spans writer target (ADR-934)
+- name: vmmd_service — install guest trace spans writer target (ADR-958)
   ansible.builtin.template:
     src: 99-faas-spans-writer.conf.j2
     dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-spans-writer.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
+- name: vmmd_service — install app outbound relay target (ADR-989)
+  ansible.builtin.template:
+    src: 99-faas-outbound-relay.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-outbound-relay.conf
     owner: root
     group: root
     mode: "0644"

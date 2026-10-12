@@ -1826,6 +1826,7 @@ func TestBaseRefFor_Runtimes(t *testing.T) {
 		{"go124-alpine → go124-alpine base (Tier 2 PR row)", RuntimeGo124Alpine, BaseRefGo124Alpine},
 		{"node24 → node24 base (Tier 1 PR 1 row)", RuntimeNode24, BaseRefNode24},
 		{"python313 → python313 base (Tier 1 PR 1 row)", RuntimePython313, BaseRefPython313},
+		{"binary → go124 base (ADR-987 alias)", RuntimeBinary, BaseRefGo124},
 		{"empty runtime → minimal base", "", BaseRefMinimal},
 		{"unknown runtime → minimal base", "ruby33", BaseRefMinimal},
 	}
@@ -1856,6 +1857,7 @@ func TestRunnerPathFor_Runtimes(t *testing.T) {
 		{"go124-alpine → go124AlpinePath (Tier 2 PR row)", func(h *Handler) { h.WithFunctionRunnerGo124Alpine("/runners/go124-alpine") }, RuntimeGo124Alpine, "/runners/go124-alpine"},
 		{"node24 → node24Path (Tier 1 PR 1 row)", func(h *Handler) { h.WithFunctionRunnerNode24("/runners/node24") }, RuntimeNode24, "/runners/node24"},
 		{"python313 → python313Path (Tier 1 PR 1 row)", func(h *Handler) { h.WithFunctionRunnerPython313("/runners/python313") }, RuntimePython313, "/runners/python313"},
+		{"binary → go124Path (ADR-987 alias)", func(h *Handler) { h.WithFunctionRunnerGo124("/runners/go124") }, RuntimeBinary, "/runners/go124"},
 		{"empty runtime → \"\"", func(h *Handler) {}, "", ""},
 		{"unknown runtime → \"\"", func(h *Handler) {}, "ruby33", ""},
 	}
@@ -1888,6 +1890,7 @@ func TestRuntimeToEnvSuffix_Runtimes(t *testing.T) {
 		{"go124-alpine → GO124_ALPINE (Tier 2 PR row)", RuntimeGo124Alpine, "GO124_ALPINE"},
 		{"node24 → NODE24 (Tier 1 PR 1 row)", RuntimeNode24, "NODE24"},
 		{"python313 → PYTHON313 (Tier 1 PR 1 row)", RuntimePython313, "PYTHON313"},
+		{"binary → GO124 (ADR-987 alias)", RuntimeBinary, "GO124"},
 		{"unknown runtime → unchanged", "ruby33", "ruby33"},
 	}
 	for _, tc := range cases {

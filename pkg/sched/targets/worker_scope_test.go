@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -13,6 +14,12 @@ type scopedWorkerPoolFake struct {
 	*workerPoolFakeEngine
 	calls []string
 	err   error
+}
+
+type fixedCustomMetrics []state.CustomMetric
+
+func (m fixedCustomMetrics) ListCustomMetrics(context.Context, string) ([]state.CustomMetric, error) {
+	return []state.CustomMetric(m), nil
 }
 
 func (e *scopedWorkerPoolFake) ReconcileWorkerPools(_ context.Context, appID, trigger string) error {
@@ -43,5 +50,29 @@ func TestTrigger_ReconcilesScopedWorkerPools(t *testing.T) {
 	}
 	if len(engine.calls) != 2 || len(engine.desired) != 0 || len(engine.admitCalls) != 0 {
 		t.Fatalf("failed scoped reconciliation bypassed backoff: %v", engine.calls)
+	}
+}
+
+func TestTrigger_ReconcilesWorkerPoolsForCustomMetricTargets(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{
+		ID: "mcp-worker", WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 5,
+		Manifest: state.AppManifest{ExecutionMode: "worker", WorkerReplicas: &state.WorkerScaling{
+			Min: 0, Max: 5, Metric: "custom", Name: "mcp_tasks_outstanding", Target: 2,
+		}},
+		ScalingPolicy: &state.ScalingPolicy{Target: &state.ScalingTarget{
+			Metric: "custom", Name: "mcp_tasks_outstanding", Value: 2,
+		}},
+	}}}
+	engine := &scopedWorkerPoolFake{workerPoolFakeEngine: &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}}
+	metrics := fixedCustomMetrics{{Name: "mcp_tasks_outstanding", Value: 8, ObservedAt: time.Now()}}
+	tr := New(store, nil, engine, nil, Options{CustomMetricReader: metrics})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.calls) != 1 || engine.calls[0] != "mcp-worker:worker.pool" {
+		t.Fatalf("scoped worker reconciliation calls = %v, want [mcp-worker:worker.pool]", engine.calls)
+	}
+	if len(engine.admitCalls) != 0 || len(engine.desired) != 0 {
+		t.Fatalf("custom worker demand used generic admission: admits=%v legacy=%v", engine.admitCalls, engine.desired)
 	}
 }

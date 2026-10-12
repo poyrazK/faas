@@ -219,6 +219,7 @@ type Querier interface {
 	ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ClaimProjectEnvironmentClonePostgresVerification(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationParams) (ProjectEnvironmentClonePostgresVerification, error)
 	ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
+	ClaimReadinessSubscriptions(ctx context.Context, db DBTX, arg ClaimReadinessSubscriptionsParams) ([]CustomerWorkflowReadinessSubscription, error)
 	ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error)
 	ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error)
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
@@ -320,6 +321,7 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	CountReadinessSubscriptions(ctx context.Context, db DBTX, arg CountReadinessSubscriptionsParams) (int64, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error)
@@ -500,6 +502,8 @@ type Querier interface {
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	DeleteProfileInvestigation(ctx context.Context, db DBTX, arg DeleteProfileInvestigationParams) (int64, error)
+	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
+	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
 	DeleteUDPListener(ctx context.Context, db DBTX, id string) (int64, error)
 	DeleteWebhookAutomationBinding(ctx context.Context, db DBTX, arg DeleteWebhookAutomationBindingParams) (int64, error)
@@ -679,6 +683,7 @@ type Querier interface {
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
 	EventRecoveryActiveCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventRecoveryApp(ctx context.Context, db DBTX, arg EventRecoveryAppParams) (pgtype.UUID, error)
+	EventRecoveryByRequest(ctx context.Context, db DBTX, arg EventRecoveryByRequestParams) (pgtype.UUID, error)
 	EventRecoveryCancelItems(ctx context.Context, db DBTX, arg EventRecoveryCancelItemsParams) error
 	EventRecoveryCancelJob(ctx context.Context, db DBTX, arg EventRecoveryCancelJobParams) error
 	EventRecoveryCandidates(ctx context.Context, db DBTX, arg EventRecoveryCandidatesParams) ([]EventRecoveryCandidatesRow, error)
@@ -697,6 +702,7 @@ type Querier interface {
 	EventRecoveryHistoryList(ctx context.Context, db DBTX, arg EventRecoveryHistoryListParams) ([]EventRecoveryHistory, error)
 	EventRecoveryInsertItem(ctx context.Context, db DBTX, arg EventRecoveryInsertItemParams) error
 	EventRecoveryItems(ctx context.Context, db DBTX, arg EventRecoveryItemsParams) ([]EventRecoveryItem, error)
+	EventRecoveryLegacySettled(ctx context.Context, db DBTX, id int64) (bool, error)
 	EventRecoveryList(ctx context.Context, db DBTX, arg EventRecoveryListParams) ([]EventRecoveryListRow, error)
 	EventRecoveryListApp(ctx context.Context, db DBTX, arg EventRecoveryListAppParams) (pgtype.UUID, error)
 	EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecoveryLockParams) (EventRecoveryJob, error)
@@ -725,11 +731,14 @@ type Querier interface {
 	EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg EventRecoveryPreflightJobParams) (EventRecoveryJob, error)
 	EventRecoveryProgress(ctx context.Context, db DBTX, arg EventRecoveryProgressParams) error
 	EventRecoveryPrune(ctx context.Context, db DBTX, arg EventRecoveryPruneParams) (int64, error)
+	EventRecoveryPublishedVersion(ctx context.Context, db DBTX, arg EventRecoveryPublishedVersionParams) (int64, error)
 	EventRecoveryReadApp(ctx context.Context, db DBTX, arg EventRecoveryReadAppParams) (pgtype.UUID, error)
 	EventRecoveryRecordReplay(ctx context.Context, db DBTX, arg EventRecoveryRecordReplayParams) error
+	EventRecoveryReplayCount(ctx context.Context, db DBTX, arg EventRecoveryReplayCountParams) (int64, error)
 	EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error
 	EventRecoveryRetryCandidates(ctx context.Context, db DBTX, arg EventRecoveryRetryCandidatesParams) ([]EventRecoveryRetryCandidatesRow, error)
 	EventRecoveryRetryExisting(ctx context.Context, db DBTX, arg EventRecoveryRetryExistingParams) (pgtype.UUID, error)
+	EventRecoveryRoutingGeneration(ctx context.Context, db DBTX, arg EventRecoveryRoutingGenerationParams) (EventRecoveryRoutingGenerationRow, error)
 	EventRecoverySchedule(ctx context.Context, db DBTX, arg EventRecoveryScheduleParams) error
 	EventRecoveryScheduleTerminalState(ctx context.Context, db DBTX, arg EventRecoveryScheduleTerminalStateParams) (string, error)
 	EventRecoverySetItem(ctx context.Context, db DBTX, arg EventRecoverySetItemParams) error
@@ -815,6 +824,7 @@ type Querier interface {
 	EventSubscriptionControlTarget(ctx context.Context, db DBTX, arg EventSubscriptionControlTargetParams) (pgtype.UUID, error)
 	EventSubscriptionControlUsePermit(ctx context.Context, db DBTX, arg EventSubscriptionControlUsePermitParams) error
 	EventSubscriptionSchemaVersionsSet(ctx context.Context, db DBTX, arg EventSubscriptionSchemaVersionsSetParams) error
+	EventWorkflowRecoveryCandidate(ctx context.Context, db DBTX, arg EventWorkflowRecoveryCandidateParams) (EventWorkflowRecoveryCandidateRow, error)
 	ExclusiveWorkAppScope(ctx context.Context, db DBTX, arg ExclusiveWorkAppScopeParams) (ExclusiveWorkAppScopeRow, error)
 	ExclusiveWorkClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ExclusiveWorkEnvironmentScope(ctx context.Context, db DBTX, arg ExclusiveWorkEnvironmentScopeParams) (string, error)
@@ -940,6 +950,8 @@ type Querier interface {
 	FinishProjectEnvironmentClonePostgresCopyTargetCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresCopyTargetCleanupParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	FinishProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	FinishReadinessSubscription(ctx context.Context, db DBTX, arg FinishReadinessSubscriptionParams) (pgtype.UUID, error)
+	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
 	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
@@ -1050,6 +1062,7 @@ type Querier interface {
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)
 	// ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 	GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error)
+	GetReadinessSubscription(ctx context.Context, db DBTX, arg GetReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
 	// Read the row after a detector upsert so the notification reflects a
 	// preserved acknowledgement/dismissal rather than assuming active state.
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
@@ -1063,11 +1076,16 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	// Route priorities (ADR-978). apid owns the rows; gatewayd-internal reads them.
+	GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error)
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
 	GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error)
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	// Service wake-ahead (ADR-977). apid owns the setting; gatewayd-internal reads
+	// it and the fleet residency that guards every wake-ahead.
+	GetServiceWakeAhead(ctx context.Context, db DBTX, arg GetServiceWakeAheadParams) (GetServiceWakeAheadRow, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -1298,6 +1316,8 @@ type Querier interface {
 	InsertProjectEnvironmentQueueConsumer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueConsumerParams) error
 	InsertProjectEnvironmentQueueRuntimeSet(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueRuntimeSetParams) error
 	InsertPromotionFeatureFlags(ctx context.Context, db DBTX, arg InsertPromotionFeatureFlagsParams) error
+	InsertReadinessNotification(ctx context.Context, db DBTX, arg InsertReadinessNotificationParams) error
+	InsertReadinessSubscription(ctx context.Context, db DBTX, arg InsertReadinessSubscriptionParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -1383,6 +1403,7 @@ type Querier interface {
 	InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, arg InsertWebhookAutomationReceiptParams) error
 	InsertWorkflowAutomationRevision(ctx context.Context, db DBTX, arg InsertWorkflowAutomationRevisionParams) error
 	InsertWorkflowOperationEffect(ctx context.Context, db DBTX, arg InsertWorkflowOperationEffectParams) error
+	InsertWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg InsertWorkflowPlaybookProgressParams) (int64, error)
 	InsertWorkflowResume(ctx context.Context, db DBTX, arg InsertWorkflowResumeParams) (pgtype.Timestamptz, error)
 	InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWorkflowRunParams) (InsertWorkflowRunRow, error)
 	InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX, arg InsertWorkflowScheduleOccurrenceParams) error
@@ -1622,9 +1643,12 @@ type Querier interface {
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
 	ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error)
 	ListCustomerOperationJobExecutions(ctx context.Context, db DBTX, arg ListCustomerOperationJobExecutionsParams) ([][]byte, error)
+	ListCustomerOperationRetainedMilestonePrerequisites(ctx context.Context, db DBTX, arg ListCustomerOperationRetainedMilestonePrerequisitesParams) ([]ListCustomerOperationRetainedMilestonePrerequisitesRow, error)
 	ListCustomerOperationWorkflowAttention(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowAttentionParams) ([]ListCustomerOperationWorkflowAttentionRow, error)
 	ListCustomerOperationWorkflowExecutions(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowExecutionsParams) ([][]byte, error)
 	ListCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowOutcomesParams) ([]ListCustomerOperationWorkflowOutcomesRow, error)
+	ListCustomerOperationWorkflowProgressDefinitions(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowProgressDefinitionsParams) ([]ListCustomerOperationWorkflowProgressDefinitionsRow, error)
+	ListCustomerOperationWorkflowReadinessCandidates(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowReadinessCandidatesParams) ([][]byte, error)
 	ListCustomerOperationWorkflowStepDeclarations(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowStepDeclarationsParams) ([]ListCustomerOperationWorkflowStepDeclarationsRow, error)
 	// The parent workflow run is locked before these snapshot and transition queries.
 	ListCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowStep, error)
@@ -1818,6 +1842,9 @@ type Querier interface {
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
 	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
+	ListReadinessFollowUps(ctx context.Context, db DBTX, arg ListReadinessFollowUpsParams) ([][]byte, error)
+	ListReadinessNotifications(ctx context.Context, db DBTX, arg ListReadinessNotificationsParams) ([][]byte, error)
+	ListReadinessSubscriptions(ctx context.Context, db DBTX, arg ListReadinessSubscriptionsParams) ([][]byte, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 	// the partial index events_actor_account_idx on
 	// (actor_account_id) WHERE actor_account_id IS NOT NULL
@@ -1902,6 +1929,7 @@ type Querier interface {
 	ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthRecentRunsParams) ([]ListWorkflowAutomationHealthRecentRunsRow, error)
 	ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg ListWorkflowAutomationRevisionsParams) ([]WorkflowAutomationRevision, error)
 	ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg ListWorkflowOperationEffectsParams) ([]ListWorkflowOperationEffectsRow, error)
+	ListWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg ListWorkflowPlaybookProgressParams) ([][]byte, error)
 	ListWorkflowResumes(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowRunResume, error)
 	ListWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListWorkflowScheduleCandidatesParams) ([]ListWorkflowScheduleCandidatesRow, error)
 	ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowScheduleCursor, error)
@@ -1954,6 +1982,7 @@ type Querier interface {
 	LockDeploymentTrafficApp(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error)
+	LockDueReadinessReminderNotifications(ctx context.Context, db DBTX, arg LockDueReadinessReminderNotificationsParams) ([]CustomerWorkflowReadinessNotification, error)
 	LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error
 	LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
 	LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error)
@@ -2048,6 +2077,9 @@ type Querier interface {
 	LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationSpec(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationSpecParams) (LockProjectEnvironmentQueuePreparationSpecRow, error)
 	LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX, arg LockPromotionFeatureFlagCustomerParams) (pgtype.UUID, error)
+	LockReadinessNotification(ctx context.Context, db DBTX, arg LockReadinessNotificationParams) ([]byte, error)
+	LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
+	LockReadinessSubscriptionLease(ctx context.Context, db DBTX, arg LockReadinessSubscriptionLeaseParams) (pgtype.UUID, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.
@@ -2566,6 +2598,7 @@ type Querier interface {
 	PruneProfileCanaryChecks(ctx context.Context, db DBTX, arg PruneProfileCanaryChecksParams) error
 	PruneProfileDeploymentChecks(ctx context.Context, db DBTX, arg PruneProfileDeploymentChecksParams) error
 	PruneProfilePeriodicMonitors(ctx context.Context, db DBTX, arg PruneProfilePeriodicMonitorsParams) error
+	PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
@@ -3174,6 +3207,18 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	// The two busiest identified consumers of each route with their peak minute.
+	// The consumer join validates ownership; it never infers one from today's link.
+	RouteAdviceConsumers(ctx context.Context, db DBTX, arg RouteAdviceConsumersParams) ([]RouteAdviceConsumersRow, error)
+	// Route advisor reads (ADR-976). Retained debugger telemetry only; nothing
+	// here touches the usage ledger. Route labels are "METHOD /template".
+	// The busiest routes of an app across deployments. The cache estimate buckets
+	// anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first
+	// request of a window fills the cache, the rest are hits, and a cold boot
+	// that is not first in its window is a wake the cache would have avoided.
+	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
+	// Requests one consumer sent above a per-minute allowance on one route.
+	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
@@ -3233,6 +3278,9 @@ type Querier interface {
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
 	ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error)
 	ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error)
+	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	// Billable RAM of live instances against the active nodes' admission ceilings.
+	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	SetAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg SetAppSecretRuntimeProcessParams) (int64, error)
 	// Runtime-base generation identity (ADR-736).
@@ -3275,7 +3323,9 @@ type Querier interface {
 	SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg SetOutboundBindingProbePolicyParams) (pgtype.UUID, error)
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)
+	SetRoutePriorities(ctx context.Context, db DBTX, arg SetRoutePrioritiesParams) (SetRoutePrioritiesRow, error)
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
+	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
@@ -3430,6 +3480,7 @@ type Querier interface {
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error
 	UpdatePromotionFeatureFlagReceipt(ctx context.Context, db DBTX, arg UpdatePromotionFeatureFlagReceiptParams) (pgtype.UUID, error)
+	UpdateReadinessNotification(ctx context.Context, db DBTX, arg UpdateReadinessNotificationParams) (int64, error)
 	UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg UpdateRoutePolicyRuleActionParams) (int64, error)
 	// ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 	// OTLP/HTTP handler coalesces incoming batches for the same trace_id
@@ -3466,6 +3517,7 @@ type Querier interface {
 	// ListEnabledTriggers uses (filter_criteria is part of the
 	// Trigger struct since commit 6 of issue #757 mega-PR).
 	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error)
+	UpdateWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg UpdateWorkflowPlaybookProgressParams) (int64, error)
 	// Replay admissions update fairness without rewriting the scheduler cursor's
 	// last outcome or nominal schedule time.
 	UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateWorkflowScheduleLastAdmittedAtParams) (int64, error)
@@ -3561,6 +3613,9 @@ type Querier interface {
 	WorkflowDispatchCapacityAvailable(ctx context.Context, db DBTX, arg WorkflowDispatchCapacityAvailableParams) (bool, error)
 	WorkflowEventReplayPreviewApp(ctx context.Context, db DBTX, arg WorkflowEventReplayPreviewAppParams) (WorkflowEventReplayPreviewAppRow, error)
 	WorkflowEventReplayPreviewCandidates(ctx context.Context, db DBTX, arg WorkflowEventReplayPreviewCandidatesParams) ([]WorkflowEventReplayPreviewCandidatesRow, error)
+	WorkflowFailureEligibilityNext(ctx context.Context, db DBTX, arg WorkflowFailureEligibilityNextParams) (WorkflowFailureEligibilityNextRow, error)
+	WorkflowFailureEligibilityParent(ctx context.Context, db DBTX, arg WorkflowFailureEligibilityParentParams) (WorkflowFailureEligibilityParentRow, error)
+	WorkflowFailureEligibilitySave(ctx context.Context, db DBTX, arg WorkflowFailureEligibilitySaveParams) error
 	WorkflowForEachStartAllowed(ctx context.Context, db DBTX, arg WorkflowForEachStartAllowedParams) (bool, error)
 	WorkflowGenerationCurrent(ctx context.Context, db DBTX, arg WorkflowGenerationCurrentParams) (bool, error)
 	WorkflowGuardOutputs(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowGuardOutputsRow, error)
@@ -3571,8 +3626,82 @@ type Querier interface {
 	WorkflowOutboundCompletionCurrent(ctx context.Context, db DBTX, arg WorkflowOutboundCompletionCurrentParams) (bool, error)
 	WorkflowOutboundSigningKey(ctx context.Context, db DBTX) (WorkflowOutboundSigningKeyRow, error)
 	WorkflowOutboundStartCurrent(ctx context.Context, db DBTX, arg WorkflowOutboundStartCurrentParams) (bool, error)
+	WorkflowRecoveryActionReceiptCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
+	WorkflowRecoveryActionReceiptGet(ctx context.Context, db DBTX, arg WorkflowRecoveryActionReceiptGetParams) (WorkflowRecoveryActionReceipt, error)
+	WorkflowRecoveryActionReceiptInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryActionReceiptInsertParams) error
+	WorkflowRecoveryAutomaticApply(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticApplyParams) error
+	WorkflowRecoveryAutomaticBlockedCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBlockedCaptureParams) error
+	WorkflowRecoveryAutomaticBlockedDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBlockedDeferParams) error
+	WorkflowRecoveryAutomaticBlockedNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticBlockedNextRow, error)
+	WorkflowRecoveryAutomaticBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBudgetParams) (WorkflowRecoveryAutomaticBudgetRow, error)
+	WorkflowRecoveryAutomaticChargesPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticChargesPruneParams) error
+	WorkflowRecoveryAutomaticDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticDeferParams) error
+	WorkflowRecoveryAutomaticEvaluate(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticEvaluateParams) error
+	WorkflowRecoveryAutomaticExecutionInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticExecutionInsertParams) error
+	WorkflowRecoveryAutomaticObsolete(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticObsoleteParams) error
+	WorkflowRecoveryAutomaticOperatorAction(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorActionParams) (WorkflowRecoveryPolicyExecution, error)
+	WorkflowRecoveryAutomaticOperatorPolicy(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorPolicyParams) (WorkflowRecoveryAutomaticOperatorPolicyRow, error)
+	WorkflowRecoveryAutomaticOperatorSuppress(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorSuppressParams) error
+	WorkflowRecoveryAutomaticOutstanding(ctx context.Context, db DBTX, appID pgtype.UUID) (WorkflowRecoveryAutomaticOutstandingRow, error)
+	WorkflowRecoveryAutomaticPending(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPendingParams) (WorkflowRecoveryAutomaticPendingRow, error)
+	WorkflowRecoveryAutomaticPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyAdvanceParams) error
+	WorkflowRecoveryAutomaticPolicyClaim(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyClaimParams) (WorkflowRecoveryAutomaticPolicyClaimRow, error)
+	WorkflowRecoveryAutomaticPolicyNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticPolicyNextRow, error)
+	WorkflowRecoveryAutomaticQueue(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueParams) ([]byte, error)
+	WorkflowRecoveryAutomaticQueueApp(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueAppParams) (pgtype.UUID, error)
+	WorkflowRecoveryAutomaticResult(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticResultParams) error
+	WorkflowRecoveryAutomaticSuppress(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticSuppressParams) error
+	WorkflowRecoveryCancellationHistory(ctx context.Context, db DBTX, arg WorkflowRecoveryCancellationHistoryParams) error
+	WorkflowRecoveryClaimExecutionAttention(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryClaimExecutionAttentionRow, error)
+	WorkflowRecoveryDeferExecutionAttention(ctx context.Context, db DBTX, arg WorkflowRecoveryDeferExecutionAttentionParams) error
+	WorkflowRecoveryEnqueueExecutionAttention(ctx context.Context, db DBTX, arg WorkflowRecoveryEnqueueExecutionAttentionParams) error
+	// Native recovery observes only the generation admitted by the owning job.
+	WorkflowRecoveryExecutionObservations(ctx context.Context, db DBTX, arg WorkflowRecoveryExecutionObservationsParams) ([]WorkflowRecoveryExecutionObservationsRow, error)
+	WorkflowRecoveryFailureCaptureStart(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	WorkflowRecoveryFailureEvaluation(ctx context.Context, db DBTX, arg WorkflowRecoveryFailureEvaluationParams) ([]WorkflowRecoveryFailureEvaluationRow, error)
+	WorkflowRecoveryFailureExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryFailureExpireParams) (int64, error)
+	WorkflowRecoveryHealthAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryHealthAdvanceParams) error
+	WorkflowRecoveryHealthClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryHealthClaimRow, error)
+	WorkflowRecoveryHealthIncidentGet(ctx context.Context, db DBTX, appID pgtype.UUID) ([]byte, error)
+	WorkflowRecoveryHealthIncidentSet(ctx context.Context, db DBTX, arg WorkflowRecoveryHealthIncidentSetParams) error
+	WorkflowRecoveryHistory(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryParams) ([][]byte, error)
+	WorkflowRecoveryHistoryAction(ctx context.Context, db DBTX, actionID pgtype.UUID) (WorkflowRecoveryHistoryActionRow, error)
+	WorkflowRecoveryHistoryAppend(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryAppendParams) error
+	WorkflowRecoveryHistoryExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryExpireParams) (int64, error)
+	WorkflowRecoveryHistoryPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryPruneParams) error
+	WorkflowRecoveryHistorySequence(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	WorkflowRecoveryPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyAdvanceParams) error
+	WorkflowRecoveryPolicyBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyBudgetParams) (WorkflowRecoveryPolicyBudgetRow, error)
+	WorkflowRecoveryPolicyChangeJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyChangeJobsParams) ([]pgtype.UUID, error)
+	WorkflowRecoveryPolicyClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryPolicyClaimRow, error)
+	WorkflowRecoveryPolicyControl(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyControlParams) (WorkflowRecoveryPolicyControlRow, error)
+	WorkflowRecoveryPolicyControlAudit(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowRecoveryPolicyControlAuditRow, error)
+	WorkflowRecoveryPolicyEvaluationExecutions(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyEvaluationExecutionsParams) ([][]byte, error)
+	WorkflowRecoveryPolicyEvaluationReviews(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyEvaluationReviewsParams) ([]WorkflowRecoveryPolicyEvaluationReviewsRow, error)
+	WorkflowRecoveryPolicyGet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyGetParams) (WorkflowRecoveryPolicy, error)
+	WorkflowRecoveryPolicyJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyJobsParams) ([]pgtype.UUID, error)
+	WorkflowRecoveryPolicyReviewCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	WorkflowRecoveryPolicyReviewDecide(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewDecideParams) ([]byte, error)
+	WorkflowRecoveryPolicyReviewGet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewGetParams) ([]byte, error)
+	WorkflowRecoveryPolicyReviewInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewInsertParams) (int64, error)
+	WorkflowRecoveryPolicyReviews(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewsParams) ([]WorkflowRecoveryPolicyReviewsRow, error)
+	WorkflowRecoveryPolicySet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicySetParams) (WorkflowRecoveryPolicy, error)
+	WorkflowRecoveryPolicyTargetInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyTargetInsertParams) error
+	WorkflowRecoveryPolicyTargets(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyTargetsParams) ([]WorkflowRecoveryPolicyTargetsRow, error)
+	WorkflowRecoveryPolicyUpdate(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyUpdateParams) (WorkflowRecoveryPolicy, error)
+	WorkflowRecoveryReviewCompletionCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewCompletionCaptureParams) error
+	WorkflowRecoveryReviewCompletionClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryReviewCompletionClaimRow, error)
+	WorkflowRecoveryReviewCompletionDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewCompletionDeferParams) error
+	WorkflowRecoveryReviewNotificationCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationCaptureParams) error
+	WorkflowRecoveryReviewNotificationClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryReviewNotificationClaimRow, error)
+	WorkflowRecoveryReviewNotificationDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationDeferParams) error
+	WorkflowRecoveryReviewNotificationEnqueue(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationEnqueueParams) error
+	WorkflowRecoveryReviewNotificationInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationInsertParams) error
+	WorkflowRecoveryReviewNotificationReceivers(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationReceiversParams) ([]pgtype.UUID, error)
 	WorkflowResumeHasRunningAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
 	WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowResumeStepsRow, error)
+	WorkflowRunRecoveryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryCandidateParams) (WorkflowRunRecoveryCandidateRow, error)
+	WorkflowRunRecoveryRetryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryRetryCandidateParams) (WorkflowRunRecoveryRetryCandidateRow, error)
 	WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error)
 	WriteCanaryRouteGate(ctx context.Context, db DBTX, arg WriteCanaryRouteGateParams) error
 	WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error)

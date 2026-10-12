@@ -61,15 +61,22 @@ custom success-body counters have moved to `X-Gregale-Accepted-Spans`.
 
 ## Deployment identity
 
-Every wake, restore, and migration stamps the workload with reserved
-`FAAS_*` variables. They are platform-owned and cannot be overridden by an
-image environment variable, app env row, or secret:
+Every instance starts its workload with reserved `FAAS_*` variables. They
+are platform-owned and cannot be overridden by an image environment variable,
+app env row, or secret:
 
 `FAAS_APP_ID`, `FAAS_DEPLOYMENT_ID`, `FAAS_TENANT_ID`,
 `FAAS_INSTANCE_ID`, `FAAS_NODE_ID`, `FAAS_REGION`, `FAAS_COMMIT_SHA`,
 `FAAS_DEPLOYMENT_TAG`, `FAAS_DEPLOYMENT_CREATED_AT` (RFC 3339), and
 `FAAS_IMAGE_DIGEST` when the deployment has an immutable image/artifact
 digest.
+
+A process's environment is fixed when it starts, so an instance woken from a
+snapshot keeps the values of the instance that booted the workload. The app,
+deployment, tenant, commit, tag, created-at and image values stay correct
+because a snapshot belongs to one deployment, but `FAAS_INSTANCE_ID` and
+`FAAS_NODE_ID` can name an earlier instance or another node. Read the serving
+instance and node from the per-request headers below instead.
 
 The gateway also forwards the request-scoped `X-Faas-Request-Id`, app,
 deployment, tenant, instance, node, region, commit, deployment-tag,

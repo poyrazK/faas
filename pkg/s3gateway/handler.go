@@ -400,7 +400,10 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	if len(parts) == 1 {
+	// "/bucket/" is the bucket itself: S3 has no empty key, and AWS SDK for
+	// JavaScript v3 sends every path-style bucket operation (ListObjectsV2,
+	// GetBucketVersioning, ...) with that trailing slash (H9-132).
+	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])
@@ -986,6 +989,10 @@ func copyObjectHeaders(dst, src http.Header) {
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
+		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed", "The destination does not satisfy the write condition.", resource, req.requestID)
+		return
+	}
 	if errors.Is(err, state.ErrObjectBucketWriteFenced) {
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Bucket writes are temporarily paused for checkpoint capture.", resource, req.requestID)
 		return

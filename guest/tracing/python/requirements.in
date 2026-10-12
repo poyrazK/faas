@@ -1,4 +1,4 @@
-# Top-level pins for managed Python request tracing (ADR-934). Regenerate
+# Top-level pins for managed Python request tracing (ADR-958). Regenerate
 # requirements.txt (with hashes for every transitive wheel) after changing
 # this file; runner images install with --require-hashes --only-binary=:all:.
 opentelemetry-distro==0.65b0

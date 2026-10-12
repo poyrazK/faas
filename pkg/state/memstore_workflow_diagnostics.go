@@ -34,12 +34,16 @@ func (m *MemStore) workflowRecoveryTargetLocked(run WorkflowRun) workflowRecover
 func (m *MemStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDiagnosticsOptions) (api.WorkflowRunDiagnosticsResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.workflowRunDiagnosticsLocked(ctx, opts)
+}
+
+func (m *MemStore) workflowRunDiagnosticsLocked(ctx context.Context, opts WorkflowDiagnosticsOptions) (api.WorkflowRunDiagnosticsResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return api.WorkflowRunDiagnosticsResponse{}, err
 	}
 	run, ok := m.workflowRuns[opts.RunID]
 	app, appOK := m.apps[run.AppID]
-	if !ok || !appOK || app.AccountID != opts.AccountID || opts.PlatformTenantID != "" && run.PlatformTenantID != opts.PlatformTenantID {
+	if !ok || !appOK || !sameMemUUID(app.AccountID, opts.AccountID) || opts.AppID != "" && !sameMemUUID(run.AppID, opts.AppID) || opts.PlatformTenantID != "" && run.PlatformTenantID != opts.PlatformTenantID {
 		return api.WorkflowRunDiagnosticsResponse{}, ErrWorkflowRunNotFound
 	}
 	now := time.Now().UTC()
@@ -55,6 +59,13 @@ func (m *MemStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowD
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) == nil {
 		outboundErr = m.validateWorkflowOutboundLocked(run.AppID, opts.AccountID, spec)
 	}
-	return buildWorkflowRunDiagnostics(run, m.workflowSteps[run.ID], m.workflowDispatchDeadlineLocked(run), now,
-		m.workflowDispatchOccupancyLocked(now), target, running, outboundErr), nil
+	result := buildWorkflowRunDiagnostics(run, m.workflowSteps[run.ID], m.workflowDispatchDeadlineLocked(run), now,
+		m.workflowDispatchOccupancyLocked(now), target, running, outboundErr)
+	if _, linked := m.operationForWorkflowLocked(run.ID); linked {
+		for i := range result.Steps {
+			result.Steps[i].RetryEligible = false
+			result.Steps[i].RetryReopenedSteps = nil
+		}
+	}
+	return result, nil
 }

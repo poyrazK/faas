@@ -62,7 +62,16 @@ func (h *Handler) resolveReadVersion(w http.ResponseWriter, r *http.Request, req
 func (h *Handler) presignGatewayRead(r *http.Request, req requestContext, key, native string) (objectstorage.SignedRequest, error) {
 	mode := headerOrQueryValue(r, "x-amz-checksum-mode")
 	if native != "" {
-		return req.provider.(objectstorage.VersionReadPresigner).PresignVersionRead(r.Context(), req.bucket.PhysicalName, r.Method, key, native, mode == "ENABLED", 60)
+		presigner := req.provider.(objectstorage.VersionReadPresigner)
+		signed, err := presigner.PresignVersionRead(r.Context(), req.bucket.PhysicalName, r.Method, key, native, mode == "ENABLED", 60)
+		if mode == "ENABLED" && errors.Is(err, objectstorage.ErrUnsupported) {
+			// Same rule as current-version reads: S3 permits a successful
+			// response without a checksum when none is available. AWS SDKs send
+			// x-amz-checksum-mode: ENABLED on every GET by default, so refusing
+			// here made every SDK version read 501 on GCS (H9-143).
+			return presigner.PresignVersionRead(r.Context(), req.bucket.PhysicalName, r.Method, key, native, false, 60)
+		}
+		return signed, err
 	}
 	return presignChecksumRead(r.Context(), req.provider, req.bucket.PhysicalName, r.Method, key, mode)
 }

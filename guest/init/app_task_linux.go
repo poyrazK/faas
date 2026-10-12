@@ -31,6 +31,7 @@ const (
 	appTaskManifestKind                = "app_task"
 	appTaskManifestVersion             = 1
 	appTaskTerminationGrace            = 2 * time.Second
+	appTaskResultDeliveryGrace         = 5 * time.Second
 )
 
 type appTaskManifest struct {
@@ -59,20 +60,7 @@ func validateAppTaskManifest(data []byte) error {
 }
 
 func listenAppTaskHook() (net.Listener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock socket: %w", err)
-	}
-	addr := &unix.SockaddrVM{CID: VsockAppTaskBindCID, Port: VsockAppTaskPort}
-	if err := unix.Bind(fd, addr); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock bind port %d: %w", VsockAppTaskPort, err)
-	}
-	if err := unix.Listen(fd, 1); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock listen: %w", err)
-	}
-	return newFDListener(fd, vsockAddr{port: VsockAppTaskPort}), nil
+	return listenGuestVsock(VsockAppTaskPort)
 }
 
 func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler, interactive apptaskproto.InteractiveHandler) error {
@@ -84,24 +72,32 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 		return fmt.Errorf("app task vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	serveErr := apptaskproto.ServeSession(ctx, conn, handler, interactive)
-	awaitAppTaskHostClose(conn, appTaskHostCloseWait)
-	return serveErr
+	if err := apptaskproto.ServeSession(ctx, conn, handler, interactive); err != nil {
+		return err
+	}
+	return awaitAppTaskHostClose(ctx, conn)
 }
 
-// appTaskHostCloseWait bounds how long the guest waits for the host to close
-// the session after the result frame.
-const appTaskHostCloseWait = 3 * time.Second
-
-// awaitAppTaskHostClose holds the guest until the host closes the connection
-// (or wait elapses). A vsock write only queues bytes: powering off right
-// after writing the result frame can drop it before the host reads it. The
-// host closes as soon as it has the result.
-func awaitAppTaskHostClose(conn net.Conn, wait time.Duration) {
-	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
-		return
+// A successful vsock write only queues the terminal frame. Powering off here
+// can discard it before the host reads it. The one-shot host closes its session
+// after consuming the result; wait for that close before halting the guest.
+// A missing or stalled host must still leave this disposable VM bounded.
+// An interactive (ADR-958) host may still have stdin frames in flight when the
+// result is written, so trailing bytes are discarded rather than treated as a
+// reason to halt before the host has read the result.
+func awaitAppTaskHostClose(ctx context.Context, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	_, _ = io.Copy(io.Discard, conn)
+	deliveryCtx, cancel := context.WithTimeout(ctx, appTaskResultDeliveryGrace)
+	defer cancel()
+	stop := context.AfterFunc(deliveryCtx, func() { _ = conn.Close() })
+	defer stop()
+	_, err := io.Copy(io.Discard, conn)
+	if contextErr := deliveryCtx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
 }
 
 var poweroffAppTask = func() error {
@@ -120,6 +116,9 @@ func runAppTaskGuest(log *slog.Logger) error {
 	}
 	if err := startEventPublishProxy(log); err != nil {
 		log.Warn("app task event publish proxy unavailable", "err", err)
+	}
+	if err := startOutboundRelay(log); err != nil {
+		log.Warn("app task outbound relay unavailable", "err", err)
 	}
 	ln, err := listenAppTaskHook()
 	if err != nil {
@@ -244,6 +243,7 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {

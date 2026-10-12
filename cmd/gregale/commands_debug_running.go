@@ -48,7 +48,11 @@ func cmdDebugRunning(args []string) int {
 
 func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse) {
 	_, _ = fmt.Fprintf(w, "Why is %s running?\n", slug)
-	if resp.CurrentObservedAt == "" {
+	if resp.CurrentObservedAt == "" && len(resp.History) > 0 {
+		// History without a current observation means no instance is live:
+		// the app is parked, not unobserved.
+		_, _ = fmt.Fprintln(w, "No instance is running now; earlier observations follow.")
+	} else if resp.CurrentObservedAt == "" {
 		_, _ = fmt.Fprintln(w, "No scheduler observation is available in the selected window.")
 	} else {
 		_, _ = fmt.Fprintf(w, "Observed at %s\n", resp.CurrentObservedAt)

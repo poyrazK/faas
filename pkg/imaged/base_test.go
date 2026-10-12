@@ -160,6 +160,25 @@ func TestStatefulBaseImageDenylist_AllKeysHaveHint(t *testing.T) {
 // Companion to TestResolveParentRef_HonorsEnvOverride in
 // base_stage_test.go (startup path). Together they pin the full set
 // of per-runtime env-override consumers.
+// ADR-987: binary resolves to go124's base, honouring go124's operator
+// override, so builderd and imaged agree on one immutable base.
+func TestResolveDeployBaseRef_BinaryUsesGo124Base(t *testing.T) {
+	const goRef = "registry.example.com/runner-go124@sha256:81d93757457f988523814ae0009837ae893f38d3fe123f2c37896f118b4c7804"
+	got, err := resolveDeployBaseRef(RuntimeBinary, func(key string) string {
+		if key == "FAAS_DEPLOY_BASE_REF_GO124" {
+			return goRef
+		}
+		return ""
+	})
+	if err != nil || got != goRef {
+		t.Fatalf("resolveDeployBaseRef(binary) = (%q, %v), want go124's override %q", got, err, goRef)
+	}
+	got, err = resolveDeployBaseRef(RuntimeBinary, func(string) string { return "" })
+	if err != nil || got != BaseRefGo124 {
+		t.Fatalf("resolveDeployBaseRef(binary) = (%q, %v), want %q", got, err, BaseRefGo124)
+	}
+}
+
 func TestResolveDeployBaseRef_PerRuntimeEnvOverride(t *testing.T) {
 	const overrideRef = "mirror.gcr.io/library/node@sha256:81d93757457f988523814ae0009837ae893f38d3fe123f2c37896f118b4c7804"
 	const parentRef = "mirror.gcr.io/library/debian@sha256:81d93757457f988523814ae0009837ae893f38d3fe123f2c37896f118b4c7804"

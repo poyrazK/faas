@@ -876,11 +876,10 @@ const (
 	// NotifyTrustedSignerChanged {"app_id":uuid, "signer":"...",
 	//                              "kind":"upserted|deleted"}
 	//   apid → imaged (issue #472 / ADR-054): a row was written or
-	//   removed from app_trusted_signers. imaged refreshes its
-	//   in-memory cache of /etc/faas/secrets/trusted-publishers/ so
-	//   a freshly-onboarded publisher takes effect on the NEXT
-	//   deploy without an imaged restart. The pg_notify payload is
-	//   informational — the on-disk dir is the source of truth.
+	//   removed from app_trusted_signers. imaged reads that table on
+	//   every verify, so the notify only triggers revalidation of live
+	//   signed images (ADR-058 amendment). The payload is informational
+	//   — the table is the source of truth.
 	NotifyTrustedSignerChanged = "trusted_signer_changed"
 	// NotifyAuditEvent {"outbox_id":N, "kind":"app.signature_missing|...",
 	//                    "app_id":uuid, "deployment_id":uuid,

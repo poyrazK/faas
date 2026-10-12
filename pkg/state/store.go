@@ -23,7 +23,7 @@ var ErrNotFound = errors.New("state: not found")
 
 // ErrRequestTelemetryRowNotFound reports that a spans summary arrived before
 // (or without) the request_telemetry row it enriches. Producers retry it on
-// their next flush instead of treating the write as delivered (ADR-934).
+// their next flush instead of treating the write as delivered (ADR-958).
 var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
 
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most
@@ -234,6 +234,10 @@ var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
 // to change traffic while the app has a live, in-flight managed canary. The
 // rollout state machine owns traffic until the canary completes or aborts.
 var ErrTrafficChangeDuringCanary = errors.New("state: traffic change blocked during active canary")
+
+// ErrMCPTaskCompatibilityGate means a stable cutover would retire the last
+// worker that can claim at least one queued MCP handler version.
+var ErrMCPTaskCompatibilityGate = errors.New("state: MCP task compatibility rollout gate blocked cutover")
 
 // sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
 // dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
@@ -999,6 +1003,15 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
+	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
+	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)
+	RetryMCPTaskPromotionRecovery(context.Context, string, string) error
+	MCPTaskPromotionHoldAgeSeconds(context.Context, string, string, time.Time) (float64, error)
+	MarkMCPTaskRecoveryDeploymentLive(context.Context, string, bool) error
+	ReconcileObsoleteMCPTaskHolds(context.Context, string) ([]Deployment, error)
+	DeploymentWorkerDrainStatus(context.Context, string) (*DeploymentWorkerDrainStatus, error)
+	MCPTaskPromotionHold(context.Context, string) (*MCPTaskPromotionHold, error)
 	// Boot and restore read one owned configuration/secret snapshot.
 	RuntimeAppValuesStore
 	RuntimeScalingStateStore
@@ -1891,6 +1904,10 @@ type Store interface {
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
 	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	// ScenarioTestDNSChaosByHostIP returns an active run policy only when a
+	// live guest address belongs to a registered test member and the target is
+	// in that same run. The source identity is checked in the same lookup.
+	ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, hostIP, targetWorkload string) (ScenarioTestDNSChaosPolicy, error)
 	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
 	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
@@ -4290,6 +4307,13 @@ type Store interface {
 	// DeleteCustomMetric removes one gauge by name so a customer can
 	// retire a metric without waiting for the app to be deleted.
 	DeleteCustomMetric(ctx context.Context, appID, name string) error
+	// PutMCPTaskCompatibilityReport replaces the app's bounded aggregate
+	// handler-version snapshot. It contains counts only, with no task IDs or
+	// payloads; observedAt is assigned by apid when it accepts the report.
+	PutMCPTaskCompatibilityReport(ctx context.Context, appID string, report MCPTaskCompatibilityReport) error
+	// GetMCPTaskCompatibilityReport returns the last accepted snapshot or
+	// ErrNotFound when the observer has not published one yet.
+	GetMCPTaskCompatibilityReport(ctx context.Context, appID string) (MCPTaskCompatibilityReport, error)
 	// QueueStateForQueue returns the same live counters scoped to one named
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.

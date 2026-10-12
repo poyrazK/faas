@@ -306,3 +306,13 @@ func linkedDefaultAppName(start string) (string, error) {
 	}
 	return app, nil
 }
+
+// resolveSecretApp shares the linked-app rules used by env push while adding
+// an actionable error for commands that require exactly one target.
+func resolveSecretApp(explicit string) (string, error) {
+	app, err := resolveAppFlagOrContext(explicit)
+	if err != nil {
+		return "", fmt.Errorf("%w; pass --app <slug> or run gregale link <project-slug> --app <slug>", err)
+	}
+	return app, nil
+}

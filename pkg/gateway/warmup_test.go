@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -34,58 +35,63 @@ func (f *fakeProber) Probe(_ context.Context, slug string) error {
 
 func (f *fakeProber) CallCount() int64 { return f.count.Load() }
 
+// Keep these in-process interval tests independent of host scheduling pauses.
 func TestWarmupLoop_RunsOnInterval(t *testing.T) {
-	p := &fakeProber{}
-	loop := &WarmupLoop{
-		Prober:       p,
-		Interval:     10 * time.Millisecond,
-		ProbeTimeout: 5 * time.Millisecond,
-		Slugs:        func() []string { return []string{"app-a", "app-b"} },
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Millisecond)
-	defer cancel()
-	if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want DeadlineExceeded", err)
-	}
-	// ~5 ticks (initial + 5 intervals inside 55ms) × 2 apps.
-	got := p.CallCount()
-	if got < 8 || got > 14 {
-		t.Errorf("expected 8..14 probes, got %d", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p := &fakeProber{}
+		loop := &WarmupLoop{
+			Prober:       p,
+			Interval:     10 * time.Millisecond,
+			ProbeTimeout: 5 * time.Millisecond,
+			Slugs:        func() []string { return []string{"app-a", "app-b"} },
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 55*time.Millisecond)
+		defer cancel()
+		if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run returned %v, want DeadlineExceeded", err)
+		}
+		// Initial probe plus five interval ticks inside 55ms, each with two apps.
+		got := p.CallCount()
+		if got != 12 {
+			t.Errorf("expected 12 probes across initial and interval ticks, got %d", got)
+		}
+	})
 }
 
 func TestWarmupLoop_ProbeFailuresSwallowed(t *testing.T) {
-	p := &fakeProber{errs: map[string]error{
-		"app-a": errors.New("503"),
-	}}
-	var seen []string
-	var mu sync.Mutex
-	loop := &WarmupLoop{
-		Prober:       p,
-		Interval:     10 * time.Millisecond,
-		ProbeTimeout: 5 * time.Millisecond,
-		Slugs:        func() []string { return []string{"app-a"} },
-		OnError: func(slug string, err error) {
-			mu.Lock()
-			seen = append(seen, slug)
-			mu.Unlock()
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
-	defer cancel()
-	if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want DeadlineExceeded", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(seen) == 0 {
-		t.Errorf("OnError never fired for app-a failure")
-	}
-	for _, s := range seen {
-		if s != "app-a" {
-			t.Errorf("OnError called with unexpected slug %q", s)
+	synctest.Test(t, func(t *testing.T) {
+		p := &fakeProber{errs: map[string]error{
+			"app-a": errors.New("503"),
+		}}
+		var seen []string
+		var mu sync.Mutex
+		loop := &WarmupLoop{
+			Prober:       p,
+			Interval:     10 * time.Millisecond,
+			ProbeTimeout: 5 * time.Millisecond,
+			Slugs:        func() []string { return []string{"app-a"} },
+			OnError: func(slug string, err error) {
+				mu.Lock()
+				seen = append(seen, slug)
+				mu.Unlock()
+			},
 		}
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+		defer cancel()
+		if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run returned %v, want DeadlineExceeded", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(seen) != 4 {
+			t.Errorf("expected four app-a probe errors, got %d", len(seen))
+		}
+		for _, s := range seen {
+			if s != "app-a" {
+				t.Errorf("OnError called with unexpected slug %q", s)
+			}
+		}
+	})
 }
 
 func TestWarmupLoop_DefaultsFromAPI(t *testing.T) {
@@ -118,76 +124,91 @@ func TestWarmupLoop_DefaultsFromAPI(t *testing.T) {
 }
 
 func TestWarmupLoop_CtxCancelExits(t *testing.T) {
-	p := &fakeProber{}
-	loop := &WarmupLoop{
-		Prober:       p,
-		Interval:     100 * time.Millisecond,
-		ProbeTimeout: 5 * time.Millisecond,
-		Slugs:        func() []string { return []string{"app-a"} },
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- loop.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Run returned %v, want Canceled", err)
+	synctest.Test(t, func(t *testing.T) {
+		p := &fakeProber{}
+		loop := &WarmupLoop{
+			Prober:       p,
+			Interval:     100 * time.Millisecond,
+			ProbeTimeout: 5 * time.Millisecond,
+			Slugs:        func() []string { return []string{"app-a"} },
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("Run did not exit within 100ms after cancel")
-	}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- loop.Run(ctx) }()
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Run returned %v, want Canceled", err)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("Run did not exit within 100ms after cancel")
+		}
+	})
 }
 
 func TestWarmupLoop_NilSlugsIsNoop(t *testing.T) {
-	p := &fakeProber{}
-	loop := &WarmupLoop{
-		Prober:       p,
-		Interval:     10 * time.Millisecond,
-		ProbeTimeout: 5 * time.Millisecond,
-		// Slugs intentionally nil — the loop's Run() must
-		// default to a no-op so PR-A's bare-metal fixture
-		// doesn't have to wire one.
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want DeadlineExceeded", err)
-	}
-	if p.CallCount() != 0 {
-		t.Errorf("nil Slugs must not probe, got %d calls", p.CallCount())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p := &fakeProber{}
+		loop := &WarmupLoop{
+			Prober:       p,
+			Interval:     10 * time.Millisecond,
+			ProbeTimeout: 5 * time.Millisecond,
+			// Slugs intentionally nil — the loop's Run() must
+			// default to a no-op so PR-A's bare-metal fixture
+			// doesn't have to wire one.
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+		defer cancel()
+		if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run returned %v, want DeadlineExceeded", err)
+		}
+		if p.CallCount() != 0 {
+			t.Errorf("nil Slugs must not probe, got %d calls", p.CallCount())
+		}
+	})
 }
 
 func TestWarmupLoop_ShrinkingSlugs(t *testing.T) {
-	// Slugs returns a shrinking list across ticks — the loop
-	// must not panic on a nil element and must not re-probe
-	// previously-seen slugs that have since been removed.
-	p := &fakeProber{}
-	var tickCount atomic.Int64
-	loop := &WarmupLoop{
-		Prober:       p,
-		Interval:     10 * time.Millisecond,
-		ProbeTimeout: 5 * time.Millisecond,
-		Slugs: func() []string {
-			n := tickCount.Add(1)
-			switch n {
-			case 1:
-				return []string{"app-a", "app-b"}
-			case 2:
-				return []string{"app-a"} // app-b removed
-			default:
-				return nil // empty after that
-			}
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
-	defer cancel()
-	if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want DeadlineExceeded", err)
-	}
-	if p.CallCount() < 2 {
-		t.Errorf("expected >= 2 probes across shrinking slugs, got %d", p.CallCount())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		// Slugs returns a shrinking list across ticks — the loop
+		// must use the current list, handle an empty list, and stop
+		// probing slugs that have been removed.
+		p := &fakeProber{}
+		var tickCount atomic.Int64
+		loop := &WarmupLoop{
+			Prober:       p,
+			Interval:     10 * time.Millisecond,
+			ProbeTimeout: 5 * time.Millisecond,
+			Slugs: func() []string {
+				n := tickCount.Add(1)
+				switch n {
+				case 1:
+					return []string{"app-a", "app-b"}
+				case 2:
+					return []string{"app-a"} // app-b removed
+				default:
+					return nil // empty after that
+				}
+			},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+		defer cancel()
+		if err := loop.Run(ctx); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run returned %v, want DeadlineExceeded", err)
+		}
+		if got := tickCount.Load(); got != 4 {
+			t.Fatalf("expected four slug-list reads, got %d", got)
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		calls := make(map[string]int)
+		for _, slug := range p.calls {
+			calls[slug]++
+		}
+		if len(p.calls) != 3 || calls["app-a"] != 2 || calls["app-b"] != 1 {
+			t.Errorf("unexpected probes across shrinking slugs: %v", p.calls)
+		}
+	})
 }

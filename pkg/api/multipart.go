@@ -75,9 +75,17 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.DisableStartupCPUBoost != nil {
 		_ = w.WriteField("disable_startup_cpu_boost", fmt.Sprintf("%t", *a.DisableStartupCPUBoost))
 	}
+	if a.MCPTaskMigrationOverride {
+		_ = w.WriteField("mcp_task_migration_override", "true")
+	}
 	if a.Healthcheck != nil {
 		if raw, err := json.Marshal(a.Healthcheck); err == nil {
 			_ = w.WriteField("healthcheck", string(raw))
+		}
+	}
+	if len(a.OverrideEnv) > 0 {
+		if raw, err := json.Marshal(a.OverrideEnv); err == nil {
+			_ = w.WriteField("override_env", string(raw))
 		}
 	}
 	if a.NoTriggers {
@@ -152,12 +160,18 @@ type DeployAnnotations struct {
 	// Rollout options share this transport envelope so local directory,
 	// tarball, developer-source, and source-ref deploys preserve the same
 	// semantics as image JSON deploys. The pointer preserves explicit zero.
-	TrafficPercent         *int
-	Canary                 *CanaryPresetSpec
-	RollbackOn5xx          *bool
-	DisableStartupCPUBoost *bool
-	Healthcheck            *DeploymentHealthcheck
-	NoTriggers             bool // skip manifest trigger reconciliation
+	TrafficPercent           *int
+	Canary                   *CanaryPresetSpec
+	MCPTaskMigrationOverride bool
+	RollbackOn5xx            *bool
+	DisableStartupCPUBoost   *bool
+	Healthcheck              *DeploymentHealthcheck
+	// OverrideEnv applies non-secret environment values to this deployment
+	// revision only on multipart source/developer-source transports. The
+	// source-ref JSON request has a separate, explicit shape. Use the sealed
+	// app-secret surface for credentials.
+	OverrideEnv map[string]string
+	NoTriggers  bool // skip manifest trigger reconciliation
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {

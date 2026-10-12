@@ -95,6 +95,9 @@ type Loop struct {
 	// for now we never rebuild within a process lifetime.
 	triggerPollersMu sync.Mutex
 	triggerPollers   map[string]triggerSource
+	// queuePushLanes holds each push-queue trigger's lane allowance
+	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
+	queuePushLanes queuePushLaneAllowance
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and
 	// previous identities coexist here during host-key rotation.
@@ -447,6 +450,8 @@ type InstanceStatsPoller interface {
 type InstanceActivity struct {
 	Inflight    int64
 	LastRequest time.Time
+	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
+	ResidentMB int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -2552,6 +2557,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				LastRequest:  lastRequest,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
+				AppType:      string(a.Type),
 				NodeID:       ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           a.EffectiveMinInstances(),
@@ -2712,6 +2718,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.runReaperAggressive(ctx, apps, snapshot, instanceToApp, cooldownHeldByApp, now)
 	}
 
+	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
 		if err := l.engine.Evict(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
@@ -2838,14 +2845,15 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // drainSupersededReaperRows repairs a superseded deployment's drain when the
 // deployment_changed notification was missed or its park failed (production-us
 // hunt #8: superseded instances stayed resident and billed until the idle
-// timeout). The rows leave the snapshot so the idle and pressure selectors do
-// not act on the same instances in this tick.
+// timeout). Instances of cancelled or failed deployments are evicted the same
+// way (hunt #9). The rows leave the snapshot so the idle and pressure
+// selectors do not act on the same instances in this tick.
 func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []InstanceInfo) []InstanceInfo {
 	kept := snapshot[:0]
 	drained := map[string]struct{}{}
 	for _, row := range snapshot {
 		switch {
-		case !row.DeploymentSuperseded:
+		case !row.DeploymentSuperseded && !row.DeploymentEnded:
 			kept = append(kept, row)
 			continue
 		case row.State != state.StateRunning && row.State != state.StateWaking && row.State != state.StateColdBooting:
@@ -2858,9 +2866,9 @@ func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []Instanc
 			continue
 		}
 		drained[row.DeploymentID] = struct{}{}
-		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID)
+		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID, "ended", row.DeploymentEnded)
 		drainCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
-		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, true)
+		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, !row.DeploymentEnded)
 		cancel()
 	}
 	return kept
@@ -4980,4 +4988,43 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
+// ceiling (ADR-909). It runs only under measured admission: otherwise each
+// VM's memory.max keeps a node's memory under its reservations. A node
+// without a fresh vmmd capacity report is skipped.
+func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
+	ledger := l.engine.Ledger()
+	if !ledger.MeasuredAdmissionEnabled() {
+		return
+	}
+	used, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
+			continue
+		}
+		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
+		if !ok {
+			continue
+		}
+		used[in.NodeID] = int(report.UsedMB)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	resident := make(map[string]int, len(activity))
+	for id, a := range activity {
+		resident[id] = a.ResidentMB
+	}
+	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
+		if err := l.engine.Evict(ctx, id); err != nil {
+			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
+			continue
+		}
+		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
+				counter.Inc()
+			}
+		}
+	}
 }

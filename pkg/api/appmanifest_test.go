@@ -284,6 +284,26 @@ func TestManifestValidate(t *testing.T) {
 			ExecutionMode:  ExecutionModeWorker,
 			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
 		}, true},
+		{"worker_replicas scale-to-zero MCP tasks require observer", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
+		}, false},
+		{"worker_replicas scale-to-zero MCP tasks with observer valid", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "mcp-observer"},
+		}, true},
+		{"worker_replicas observer requires MCP task metric", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: "queue_lag", Target: 4, ObserverAppSlug: "mcp-observer"},
+		}, false},
+		{"worker_replicas observer slug validated", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "invalid_slug"},
+		}, false},
 		{"worker_replicas custom requires name", AppManifest{
 			Entrypoint:     []string{"x"},
 			ExecutionMode:  ExecutionModeWorker,
@@ -688,5 +708,54 @@ func TestPreAuthTargetObservationValidation(t *testing.T) {
 		if err := invalid.Validate(PlanFree); err == nil {
 			t.Fatal("invalid target observation accepted")
 		}
+	}
+}
+
+func TestSuggestPreAuthEnforcement(t *testing.T) {
+	quiet := []PreAuthPolicyObservation{{Kind: "app", WouldBlock: 3, Result4xx: 3}}
+	succeeded := []PreAuthPolicyObservation{
+		{Kind: "app", WouldBlock: 2, Result4xx: 2},
+		{Kind: "route", WouldBlock: 5, Result2xx: 4, Result3xx: 1},
+		{Kind: "failures", WouldBlock: 9, Result2xx: 9}, // not a decision policy
+	}
+	for _, tc := range []struct {
+		name, rng, status string
+		requests          int64
+		policies          []PreAuthPolicyObservation
+		wouldBlock, ok    int64
+	}{
+		{name: "short range", rng: "1h", requests: 1e6, policies: quiet, status: PreAuthSuggestionInsufficientData, wouldBlock: 3},
+		{name: "too little traffic", rng: "24h", requests: PreAuthSuggestionMinRequests - 1, policies: quiet, status: PreAuthSuggestionInsufficientData, wouldBlock: 3},
+		{name: "only failing requests would block", rng: "24h", requests: PreAuthSuggestionMinRequests, policies: quiet, status: PreAuthSuggestionReady, wouldBlock: 3},
+		{name: "nothing would block", rng: "7d", requests: 5000, status: PreAuthSuggestionReady},
+		{name: "successful requests would block", rng: "15d", requests: 5000, policies: succeeded, status: PreAuthSuggestionReview, wouldBlock: 7, ok: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SuggestPreAuthEnforcement(tc.rng, tc.requests, tc.policies)
+			if got.Status != tc.status || got.Requests != tc.requests || got.WouldBlock != tc.wouldBlock ||
+				got.WouldBlockSucceeded != tc.ok || got.Reason == "" {
+				t.Fatalf("suggestion = %+v, want status %s would_block %d succeeded %d", got, tc.status, tc.wouldBlock, tc.ok)
+			}
+		})
+	}
+}
+
+func TestDefaultPreAuthRateLimitObservesWithinEveryPlan(t *testing.T) {
+	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		config := DefaultPreAuthRateLimit(plan)
+		limits, _ := LimitsFor(plan)
+		if config == nil || config.Mode != PreAuthRateLimitObserve || len(config.Routes) != 0 {
+			t.Fatalf("%s default = %+v, want observe-only app-wide guard", plan, config)
+		}
+		if config.RequestsPerSecond != min(PreAuthDefaultRequestsPerSecond, limits.RateLimitRPS) ||
+			config.Burst != min(PreAuthDefaultBurst, limits.RateLimitBurst) {
+			t.Fatalf("%s default = %+v, want plan-clamped defaults", plan, config)
+		}
+		if err := config.Validate(plan); err != nil {
+			t.Fatalf("%s default does not validate: %v", plan, err)
+		}
+	}
+	if DefaultPreAuthRateLimit(Plan("unknown")) != nil {
+		t.Fatal("unknown plan received a default guard")
 	}
 }

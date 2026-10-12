@@ -122,7 +122,7 @@ func TestEdgeRuleValidateAction_Validate_Rejects(t *testing.T) {
 			mutate: func(a *EdgeRuleValidateAction) {
 				a.Schema = json.RawMessage(nil)
 			},
-			wantSub: "schema is required",
+			wantSub: "schema or parameters is required",
 		},
 		{
 			name: "schema-exceeds-64KiB",

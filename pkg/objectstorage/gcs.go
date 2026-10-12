@@ -671,6 +671,9 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 	if r.VersionID != "" {
 		return SignedRequest{}, ErrInvalid
 	}
+	if r.IfMatch != "" || r.IfNoneMatch != "" {
+		return p.PresignConditionalPut(ctx, bucket, r, ObjectWriteConditions{})
+	}
 	return p.presignGCS(ctx, bucket, r, nil)
 }
 

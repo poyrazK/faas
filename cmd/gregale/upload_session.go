@@ -45,6 +45,7 @@ type resumableUploadProgress func(uploaded, total int64)
 // upload commit.
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return (sh == shapeApp || sh == shapeFunction) &&
+		len(ann.OverrideEnv) == 0 &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""
@@ -87,7 +88,7 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
 	}
-	statePath, err := uploadStatePath(slug, archivePath)
+	statePath, err := uploadStatePath(slug, archiveSHA256, optionsSHA256)
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
 	}
@@ -275,13 +276,14 @@ func hashUploadArchive(f *os.File) (string, error) {
 }
 
 func uploadStateMatches(state resumableUploadState, slug, archivePath string, info os.FileInfo, archiveSHA256, optionsSHA256 string) bool {
-	if state.Version != resumableUploadStateVersion || state.UploadID == "" || state.AppSlug != slug || state.APIBase != apiBase() || state.ArchivePath != archivePath || state.ArchiveSize != info.Size() || state.DeployOptionsSHA256 != optionsSHA256 {
+	if state.Version != resumableUploadStateVersion || state.UploadID == "" || state.AppSlug != slug || state.APIBase != apiBase() || state.ArchiveSize != info.Size() || state.DeployOptionsSHA256 != optionsSHA256 {
 		return false
 	}
+	// Identical bytes resume regardless of where this run packed them.
 	if state.ArchiveSHA256 != "" {
 		return strings.EqualFold(state.ArchiveSHA256, archiveSHA256)
 	}
-	return state.ArchiveModTimeUnixNano == info.ModTime().UnixNano()
+	return state.ArchivePath == archivePath && state.ArchiveModTimeUnixNano == info.ModTime().UnixNano()
 }
 
 func validateDiscoveredUpload(state resumableUploadState, remote api.UploadSessionResponse, localSize int64) error {

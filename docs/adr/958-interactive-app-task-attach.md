@@ -18,14 +18,15 @@
 
 `POST /v1/apps/{slug}/tasks` accepts `interactive: true` and optional `tty`.
 apid admits a manual task as before and additionally mints a 32-byte random
-attach token. Only its SHA-256 digest is stored (`app_tasks.attach_token_sha256`);
+attach token. Only its SHA-256 digest is stored, in an
+`app_task_attach_sessions` row inserted in the same statement as the task;
 the plaintext is returned once in the create response and never again. The
 command defaults to `/bin/sh`. Interactive tasks persist no output: their
 stdout/stderr tails stay empty and their output budget is ignored. The task
 timeout is the maximum session length (1..3600 s).
 
 The lifecycle is ADR-230's. After restore, `schedd` marks the task `running`,
-records the node that owns the VM (`attach_node_id`), and calls vmmd's existing
+records the node that owns the VM (`app_task_attach_sessions.node_id`), and calls vmmd's existing
 `ExecuteAppTaskStream` with the interactive fields and the token digest. vmmd
 does not dial the guest yet. It registers a single-use rendezvous for the task
 instance and waits up to the attach window (60 s) for a client:

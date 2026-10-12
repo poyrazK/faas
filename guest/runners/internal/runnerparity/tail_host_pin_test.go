@@ -8,7 +8,7 @@ package runnerparity
 // the tail-events proxy. This test pins the cross-runtime shape:
 // every runner wires the host, every runner reads the same
 // env vars (FAAS_TAIL_WAIT_SEC + FAAS_TAIL_PIPE_PATH), every
-// runner invokes drainTailHost after invokeHandler returns and
+// runner hands them to internal.Serve, which drains the tail after the handler returns and
 // before the response envelope is written.
 //
 // Why a file-walk rather than a per-runtime test: the cross-
@@ -24,8 +24,6 @@ package runnerparity
 // no Go AST parsing needed.
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,96 +32,35 @@ import (
 // guest/runners/<runtime>/ main.go and asserts:
 //
 //  1. main.go reads the FAAS_TAIL_WAIT_SEC + FAAS_TAIL_PIPE_PATH env vars
-//  2. main.go calls drainTailHost(env, &resp) inside handle()
-//  3. tail_host_integration.go defines drainTailHost
-//  4. tail_host_integration.go imports internal.NewTailHost
+//  2. main.go passes them to internal.Serve (WaitUntilSec, TailPipePath)
+//  3. internal/serve.go drains the tail with internal.DrainForResponse, for
+//     a complete response and after a streamed one (ADR-999)
 //
 // A future contributor who adds a new runtime (e.g. ruby) must
 // mirror the same plumbing — the test will fail until they do,
 // pinning the cross-runtime parity claim made in issue #667 §"Rules".
 func TestParity_AllRuntimesHonorWaitUntil(t *testing.T) {
-	root := filepath.Join(runnerRoot, "runners")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read runners dir: %v", err)
-	}
-
-	var checked int
+	mains := runnerMains(t)
+	names := requireRunnersDelegate(t, mains)
 	var missing []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	for _, name := range names {
+		main := mains[name]
+		ok := true
+		for _, want := range []string{"FAAS_TAIL_WAIT_SEC", "FAAS_TAIL_PIPE_PATH", "WaitUntilSec:", "TailPipePath:"} {
+			if !strings.Contains(main, want) {
+				t.Errorf("%s: main.go does not carry %s to internal.Serve — the tail host cannot drain this runner's pipe", name, want)
+				ok = false
+			}
 		}
-		// Skip the shared internal/ helpers package.
-		if e.Name() == "internal" {
-			continue
-		}
-		runnerDir := e.Name()
-		checked++
-
-		// 1. main.go reads the per-plan env vars.
-		mainPath := filepath.Join(root, runnerDir, "main.go")
-		mainSrc, err := os.ReadFile(mainPath)
-		if err != nil {
-			t.Errorf("%s: read main.go: %v", runnerDir, err)
-			continue
-		}
-		main := string(mainSrc)
-		missingEnv := false
-		if !strings.Contains(main, `FAAS_TAIL_WAIT_SEC`) {
-			t.Errorf("%s: main.go does not read FAAS_TAIL_WAIT_SEC — runner cannot thread the per-task ceiling", runnerDir)
-			missingEnv = true
-		}
-		if !strings.Contains(main, `FAAS_TAIL_PIPE_PATH`) {
-			t.Errorf("%s: main.go does not read FAAS_TAIL_PIPE_PATH — runner cannot drain the JSONL pipe", runnerDir)
-			missingEnv = true
-		}
-		// 2. main.go has a handle() that calls drainTailHost.
-		// (`handle(...)` is the canonical name; the call site
-		// is one line inside the post-invokeHandler, pre-write
-		// window — the assertion is just that the call exists.)
-		if !strings.Contains(main, "drainTailHost(") {
-			t.Errorf("%s: main.go does not call drainTailHost — tail host not wired on this runner", runnerDir)
-			missingEnv = true
-		}
-
-		// 3. tail_host_integration.go defines drainTailHost.
-		integrationPath := filepath.Join(root, runnerDir, "tail_host_integration.go")
-		integrationSrc, err := os.ReadFile(integrationPath)
-		if err != nil {
-			t.Errorf("%s: missing tail_host_integration.go (the per-runtime drainTailHost file): %v", runnerDir, err)
-			missingEnv = true
-			continue
-		}
-		integration := string(integrationSrc)
-		if !strings.Contains(integration, "func drainTailHost") {
-			t.Errorf("%s: tail_host_integration.go does not define drainTailHost", runnerDir)
-			missingEnv = true
-		}
-		// 4. tail_host_integration.go imports internal (the
-		// runner-agnostic helpers). Acceptance: either the
-		// shim call internal.NewTailHost + internal.ReadPipe
-		// directly (the v1 shape) OR call internal.DrainForResponse
-		// (the v2 helper that encapsulates both — preferred for
-		// new code; issue #667 review item #11 deduplication).
-		usesDrainForResponse := strings.Contains(integration, "internal.DrainForResponse")
-		usesNewTailHost := strings.Contains(integration, "internal.NewTailHost")
-		usesReadPipe := strings.Contains(integration, "internal.ReadPipe")
-		if !usesDrainForResponse && (!usesNewTailHost || !usesReadPipe) {
-			t.Errorf("%s: tail_host_integration.go must call internal.DrainForResponse OR (internal.NewTailHost + internal.ReadPipe)", runnerDir)
-			missingEnv = true
-		}
-
-		if missingEnv {
-			missing = append(missing, runnerDir)
+		if !ok {
+			missing = append(missing, name)
 		}
 	}
-
-	if checked == 0 {
-		t.Fatal("no runner dirs found under " + root + " — walk path is wrong")
+	if got := strings.Count(serveSource(t), "DrainForResponse("); got < 2 {
+		t.Errorf("internal/serve.go calls DrainForResponse %d times; want both the complete and the streamed response paths", got)
 	}
 	if len(missing) > 0 {
-		t.Fatalf("%d/%d runners missing the waitUntil plumbing: %v", len(missing), checked, missing)
+		t.Fatalf("%d/%d runners missing the waitUntil plumbing: %v", len(missing), len(names), missing)
 	}
-	t.Logf("walked %d runner dirs — all honor waitUntil (drainTailHost + env-var threading + tail_host_integration.go)", checked)
+	t.Logf("walked %d runner dirs — all thread the tail settings into internal.Serve, which drains them", len(names))
 }

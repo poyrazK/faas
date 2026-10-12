@@ -81,7 +81,7 @@ class AppManifest:
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     tracing: TracingConfig | Unset = UNSET
-    """Opt-in zero-config request tracing baked into each deployment (ADR-934). Managed runtimes export database,
+    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
     cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
     OTel exporter are left untouched."""
     env: AppManifestEnv | Unset = UNSET
@@ -219,7 +219,7 @@ class AppManifest:
 
         service_binding_transport: str | Unset = UNSET
         if not isinstance(self.service_binding_transport, Unset):
-            service_binding_transport = self.service_binding_transport
+            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):

@@ -3,9 +3,97 @@ package state
 import (
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/operations"
 )
 
 func validateWorkflowPolicyEvidence(def OperationDefinition, report api.OperationWorkflowStateReport, payloads map[string][]byte) error {
+	if report.FromState != "" && !report.BlockersOnly && !report.DeadlineOnly && !report.OutcomeOnly && !report.DependenciesOnly {
+		for _, step := range def.Spec.WorkflowSteps {
+			if step.Workflow != report.Workflow {
+				continue
+			}
+			for _, edge := range step.Transitions {
+				if edge.From != report.FromState || edge.To != report.State {
+					continue
+				}
+				for _, group := range edge.RetainedMilestoneGroups {
+					requiresChoice := false
+					for _, path := range group.Paths {
+						requiresChoice = requiresChoice || path.Decision != nil
+					}
+					chosen := false
+					for _, selection := range report.SelectedPaths {
+						if selection.GroupID != group.ID {
+							continue
+						}
+						chosen = true
+						for _, path := range group.Paths {
+							if path.ID != selection.PathID || path.Decision == nil {
+								continue
+							}
+							matched := false
+							for _, evidence := range report.EvidenceMilestones {
+								if evidence.ID != selection.DecisionMilestoneID || evidence.Name != path.Decision.Milestone {
+									continue
+								}
+								d, err := api.ParseOperationBusinessDecision(payloads[evidence.ID])
+								matched = err == nil && d != nil && api.OperationWorkflowPolicyMatches(*path.Decision, evidence.Name, report.Workflow, report.InstanceID, *d)
+							}
+							if !matched {
+								return fmt.Errorf("%w: path %s requires decision %s from rule %s version %s", ErrInvalidArgument, path.ID, path.Decision.Code, path.Decision.RuleID, path.Decision.RuleVersion)
+							}
+						}
+					}
+					if requiresChoice && !chosen {
+						return fmt.Errorf("%w: decision-constrained group %s requires a selected path", ErrInvalidArgument, group.ID)
+					}
+				}
+			}
+		}
+	}
+
+	reasonSelections := api.CloneOperationWorkflowPathSelections(report.SelectedPaths)
+	if reason := report.ChangeReason; reason != nil {
+		reasonSelections = append(reasonSelections, api.OperationWorkflowPathSelection{DecisionConditions: reason.Decision.Conditions, DecisionMilestoneID: reason.MilestoneID, DecisionCode: reason.Decision.Code, DecisionDescription: reason.Decision.Description, DecisionRuleID: reason.Decision.RuleID, DecisionRuleVersion: reason.Decision.RuleVersion})
+	}
+	for _, selection := range reasonSelections {
+		if selection.DecisionMilestoneID == "" {
+			continue
+		}
+		referenced := false
+		for _, evidence := range report.EvidenceMilestones {
+			if evidence.ID == selection.DecisionMilestoneID {
+				referenced = true
+			}
+		}
+		versionMatched := false
+		for _, evidence := range report.EvidenceMilestones {
+			if evidence.ID != selection.DecisionMilestoneID {
+				continue
+			}
+			steps, err := operations.WorkflowStepsForMilestone(def.Spec, evidence.Name, payloads[evidence.ID])
+			if err != nil {
+				continue
+			}
+			for _, step := range steps {
+				version := step.Version
+				if version == 0 {
+					version = 1
+				}
+				if step.Workflow == report.Workflow && step.InstanceID == report.InstanceID && version == report.ContractVersion {
+					versionMatched = true
+				}
+			}
+		}
+		decision, err := api.ParseOperationBusinessDecision(payloads[selection.DecisionMilestoneID])
+		if !referenced || !versionMatched || err != nil || decision == nil || decision.Workflow != report.Workflow || decision.InstanceID != report.InstanceID || (report.ChangeReason != nil && selection.DecisionMilestoneID == report.ChangeReason.MilestoneID && !api.SameOperationBusinessDecision(*decision, report.ChangeReason.Decision)) || !api.SameOperationBusinessDecision(*decision, api.OperationBusinessDecision{Workflow: report.Workflow, InstanceID: report.InstanceID, Code: selection.DecisionCode, Description: selection.DecisionDescription, RuleID: selection.DecisionRuleID, RuleVersion: selection.DecisionRuleVersion, Conditions: selection.DecisionConditions}) || decision.Code != selection.DecisionCode || decision.Description != selection.DecisionDescription || decision.RuleID != selection.DecisionRuleID || decision.RuleVersion != selection.DecisionRuleVersion {
+			if report.ChangeReason != nil && selection.DecisionMilestoneID == report.ChangeReason.MilestoneID {
+				return fmt.Errorf("%w: workflow change reason requires matching decision evidence in the same workflow instance and contract version", ErrInvalidArgument)
+			}
+			return fmt.Errorf("%w: selected path requires matching business decision evidence", ErrInvalidArgument)
+		}
+	}
+
 	if report.FromState == "" && len(report.EvidenceMilestones) > 0 {
 		if len(report.EvidenceMilestones) != 1 {
 			return fmt.Errorf("%w: reconciliation requires exactly one discrepancy fact", ErrInvalidArgument)

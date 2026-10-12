@@ -182,6 +182,16 @@ func inspectWatchChanges(previous *inspectSummary, current inspectSummary) ([]st
 		{"recommendations", before.Recommendations, after.Recommendations},
 		{"unavailable", before.Unavailable, after.Unavailable},
 	}
+	if !jsonOutput {
+		// Human explanations participate in release change detection without
+		// changing JSON snapshots or JSON watch event contents.
+		for i := range sections {
+			if sections[i].name == "release" {
+				sections[i].before = []any{before.Release, before.Failure, before.RecentChanges}
+				sections[i].now = []any{after.Release, after.Failure, after.RecentChanges}
+			}
+		}
+	}
 	var changed []string
 	for _, section := range sections {
 		old, err := json.Marshal(section.before)
@@ -219,6 +229,9 @@ func emitInspectWatchEvent(event inspectWatchEvent) error {
 }
 
 func renderInspectWatchChanges(w io.Writer, summary inspectSummary, changed []string) {
+	renderInspectAttention(w, summary)
+	renderInspectFailureDetails(w, summary)
+	renderInspectRecentChanges(w, summary)
 	for _, section := range changed {
 		switch section {
 		case "app":
@@ -234,7 +247,7 @@ func renderInspectWatchChanges(w io.Writer, summary inspectSummary, changed []st
 		case "current_operations":
 			renderInspectOperational(w, summary.Operational)
 		case "recommendations":
-			renderInspectRecommendations(w, summary.Recommendations)
+			renderInspectRemainingRecommendations(w, summary)
 		case "unavailable":
 			if len(summary.Unavailable) == 0 {
 				_, _ = fmt.Fprintln(w, "  unavailable sources: none")

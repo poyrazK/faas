@@ -4,8 +4,23 @@
 faas_networkd_dispatcher_ephemeral_filter: true
 faas_networkd_dispatcher_log_filter_min_systemd: 253
 
-# ADR-934 split-box guest trace exports reuse vmmd's node-identity
+# ADR-958 split-box guest trace exports reuse vmmd's node-identity
 # apid-client leaf (pkg/pki RoleUsesNodeIdentity).
 vmmd_apid_client_tls_cert_path: /etc/faas/tls/vmmd/apid-client.crt
 vmmd_apid_client_tls_key_path: /etc/faas/tls/vmmd/apid-client.key
 vmmd_apid_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
+
+# ADR-989 app outbound relay. The manifest sets the split-box target to
+# tcp://outboundd.faas:8096; single-box hosts may set
+# unix:///run/faas/outboundd-relay.sock to match outboundd's relay_listen.
+faas_vmmd_outbound_relay_target: ""
+vmmd_outbound_client_tls_cert_path: /etc/faas/tls/vmmd/outboundd-client.crt
+vmmd_outbound_client_tls_key_path: /etc/faas/tls/vmmd/outboundd-client.key
+vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
+
+# ADR-149 prepared networks: vmmd keeps this many unused wake namespaces
+# (netns + TAP + nft) ready so a restore claims one instead of building it.
+# The code default is 0 (off). PR #4396 measured the restore p95 target only
+# with 4 prepared networks; production-us without them paid setup_network
+# 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
+vmmd_prepared_networks: 4

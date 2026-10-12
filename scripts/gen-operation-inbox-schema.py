@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = {
+ "OperationWorkflowRetainedGroupsMax": "WORKFLOW_PATH_SELECTIONS",
     "OperationArtifactUploadDefaultBytes": "UPLOAD_DEFAULT_BYTES",
     "OperationReportIDMaxBytes": "REPORT_ID_BYTES",
     "OperationArtifactNameMaxBytes": "ARTIFACT_NAME_BYTES",

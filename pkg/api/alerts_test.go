@@ -315,7 +315,7 @@ func TestClosedSetPredicates(t *testing.T) {
 }
 
 func TestNotificationOnlyAlertActions(t *testing.T) {
-	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "workflow_failures", "workflow_schedule_quota_skips", "workflow_pending_age_seconds", "workflow_waiting_age_seconds", "workflow_due_age_seconds"} {
+	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "edge_rejections", "edge_waf_detections", "workflow_failures", "workflow_schedule_quota_skips", "workflow_pending_age_seconds", "workflow_waiting_age_seconds", "workflow_due_age_seconds"} {
 		for _, action := range []string{"", "webhook"} {
 			if !api.AlertRuleActionAllowedForMetric(metric, action) {
 				t.Fatalf("notification-only metric %q rejected action %q", metric, action)
@@ -329,6 +329,21 @@ func TestNotificationOnlyAlertActions(t *testing.T) {
 	}
 	if !api.AlertRuleActionAllowedForMetric("error_rate_pct", "rollback") {
 		t.Fatal("unrelated alert action rejected")
+	}
+}
+
+func TestMCPTaskAlertsAreNotificationOnly(t *testing.T) {
+	for _, metric := range []string{"mcp_tasks_oldest_age_seconds", "mcp_tasks_metrics_stale"} {
+		for _, action := range []string{"", "webhook"} {
+			if !api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("MCP task metric %q rejected action %q", metric, action)
+			}
+		}
+		for _, action := range []string{"rollback", "demote", "promote"} {
+			if api.AlertRuleActionAllowedForMetric(metric, action) {
+				t.Fatalf("MCP task metric %q accepted deployment action %q", metric, action)
+			}
+		}
 	}
 }
 

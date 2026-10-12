@@ -760,6 +760,15 @@ type Engine struct {
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
+	// workerScaleIn holds each worker pool's recent demand recommendations
+	// for the scale-in stabilization window. It is per schedd and in
+	// memory: a restart forgets it, and the pool then holds its size for
+	// one window before shrinking.
+	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
+
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
 	// the report's node_signature (ADR-053). Populated by the
@@ -904,6 +913,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
+		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB
@@ -945,6 +956,14 @@ func (e *Engine) WithBrokerLagReader(r BrokerLagReader) *Engine {
 // counter. Returns the engine for builder-style wiring.
 func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	e.ops = ops
+	return e
+}
+
+// WithWorkerScaleInStabilization replaces the worker-pool scale-in window.
+// Zero or negative disables stabilization so computed demand shrinks a pool
+// on the tick that observes it.
+func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
+	e.workerScaleIn = newWorkerScaleInStabilizer(window)
 	return e
 }
 
@@ -3082,7 +3101,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if secretPolicyBlocksSnapshots {
 		choice.coldReason = secretPolicyColdReason
 	} else {
-		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+		choice = e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), e.guestRAMMB(ctx, dep.ID, app.RAMMB), app.AppProtocol)
 	}
 	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
@@ -3561,7 +3580,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey: snap.StorageKey,
+		snapKey:      snap.StorageKey,
+		snapMemBytes: snap.MemBytes,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3803,6 +3823,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			StorageKey:        bootInput.snapKey,
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
+			MemBytes:          bootInput.snapMemBytes,
 		})
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -3925,9 +3946,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	var postRPC events.PostRPCTimings
+	tPreCommit := time.Now()
 	joinScaleOutStamp()
+	tStampJoined := time.Now()
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
+	tLocked := time.Now()
 
 	// Publish the runtime identity and RUNNING state in one conditional write.
 	// The old success path paid for InstanceByID, SetInstanceRuntime, another
@@ -3944,6 +3969,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
+	tPublished := time.Now()
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -4063,6 +4089,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// this is idempotent for deployments that never had a backoff row and does
 	// not need to delay the newly routable target.
 	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
+	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -4155,6 +4182,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			TriggerClass:          inboundCorr.TriggerClass,
 			QueuedCount:           bootInput.queuedCount,
 			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
+			PostRPC:               postRPC,
 		})
 	}
 
@@ -4221,6 +4249,9 @@ type bootInput struct {
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
 	snapKey string
+	// snapMemBytes is the snap row's guest memory length; vmmd matches it
+	// against the requested guest memory before restoring a companion.
+	snapMemBytes int64
 	// nodeID is the chosen compute_node for this wake (issue #97 /
 	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
 	// the rest of bootInput so the unlocked Phase 3 vmmd call can
@@ -4381,7 +4412,7 @@ func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInp
 }
 
 // applyLiveCapacityMB returns the chooser's per-node used_mb input:
-// max(live report, ledger) when the report is fresh, 0 (sentinel)
+// max(live report, ledger.AdmissionUsedMB) when the report is fresh, 0 (sentinel)
 // when stale or absent. The ledger floor closes the stale-low /
 // hostile-report gap — a vmmd that under-reports its cgroup
 // memory.current cannot shrink the live accounting and force schedd
@@ -4409,7 +4440,7 @@ func (e *Engine) applyLiveCapacityMB(_ context.Context, nodeID string) int64 {
 		return 0
 	}
 	used := int64(live.UsedMB)
-	if ledger := int64(e.ledger.ResidentRAMForNode(nodeID)); ledger > used {
+	if ledger := int64(e.ledger.AdmissionUsedMB(nodeID)); ledger > used {
 		used = ledger
 	}
 	if used < 0 {
@@ -4918,6 +4949,19 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("cooldown")
 		return nil
 	}
+	// ADR-087's cheap path reassigns parked-only apps, and peer-to-peer
+	// live migration is not implemented (see the hook note below), so an
+	// app with resident instances stays pinned. Re-homing it anyway left
+	// those instances outside the new owner's admission ledger: on
+	// production-us the new owner admitted max_concurrency more on the
+	// peer, cold-booting them, while the old owner's instance still ran
+	// (hunt #9, H9-101: 3 running against max_concurrency 2).
+	if live, err := e.appHasResidentInstances(ctx, app.ID); err != nil {
+		return fmt.Errorf("sched: pressure rebalance: list instances: %w", err)
+	} else if live {
+		e.observePressure("no_eligibility")
+		return nil
+	}
 	// Peer selection — name-ASC sort, deterministic.
 	// Tier A10 / ADR-088: per-app overflow_node preference. If
 	// the customer pinned a spill target, try it first; on
@@ -5051,6 +5095,21 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // observePressure is the per-outcome pressure-rebalancer metric
 // helper. Centralising the nil-safety keeps the call sites
 // single-line.
+// appHasResidentInstances reports whether any instance of appID still holds
+// resident RAM (state.CountsForRAM), wherever it runs.
+func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	for _, ins := range instances {
+		if state.State(ins.State).CountsForRAM() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *Engine) observePressure(outcome string) {
 	if e.ops != nil {
 		e.ops.PressureReassignments(outcome).Inc()
@@ -5963,6 +6022,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	if dep.EnvironmentWorkloadHeld() {
 		return nil
+	}
+	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		return err
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
@@ -6914,6 +6976,12 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 		if grace <= 0 {
 			grace = 30
 		}
+		deadline := time.Now().Add(time.Duration(grace) * time.Second)
+		drainOutcome := "failed"
+		if mode == state.InstanceModeWorker {
+			e.auditWorkerDrain(ctx, *ins, deadline, "draining")
+			defer func() { e.auditWorkerDrain(ctx, *ins, deadline, drainOutcome) }()
+		}
 		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
 		if serr != nil {
 			e.log.Warn("sched: stop instance signal-grace failed; falling through to destroy",
@@ -6948,9 +7016,16 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 			Mode:            string(mode),
 			LifecycleReason: LifecycleReasonCleanExit,
 		}
+		if serr == nil && out != nil {
+			drainOutcome = "completed"
+		}
 		if out != nil {
 			outcome.ExitCode = out.ExitCode
 			outcome.KillSignalSent = out.KillSignalSent
+			if out.KillSignalSent {
+				drainOutcome = "timed_out"
+				outcome.LifecycleReason = LifecycleReasonDrainTimeout
+			}
 		}
 		return outcome, nil
 	case state.InstanceModeService:
@@ -7005,10 +7080,7 @@ type StopOptions struct {
 // SignalAndKill for the worker/job dispatch path; the request /
 // service / mirror path leaves both at zero (snapshotAndPark
 // doesn't capture an exit code). LifecycleReason is the
-// engine-side aggregation — today always LifecycleReasonCleanExit
-// for the success path; a future taxonomy addition can
-// distinguish killed_after_grace (grace expired + SIGKILL
-// escalation) from the clean-exit case.
+// engine-side aggregation — clean_exit or drain_timeout after a forced kill.
 type StopOutcome struct {
 	Instance        string
 	Mode            string
@@ -7018,11 +7090,8 @@ type StopOutcome struct {
 }
 
 // LifecycleReason is the engine-side reason code for a StopInstance
-// transition. M-2 surfaces two: clean_exit (workload exited
-// within the grace window) and unknown (legacy / no-grace
-// path). Future taxonomy additions (killed_after_grace,
-// oom, sigkilled_timeout) land alongside the per-mode
-// expansion in M-3.
+// transition. A worker/job killed after its grace window reports drain_timeout;
+// successful graceful exits and request/service parking report clean_exit.
 type LifecycleReason string
 
 const (
@@ -7030,7 +7099,8 @@ const (
 	// workload exited cleanly within the grace window
 	// (worker/job) or snapshotAndPark succeeded (request/
 	// service).
-	LifecycleReasonCleanExit LifecycleReason = "clean_exit"
+	LifecycleReasonCleanExit    LifecycleReason = "clean_exit"
+	LifecycleReasonDrainTimeout LifecycleReason = "drain_timeout"
 )
 
 // lockedRunning loads an instance, takes its app lock, and returns it only if it
@@ -8375,6 +8445,24 @@ func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan stri
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
 	}
 	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+}
+
+// guestRAMMB is the memory vmmd boots a deployment's guest with: the app's RAM
+// plus explicitly allocated companion RAM (fcvm.wakeGuestMemoryMiB). Snapshot
+// RAM checks compare against it; production-us rc.251 rejected every companion
+// deployment's snapshot against the app RAM alone. An unknown companion shape
+// returns 0, which skips the check and leaves vmmd's restore gate in charge.
+func (e *Engine) guestRAMMB(ctx context.Context, deploymentID string, appRAMMB int) int {
+	if appRAMMB <= 0 {
+		return appRAMMB
+	}
+	sidecarMBs, err := e.store.DeploymentSidecarRAMs(ctx, deploymentID)
+	if err != nil {
+		e.log.Warn("wake: companion RAM unknown; deferring snapshot RAM check to vmmd",
+			"deployment_id", deploymentID, "err", err)
+		return 0
+	}
+	return api.BillableRAMMBWithSidecars(appRAMMB, sidecarMBs) - api.PerVMOverheadMB
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different

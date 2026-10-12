@@ -771,7 +771,7 @@ type APIConsumerUsageEvent struct {
 	DiscoveredRoute string // optional normalized method/template
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
-	// so rate cards can weight routes (ADR-846).
+	// so rate cards can weight routes (ADR-952).
 	BillingRoute  string
 	DiscoveredAt  time.Time
 	WindowStart   time.Time
@@ -829,7 +829,7 @@ type APIConsumerUsageBucket struct {
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
-// bounded route label in one UTC minute (ADR-846). The per-minute totals in
+// bounded route label in one UTC minute (ADR-952). The per-minute totals in
 // APIConsumerUsageBucket stay authoritative; a minute's route units never
 // exceed them, and routes missing here count at weight 1.
 type APIConsumerRouteUsageBucket struct {
@@ -863,17 +863,17 @@ type APIConsumerRateCard struct {
 	Unit                   string
 	PriceMillicentsPerUnit int64
 	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
-	// calendar month while this card is effective (ADR-844).
+	// calendar month while this card is effective (ADR-950).
 	IncludedUnitsPerMonth int64
-	// Tiers is an optional graduated price ladder (ADR-845). When set it
+	// Tiers is an optional graduated price ladder (ADR-951). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
 	// RouteWeights counts each request on a listed route label as that many
-	// units (ADR-846); unlisted routes count 1. Weighted units feed the
+	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
-	// to (ADR-847); empty is the app default plan.
+	// to (ADR-953); empty is the app default plan.
 	PlanID        string
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
@@ -954,8 +954,21 @@ type PlatformTenantRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth are free units per tenant per UTC calendar month
+	// across every attributed app (ADR-975).
+	IncludedUnitsPerMonth int64
+	// Tiers is an optional graduated ladder counted per tenant per UTC month
+	// across every attributed app (ADR-975); it replaces the flat price and
+	// allowance, and PriceMillicentsPerUnit records the last step's price.
+	Tiers         []APIConsumerRateCardTier
+	EffectiveFrom time.Time
+	CreatedAt     time.Time
+}
+
+// MonthlyPricing reports whether the card prices usage by its position in
+// the tenant's UTC month, so statements must re-price whole months.
+func (c PlatformTenantRateCard) MonthlyPricing() bool {
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
@@ -979,13 +992,13 @@ type APIConsumerUsageStatementBucket struct {
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
 	// ChargedUnits is how many units this bucket bills at its price
-	// (ADR-844). Nil on buckets written before allowances existed, where
+	// (ADR-950). Nil on buckets written before allowances existed, where
 	// every priced unit was charged; read it through Charged. An adjustment
 	// may charge more units than it adds when late usage used allowance
 	// that later minutes had consumed.
 	ChargedUnits *int64 `json:"charged_units,omitempty"`
 	// TierUnits splits BillableUnits across a tiered card's ladder steps
-	// (ADR-845); AmountMillicents is the sum of each step's units times its
+	// (ADR-951); AmountMillicents is the sum of each step's units times its
 	// price. In an adjustment, entries can be negative when late usage moved
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
@@ -1174,7 +1187,7 @@ type App struct {
 	// internal apps are reachable only through authenticated service routing.
 	Visibility     api.AppVisibility
 	Type           AppType
-	Runtime        string // node22|python312|go124|go124-alpine|node24|python313 for functions
+	Runtime        string // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB          int
 	CPUMillicores  int
 	IdleTimeoutS   int // 0 => plan default
@@ -1804,11 +1817,12 @@ type ServiceReplicas struct {
 
 // WorkerScaling is the queue-driven autoscaling policy for worker-mode apps.
 type WorkerScaling struct {
-	Min    int     `json:"min"`
-	Max    int     `json:"max"`
-	Metric string  `json:"metric,omitempty"`
-	Name   string  `json:"name,omitempty"`
-	Target float64 `json:"target,omitempty"`
+	Min             int     `json:"min"`
+	Max             int     `json:"max"`
+	Metric          string  `json:"metric,omitempty"`
+	Name            string  `json:"name,omitempty"`
+	Target          float64 `json:"target,omitempty"`
+	ObserverAppSlug string  `json:"observer_app_slug,omitempty"`
 }
 
 // AppManifest is the runner-scaffold and app-owned lifecycle payload. Stored
@@ -2096,6 +2110,29 @@ type CustomMetric struct {
 	ObservedAt time.Time
 }
 
+// MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
+// single tool and handler version.
+type MCPTaskHandlerCompatibility struct {
+	ToolName                 string
+	HandlerVersion           string
+	WaitingTasks             int64
+	LiveCompatibleWorkers    int64
+	UnknownDeploymentWorkers int64
+	Deployments              []MCPTaskHandlerDeploymentWorkers
+}
+
+type MCPTaskHandlerDeploymentWorkers struct {
+	DeploymentID string
+	Workers      int64
+}
+
+// MCPTaskCompatibilityReport is the latest observer snapshot for one app.
+type MCPTaskCompatibilityReport struct {
+	Handlers   []MCPTaskHandlerCompatibility
+	Truncated  bool
+	ObservedAt time.Time
+}
+
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
 // It is the ONLY way a trigger should reach the targets: callers that read
 // Target directly miss the multi-signal form, and callers that read Targets
@@ -2337,6 +2374,10 @@ type Deployment struct {
 	RootfsKey   string
 	RootfsBytes int64
 	Status      DeploymentStatus
+	// MCPTaskMigrationOverride is a one-use rollout grant stored separately
+	// from the deployment row. It is set only by an explicit deployment API
+	// request and consumed by the stable deployment cutover.
+	MCPTaskMigrationOverride bool `json:"-"`
 	// Priority is the deployment-queue priority (lower = run
 	// sooner). Range [0, 1000], default 100. Migration 00362
 	// widens the column CHECK + adds the partial index that
@@ -2782,14 +2823,15 @@ type Deployment struct {
 // are applied by the store so an operator cannot accidentally load the full
 // deployment history into apid.
 type OperatorDeploymentFilter struct {
-	AccountID      string
-	AppID          string
-	Statuses       []DeploymentStatus
-	IncludeDeleted bool
-	CreatedBefore  time.Time
-	OldestFirst    bool
-	Limit          int
-	Offset         int
+	ExcludeMCPTaskHolds bool
+	AccountID           string
+	AppID               string
+	Statuses            []DeploymentStatus
+	IncludeDeleted      bool
+	CreatedBefore       time.Time
+	OldestFirst         bool
+	Limit               int
+	Offset              int
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -3296,10 +3338,10 @@ type OperatorIntent struct {
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
-// condition (issue #396, ADR-045). Names mirror the AppMetricsResponse
-// payload verbatim so the evaluator and the customer-facing metrics
-// endpoint cannot drift. failed_invocations is the only non-Prometheus
-// metric; its source dimension comes through AlertRule.FailureSource.
+// condition (issue #396, ADR-045). Prometheus-backed names mirror the
+// AppMetricsResponse payload; durable and pushed metrics use their own
+// evaluator sources. failed_invocations is the only metric with a separate
+// source dimension in AlertRule.FailureSource.
 //
 // Issue #1233 / ADR-123 — extended with 5 metrics backing the alert
 // preset catalog (api_up / account_spend_eur / deployment_failed /
@@ -3310,6 +3352,9 @@ type OperatorIntent struct {
 // daily_cost_cents from the durable observability rollups. F2 adds
 // cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
 // #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
+// MCP hosting adds mcp_tasks_oldest_age_seconds from the app's fresh pushed
+// custom metric and mcp_tasks_metrics_stale for missing, expired, or invalid
+// gauges; min=0 workers also require the dedicated observer heartbeat.
 type AlertMetric string
 
 const (
@@ -3356,14 +3401,24 @@ const (
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
 	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
 	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint                          AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct                              AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents                               AlertMetric = "daily_cost_cents"
-	AlertMetricWorkflowFailures                             AlertMetric = "workflow_failures"
-	AlertMetricWorkflowQuotaSkips                           AlertMetric = "workflow_schedule_quota_skips"
-	AlertMetricWorkflowPendingAge                           AlertMetric = "workflow_pending_age_seconds"
-	AlertMetricWorkflowWaitingAge                           AlertMetric = "workflow_waiting_age_seconds"
-	AlertMetricWorkflowDueAge                               AlertMetric = "workflow_due_age_seconds"
+	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
+	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
+	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
+	// 401/403/413/429 answers from the other edge gates;
+	// AlertMetricEdgeWAFDetections counts kind=waf detections (ADR-831).
+	// All are webhook-only.
+	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
+	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"
+	AlertMetricEdgeRejections         AlertMetric = "edge_rejections"
+	AlertMetricEdgeWAFDetections      AlertMetric = "edge_waf_detections"
+	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures       AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips     AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3388,6 +3443,15 @@ const (
 	// safedeploy_in_flight_rollouts > 50 for 10 min. Warning;
 	// operator back-pressure signal.
 	AlertMetricCanaryFleetInFlightHigh AlertMetric = "canary_fleet_in_flight_high"
+	// AlertMetricMCPTasksOldestAgeSeconds reads the fresh pushed gauge the
+	// MCP Tasks runtime publishes alongside its scaling backlog metric.
+	AlertMetricMCPTasksOldestAgeSeconds AlertMetric = "mcp_tasks_oldest_age_seconds"
+	// AlertMetricMCPTasksMetricsStale fires when any required task gauge is
+	// missing, expired, or invalid. For min=0 worker apps it also requires a fresh
+	// observer heartbeat equal to 1. Unlike the gauge alert, it evaluates to a
+	// binary 1/0 so a broken publisher can notify operators.
+	AlertMetricMCPTasksMetricsStale           AlertMetric = "mcp_tasks_metrics_stale"
+	AlertMetricMCPTaskPromotionHoldAgeSeconds AlertMetric = "mcp_task_promotion_hold_age_seconds"
 )
 
 // AlertComparison is the textual form of the comparison operator stored
@@ -3689,6 +3753,8 @@ const (
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventOutboundAIBudgetThreshold        AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
@@ -3710,10 +3776,17 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryQueueBlocked             AppWebhookEvent = "automation.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert              AppWebhookEvent = "automation.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered          AppWebhookEvent = "automation.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused             AppWebhookEvent = "automation.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished           AppWebhookEvent = "automation.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady              AppWebhookEvent = "automation.recovery_review_ready"
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
 	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
+	AppWebhookEventRecoveryExecutionAttention       AppWebhookEvent = "event_recovery.execution_attention"
 	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
@@ -3755,6 +3828,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventOutboundAIBudgetThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
@@ -3771,7 +3846,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 
@@ -5568,7 +5643,15 @@ const (
 	// clean evidence to blocking findings or unavailable evidence. The
 	// payload is the durable quarantine signal; traffic controllers may
 	// consume it without making the scanner own instance teardown.
-	DeployScanRegressed DeploymentAuditKind = "deploy.scan_regressed"
+	DeployScanRegressed         DeploymentAuditKind = "deploy.scan_regressed"
+	DeployMCPTaskHeld           DeploymentAuditKind = "deploy.mcp_task_held"
+	DeployMCPTaskRetryRequested DeploymentAuditKind = "deploy.mcp_task_retry_requested"
+	DeployMCPTaskRetryStarted   DeploymentAuditKind = "deploy.mcp_task_retry_started"
+	DeployMCPTaskRetryCompleted DeploymentAuditKind = "deploy.mcp_task_retry_completed"
+	DeployMCPTaskRecovered      DeploymentAuditKind = "deploy.mcp_task_recovered"
+	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
+	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
+	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
 )
 
 // DeploymentAudit is one row of the deployment_audit table
@@ -7593,6 +7676,12 @@ const (
 	// existing invocation drain later delivers the original method, path, JSON
 	// body, and safe headers to the app.
 	EdgeRuleKindAsync EdgeRuleKind = "async"
+	// EdgeRuleKindWAF inspects matched requests with the OWASP Core Rule
+	// Set (ADR-831 step 1). Observe-only: inspection runs off the request
+	// path and reports detections without blocking. Quota via
+	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
+	// migrations/20261009172820417_edge_rules_kind_waf.sql.
+	EdgeRuleKindWAF EdgeRuleKind = "waf"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -7605,7 +7694,8 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
-		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync:
+		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
+		EdgeRuleKindWAF:
 		return true
 	}
 	return false
@@ -7652,6 +7742,7 @@ type EdgeRuleRedirectAction struct {
 	StatusCode int               `json:"status_code"`
 	To         string            `json:"to"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	Template   bool              `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeaderOp is one mutation. Action ∈ {add,set,remove}; Value
@@ -7659,9 +7750,10 @@ type EdgeRuleRedirectAction struct {
 // blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) at apply time.
 type EdgeRuleHeaderOp struct {
-	Name   string `json:"name"`
-	Value  string `json:"value,omitempty"`
-	Action string `json:"action"`
+	Name     string `json:"name"`
+	Value    string `json:"value,omitempty"`
+	Action   string `json:"action"`
+	Template bool   `json:"template,omitempty"` // ADR-968
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and
@@ -7762,6 +7854,9 @@ type EdgeRuleValidateAction struct {
 	// is intentionally permissive — the closed-set enforcement
 	// lives at the apid write boundary (pkg/api.Validate).
 	ValidateMode string `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values (ADR-091
+	// amendment: request parameters). Nil keeps body-only behaviour.
+	Parameters *api.EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleLimitAction carries the per-rule body caps for kind=limit.
@@ -8048,6 +8143,18 @@ type EdgeRuleAction struct {
 	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
 	// Async marks a matching request for durable deferred execution.
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
+	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
+	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+}
+
+// EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
+// are the effective ones written by api.EdgeRuleWAFAction.Validate.
+type EdgeRuleWAFAction struct {
+	Mode             string `json:"mode,omitempty"`
+	ParanoiaLevel    int    `json:"paranoia_level,omitempty"`
+	AnomalyThreshold int    `json:"anomaly_threshold,omitempty"`
+	ExcludeRuleIDs   []int  `json:"exclude_rule_ids,omitempty"`
+	InspectBodyBytes int    `json:"inspect_body_bytes,omitempty"`
 }
 
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).

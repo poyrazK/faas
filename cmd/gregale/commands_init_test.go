@@ -468,6 +468,9 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
 		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "anthropic"}}, noErr: true},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "gemini"}}, want: "GREGALE_AI_PROVIDER"},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "openai"}, {Key: "OPENAI_API_KEY", Value: "sk"}}, want: "must not also set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.tpl+tc.want, func(t *testing.T) {
@@ -581,7 +584,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	// CategoryFor mis-classification can't ship silently.
 	wantPerCat := map[string][]string{
 		"hello":              {"hello-node", "hello-python", "hello-go"},
-		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
+		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example"},
 		"event-driven":       {"event-worker", "queue-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},

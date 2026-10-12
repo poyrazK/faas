@@ -129,7 +129,7 @@ func serviceTCPIdleTimeout(app gateway.App) time.Duration {
 	seconds := app.IdleTimeoutS
 	if seconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			seconds = limits.IdleTimeoutS
+			seconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if seconds <= 0 {

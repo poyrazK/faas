@@ -1,4 +1,4 @@
-"""Opt-in request tracing for managed Python processes (ADR-934)."""
+"""Opt-in request tracing for managed Python processes (ADR-958)."""
 import os
 
 

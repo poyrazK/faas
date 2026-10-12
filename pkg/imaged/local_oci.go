@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -144,7 +145,7 @@ func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, arch
 		cleanup()
 		return nil, "", func() {}, err
 	}
-	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine {
+	if runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary {
 		executable, err := goFunctionExecutable(config)
 		if err != nil {
 			cleanup()
@@ -346,6 +347,21 @@ func functionAppEntryName(name string) (string, bool) {
 	return clean, true
 }
 
+// functionHandlerSourcePath returns the handler file inside the built source
+// tree. A deployment handler that names a file for the runtime selects it
+// (ADR-985 shared-tree functions); any other value keeps fallback, the
+// runtime's default file.
+func functionHandlerSourcePath(runtime, handler, fallback string) (string, error) {
+	file, ok, err := api.FunctionHandlerFile(runtime, handler)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return fallback, nil
+	}
+	return "/app/" + file, nil
+}
+
 func functionHandlerPaths(runtime string) (source, target string, err error) {
 	switch runtime {
 	case RuntimeNode22:
@@ -354,7 +370,7 @@ func functionHandlerPaths(runtime string) (source, target string, err error) {
 		return "/app/handler.js", "/app/node24.js", nil
 	case RuntimePython312, RuntimePython313:
 		return "/app/handler.py", "/app/handler.py", nil
-	case RuntimeGo124, RuntimeGo124Alpine:
+	case RuntimeGo124, RuntimeGo124Alpine, RuntimeBinary:
 		return "/app/server", "/app/handler", nil
 	default:
 		return "", "", fmt.Errorf("unsupported function runtime %q", runtime)
@@ -526,14 +542,26 @@ func localOCIBlobName(digest string) (string, error) {
 // bootable drive1. Source-built apps do not have a registry reference or a
 // platform-runtime prefix to feed through the registry two-drive path, so all
 // layers from this trusted local artifact are applied here.
-func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account) error {
+	digest, err := localOCIManifestDigest(dep.RootfsPath)
+	if err != nil {
+		return fmt.Errorf("imaged: verify source build digest: %w", err)
+	}
+	pins, ok := h.store.(state.DeploymentBuildDigestStore)
+	if !ok {
+		return fmt.Errorf("imaged: source build digest store is unavailable")
+	}
+	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, dep.RootfsPath, digest); err != nil {
+		return fmt.Errorf("imaged: pin source build digest: %w", err)
+	}
+	dep.ImageDigest = digest
 	config, layers, cleanup, err := loadLocalOCIArchive(dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)
 	}
 	defer cleanup()
 
-	manifest, err := manifestFromLocalOCIConfig(config, dep)
+	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
@@ -544,7 +572,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
-	manifest, err = applyOverrides(manifest, dep)
+	manifest, err = applyOverrides(manifest, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
@@ -587,7 +615,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	// app layer here and then failed at snapshot prime with "sidecar
 	// \"heartbeat\" has no built layer". Build them here too, with the same
 	// fail-on-secret posture as the image path.
-	scFindings, err := h.buildSidecarLayers(ctx, app, dep, acct)
+	scFindings, err := h.buildSidecarLayers(ctx, app, *dep, acct)
 	if err != nil {
 		return err
 	}

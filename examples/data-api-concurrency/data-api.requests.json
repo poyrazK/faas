@@ -1,0 +1,118 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "document-concurrency",
+      "requests": [
+        {
+          "name": "Create versioned document",
+          "identity": "alice",
+          "method": "POST",
+          "path": "/rest/v1/documents?select=id,version",
+          "body": {
+            "owner": "alice",
+            "tenant": "team-a",
+            "body": "draft"
+          },
+          "expect": {
+            "status": 201
+          },
+          "capture": {
+            "id": "/0/id",
+            "version": "/0/version"
+          }
+        },
+        {
+          "name": "Different subject cannot read",
+          "identity": "bob",
+          "method": "GET",
+          "path": "/rest/v1/documents?id=eq.{{id}}",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Same subject different tenant cannot edit",
+          "identity": "otherTenant",
+          "method": "PATCH",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.{{version}}",
+          "body": {
+            "body": "forbidden"
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Version match applies",
+          "identity": "alice",
+          "method": "PATCH",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.{{version}}&select=version",
+          "body": {
+            "body": "edited"
+          },
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "version": 2
+              }
+            ]
+          }
+        },
+        {
+          "name": "Stale edit conflicts",
+          "identity": "alice",
+          "method": "PATCH",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.{{version}}",
+          "body": {
+            "body": "stale"
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Stale delete conflicts",
+          "identity": "alice",
+          "method": "DELETE",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.{{version}}",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Current delete applies",
+          "identity": "alice",
+          "method": "DELETE",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.2&select=id",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{id}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Deleted document conflicts",
+          "identity": "alice",
+          "method": "PATCH",
+          "path": "/rest/v1/documents?id=eq.{{id}}&version=eq.2",
+          "body": {
+            "body": "missing"
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    }
+  ]
+}

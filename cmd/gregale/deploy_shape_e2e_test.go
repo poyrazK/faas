@@ -268,6 +268,21 @@ func TestResolveDeployShape_Unknown(t *testing.T) {
 // app marker) must resolve to shapeFunction when explicitFunction
 // is true. The customer paid for the explicit flag — auto-detection
 // must NOT overrule them.
+// ADR-987: --runtime binary builds from a Dockerfile at the source root and
+// has no handler.* file to infer.
+func TestResolveDeployShape_BinaryRuntimeNeedsDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Cargo.toml", "[package]\nname = \"handler\"\n")
+	if _, _, _, err := resolveDeployShape(dir, true, false, true, runtimeBinary, ""); err == nil || !strings.Contains(err.Error(), "Dockerfile") {
+		t.Fatalf("binary without a Dockerfile: err = %v", err)
+	}
+	writeFile(t, dir, "Dockerfile", "FROM scratch\n")
+	sh, rt, hnd, err := resolveDeployShape(dir, true, false, true, runtimeBinary, "")
+	if err != nil || sh != shapeFunction || rt != runtimeBinary || hnd != defaultTemplateHandler {
+		t.Fatalf("binary with a Dockerfile = (%d, %q, %q, %v)", sh, rt, hnd, err)
+	}
+}
+
 func TestResolveDeployShape_ExplicitFunctionForcesFunction(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "package.json", "{}")

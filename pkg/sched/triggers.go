@@ -73,8 +73,8 @@ const (
 	// long-lived worker assigned to a live deployment scope.
 	TriggerWorkerSingleton = "worker.singleton"
 
-	// TriggerWorkerPool — queue-depth reconciliation for a worker fleet. It
-	// uses the explicit deployment admission path and is distinct from the
+	// TriggerWorkerPool — backlog-driven reconciliation for a worker fleet.
+	// It uses the explicit deployment admission path and is distinct from the
 	// singleton lifecycle repair trigger for wake-timeline observability.
 	TriggerWorkerPool = "worker.pool"
 
@@ -106,4 +106,10 @@ const (
 	// reading the wake timeline can tell internal fan-out apart from customer
 	// traffic when attributing latency or cold-start cost.
 	TriggerServiceMesh = "service.mesh"
+
+	// TriggerServiceWakeAhead — an opt-in, speculative wake of a service
+	// that a waking caller is measured to call soon after it wakes (ADR-977).
+	// It is distinct from TriggerServiceMesh so the wake timeline shows which
+	// restores were predictions, and it never parks idle instances for room.
+	TriggerServiceWakeAhead = "service.wake_ahead"
 )

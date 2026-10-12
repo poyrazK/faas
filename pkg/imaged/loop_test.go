@@ -12,6 +12,7 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -423,6 +424,46 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("expired stale rows remain: %d", len(rows))
+	}
+}
+
+// production-us hunt #9: stale snapshots past their retention were reclaimed
+// only by the one-shot startup FC sweep, so a long-running imaged kept every
+// re-captured init snapshot (one app: 103 stale rows, 52 GB). The periodic GC
+// tick now evicts them while a fresh stale row stays inside its window.
+func TestGCTick_EvictsExpiredStaleSnapshotsWithoutAnFCSweep(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "stale-tick@x.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "stale-tick", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:tick", Status: state.DeployLive})
+	expired, _ := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
+		StorageKey: "snap/expired/mem", CreatedAt: time.Now().Add(-api.SnapshotStaleRetention - time.Hour),
+	})
+	recent, _ := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
+		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-time.Hour),
+	})
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
+	loop := &Loop{
+		store:     store,
+		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		lvUsedPct: func(context.Context) (float64, error) { return 10, nil },
+		handler:   &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storage: be},
+	}
+	loop.runGCTick(ctx, time.Now())
+
+	rows, err := store.ListSnapshotsStaleOlderThan(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, row := range rows {
+		ids[row.ID] = true
+	}
+	if ids[expired.ID] || !ids[recent.ID] {
+		t.Fatalf("stale rows after GC tick = %v, want only the in-window row %s", ids, recent.ID)
 	}
 }
 
@@ -1761,5 +1802,58 @@ func TestDeleteSnapshotsAndFiles_TierAwareWarm(t *testing.T) {
 	}
 	if _, err := be.Get(context.Background(), state.SnapMemKey(dep.ID)); err != nil {
 		t.Errorf("init mem blob was incorrectly deleted — warm-tier evict must not touch init keys: %v", err)
+	}
+}
+
+// Hunt #9: a rollback moves an old superseded deployment back into
+// snapshotting. The reconciler aged rows from created_at, so it cancelled a
+// rollback to a 22-hour-old deployment six seconds after it started and left
+// the rollback target permanently cancelled. Age counts from the current
+// pipeline stage instead.
+func TestReconcileStaleDeploymentsAgesFromCurrentStage(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stale-rollback@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 11, 9, 0, 30, 0, time.UTC)
+	makeSnapshotting := func(slug string, stageStarted time.Time) state.Deployment {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages, err := json.Marshal(state.StageState{Current: "snapshot_prepare", CurrentStartedAt: &stageStarted})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeploySnapshotting,
+			CreatedAt: now.Add(-22 * time.Hour), StageState: stages,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	rollback := makeSnapshotting("stale-rollback", now.Add(-6*time.Second))
+	stuck := makeSnapshotting("stale-stuck", now.Add(-3*time.Hour))
+	ops := wire.NewOpsMetrics("imaged_stage_test")
+	loop := NewLoop(LoopConfig{
+		Handler: &Handler{ops: ops}, Store: store, Now: func() time.Time { return now },
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	loop.reconcileStaleDeployments(ctx)
+	if got, _ := store.DeploymentByID(ctx, rollback.ID); got.Status != state.DeploySnapshotting {
+		t.Fatalf("rollback target = %s (principal %q), want snapshotting", got.Status, got.CancelledByPrincipal)
+	}
+	got, _ := store.DeploymentByID(ctx, stuck.ID)
+	if got.Status != state.DeployCancelled || !strings.Contains(got.CancelledByPrincipal, "snapshotting:10800s") {
+		t.Fatalf("stuck = status %s principal %q, want cancelled after 10800s in stage", got.Status, got.CancelledByPrincipal)
+	}
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if want := "imaged_stage_test_stale_deployment_oldest_age_seconds 0"; !strings.Contains(recorder.Body.String(), want) {
+		t.Errorf("metrics missing %q: a rollback in progress is not stale backlog", want)
 	}
 }

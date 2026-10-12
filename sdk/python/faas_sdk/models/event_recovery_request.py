@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -9,6 +9,11 @@ from attrs import define as _attrs_define
 from ..models.event_recovery_request_mode import EventRecoveryRequestMode, check_event_recovery_request_mode
 from ..models.event_recovery_request_outcome import EventRecoveryRequestOutcome, check_event_recovery_request_outcome
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.event_workflow_recovery_plan import EventWorkflowRecoveryPlan
+    from ..models.workflow_run_recovery_plan import WorkflowRunRecoveryPlan
+
 
 T = TypeVar("T", bound="EventRecoveryRequest")
 
@@ -19,18 +24,34 @@ class EventRecoveryRequest:
     parent_job_id, saved parent failures remain selectable even when execution or receipt evidence has disappeared;
     admission skips changes rather than following newer work. Ordinary execution mode includes publication and
     materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and
-    execution records. Creation freezes its own selection; preview is advisory.
+    execution records. Native workflow mode requires explicit workflow_runs and never selects event recipients. Creation
+    freezes its own selection; preview is advisory.
 
     """
 
+    workflow_runs: WorkflowRunRecoveryPlan | Unset = UNSET
+    """Explicit reviewed native workflow runs. Requires workflow mode and request_id; excludes event selections and
+    receipt protection. Each resume checks the original count and eligibility atomically with its job outcome.
+    Concurrency pressure leaves the item pending; changed or unsafe targets are skipped. Queued means a resume was
+    admitted, not execution success. No new runs are selected. The original normalized request returns the retained
+    job on retry; changes conflict."""
+    workflow_routing: EventWorkflowRecoveryPlan | Unset = UNSET
+    """Explicit reviewed workflow acceptance recipients. Routing mode only, requires request_id and excludes parent
+    and backlog filters. Creation freezes the exact selection. Before each admission the worker atomically compares
+    published version, replay count and routing generation; changes are skipped. Repeated request_id returns the
+    retained job, even after completion; a different normalized plan or rate conflicts. Preview and preflight are
+    advisory; workflow fence eligibility is unknown in preflight. Queued means routing recovery was admitted, not
+    workflow completion."""
     parent_job_id: UUID | Unset = UNSET
-    """Select only saved failed/dead-lettered queued items from this retained terminal execution recovery in the
-    same account/app. Requires execution mode. Does not follow newer replays."""
+    """Select saved failed/dead-lettered execution items or saved failed native workflow items from a retained
+    terminal recovery in the same account/app. Native workflow retries require explicit parent_position and the
+    saved resume count for every target, and the same workflow name. Changed runs are rejected at creation or
+    skipped at admission. Does not follow newer replays."""
     request_id: UUID | Unset = UNSET
-    """Required on child creation; optional on preview. Account-scoped durable idempotency while the child job is
-    retained. Repeating the normalized selection returns its existing child; different selection/app with the same
-    UUID conflicts. Only allowed with parent_job_id. Operator reason is excluded from comparison and the original
-    audit reason wins."""
+    """Required for workflow_runs, workflow_routing and on child creation; optional on child preview. Account-
+    scoped durable idempotency while the job is retained. Repeating the normalized selection returns its existing
+    job; different selection/app with the same UUID conflicts. Only allowed with parent_job_id, workflow_runs or
+    workflow_routing. Operator reason is excluded from comparison and the original audit reason wins."""
     reason: str | Unset = UNSET
     """Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit
     history; omitted from frozen selection. Preview does not record it."""
@@ -53,6 +74,14 @@ class EventRecoveryRequest:
     depends on scheduler load."""
 
     def to_dict(self) -> dict[str, Any]:
+        workflow_runs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workflow_runs, Unset):
+            workflow_runs = self.workflow_runs.to_dict()
+
+        workflow_routing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workflow_routing, Unset):
+            workflow_routing = self.workflow_routing.to_dict()
+
         parent_job_id: str | Unset = UNSET
         if not isinstance(self.parent_job_id, Unset):
             parent_job_id = str(self.parent_job_id)
@@ -90,6 +119,10 @@ class EventRecoveryRequest:
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
+        if workflow_runs is not UNSET:
+            field_dict["workflow_runs"] = workflow_runs
+        if workflow_routing is not UNSET:
+            field_dict["workflow_routing"] = workflow_routing
         if parent_job_id is not UNSET:
             field_dict["parent_job_id"] = parent_job_id
         if request_id is not UNSET:
@@ -121,7 +154,24 @@ class EventRecoveryRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_workflow_recovery_plan import EventWorkflowRecoveryPlan
+        from ..models.workflow_run_recovery_plan import WorkflowRunRecoveryPlan
+
         d = dict(src_dict)
+        _workflow_runs = d.pop("workflow_runs", UNSET)
+        workflow_runs: WorkflowRunRecoveryPlan | Unset
+        if isinstance(_workflow_runs, Unset):
+            workflow_runs = UNSET
+        else:
+            workflow_runs = WorkflowRunRecoveryPlan.from_dict(_workflow_runs)
+
+        _workflow_routing = d.pop("workflow_routing", UNSET)
+        workflow_routing: EventWorkflowRecoveryPlan | Unset
+        if isinstance(_workflow_routing, Unset):
+            workflow_routing = UNSET
+        else:
+            workflow_routing = EventWorkflowRecoveryPlan.from_dict(_workflow_routing)
+
         _parent_job_id = d.pop("parent_job_id", UNSET)
         parent_job_id: UUID | Unset
         if isinstance(_parent_job_id, Unset):
@@ -169,6 +219,8 @@ class EventRecoveryRequest:
         rate_per_second = d.pop("rate_per_second", UNSET)
 
         event_recovery_request = cls(
+            workflow_runs=workflow_runs,
+            workflow_routing=workflow_routing,
             parent_job_id=parent_job_id,
             request_id=request_id,
             reason=reason,

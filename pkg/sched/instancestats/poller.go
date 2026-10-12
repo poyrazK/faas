@@ -74,15 +74,18 @@ type EgressAbuseHandler func(ctx context.Context, row InstanceStat, reason sched
 // state lives in the Reader; the poller itself is stateless across
 // ticks so process restart has no plumbing consequence.
 type Poller struct {
-	Interval  time.Duration
-	Store     state.Store
-	Dialer    Dialer
-	TLS       *tls.Config
-	Reader    *Reader
-	Metrics   *wire.OpsMetrics
-	Log       *slog.Logger
-	Now       func() time.Time
-	Freshness time.Duration
+	// rssHistory is each instance's recent resident memory for the ADR-909
+	// charge; only the tick goroutine touches it.
+	rssHistory *rssHistory
+	Interval   time.Duration
+	Store      state.Store
+	Dialer     Dialer
+	TLS        *tls.Config
+	Reader     *Reader
+	Metrics    *wire.OpsMetrics
+	Log        *slog.Logger
+	Now        func() time.Time
+	Freshness  time.Duration
 	// Telemetry is the notification/stream-backed node observer cache. When
 	// set, Tick only projects its local snapshot and never dials vmmd.
 	Telemetry *sched.NodeTelemetryCache
@@ -277,6 +280,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if p.FleetStats != nil {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows, started)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -304,6 +308,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 			}
 		}
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows, started)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
@@ -321,6 +326,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
+	p.publishMemoryShadow(instances, rows, started)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per

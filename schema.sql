@@ -1068,6 +1068,39 @@ END $$;
 
 
 --
+-- Name: capture_event_recovery_workflow_result(uuid, uuid, text, integer, text, timestamp with time zone, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_workflow_result(p_run uuid, p_app uuid, p_name text, p_count integer, p_status text, p_updated timestamp with time zone, p_finished timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz := clock_timestamp();
+BEGIN
+ IF p_updated>observed THEN RETURN; END IF;
+ INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+ SELECT item.job_id,item.position,p_run,resume.resume_number,resume.created_at,
+ CASE WHEN p_count>resume.resume_number THEN 'superseded'
+ WHEN p_status='succeeded' THEN 'succeeded'
+ WHEN p_cancelled THEN 'cancelled' ELSE 'failed' END,
+ CASE WHEN p_count>resume.resume_number THEN NULL ELSE p_finished END,observed
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ JOIN apps app ON app.id=job.app_id AND app.account_id=job.account_id
+ JOIN workflow_run_resumes resume ON resume.run_id=p_run AND resume.account_id=job.account_id
+  AND resume.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+  AND resume.created_at>=job.created_at AND resume.created_at<=observed
+ WHERE item.state='queued' AND job.selection->>'mode'='workflow' AND job.app_id=p_app
+  AND job.selection->'workflow_runs'->>'name'=p_name
+  AND (item.expected_progress->>'run_id')::uuid=p_run
+  AND p_count>=resume.resume_number AND p_updated>=resume.created_at
+  AND (p_count>resume.resume_number OR p_status IN ('succeeded','failed','dead'))
+  AND (p_count>resume.resume_number OR p_finished IS NULL OR p_finished BETWEEN resume.created_at AND observed)
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1214,6 +1247,30 @@ BEGIN
   PERFORM bump_binding_promotion_revision(target);
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
+
+
+--
+-- Name: capture_workflow_recovery_failure(uuid, uuid, text, text, integer, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_workflow_recovery_failure(p_app uuid, p_run uuid, p_workflow text, p_status text, p_count integer, p_completed timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz:=clock_timestamp(); retained integer; age_seconds bigint; inserted uuid;
+BEGIN
+ IF p_status NOT IN ('failed','dead') OR p_cancelled OR p_completed>observed THEN RETURN; END IF;
+ IF NOT EXISTS(SELECT 1 FROM apps WHERE id=p_app AND status<>'deleted') THEN RETURN; END IF;
+ -- Serialize retention and first-observation capture for this app only.
+ PERFORM pg_advisory_xact_lock(hashtextextended('workflow-failure-evidence:'||p_app::text,0));
+ SELECT max_entries,retention_seconds INTO retained,age_seconds FROM workflow_recovery_failure_capture WHERE singleton;
+ INSERT INTO workflow_recovery_failure_evidence(id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at)
+ VALUES(gen_random_uuid(),p_app,p_run,p_workflow,p_count,p_status,observed,p_completed)
+ ON CONFLICT(app_id,run_id,resume_count) DO NOTHING RETURNING id INTO inserted;
+ IF inserted IS NULL THEN RETURN; END IF;
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND observed_at<=observed-make_interval(secs=>age_seconds::double precision);
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND sequence < (
+ SELECT sequence FROM workflow_recovery_failure_evidence WHERE app_id=p_app ORDER BY sequence DESC OFFSET retained-1 LIMIT 1);
 END $$;
 
 
@@ -3356,9 +3413,9 @@ CREATE TABLE public.deployments (
     github_source_ref text,
     github_installation_id bigint,
     environment_workload_runtime jsonb,
-    environment_workload_held boolean DEFAULT false NOT NULL,
     serving_ended_at timestamp with time zone,
     runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
+    environment_workload_held boolean DEFAULT false NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3367,8 +3424,8 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
     CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
     CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK (((NOT environment_workload_held) OR (environment_workload_runtime IS NOT NULL))),
     CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
-    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK ((NOT environment_workload_held) OR environment_workload_runtime IS NOT NULL),
     CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
     CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
     CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
@@ -3402,6 +3459,50 @@ CREATE TABLE public.deployments (
 
 
 --
+-- Name: environment_workload_activation_authorized(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_activation_authorized(candidate public.deployments) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE frozen jsonb; token text; source_uuid uuid; source_generation bigint; source_intent bigint; environment_uuid uuid; revision_uuid uuid;
+BEGIN
+    frozen:=candidate.environment_workload_runtime;
+    IF frozen IS NULL OR candidate.environment_workload_held OR candidate.status<>'live' THEN RETURN false; END IF;
+    token:=nullif(current_setting('gregale.gitops_activation',true),'');
+    IF token IS NULL OR token IS DISTINCT FROM current_setting('gregale.gitops_lease',true) THEN RETURN false; END IF;
+    BEGIN
+        source_uuid:=(frozen->>'source_id')::uuid;
+        source_generation:=(frozen->>'generation')::bigint;
+        source_intent:=(frozen->>'intent_version')::bigint;
+        environment_uuid:=(frozen->>'environment_id')::uuid;
+        revision_uuid:=(frozen->>'revision_id')::uuid;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN false;
+    END;
+    RETURN EXISTS (
+        SELECT 1
+        FROM active_environment_git_sources source
+        JOIN environment_gitops_jobs job ON job.source_id=source.id
+        JOIN environment_workload_graphs graph ON graph.source_id=source.id
+        CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
+        WHERE source.id=source_uuid AND source.mode='enforce' AND NOT source.suspended
+            AND source.generation=source_generation AND source.intent_version=source_intent
+            AND source.environment_id=environment_uuid AND source.approved_revision_id=revision_uuid
+            AND graph.environment_id=source.environment_id AND graph.revision_id=source.approved_revision_id
+            AND graph.generation=source.generation AND graph.intent_version=source.intent_version
+            AND graph.plan_hash=frozen->>'plan_hash' AND graph.phase='prepared'
+            AND environment_workload_graph_serving_supported(graph.id)
+            AND graph_member.value->>'resource'=frozen->>'resource'
+            AND graph_member.value->>'app_id'=candidate.app_id::text
+            AND graph_member.value->>'candidate_deployment_id'=candidate.id::text
+            AND job.desired_generation=source.generation AND job.claimed_generation=source.generation
+            AND job.lease_until>clock_timestamp() AND job.lease_token=token AND token<>''
+    );
+END $$;
+
+
+--
 -- Name: environment_workload_artifact(public.deployments); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3412,6 +3513,120 @@ CREATE FUNCTION public.environment_workload_artifact(d public.deployments) RETUR
   'rootfs_bytes',coalesce((d).rootfs_bytes,0),'image_digest',coalesce((d).image_digest,''),
   'build_id',coalesce((d).build_id::text,''),'kind',(d).kind,'commit_sha',coalesce((d).commit_sha,''));
 $$;
+
+
+--
+-- Name: environment_workload_candidate_applied_removal_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_candidate_applied_removal_valid(input_value jsonb) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE source_uuid uuid; revision_uuid uuid; source_generation bigint; resource_name text;
+BEGIN
+ BEGIN
+  source_uuid:=(input_value->>'source_id')::uuid;
+  revision_uuid:=(input_value->>'revision_id')::uuid;
+  source_generation:=(input_value->>'generation')::bigint;
+  resource_name:=input_value->>'resource';
+ EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+  RETURN false;
+ END;
+ IF source_uuid IS NULL OR revision_uuid IS NULL OR source_generation IS NULL OR resource_name IS NULL THEN RETURN false; END IF;
+ RETURN EXISTS(
+  SELECT 1 FROM environment_gitops_runs run CROSS JOIN LATERAL jsonb_array_elements(run.steps) step
+  WHERE run.source_id=source_uuid AND run.revision_id=revision_uuid AND run.generation=source_generation
+   AND step->>'resource'=resource_name AND step->>'status'='applied' AND step->>'action'='remove'
+   AND (step->>'path' IN ('source','source_revision') OR starts_with(step->>'path','runtime/') OR
+    starts_with(step->>'path','service_bindings/') OR starts_with(step->>'path','queue_bindings/') OR
+    starts_with(step->>'path','variables/') OR starts_with(step->>'path','secret_refs/') OR step->>'path'='schedule')
+ );
+END $$;
+
+
+--
+-- Name: environment_workload_candidate_queue_bindings_valid(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_candidate_queue_bindings_valid(input_value jsonb, candidate_app_id uuid) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE source_row environment_git_sources%ROWTYPE; revision_row environment_desired_revisions%ROWTYPE;
+        approved_bindings jsonb; frozen_bindings jsonb; workload_name text; entry record;
+BEGIN
+ BEGIN
+  SELECT * INTO source_row FROM environment_git_sources WHERE id=(input_value->>'source_id')::uuid;
+  SELECT * INTO revision_row FROM environment_desired_revisions
+   WHERE id=(input_value->>'revision_id')::uuid AND source_id=source_row.id;
+ EXCEPTION WHEN invalid_text_representation THEN
+  RETURN false;
+ END;
+ IF source_row.id IS NULL OR revision_row.id IS NULL THEN RETURN false; END IF;
+ IF coalesce(input_value->>'resource','') !~ '^workload/[a-z0-9][a-z0-9-]*$' THEN RETURN false; END IF;
+ workload_name:=substring(input_value->>'resource' from 10);
+ approved_bindings:=coalesce(revision_row.definition->'workloads'->workload_name->'queue_bindings','{}'::jsonb);
+ frozen_bindings:=coalesce(input_value->'queue_bindings','{}'::jsonb);
+ IF jsonb_typeof(approved_bindings) IS DISTINCT FROM 'object' OR jsonb_typeof(frozen_bindings) IS DISTINCT FROM 'object' THEN
+  RETURN false;
+ END IF;
+ IF (SELECT count(*) FROM jsonb_each(approved_bindings)) <>
+    (SELECT count(*) FROM jsonb_each(frozen_bindings)) THEN RETURN false; END IF;
+ FOR entry IN SELECT key,value FROM jsonb_each(frozen_bindings) LOOP
+  IF jsonb_typeof(entry.value) IS DISTINCT FROM 'object' OR NOT (entry.value ?& ARRAY['binding_id','contract']) OR
+     jsonb_typeof(entry.value->'contract') IS DISTINCT FROM 'object' OR
+     coalesce(entry.value->>'binding_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR
+     entry.value->'contract' IS DISTINCT FROM approved_bindings->entry.key THEN RETURN false; END IF;
+  IF NOT EXISTS(
+   SELECT 1 FROM environment_gitops_queue_bindings identity
+   JOIN environment_managed_fields owner ON owner.source_id=identity.source_id AND owner.environment_id=source_row.environment_id
+    AND owner.resource=identity.resource AND owner.field_path=identity.field_path
+   JOIN queue_bindings binding ON binding.id=identity.binding_id
+   JOIN apps app ON app.id=binding.app_id
+   WHERE identity.source_id=source_row.id AND identity.resource=input_value->>'resource'
+    AND identity.field_path='queue_bindings/'||entry.key AND identity.binding_id=(entry.value->>'binding_id')::uuid
+    AND binding.id=(entry.value->>'binding_id')::uuid AND binding.account_id=source_row.account_id
+    AND binding.app_id=candidate_app_id AND binding.environment_id=source_row.environment_id
+    AND binding.deployment_scope=input_value->>'scope' AND binding.name=entry.key AND binding.retired_at IS NULL
+    AND binding.workload_class=app.workload_class AND binding.workload_class=entry.value->'contract'->>'workload_class'
+    AND entry.value->'contract'=(jsonb_build_object('queue_name',binding.queue_name,'mode',binding.mode,
+      'workload_class',binding.workload_class,'enabled',binding.enabled,'max_concurrency',binding.max_concurrency)
+      || CASE WHEN binding.retry_policy='{}'::jsonb THEN '{}'::jsonb ELSE jsonb_build_object('retry_policy',binding.retry_policy) END)
+  ) THEN RETURN false; END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: environment_workload_candidate_secret_refs_valid(jsonb, uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_candidate_secret_refs_valid(input_value jsonb, target_app uuid, target_scope text, desired_refs jsonb) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE frozen_refs jsonb; reviewed_refs jsonb;
+BEGIN
+ frozen_refs:=coalesce(input_value->'secret_refs','{}'::jsonb);
+ reviewed_refs:=coalesce(desired_refs,'{}'::jsonb);
+ IF jsonb_typeof(frozen_refs)<>'object' OR jsonb_typeof(reviewed_refs)<>'object' OR
+    jsonb_typeof(coalesce(input_value->'variables','{}'::jsonb))<>'object' OR
+    jsonb_typeof(coalesce(input_value->'service_bindings','{}'::jsonb))<>'object' THEN
+  RETURN false;
+ END IF;
+ IF frozen_refs IS DISTINCT FROM reviewed_refs OR
+    frozen_refs IS DISTINCT FROM environment_scoped_secret_refs(target_app,target_scope) THEN
+  RETURN false;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each_text(frozen_refs) entry
+   WHERE entry.key !~ '^[A-Z][A-Z0-9_]{0,127}$' OR entry.value !~ '^secret:[A-Z][A-Z0-9_]{0,127}$') OR
+    EXISTS(SELECT 1 FROM jsonb_object_keys(frozen_refs) secret_key(key)
+      JOIN jsonb_object_keys(coalesce(input_value->'variables','{}'::jsonb)) variable_key(key) USING(key)) OR
+    EXISTS(SELECT 1 FROM jsonb_object_keys(frozen_refs) secret_key(key)
+      JOIN jsonb_each(coalesce(input_value->'service_bindings','{}'::jsonb)) binding ON binding.value->>'env_key'=secret_key.key) THEN
+  RETURN false;
+ END IF;
+ RETURN true;
+END $_$;
 
 
 --
@@ -3437,37 +3652,197 @@ $$;
 
 
 --
--- Name: environment_workload_qualification_inputs_current(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: environment_workload_graph_service_bindings_supported(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.environment_workload_qualification_inputs_current(request_id uuid) RETURNS boolean
+CREATE FUNCTION public.environment_workload_graph_service_bindings_supported(target_graph uuid) RETURNS boolean
     LANGUAGE sql STABLE
-    AS $$
- SELECT EXISTS(SELECT 1 FROM environment_workload_qualification_requests target
-  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN active_environment_git_sources s ON s.id=g.source_id
-  JOIN project_environments e ON e.id=g.environment_id JOIN accounts c ON c.id=s.account_id
-  WHERE target.id=request_id AND g.phase='prepared' AND s.mode='enforce' AND NOT s.suspended
-   AND c.status='active' AND c.abuse_hold_at IS NULL
-   AND g.generation=s.generation AND g.intent_version=s.intent_version AND g.revision_id=s.approved_revision_id
-   AND g.environment_id=s.environment_id AND e.account_id=s.account_id AND e.project_id=s.project_id
-   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m LEFT JOIN apps a ON a.id=(m->>'app_id')::uuid
-    WHERE a.id IS NULL OR a.status NOT IN ('active','evicted_cold') OR a.account_id<>s.account_id OR a.project_id<>s.project_id
-     OR m->'retained_deployments' IS DISTINCT FROM (SELECT coalesce(jsonb_agg(d.id::text ORDER BY d.id),'[]'::jsonb)
-      FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'))
-   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
-    LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource'
-     AND q.app_id=(m->>'app_id')::uuid AND q.deployment_id=(m->>'candidate_deployment_id')::uuid
-    LEFT JOIN deployments d ON d.id=q.deployment_id LEFT JOIN apps a ON a.id=q.app_id
-    WHERE m ? 'candidate_deployment_id' AND (q.id IS NULL OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0
-     OR q.artifact IS DISTINCT FROM environment_workload_artifact(d) OR q.frozen_inputs IS DISTINCT FROM d.environment_workload_runtime
-     OR d.scope IS DISTINCT FROM e.slug OR d.app_id IS DISTINCT FROM a.id
-     OR jsonb_strip_nulls(q.frozen_inputs->'baseline') IS DISTINCT FROM jsonb_strip_nulls(a.manifest)
-     OR q.frozen_inputs->>'start_command' IS DISTINCT FROM coalesce(a.start_command,'') OR q.frozen_inputs->>'app_type' IS DISTINCT FROM a.type
-     OR q.frozen_inputs->>'runtime_base' IS DISTINCT FROM coalesce(a.runtime,'') OR q.frozen_inputs->>'workload_class' IS DISTINCT FROM a.workload_class
-     OR q.frozen_inputs ? 'deployment_inputs' AND EXISTS(SELECT 1 FROM deployments original
-      WHERE original.app_id=a.id AND original.scope=e.slug AND original.status='live'
-       AND environment_workload_deployment_inputs(original) IS DISTINCT FROM q.frozen_inputs->'deployment_inputs'))));
-$$;
+    AS $_$
+SELECT EXISTS (
+    SELECT 1 FROM environment_workload_graphs graph
+    WHERE graph.id=target_graph AND CASE WHEN jsonb_typeof(graph.members)='array'
+        THEN jsonb_array_length(graph.members)>0 ELSE false END
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(CASE WHEN jsonb_typeof(graph.members)='array' THEN graph.members ELSE '[]'::jsonb END) AS caller(value)
+            CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(caller.value->'service_bindings')='object'
+                THEN caller.value->'service_bindings' ELSE '{}'::jsonb END AS bindings) frozen
+            WHERE coalesce(jsonb_typeof(caller.value->'service_bindings'),'null') NOT IN ('object','null')
+                OR coalesce(caller.value->>'service_bindings_configured','false')<>
+                    (frozen.bindings<>'{}'::jsonb)::text
+                OR (frozen.bindings<>'{}'::jsonb AND caller.value->>'execution_mode' NOT IN ('request','service','worker','job'))
+                OR (caller.value->>'execution_mode'='job' AND frozen.bindings<>'{}'::jsonb AND
+                    (coalesce(caller.value->>'schedule_configured','false')<>'true' OR coalesce(caller.value->>'job_smoke_configured','false')<>'true' OR
+                     coalesce(caller.value->>'queue_bindings_configured','false')<>'false' OR
+                     coalesce(nullif(caller.value->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb OR
+                     coalesce(nullif(caller.value->'queue_modes','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb))
+                OR EXISTS (
+                    SELECT 1 FROM jsonb_each(frozen.bindings) AS binding(name,value)
+                    WHERE binding.name !~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                        OR binding.name ~ '^tag-'
+                        OR jsonb_typeof(binding.value)<>'object'
+                        OR coalesce(binding.value->>'workload','') !~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                        OR coalesce(binding.value->>'workload','') ~ '^tag-'
+                        OR coalesce(binding.value->>'env_key','') !~ '^[A-Z][A-Z0-9_]*$'
+                        OR octet_length(coalesce(binding.value->>'env_key',''))>128
+                        OR coalesce(binding.value->>'target_app_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                        OR binding.value->>'target_app_id'=caller.value->>'app_id'
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements(CASE WHEN jsonb_typeof(graph.members)='array' THEN graph.members ELSE '[]'::jsonb END) AS target(value)
+                            WHERE target.value->>'resource'='workload/'||(binding.value->>'workload')
+                                AND target.value->>'app_id'=binding.value->>'target_app_id'
+                                AND target.value->>'app_id'<>caller.value->>'app_id'
+                                AND target.value->>'execution_mode' IN ('request','service')
+                                AND ((nullif(target.value->>'candidate_deployment_id','') IS NULL)=
+                                    (nullif(caller.value->>'candidate_deployment_id','') IS NULL))
+                        )
+                )
+                OR (SELECT count(*)<>count(DISTINCT binding.value->>'env_key')
+                    FROM jsonb_each(frozen.bindings) AS binding(name,value))
+        )
+)
+$_$;
+
+
+--
+-- Name: environment_workload_graph_serving_supported(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_graph_serving_supported(target_graph uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $_$
+SELECT EXISTS (
+    SELECT 1 FROM environment_workload_graphs graph
+    WHERE graph.id=target_graph AND CASE WHEN jsonb_typeof(graph.members)='array'
+        THEN jsonb_array_length(graph.members)>0 ELSE false END
+        AND environment_workload_graph_service_bindings_supported(target_graph)
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE NOT coalesce((
+                (
+                    graph_member.value->>'execution_mode' IN ('request','service')
+                    AND coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb
+                    AND NOT EXISTS (
+                        SELECT 1 FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                    )
+                ) OR (
+                    graph_member.value->>'execution_mode'='request'
+                    AND graph_member.value->>'function'='true'
+                    AND jsonb_typeof(graph_member.value->'queue_modes')='object'
+                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))>0
+                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))=(
+                        SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)) AS queue_mode(name,value)
+                        WHERE queue_mode.value<>'"push"'::jsonb OR NOT EXISTS (
+                            SELECT 1
+                            FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                            WHERE queue_binding.name=queue_mode.name
+                                AND queue_binding.value->'contract'->>'enabled'='true'
+                                AND queue_binding.value->'contract'->>'mode'='push'
+                                AND queue_binding.value->'contract'->>'workload_class'='http'
+                                AND coalesce(queue_binding.value->>'binding_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                                AND coalesce(queue_binding.value->>'trigger_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                        )
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                            AND NOT (coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb) ? queue_binding.name)
+                    )
+                ) OR (
+                    graph_member.value->>'execution_mode'='worker'
+                    AND jsonb_typeof(graph_member.value->'queue_modes')='object'
+                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))>0
+                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))=(
+                        SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)) AS queue_mode(name,value)
+                        WHERE queue_mode.value NOT IN ('"push"'::jsonb,'"pull"'::jsonb) OR NOT EXISTS (
+                            SELECT 1
+                            FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                            WHERE queue_binding.name=queue_mode.name
+                                AND queue_binding.value->'contract'->>'enabled'='true'
+                                AND queue_binding.value->'contract'->>'mode'=queue_mode.value#>>'{}'
+                                AND queue_binding.value->'contract'->>'workload_class'='worker'
+                                AND coalesce(queue_binding.value->>'binding_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                                AND ((queue_mode.value='"push"'::jsonb AND coalesce(queue_binding.value->>'trigger_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+                                    OR (queue_mode.value='"pull"'::jsonb AND coalesce(queue_binding.value->>'trigger_id','')=''))
+                        )
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                            AND NOT (coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb) ? queue_binding.name)
+                    )
+                ) OR (
+                    graph_member.value->>'execution_mode'='job'
+                    AND graph_member.value->>'schedule_configured'='true'
+                    AND graph_member.value->>'job_smoke_configured'='true'
+                    AND coalesce(graph_member.value->>'job_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    AND coalesce(graph_member.value->>'queue_bindings_configured','false')='false'
+                    AND coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)='{}'::jsonb
+                    AND coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb
+                    AND NOT EXISTS (
+                        SELECT 1 FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+                        WHERE queue_binding.value->'contract'->>'enabled'='true'
+                    )
+                )
+            ),false)
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM active_environment_git_sources source
+            JOIN project_environments environment ON environment.id=source.environment_id
+            CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
+            LEFT JOIN triggers queue_trigger ON queue_trigger.id::text=queue_binding.value->>'trigger_id'
+            WHERE source.id=graph.source_id
+                AND graph.id=target_graph
+                AND (graph_member.value->>'execution_mode'='worker' OR
+                    (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (binding.id IS NULL
+                    OR binding.app_id::text IS DISTINCT FROM graph_member.value->>'app_id'
+                    OR binding.account_id IS DISTINCT FROM source.account_id
+                    OR binding.environment_id IS DISTINCT FROM source.environment_id
+                    OR binding.deployment_scope IS DISTINCT FROM environment.slug
+                    OR binding.name IS DISTINCT FROM queue_binding.name
+                    OR binding.queue_name IS DISTINCT FROM queue_binding.value->'contract'->>'queue_name'
+                    OR binding.mode IS DISTINCT FROM queue_binding.value->'contract'->>'mode'
+                    OR binding.workload_class IS DISTINCT FROM queue_binding.value->'contract'->>'workload_class'
+                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
+                    OR binding.max_concurrency::text IS DISTINCT FROM queue_binding.value->'contract'->>'max_concurrency'
+                    OR binding.retry_policy IS DISTINCT FROM coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)
+                    OR binding.retired_at IS NOT NULL
+                    OR (binding.mode='push' AND (queue_trigger.id IS NULL
+                        OR queue_trigger.app_id IS DISTINCT FROM binding.app_id
+                        OR queue_trigger.account_id IS DISTINCT FROM source.account_id
+                        OR queue_trigger.queue_binding_id IS DISTINCT FROM binding.id
+                        OR NOT queue_trigger.enabled
+                        OR queue_trigger.kind IS DISTINCT FROM 'queue'
+                        OR queue_trigger.source IS DISTINCT FROM 'queue'
+                        OR queue_trigger.slug IS DISTINCT FROM queue_binding.value->'contract'->>'queue_name'
+                        OR queue_trigger.queue_binding_scope IS DISTINCT FROM environment.slug
+                        OR queue_trigger.queue_binding_environment_id IS DISTINCT FROM source.environment_id))
+                    OR (binding.mode='pull' AND (coalesce(queue_binding.value->>'trigger_id','')<>'' OR queue_trigger.id IS NOT NULL))
+                    OR binding.mode NOT IN ('push','pull'))
+        )
+)
+$_$;
+
 
 --
 -- Name: environment_workload_qualification_evidence_current(uuid); Type: FUNCTION; Schema: public; Owner: -
@@ -3510,6 +3885,398 @@ CREATE FUNCTION public.environment_workload_qualification_evidence_current(reque
        AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) candidate
         WHERE candidate->>'candidate_deployment_id'=original.id::text)
        AND environment_workload_deployment_inputs(original) IS DISTINCT FROM q.frozen_inputs->'deployment_inputs'))));
+$$;
+
+
+--
+-- Name: environment_workload_qualification_inputs_current(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_qualification_inputs_current(request_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM environment_workload_qualification_requests target
+  JOIN environment_workload_graphs g ON g.id=target.graph_id JOIN active_environment_git_sources s ON s.id=g.source_id
+  JOIN project_environments e ON e.id=g.environment_id JOIN accounts c ON c.id=s.account_id
+  WHERE target.id=request_id AND g.phase='prepared' AND s.mode='enforce' AND NOT s.suspended
+   AND c.status='active' AND c.abuse_hold_at IS NULL
+   AND g.generation=s.generation AND g.intent_version=s.intent_version AND g.revision_id=s.approved_revision_id
+   AND g.environment_id=s.environment_id AND e.account_id=s.account_id AND e.project_id=s.project_id
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m LEFT JOIN apps a ON a.id=(m->>'app_id')::uuid
+    WHERE a.id IS NULL OR a.status NOT IN ('active','evicted_cold') OR a.account_id<>s.account_id OR a.project_id<>s.project_id
+     OR m->'retained_deployments' IS DISTINCT FROM (SELECT coalesce(jsonb_agg(d.id::text ORDER BY d.id),'[]'::jsonb)
+      FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'))
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+    LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource'
+     AND q.app_id=(m->>'app_id')::uuid AND q.deployment_id=(m->>'candidate_deployment_id')::uuid
+    LEFT JOIN deployments d ON d.id=q.deployment_id LEFT JOIN apps a ON a.id=q.app_id
+    WHERE m ? 'candidate_deployment_id' AND (q.id IS NULL OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0
+     OR q.artifact IS DISTINCT FROM environment_workload_artifact(d) OR q.frozen_inputs IS DISTINCT FROM d.environment_workload_runtime
+     OR d.scope IS DISTINCT FROM e.slug OR d.app_id IS DISTINCT FROM a.id
+     OR jsonb_strip_nulls(q.frozen_inputs->'baseline') IS DISTINCT FROM jsonb_strip_nulls(a.manifest)
+     OR q.frozen_inputs->>'start_command' IS DISTINCT FROM coalesce(a.start_command,'') OR q.frozen_inputs->>'app_type' IS DISTINCT FROM a.type
+     OR q.frozen_inputs->>'runtime_base' IS DISTINCT FROM coalesce(a.runtime,'') OR q.frozen_inputs->>'workload_class' IS DISTINCT FROM a.workload_class
+     OR q.frozen_inputs ? 'deployment_inputs' AND EXISTS(SELECT 1 FROM deployments original
+      WHERE original.app_id=a.id AND original.scope=e.slug AND original.status='live'
+       AND environment_workload_deployment_inputs(original) IS DISTINCT FROM q.frozen_inputs->'deployment_inputs'))));
+$$;
+
+
+--
+-- Name: environment_workload_queue_serving_ack_authorized(uuid, uuid, text, uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_queue_serving_ack_authorized(target_graph uuid, target_binding uuid, target_mode text, target_trigger uuid, target_app uuid, target_deployment uuid, target_invocation uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT EXISTS (
+    SELECT 1
+    FROM environment_workload_graphs graph
+    JOIN active_environment_git_sources source ON source.id=graph.source_id
+    JOIN project_environments environment ON environment.id=source.environment_id
+    JOIN project_release_sets release ON release.project_id=source.project_id
+        AND release.environment_slug=environment.slug AND release.active
+    JOIN project_release_members release_member ON release_member.release_id=release.id
+        AND release_member.app_id=target_app AND release_member.deployment_id=target_deployment
+    JOIN deployments deployment ON deployment.id=target_deployment AND deployment.app_id=target_app
+        AND deployment.status='live' AND NOT deployment.environment_workload_held
+        AND deployment.scope=environment.slug
+    JOIN invocations invocation ON invocation.id=target_invocation AND invocation.app_id=target_app
+        AND invocation.source='queue' AND invocation.state='completed'
+        AND invocation.completed_at IS NOT NULL AND invocation.deployment_scope=environment.slug
+        AND invocation.queue_binding_id=target_binding
+    CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
+    CROSS JOIN LATERAL jsonb_each(coalesce(graph_member.value->'queue_bindings','{}'::jsonb)) AS queue_binding(name,value)
+    JOIN queue_bindings binding ON binding.id=target_binding
+        AND binding.app_id=target_app AND binding.account_id=source.account_id AND binding.environment_id=source.environment_id
+        AND binding.deployment_scope=environment.slug AND binding.name=queue_binding.name
+        AND binding.mode=target_mode AND binding.enabled
+        AND ((binding.workload_class='worker' AND graph_member.value->>'execution_mode'='worker') OR
+            (binding.workload_class='http' AND graph_member.value->>'execution_mode'='request'
+                AND graph_member.value->>'function'='true'))
+        AND binding.retired_at IS NULL
+    WHERE graph.id=target_graph AND graph.phase='prepared'
+        AND source.mode='enforce' AND NOT source.suspended
+        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+        AND source.approved_revision_id=graph.revision_id
+        AND graph.environment_id=source.environment_id
+        AND ((graph_member.value->>'execution_mode'='worker' AND binding.workload_class='worker'
+                AND target_mode IN ('push','pull')) OR
+            (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'
+                AND binding.workload_class='http' AND target_mode='push'))
+        AND graph_member.value->>'app_id'=target_app::text
+        AND coalesce(queue_binding.value->>'binding_id','')=binding.id::text
+        AND queue_binding.value->'contract'->>'mode'=target_mode
+        AND queue_binding.value->'contract'->>'workload_class'=binding.workload_class
+        AND queue_binding.value->'contract'->>'enabled'='true'
+        AND queue_binding.value->'contract'->>'queue_name'=binding.queue_name
+        AND queue_binding.value->'contract'->>'max_concurrency'=binding.max_concurrency::text
+        AND coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)=binding.retry_policy
+        AND ((target_mode='push' AND target_trigger IS NOT NULL
+                AND coalesce(queue_binding.value->>'trigger_id','')=target_trigger::text
+                AND EXISTS (
+                    SELECT 1 FROM triggers queue_trigger
+                    JOIN trigger_records record ON record.trigger_id=queue_trigger.id
+                        AND record.item_identifier=invocation.id::text AND record.state='succeeded'
+                    WHERE queue_trigger.id=target_trigger AND queue_trigger.account_id=source.account_id
+                        AND queue_trigger.app_id=target_app AND queue_trigger.queue_binding_id=binding.id
+                        AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
+                        AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
+                        AND queue_trigger.queue_binding_scope=environment.slug
+                        AND queue_trigger.queue_binding_environment_id=source.environment_id)) OR
+            (target_mode='pull' AND target_trigger IS NULL
+                AND coalesce(queue_binding.value->>'trigger_id','')=''))
+        AND (graph_member.value->>'candidate_deployment_id'=target_deployment::text OR
+            (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL AND
+             coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? target_deployment::text))
+)
+$$;
+
+
+--
+-- Name: environment_workload_scheduled_job_acks(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_scheduled_job_acks(target_graph uuid, target_release uuid) RETURNS TABLE(app_id text, job_id text, job_run_id text, occurrence_id text, acknowledged_at timestamp with time zone, service_bindings jsonb)
+    LANGUAGE sql STABLE
+    AS $_$
+SELECT member.value->>'app_id',managed_job.id::text,proof.run_id::text,proof.occurrence_id::text,proof.finished_at,
+    coalesce(intent.service_bindings,'{}'::jsonb)
+FROM environment_workload_graphs graph
+JOIN active_environment_git_sources source ON source.id=graph.source_id
+JOIN project_environments environment ON environment.id=source.environment_id
+JOIN project_release_sets release ON release.id=target_release AND release.project_id=source.project_id
+CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS member(value)
+JOIN app_environment_workload_intents intent ON intent.account_id=source.account_id
+    AND intent.environment_id=source.environment_id AND intent.app_id::text=member.value->>'app_id'
+    AND intent.job_id::text=member.value->>'job_id'
+JOIN jobs managed_job ON managed_job.id=intent.job_id
+JOIN project_release_members release_member ON release_member.release_id=release.id
+    AND release_member.app_id=intent.app_id
+JOIN deployments deployment ON deployment.id=release_member.deployment_id
+    AND deployment.app_id=release_member.app_id AND deployment.status='live'
+    AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
+JOIN LATERAL (
+    SELECT occurrence.id AS occurrence_id,run.id AS run_id,occurrence.finished_at
+    FROM schedule_occurrences occurrence
+    JOIN job_runs run ON run.id=occurrence.job_run_id AND run.job_id=managed_job.id
+    WHERE occurrence.job_id=managed_job.id
+        AND occurrence.schedule_revision=managed_job.schedule_revision
+        AND occurrence.status='succeeded' AND occurrence.finished_at IS NOT NULL
+        AND occurrence.created_at>=release.created_at
+        AND occurrence.started_at IS NOT NULL AND occurrence.started_at>=release.created_at
+        AND run.occurrence_id=occurrence.id AND run.trigger_kind='scheduled'
+        AND run.aggregate_status='succeeded' AND run.finished_at IS NOT NULL
+        AND run.created_at>=release.created_at AND run.started_at IS NOT NULL AND run.started_at>=release.created_at
+        AND run.finished_at>=release.created_at
+        AND occurrence.finished_at>=run.finished_at
+        AND run.image_ref_snapshot=managed_job.image_ref
+        AND run.image_resolved_digest_snapshot=managed_job.image_resolved_digest
+        AND run.image_storage_key_snapshot=managed_job.image_storage_key
+        AND run.retry_max=managed_job.retry_max
+        AND run.task_timeout_s=managed_job.task_timeout_s
+        AND run.parallelism=managed_job.max_parallelism
+        AND run.command=managed_job.command
+        AND run.ram_mb_snapshot=managed_job.ram_mb
+        AND run.env_overrides=managed_job.env_overrides
+        AND run.effective_env_snapshot=managed_job.env_overrides || run.env_overrides
+        AND run.failure_rules IS NOT DISTINCT FROM managed_job.failure_rules
+        AND run.execution_class='standard' AND run.failure_policy='continue' AND run.tasks=1
+        AND run.input_manifest_version=0 AND coalesce(run.input_digest,'')=''
+        AND run.input_manifest_uri IS NULL AND run.input_manifest_sha256 IS NULL
+    ORDER BY occurrence.finished_at,occurrence.id
+    LIMIT 1
+) proof ON true
+WHERE graph.id=target_graph AND graph.phase='prepared'
+    AND source.mode='enforce' AND NOT source.suspended
+    AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+    AND source.approved_revision_id=graph.revision_id
+    AND release.active AND release.environment_slug=environment.slug
+    AND member.value->>'execution_mode'='job'
+    AND member.value->>'schedule_configured'='true'
+    AND member.value->>'job_smoke_configured'='true'
+    AND managed_job.id::text=member.value->>'job_id'
+    AND managed_job.account_id=source.account_id AND managed_job.kind='recurring' AND managed_job.status='active'
+    AND managed_job.image_materialization_status='ready'
+    AND coalesce(managed_job.image_storage_key,'')<>''
+    AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
+    AND intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
+    AND intent.schedule IS NOT NULL AND managed_job.cron_schedule=intent.schedule->>'cron'
+    AND managed_job.cron_timezone=intent.schedule->>'timezone'
+    AND managed_job.schedule_policy IS NOT DISTINCT FROM NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
+    AND managed_job.failure_rules IS NOT DISTINCT FROM NULLIF(intent.schedule->'failure_rules','null'::jsonb)
+    AND managed_job.max_parallelism=1 AND managed_job.retry_max=0
+    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0 AND cardinality(managed_job.command)=0
+    AND managed_job.env_overrides=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
+    AND coalesce(nullif(intent.variables,'null'::jsonb),'{}'::jsonb)=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
+    AND coalesce(nullif(member.value->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(intent.service_bindings,'{}'::jsonb)
+    AND coalesce(member.value->>'service_bindings_configured','false')=(coalesce(intent.service_bindings,'{}'::jsonb)<>'{}'::jsonb)::text
+    AND coalesce(member.value->>'queue_bindings_configured','false')='false'
+    AND coalesce(nullif(member.value->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb
+    AND (member.value->>'candidate_deployment_id'=deployment.id::text OR
+        (nullif(member.value->>'candidate_deployment_id','') IS NULL
+            AND coalesce(member.value->'retained_deployments','[]'::jsonb) ? deployment.id::text))
+$_$;
+
+
+--
+-- Name: environment_workload_scheduled_jobs_ready(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_scheduled_jobs_ready(target_graph uuid, target_release uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT (SELECT count(*) FROM environment_workload_graphs graph
+    CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS member(value)
+    WHERE graph.id=target_graph AND member.value->>'execution_mode'='job') =
+    (SELECT count(*) FROM environment_workload_scheduled_job_acks(target_graph,target_release))
+$$;
+
+
+--
+-- Name: environment_workload_serving_authorized(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_serving_authorized(target_source uuid, target_graph uuid, target_release uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1
+  FROM active_environment_git_sources src
+  JOIN environment_gitops_jobs job ON job.source_id=src.id
+  JOIN environment_workload_graphs graph ON graph.id=target_graph AND graph.source_id=src.id
+  JOIN project_environments env ON env.id=src.environment_id
+  JOIN project_release_sets release ON release.id=target_release AND release.project_id=src.project_id
+      AND release.environment_slug=env.slug AND release.active
+  WHERE src.id=target_source AND src.mode='enforce' AND NOT src.suspended
+    AND src.generation=graph.generation AND src.intent_version=graph.intent_version
+    AND src.approved_revision_id=graph.revision_id AND graph.phase='prepared'
+    AND job.desired_generation=src.generation AND job.claimed_generation=src.generation
+    AND job.lease_until>clock_timestamp() AND job.lease_token<>''
+    AND job.lease_token=current_setting('gregale.gitops_lease',true)
+    AND current_setting('gregale.gitops_serving',true)=job.lease_token
+ )
+$$;
+
+
+--
+-- Name: environment_workload_serving_ready(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_serving_ready(target_graph uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT environment_workload_serving_ready_without_scheduled_jobs(target_graph)
+    AND EXISTS (
+        SELECT 1 FROM environment_workload_serving_receipts receipt
+        JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+        WHERE receipt.graph_id=target_graph
+            AND environment_workload_scheduled_jobs_ready(target_graph,release.id)
+    )
+$$;
+
+
+--
+-- Name: environment_workload_serving_ready_without_scheduled_jobs(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_serving_ready_without_scheduled_jobs(target_graph uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT EXISTS (
+    SELECT 1
+    FROM environment_workload_serving_receipts receipt
+    JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
+    JOIN active_environment_git_sources source ON source.id=receipt.source_id
+    JOIN project_environments environment ON environment.id=source.environment_id
+    JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+    WHERE receipt.graph_id=target_graph AND source.mode='enforce' AND NOT source.suspended
+        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+        AND source.approved_revision_id=graph.revision_id
+        AND environment_workload_graph_serving_supported(graph.id)
+        AND (SELECT count(*) FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)=(
+            SELECT count(*) FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+                AND NOT EXISTS (
+                    SELECT 1 FROM environment_workload_serving_routes route
+                    JOIN project_release_members release_member ON release_member.release_id=release.id
+                        AND release_member.app_id=route.app_id AND release_member.deployment_id=route.deployment_id
+                    WHERE route.graph_id=graph.id AND route.app_id::text=graph_member.value->>'app_id'
+                        AND ((route.cutover_required AND route.deployment_id::text=graph_member.value->>'candidate_deployment_id') OR
+                            (NOT route.cutover_required AND nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? route.deployment_id::text))
+                )
+        )
+        AND (NOT EXISTS (SELECT 1 FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)
+            OR cardinality(receipt.expected_gateways)>0)
+        AND NOT EXISTS (
+            SELECT 1 FROM environment_workload_serving_routes route
+            WHERE route.graph_id=graph.id AND (SELECT count(*) FROM environment_workload_serving_route_acks ack
+                WHERE ack.graph_id=route.graph_id AND ack.route_generation=route.route_generation)<>cardinality(receipt.expected_gateways)
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (binding.id IS NULL OR binding.app_id::text<>graph_member.value->>'app_id'
+                    OR binding.account_id<>source.account_id
+                    OR binding.environment_id<>source.environment_id OR binding.deployment_scope<>environment.slug
+                    OR binding.name<>queue_binding.name OR binding.queue_name<>queue_binding.value->'contract'->>'queue_name'
+                    OR binding.mode<>queue_binding.value->'contract'->>'mode'
+                    OR binding.workload_class<>queue_binding.value->'contract'->>'workload_class'
+                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
+                    OR binding.max_concurrency::text<>queue_binding.value->'contract'->>'max_concurrency'
+                    OR coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)<>binding.retry_policy
+                    OR binding.retired_at IS NOT NULL
+                    OR (binding.mode='push' AND NOT EXISTS (
+                        SELECT 1 FROM triggers queue_trigger
+                        WHERE queue_trigger.id::text=queue_binding.value->>'trigger_id'
+                            AND queue_trigger.app_id=binding.app_id AND queue_trigger.queue_binding_id=binding.id
+                            AND queue_trigger.account_id=source.account_id
+                            AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
+                            AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
+                            AND queue_trigger.queue_binding_scope=environment.slug
+                            AND queue_trigger.queue_binding_environment_id=source.environment_id
+                    ))
+                    OR (binding.mode='pull' AND coalesce(queue_binding.value->>'trigger_id','')<>'')
+                    OR binding.mode NOT IN ('push','pull'))
+        )
+        AND (SELECT count(*) FROM environment_workload_serving_queue_acks ack WHERE ack.graph_id=graph.id)=(
+            SELECT count(*)
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN environment_workload_serving_queue_acks ack ON ack.graph_id=graph.id
+                AND ack.binding_id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (ack.graph_id IS NULL OR ack.mode<>queue_binding.value->'contract'->>'mode'
+                    OR ack.app_id::text<>graph_member.value->>'app_id'
+                    OR (ack.mode='push' AND ack.trigger_id::text<>queue_binding.value->>'trigger_id')
+                    OR (ack.mode='pull' AND ack.trigger_id IS NOT NULL)
+                    OR NOT EXISTS (
+                        SELECT 1 FROM project_release_members release_member
+                        JOIN deployments deployment ON deployment.id=release_member.deployment_id
+                            AND deployment.app_id=release_member.app_id AND deployment.status='live'
+                            AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
+                        WHERE release_member.release_id=release.id AND release_member.app_id=ack.app_id
+                            AND release_member.deployment_id=ack.deployment_id
+                            AND (graph_member.value->>'candidate_deployment_id'=ack.deployment_id::text OR
+                                (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                    AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? ack.deployment_id::text))
+                    ))
+        )
+)
+$$;
+
+
+--
+-- Name: environment_workload_serving_traffic_authorized(uuid, text, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_serving_traffic_authorized(target_app uuid, target_scope text, target_deployment uuid, target_traffic integer) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1
+  FROM active_environment_git_sources src
+  JOIN environment_gitops_jobs job ON job.source_id=src.id
+  JOIN project_environments env ON env.id=src.environment_id AND env.slug=target_scope
+  JOIN environment_workload_graphs graph ON graph.source_id=src.id AND graph.phase='prepared'
+  JOIN environment_workload_serving_receipts receipt ON receipt.graph_id=graph.id AND receipt.phase='pending'
+  JOIN environment_workload_serving_routes route ON route.graph_id=receipt.graph_id AND route.app_id=target_app
+  JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+  JOIN project_release_members rm ON rm.release_id=release.id AND rm.app_id=route.app_id AND rm.deployment_id=route.deployment_id
+  CROSS JOIN LATERAL jsonb_array_elements(graph.members) member
+  WHERE src.id=receipt.source_id AND src.mode='enforce' AND NOT src.suspended
+    AND src.generation=graph.generation AND src.intent_version=graph.intent_version
+    AND src.approved_revision_id=graph.revision_id AND graph.plan_hash=receipt.plan_hash
+    AND member->>'app_id'=target_app::text AND member->>'execution_mode' IN ('request','service')
+    AND coalesce(member->'queue_modes','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb)
+    AND route.cutover_required AND member->>'candidate_deployment_id'=route.deployment_id::text
+    AND job.desired_generation=src.generation AND job.claimed_generation=src.generation
+    AND job.lease_until>clock_timestamp() AND job.lease_token<>''
+    AND job.lease_token=current_setting('gregale.gitops_lease',true)
+    AND current_setting('gregale.gitops_serving',true)=job.lease_token
+    AND ((target_deployment=route.deployment_id AND target_traffic=100) OR
+         (target_deployment<>route.deployment_id AND target_traffic=0))
+ )
 $$;
 
 
@@ -5365,6 +6132,28 @@ END $$;
 
 
 --
+-- Name: gateway_try_acquire_concurrency_queue_lease(text, uuid, integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.gateway_try_acquire_concurrency_queue_lease(p_app_id text, p_lease_id uuid, p_limit integer, p_ttl_ms bigint, OUT admitted boolean, OUT depth integer) RETURNS record
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('gateway-concurrency-queue:' || p_app_id, 0));
+    DELETE FROM gateway_concurrency_queue_leases WHERE app_id = p_app_id::uuid AND expires_at <= now();
+    SELECT count(*)::integer INTO depth FROM gateway_concurrency_queue_leases WHERE app_id = p_app_id::uuid;
+    IF depth >= p_limit THEN
+        admitted := false;
+        RETURN;
+    END IF;
+    INSERT INTO gateway_concurrency_queue_leases (lease_id, app_id, expires_at)
+    VALUES (p_lease_id, p_app_id::uuid, now() + p_ttl_ms * interval '1 millisecond');
+    admitted := true;
+    depth := depth + 1;
+END $$;
+
+
+--
 -- Name: github_webhook_secrets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5954,6 +6743,54 @@ END $$;
 
 
 --
+-- Name: guard_environment_qualification_config_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_config_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE q environment_workload_qualification_requests%ROWTYPE;
+        e environment_qualification_executions%ROWTYPE;
+        i instances%ROWTYPE;
+        d deployments%ROWTYPE;
+        runtime instance_runtime_config_receipts%ROWTYPE;
+        reservation environment_qualification_restore_reservations%ROWTYPE;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'qualification guest config evidence is immutable' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
+ SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
+ SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
+ SELECT * INTO d FROM deployments WHERE id=i.deployment_id;
+ SELECT * INTO runtime FROM instance_runtime_config_receipts WHERE instance_id=NEW.instance_id AND wake_id=i.wake_id;
+ IF e.capture_instance_id IS NOT NULL THEN
+  SELECT * INTO reservation FROM environment_qualification_restore_reservations WHERE instance_id=NEW.instance_id;
+ END IF;
+ IF q.id IS NULL OR q.phase<>'claimed' OR q.attempt<>NEW.attempt OR q.graph_id<>NEW.graph_id
+  OR q.lease_until<=clock_timestamp() OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+  OR NOT environment_workload_qualification_inputs_current(q.id)
+  OR e.instance_id IS NULL OR e.request_id<>q.id OR e.capture_instance_id IS DISTINCT FROM NEW.capture_instance_id
+  OR NOT e.dispatch_started OR e.retired_at IS NOT NULL
+  OR e.frame->>'instance_id' IS DISTINCT FROM i.id::text OR e.frame->>'request_id' IS DISTINCT FROM q.id::text
+  OR e.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text OR e.frame->>'attempt' IS DISTINCT FROM q.attempt::text
+  OR e.frame->>'app_id' IS DISTINCT FROM q.app_id::text OR e.frame->>'deployment_id' IS DISTINCT FROM q.deployment_id::text
+  OR i.app_id<>q.app_id OR i.deployment_id<>q.deployment_id OR i.state<>'running'
+  OR i.wake_id IS DISTINCT FROM (e.frame->>'wake_id')::uuid OR d.environment_workload_runtime IS DISTINCT FROM q.frozen_inputs
+  OR runtime.instance_id IS NULL OR runtime.wake_id<>i.wake_id OR runtime.scope IS DISTINCT FROM q.frozen_inputs->>'scope'
+  OR NOT environment_runtime_inputs_fresh(i.app_id,runtime.scope,runtime.boundary_at,runtime.variables,
+      runtime.secret_versions,runtime.all_secrets,runtime.secret_refs,runtime.sidecar_secret_versions)
+  OR NEW.capture_instance_id IS NULL AND i.id<>q.reserved_instance_id
+  OR NEW.capture_instance_id IS NOT NULL AND (reservation.instance_id IS NULL OR reservation.request_id<>q.id
+      OR reservation.attempt<>q.attempt OR reservation.capture_instance_id<>q.reserved_instance_id)
+ THEN
+  RAISE EXCEPTION 'guest config receipt requires the current acknowledged private graph runtime' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_qualification_execution(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6018,9 +6855,124 @@ BEGIN
    END IF;
   ELSE
    RAISE EXCEPTION 'qualification retirement kind is unsupported' USING ERRCODE='23514';
+  END IF;
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: guard_environment_qualification_framework_ready_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_framework_ready_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE q environment_workload_qualification_requests%ROWTYPE;
+        graph environment_workload_graphs%ROWTYPE;
+        target_exec environment_qualification_executions%ROWTYPE;
+        target_instance instances%ROWTYPE;
+        target_runtime instance_runtime_config_receipts%ROWTYPE;
+        reservation environment_qualification_restore_reservations%ROWTYPE;
+        capture environment_qualification_snapshot_receipts%ROWTYPE;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'qualification framework-ready evidence is immutable' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
+ SELECT * INTO graph FROM environment_workload_graphs WHERE id=NEW.graph_id;
+ SELECT * INTO target_exec FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
+ SELECT * INTO target_instance FROM instances WHERE id=NEW.instance_id;
+ SELECT * INTO target_runtime FROM instance_runtime_config_receipts WHERE instance_id=NEW.instance_id AND wake_id=target_instance.wake_id;
+ SELECT * INTO reservation FROM environment_qualification_restore_reservations WHERE instance_id=NEW.instance_id;
+ SELECT * INTO capture FROM environment_qualification_snapshot_receipts WHERE instance_id=NEW.capture_instance_id;
+ IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp() OR q.attempt<>NEW.attempt
+  OR q.graph_id<>NEW.graph_id OR q.reserved_instance_id<>NEW.capture_instance_id
+  OR coalesce(q.frozen_inputs->>'runtime_base','')<>'' AND NEW.runtime IS DISTINCT FROM q.frozen_inputs->>'runtime_base'
+  OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+  OR NOT environment_workload_qualification_inputs_current(q.id)
+  OR graph.id IS NULL OR graph.phase<>'prepared' OR graph.revision_id::text<>q.frozen_inputs->>'revision_id'
+  OR graph.generation::text<>q.frozen_inputs->>'generation' OR graph.plan_hash<>q.frozen_inputs->>'plan_hash'
+  OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph.members) member
+      WHERE member->>'resource'=q.resource AND member->>'app_id'=q.app_id::text
+       AND member->>'candidate_deployment_id'=q.deployment_id::text)
+  OR target_exec.instance_id IS NULL OR target_exec.request_id<>q.id
+  OR target_exec.capture_instance_id<>NEW.capture_instance_id OR NOT target_exec.dispatch_started OR target_exec.retired_at IS NOT NULL
+  OR target_exec.frame->>'instance_id' IS DISTINCT FROM NEW.instance_id::text
+  OR target_exec.frame->>'request_id' IS DISTINCT FROM q.id::text
+  OR target_exec.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text
+  OR target_exec.frame->>'attempt' IS DISTINCT FROM q.attempt::text
+  OR target_exec.frame->>'app_id' IS DISTINCT FROM q.app_id::text
+  OR target_exec.frame->>'deployment_id' IS DISTINCT FROM q.deployment_id::text
+  OR target_instance.id IS NULL OR target_instance.app_id<>q.app_id OR target_instance.deployment_id<>q.deployment_id
+  OR target_instance.state<>'running' OR target_instance.wake_id IS DISTINCT FROM (target_exec.frame->>'wake_id')::uuid
+  OR target_runtime.instance_id IS NULL OR target_runtime.wake_id<>target_instance.wake_id
+  OR capture.instance_id IS NULL OR target_runtime.scope IS DISTINCT FROM capture.inputs->>'scope'
+  OR target_runtime.variables IS DISTINCT FROM capture.inputs->'variables'
+  OR target_runtime.secret_versions IS DISTINCT FROM capture.inputs->'secret_versions'
+  OR target_runtime.secret_refs IS DISTINCT FROM capture.inputs->'secret_refs'
+  OR coalesce(target_runtime.sidecar_secret_versions,'{}'::jsonb) IS DISTINCT FROM coalesce(capture.inputs->'sidecar_secret_versions','{}'::jsonb)
+  OR target_runtime.all_secrets IS DISTINCT FROM (capture.inputs->>'all_secrets')::boolean
+  OR reservation.instance_id IS NULL OR reservation.request_id<>q.id OR reservation.attempt<>q.attempt
+  OR reservation.capture_instance_id<>NEW.capture_instance_id
+  OR NOT environment_runtime_inputs_fresh(target_instance.app_id,target_runtime.scope,target_runtime.boundary_at,
+      target_runtime.variables,target_runtime.secret_versions,target_runtime.all_secrets,target_runtime.secret_refs,
+      target_runtime.sidecar_secret_versions) THEN
+  RAISE EXCEPTION 'framework-ready receipt requires the current live restored graph target' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_job_smoke_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_job_smoke_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE q environment_workload_qualification_requests%ROWTYPE;
+        g environment_workload_graphs%ROWTYPE;
+        e environment_qualification_executions%ROWTYPE;
+        i instances%ROWTYPE;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'qualification job smoke evidence is immutable' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
+ SELECT * INTO g FROM environment_workload_graphs WHERE id=NEW.graph_id;
+ SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
+ SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
+ IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp() OR q.attempt<>NEW.attempt
+  OR q.graph_id<>NEW.graph_id OR q.reserved_instance_id<>NEW.instance_id OR q.resource<>NEW.resource
+  OR q.execution_mode<>'job' OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+  OR q.frozen_inputs->'job_smoke' IS NULL OR jsonb_typeof(q.frozen_inputs->'job_smoke')<>'object'
+  OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+  OR NOT environment_workload_qualification_inputs_current(q.id)
+  OR g.id IS NULL OR g.phase<>'prepared' OR g.revision_id::text IS DISTINCT FROM q.frozen_inputs->>'revision_id'
+  OR g.generation::text IS DISTINCT FROM q.frozen_inputs->>'generation' OR g.plan_hash IS DISTINCT FROM q.frozen_inputs->>'plan_hash'
+  OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
+      WHERE member->>'resource'=q.resource AND member->>'app_id'=q.app_id::text
+       AND member->>'candidate_deployment_id'=q.deployment_id::text AND member->>'execution_mode'='job'
+       AND coalesce((member->>'job_smoke_configured')::boolean,false)
+       AND coalesce(nullif(member->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)
+       AND coalesce((member->>'service_bindings_configured')::boolean,false)=(coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb)
+       AND coalesce(member->>'queue_bindings_configured','false')='false'
+       AND coalesce(nullif(member->'queue_bindings','null'::jsonb),'{}'::jsonb)='{}'::jsonb
+       AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb)
+  OR e.instance_id IS NULL OR e.request_id IS DISTINCT FROM q.id OR e.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text
+  OR e.frame->>'attempt' IS DISTINCT FROM q.attempt::text OR e.frame->>'resource' IS DISTINCT FROM q.resource
+  OR e.frame->'artifact' IS DISTINCT FROM q.artifact OR NOT e.dispatch_started OR e.retired_at IS NULL
+  OR e.retirement->>'kind' IS DISTINCT FROM 'native_retired' OR e.retirement->'processes_exited' IS DISTINCT FROM 'true'::jsonb
+  OR e.retirement->'resources_removed' IS DISTINCT FROM 'true'::jsonb
+  OR NOT EXISTS(SELECT 1 FROM environment_qualification_config_receipts c
+      WHERE c.request_id=q.id AND c.attempt=q.attempt AND c.graph_id=q.graph_id AND c.instance_id=NEW.instance_id
+       AND c.capture_instance_id IS NULL AND c.api_env_sha256 ~ '^[0-9a-f]{64}$')
+  OR i.id IS NULL OR i.state<>'stopped' OR i.wake_id IS DISTINCT FROM (e.frame->>'wake_id')::uuid THEN
+  RAISE EXCEPTION 'job smoke receipt requires a successful sanitized result for the current retired Git-owned job attempt' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
 
 
 --
@@ -6049,23 +7001,6 @@ BEGIN
   RAISE EXCEPTION 'legacy qualification has no recoverable execution frame' USING ERRCODE='23514';
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_restore_reservation(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_restore_reservation() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF TG_OP<>'INSERT' OR NOT environment_qualification_restore_current(NEW.request_id,NEW.capture_instance_id)
-  OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests WHERE id=NEW.request_id AND attempt=NEW.attempt)
-  OR EXISTS(SELECT 1 FROM instances WHERE id=NEW.instance_id) OR EXISTS(SELECT 1 FROM environment_qualification_executions WHERE instance_id=NEW.instance_id) THEN
-  RAISE EXCEPTION 'restore reservation requires its current retired original capture' USING ERRCODE='23514';
- END IF;
  RETURN NEW;
 END $$;
 
@@ -6146,6 +7081,98 @@ END $$;
 
 
 --
+-- Name: guard_environment_qualification_restore_reservation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_restore_reservation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'INSERT' OR NOT environment_qualification_restore_current(NEW.request_id,NEW.capture_instance_id)
+  OR NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests WHERE id=NEW.request_id AND attempt=NEW.attempt)
+  OR EXISTS(SELECT 1 FROM instances WHERE id=NEW.instance_id) OR EXISTS(SELECT 1 FROM environment_qualification_executions WHERE instance_id=NEW.instance_id) THEN
+  RAISE EXCEPTION 'restore reservation requires its current retired original capture' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_restore_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_restore_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE capture environment_qualification_snapshot_receipts%ROWTYPE;
+        original environment_qualification_executions%ROWTYPE;
+BEGIN
+ IF OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL AND NEW.capture_instance_id IS NOT NULL
+  AND NEW.retirement->>'kind'='native_retired' THEN
+  SELECT * INTO capture FROM environment_qualification_snapshot_receipts WHERE instance_id=NEW.capture_instance_id;
+  SELECT * INTO original FROM environment_qualification_executions WHERE instance_id=NEW.capture_instance_id;
+  IF capture.instance_id IS NULL OR original.retirement IS NULL
+   OR NEW.retirement->>'native_generation' IS NOT DISTINCT FROM capture.snapshot->>'native_generation'
+   OR NEW.retirement->>'kernel_boot_id' IS DISTINCT FROM capture.snapshot->>'kernel_boot_id'
+   OR NEW.retirement->>'receipt_id' IS NOT DISTINCT FROM original.retirement->>'receipt_id' THEN
+   RAISE EXCEPTION 'restore target requires distinct native retirement on the capture kernel' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_runtime_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_runtime_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE q environment_workload_qualification_requests%ROWTYPE; i instances%ROWTYPE;
+        b environment_qualification_restore_reservations%ROWTYPE; restoring boolean:=false;
+BEGIN
+ SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
+	IF i.id IS NULL OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id;
+ IF q.id IS NULL THEN
+  SELECT * INTO b FROM environment_qualification_restore_reservations WHERE instance_id=i.id;
+  IF b.instance_id IS NOT NULL THEN
+   SELECT * INTO q FROM environment_workload_qualification_requests
+    WHERE id=b.request_id AND reserved_instance_id=b.capture_instance_id AND attempt=b.attempt;
+   restoring:=q.id IS NOT NULL;
+  END IF;
+ END IF;
+ IF q.id IS NOT NULL THEN
+  PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
+  PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
+   JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
+  SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=q.id FOR UPDATE;
+  PERFORM n.id FROM compute_nodes n WHERE n.id=i.node_id FOR SHARE OF n;
+  PERFORM c.id FROM accounts c JOIN apps a ON a.account_id=c.id WHERE a.id=i.app_id FOR SHARE OF c;
+  SELECT * INTO i FROM instances WHERE id=NEW.instance_id FOR UPDATE;
+ END IF;
+ IF restoring AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e
+	   WHERE e.instance_id=i.id AND e.request_id=q.id AND e.capture_instance_id=b.capture_instance_id
+	    AND e.frame=(environment_qualification_execution_frame(q,i)||jsonb_build_object('capture_instance_id',b.capture_instance_id))
+    AND e.dispatch_started AND e.retired_at IS NULL AND environment_qualification_restore_current(q.id,b.capture_instance_id)) THEN
+  RAISE EXCEPTION 'restored runtime receipt requires its live dispatched target' USING ERRCODE='23514';
+ END IF;
+ IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp()
+  OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+  OR q.app_id<>i.app_id OR q.deployment_id<>i.deployment_id OR i.state<>'running'
+  OR i.ram_mb IS DISTINCT FROM (SELECT a.ram_mb FROM apps a WHERE a.id=i.app_id)
+  OR NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=i.node_id AND n.active AND n.lifecycle='active')
+  OR NEW.wake_id IS DISTINCT FROM i.wake_id OR NEW.scope IS DISTINCT FROM q.frozen_inputs->>'scope'
+  OR NOT environment_workload_qualification_inputs_current(q.id)
+  OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs,NEW.sidecar_secret_versions) THEN
+  RAISE EXCEPTION 'environment runtime evidence requires its current qualification attempt and delivered inputs' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_qualification_smoke_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6205,251 +7232,6 @@ BEGIN
       (restored.runtime_inputs->>'all_secrets')::boolean,restored.runtime_inputs->'secret_refs',
       coalesce(restored.runtime_inputs->'sidecar_secret_versions','{}'::jsonb)) THEN
   RAISE EXCEPTION 'smoke receipt requires explicit policy/result digests for the current graph member and its fresh, retired restore target' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_job_smoke_receipt(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_job_smoke_receipt() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE q environment_workload_qualification_requests%ROWTYPE;
-        g environment_workload_graphs%ROWTYPE;
-        e environment_qualification_executions%ROWTYPE;
-        i instances%ROWTYPE;
-BEGIN
- IF TG_OP<>'INSERT' THEN
-  RAISE EXCEPTION 'qualification job smoke evidence is immutable' USING ERRCODE='23514';
- END IF;
- SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
- SELECT * INTO g FROM environment_workload_graphs WHERE id=NEW.graph_id;
- SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
- SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
- IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp() OR q.attempt<>NEW.attempt
-  OR q.graph_id<>NEW.graph_id OR q.reserved_instance_id<>NEW.instance_id OR q.resource<>NEW.resource
-  OR q.execution_mode<>'job' OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
-  OR q.frozen_inputs->'job_smoke' IS NULL OR jsonb_typeof(q.frozen_inputs->'job_smoke')<>'object'
-  OR coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
-  OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
-  OR NOT environment_workload_qualification_inputs_current(q.id)
-  OR g.id IS NULL OR g.phase<>'prepared' OR g.revision_id::text IS DISTINCT FROM q.frozen_inputs->>'revision_id'
-  OR g.generation::text IS DISTINCT FROM q.frozen_inputs->>'generation' OR g.plan_hash IS DISTINCT FROM q.frozen_inputs->>'plan_hash'
-  OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
-      WHERE member->>'resource'=q.resource AND member->>'app_id'=q.app_id::text
-       AND member->>'candidate_deployment_id'=q.deployment_id::text AND member->>'execution_mode'='job'
-       AND coalesce((member->>'job_smoke_configured')::boolean,false)
-       AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb)
-  OR e.instance_id IS NULL OR e.request_id IS DISTINCT FROM q.id OR e.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text
-  OR e.frame->>'attempt' IS DISTINCT FROM q.attempt::text OR e.frame->>'resource' IS DISTINCT FROM q.resource
-  OR e.frame->'artifact' IS DISTINCT FROM q.artifact OR NOT e.dispatch_started OR e.retired_at IS NULL
-  OR e.retirement->>'kind' IS DISTINCT FROM 'native_retired' OR e.retirement->'processes_exited' IS DISTINCT FROM 'true'::jsonb
-  OR e.retirement->'resources_removed' IS DISTINCT FROM 'true'::jsonb
-  OR i.id IS NULL OR i.state<>'stopped' OR i.wake_id IS DISTINCT FROM (e.frame->>'wake_id')::uuid THEN
-  RAISE EXCEPTION 'job smoke receipt requires a successful sanitized result for the current retired Git-owned job attempt' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_config_receipt(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_config_receipt() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE q environment_workload_qualification_requests%ROWTYPE;
-        e environment_qualification_executions%ROWTYPE;
-        i instances%ROWTYPE;
-        d deployments%ROWTYPE;
-        runtime instance_runtime_config_receipts%ROWTYPE;
-        reservation environment_qualification_restore_reservations%ROWTYPE;
-BEGIN
- IF TG_OP<>'INSERT' THEN
-  RAISE EXCEPTION 'qualification guest config evidence is immutable' USING ERRCODE='23514';
- END IF;
- SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
- SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
- SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
- SELECT * INTO d FROM deployments WHERE id=i.deployment_id;
- SELECT * INTO runtime FROM instance_runtime_config_receipts WHERE instance_id=NEW.instance_id AND wake_id=i.wake_id;
- IF e.capture_instance_id IS NOT NULL THEN
-  SELECT * INTO reservation FROM environment_qualification_restore_reservations WHERE instance_id=NEW.instance_id;
- END IF;
- IF q.id IS NULL OR q.phase<>'claimed' OR q.attempt<>NEW.attempt OR q.graph_id<>NEW.graph_id
-  OR q.lease_until<=clock_timestamp() OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
-  OR NOT environment_workload_qualification_inputs_current(q.id)
-  OR e.instance_id IS NULL OR e.request_id<>q.id OR e.capture_instance_id IS DISTINCT FROM NEW.capture_instance_id
-  OR NOT e.dispatch_started OR e.retired_at IS NOT NULL
-  OR e.frame->>'instance_id' IS DISTINCT FROM i.id::text OR e.frame->>'request_id' IS DISTINCT FROM q.id::text
-  OR e.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text OR e.frame->>'attempt' IS DISTINCT FROM q.attempt::text
-  OR e.frame->>'app_id' IS DISTINCT FROM q.app_id::text OR e.frame->>'deployment_id' IS DISTINCT FROM q.deployment_id::text
-  OR i.app_id<>q.app_id OR i.deployment_id<>q.deployment_id OR i.state<>'running'
-  OR i.wake_id IS DISTINCT FROM (e.frame->>'wake_id')::uuid OR d.environment_workload_runtime IS DISTINCT FROM q.frozen_inputs
-  OR runtime.instance_id IS NULL OR runtime.wake_id<>i.wake_id OR runtime.scope IS DISTINCT FROM q.frozen_inputs->>'scope'
-  OR NOT environment_runtime_inputs_fresh(i.app_id,runtime.scope,runtime.boundary_at,runtime.variables,
-      runtime.secret_versions,runtime.all_secrets,runtime.secret_refs,runtime.sidecar_secret_versions)
-  OR NEW.capture_instance_id IS NULL AND i.id<>q.reserved_instance_id
-  OR NEW.capture_instance_id IS NOT NULL AND (reservation.instance_id IS NULL OR reservation.request_id<>q.id
-      OR reservation.attempt<>q.attempt OR reservation.capture_instance_id<>q.reserved_instance_id)
- THEN
-  RAISE EXCEPTION 'guest config receipt requires the current acknowledged private graph runtime' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_framework_ready_receipt(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_framework_ready_receipt() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE q environment_workload_qualification_requests%ROWTYPE;
-        graph environment_workload_graphs%ROWTYPE;
-        target_exec environment_qualification_executions%ROWTYPE;
-        target_instance instances%ROWTYPE;
-        target_runtime instance_runtime_config_receipts%ROWTYPE;
-        reservation environment_qualification_restore_reservations%ROWTYPE;
-        capture environment_qualification_snapshot_receipts%ROWTYPE;
-BEGIN
- IF TG_OP<>'INSERT' THEN
-  RAISE EXCEPTION 'qualification framework-ready evidence is immutable' USING ERRCODE='23514';
- END IF;
- SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=NEW.request_id FOR UPDATE;
- SELECT * INTO graph FROM environment_workload_graphs WHERE id=NEW.graph_id;
- SELECT * INTO target_exec FROM environment_qualification_executions WHERE instance_id=NEW.instance_id;
- SELECT * INTO target_instance FROM instances WHERE id=NEW.instance_id;
- SELECT * INTO target_runtime FROM instance_runtime_config_receipts WHERE instance_id=NEW.instance_id AND wake_id=target_instance.wake_id;
- SELECT * INTO reservation FROM environment_qualification_restore_reservations WHERE instance_id=NEW.instance_id;
- SELECT * INTO capture FROM environment_qualification_snapshot_receipts WHERE instance_id=NEW.capture_instance_id;
- IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp() OR q.attempt<>NEW.attempt
-  OR q.graph_id<>NEW.graph_id OR q.reserved_instance_id<>NEW.capture_instance_id
-  OR coalesce(q.frozen_inputs->>'runtime_base','')<>'' AND NEW.runtime IS DISTINCT FROM q.frozen_inputs->>'runtime_base'
-  OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
-  OR NOT environment_workload_qualification_inputs_current(q.id)
-  OR graph.id IS NULL OR graph.phase<>'prepared' OR graph.revision_id::text<>q.frozen_inputs->>'revision_id'
-  OR graph.generation::text<>q.frozen_inputs->>'generation' OR graph.plan_hash<>q.frozen_inputs->>'plan_hash'
-  OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph.members) member
-      WHERE member->>'resource'=q.resource AND member->>'app_id'=q.app_id::text
-       AND member->>'candidate_deployment_id'=q.deployment_id::text)
-  OR target_exec.instance_id IS NULL OR target_exec.request_id<>q.id
-  OR target_exec.capture_instance_id<>NEW.capture_instance_id OR NOT target_exec.dispatch_started OR target_exec.retired_at IS NOT NULL
-  OR target_exec.frame->>'instance_id' IS DISTINCT FROM NEW.instance_id::text
-  OR target_exec.frame->>'request_id' IS DISTINCT FROM q.id::text
-  OR target_exec.frame->>'graph_id' IS DISTINCT FROM q.graph_id::text
-  OR target_exec.frame->>'attempt' IS DISTINCT FROM q.attempt::text
-  OR target_exec.frame->>'app_id' IS DISTINCT FROM q.app_id::text
-  OR target_exec.frame->>'deployment_id' IS DISTINCT FROM q.deployment_id::text
-  OR target_instance.id IS NULL OR target_instance.app_id<>q.app_id OR target_instance.deployment_id<>q.deployment_id
-  OR target_instance.state<>'running' OR target_instance.wake_id IS DISTINCT FROM (target_exec.frame->>'wake_id')::uuid
-  OR target_runtime.instance_id IS NULL OR target_runtime.wake_id<>target_instance.wake_id
-  OR capture.instance_id IS NULL OR target_runtime.scope IS DISTINCT FROM capture.inputs->>'scope'
-  OR target_runtime.variables IS DISTINCT FROM capture.inputs->'variables'
-  OR target_runtime.secret_versions IS DISTINCT FROM capture.inputs->'secret_versions'
-  OR target_runtime.secret_refs IS DISTINCT FROM capture.inputs->'secret_refs'
-  OR coalesce(target_runtime.sidecar_secret_versions,'{}'::jsonb) IS DISTINCT FROM coalesce(capture.inputs->'sidecar_secret_versions','{}'::jsonb)
-  OR target_runtime.all_secrets IS DISTINCT FROM (capture.inputs->>'all_secrets')::boolean
-  OR reservation.instance_id IS NULL OR reservation.request_id<>q.id OR reservation.attempt<>q.attempt
-  OR reservation.capture_instance_id<>NEW.capture_instance_id
-  OR NOT environment_runtime_inputs_fresh(target_instance.app_id,target_runtime.scope,target_runtime.boundary_at,
-      target_runtime.variables,target_runtime.secret_versions,target_runtime.all_secrets,target_runtime.secret_refs,
-      target_runtime.sidecar_secret_versions) THEN
-  RAISE EXCEPTION 'framework-ready receipt requires the current live restored graph target' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: require_environment_qualification_restore_guest_config(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.require_environment_qualification_restore_guest_config() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE source_config environment_qualification_config_receipts%ROWTYPE;
-        target_config environment_qualification_config_receipts%ROWTYPE;
-BEGIN
- IF TG_OP<>'INSERT' THEN
-  RAISE EXCEPTION 'qualification restore guest config evidence is immutable' USING ERRCODE='23514';
- END IF;
- SELECT * INTO source_config FROM environment_qualification_config_receipts
-  WHERE request_id=NEW.request_id AND attempt=NEW.attempt AND instance_id=NEW.capture_instance_id
-   AND capture_instance_id IS NULL;
- SELECT * INTO target_config FROM environment_qualification_config_receipts
-  WHERE request_id=NEW.request_id AND attempt=NEW.attempt AND instance_id=NEW.instance_id
-   AND capture_instance_id=NEW.capture_instance_id;
- IF source_config.instance_id IS NULL OR target_config.instance_id IS NULL
-  OR source_config.graph_id IS DISTINCT FROM target_config.graph_id THEN
-  RAISE EXCEPTION 'restore receipt requires acknowledged source and restored guest configuration' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_restore_retirement(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_restore_retirement() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE capture environment_qualification_snapshot_receipts%ROWTYPE;
-        original environment_qualification_executions%ROWTYPE;
-BEGIN
- IF OLD.retired_at IS NULL AND NEW.retired_at IS NOT NULL AND NEW.capture_instance_id IS NOT NULL
-  AND NEW.retirement->>'kind'='native_retired' THEN
-  SELECT * INTO capture FROM environment_qualification_snapshot_receipts WHERE instance_id=NEW.capture_instance_id;
-  SELECT * INTO original FROM environment_qualification_executions WHERE instance_id=NEW.capture_instance_id;
-  IF capture.instance_id IS NULL OR original.retirement IS NULL
-   OR NEW.retirement->>'native_generation' IS NOT DISTINCT FROM capture.snapshot->>'native_generation'
-   OR NEW.retirement->>'kernel_boot_id' IS DISTINCT FROM capture.snapshot->>'kernel_boot_id'
-   OR NEW.retirement->>'receipt_id' IS NOT DISTINCT FROM original.retirement->>'receipt_id' THEN
-   RAISE EXCEPTION 'restore target requires distinct native retirement on the capture kernel' USING ERRCODE='23514';
-  END IF;
- END IF;
- RETURN NEW;
-END $$;
-
-
---
--- Name: guard_environment_qualification_runtime_receipt(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.guard_environment_qualification_runtime_receipt() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE q environment_workload_qualification_requests%ROWTYPE; i instances%ROWTYPE;
-BEGIN
- SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
- IF NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
- SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id;
- IF q.id IS NOT NULL THEN
-  PERFORM s.id FROM active_environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
-  PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
-   JOIN LATERAL jsonb_array_elements(g.members) m ON a.id=(m->>'app_id')::uuid ORDER BY a.id FOR UPDATE OF a;
-  SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id FOR UPDATE;
-  PERFORM n.id FROM compute_nodes n WHERE n.id=i.node_id FOR SHARE OF n;
-  PERFORM c.id FROM accounts c JOIN apps a ON a.account_id=c.id WHERE a.id=i.app_id FOR SHARE OF c;
-  -- Terminal cleanup does not require the graph lock. Re-read and lock the
-  -- incarnation after authority locks so a concurrent retirement wins.
-  SELECT * INTO i FROM instances WHERE id=NEW.instance_id FOR UPDATE;
- END IF;
- IF q.id IS NULL OR q.phase<>'claimed' OR q.lease_until<=clock_timestamp()
-  OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
-  OR q.app_id<>i.app_id OR q.deployment_id<>i.deployment_id OR i.state<>'running'
-  OR i.ram_mb IS DISTINCT FROM (SELECT a.ram_mb FROM apps a WHERE a.id=i.app_id)
-  OR NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=i.node_id AND n.active AND n.lifecycle='active')
-  OR NEW.wake_id IS DISTINCT FROM i.wake_id OR NEW.scope IS DISTINCT FROM q.frozen_inputs->>'scope'
-  OR NOT environment_workload_qualification_inputs_current(q.id)
-  OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs,NEW.sidecar_secret_versions) THEN
-  RAISE EXCEPTION 'environment runtime evidence requires its current qualification attempt and delivered inputs' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -6593,12 +7375,18 @@ CREATE FUNCTION public.guard_environment_secret_reference_baseline() RETURNS tri
     AS $$
 DECLARE old_app uuid; new_app uuid; old_scope text; new_scope text; src environment_git_sources%ROWTYPE;
 BEGIN
+ IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL AND NEW.environment_workload_runtime IS NOT NULL
+  AND OLD.environment_workload_held AND OLD.status='snapshotting'
+  AND NOT NEW.environment_workload_held AND NEW.status='live'
+  AND environment_workload_activation_authorized(NEW) THEN
+  RETURN NEW;
+ END IF;
  IF TG_OP<>'INSERT' AND OLD.status='live' THEN old_app:=OLD.app_id; old_scope:=OLD.scope; END IF;
  IF TG_OP<>'DELETE' AND NEW.status='live' THEN new_app:=NEW.app_id; new_scope:=NEW.scope; END IF;
  IF old_app IS NULL AND new_app IS NULL THEN
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
  END IF;
- FOR src IN SELECT s.* FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ FOR src IN SELECT s.* FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
   WHERE (a.id=old_app AND e.slug=old_scope) OR (a.id=new_app AND e.slug=new_scope)
   ORDER BY s.id FOR UPDATE OF s LOOP
@@ -6665,159 +7453,10 @@ END $$;
 
 
 --
--- Name: environment_workload_candidate_queue_bindings_valid(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.environment_workload_candidate_queue_bindings_valid(input_value jsonb, candidate_app_id uuid) RETURNS boolean
-    LANGUAGE plpgsql STABLE
-    AS $$
-DECLARE source_row environment_git_sources%ROWTYPE; revision_row environment_desired_revisions%ROWTYPE;
-        approved_bindings jsonb; frozen_bindings jsonb; workload_name text; entry record;
-BEGIN
- BEGIN
-  SELECT * INTO source_row FROM environment_git_sources WHERE id=(input_value->>'source_id')::uuid;
-  SELECT * INTO revision_row FROM environment_desired_revisions
-   WHERE id=(input_value->>'revision_id')::uuid AND source_id=source_row.id;
- EXCEPTION WHEN invalid_text_representation THEN
-  RETURN false;
- END;
- IF source_row.id IS NULL OR revision_row.id IS NULL THEN RETURN false; END IF;
- IF coalesce(input_value->>'resource','') !~ '^workload/[a-z0-9][a-z0-9-]*$' THEN RETURN false; END IF;
- workload_name:=substring(input_value->>'resource' from 10);
- approved_bindings:=coalesce(revision_row.definition->'workloads'->workload_name->'queue_bindings','{}'::jsonb);
- frozen_bindings:=coalesce(input_value->'queue_bindings','{}'::jsonb);
- IF jsonb_typeof(approved_bindings) IS DISTINCT FROM 'object' OR jsonb_typeof(frozen_bindings) IS DISTINCT FROM 'object' THEN
-  RETURN false;
- END IF;
- IF (SELECT count(*) FROM jsonb_each(approved_bindings)) <>
-    (SELECT count(*) FROM jsonb_each(frozen_bindings)) THEN RETURN false; END IF;
- FOR entry IN SELECT key,value FROM jsonb_each(frozen_bindings) LOOP
-  IF jsonb_typeof(entry.value) IS DISTINCT FROM 'object' OR NOT (entry.value ?& ARRAY['binding_id','contract']) OR
-     jsonb_typeof(entry.value->'contract') IS DISTINCT FROM 'object' OR
-     coalesce(entry.value->>'binding_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR
-     entry.value->'contract' IS DISTINCT FROM approved_bindings->entry.key THEN RETURN false; END IF;
-  IF NOT EXISTS(
-   SELECT 1 FROM environment_gitops_queue_bindings identity
-   JOIN environment_managed_fields owner ON owner.source_id=identity.source_id AND owner.environment_id=source_row.environment_id
-    AND owner.resource=identity.resource AND owner.field_path=identity.field_path
-   JOIN queue_bindings binding ON binding.id=identity.binding_id
-   JOIN apps app ON app.id=binding.app_id
-   WHERE identity.source_id=source_row.id AND identity.resource=input_value->>'resource'
-    AND identity.field_path='queue_bindings/'||entry.key AND identity.binding_id=(entry.value->>'binding_id')::uuid
-    AND binding.id=(entry.value->>'binding_id')::uuid AND binding.account_id=source_row.account_id
-    AND binding.app_id=candidate_app_id AND binding.environment_id=source_row.environment_id
-    AND binding.deployment_scope=input_value->>'scope' AND binding.name=entry.key AND binding.retired_at IS NULL
-    AND binding.workload_class=app.workload_class AND binding.workload_class=entry.value->'contract'->>'workload_class'
-    AND entry.value->'contract'=(jsonb_build_object('queue_name',binding.queue_name,'mode',binding.mode,
-      'workload_class',binding.workload_class,'enabled',binding.enabled,'max_concurrency',binding.max_concurrency)
-      || CASE WHEN binding.retry_policy='{}'::jsonb THEN '{}'::jsonb ELSE jsonb_build_object('retry_policy',binding.retry_policy) END)
-  ) THEN RETURN false; END IF;
- END LOOP;
- RETURN true;
-END $$;
-
-
---
--- Name: environment_workload_candidate_applied_removal_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.environment_workload_candidate_applied_removal_valid(input_value jsonb) RETURNS boolean
-    LANGUAGE plpgsql STABLE
-    AS $$
-DECLARE source_uuid uuid; revision_uuid uuid; source_generation bigint; resource_name text;
-BEGIN
- BEGIN
-  source_uuid:=(input_value->>'source_id')::uuid;
-  revision_uuid:=(input_value->>'revision_id')::uuid;
-  source_generation:=(input_value->>'generation')::bigint;
-  resource_name:=input_value->>'resource';
- EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
-  RETURN false;
- END;
- IF source_uuid IS NULL OR revision_uuid IS NULL OR source_generation IS NULL OR resource_name IS NULL THEN RETURN false; END IF;
- RETURN EXISTS(
-  SELECT 1 FROM environment_gitops_runs run CROSS JOIN LATERAL jsonb_array_elements(run.steps) step
-  WHERE run.source_id=source_uuid AND run.revision_id=revision_uuid AND run.generation=source_generation
-   AND step->>'resource'=resource_name AND step->>'status'='applied' AND step->>'action'='remove'
-   AND (step->>'path' IN ('source','source_revision') OR starts_with(step->>'path','runtime/') OR
-    starts_with(step->>'path','service_bindings/') OR starts_with(step->>'path','queue_bindings/') OR
-    starts_with(step->>'path','variables/') OR starts_with(step->>'path','secret_refs/') OR step->>'path'='schedule')
- );
-END $$;
-
-
---
--- Name: environment_workload_candidate_secret_refs_valid(jsonb, uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE OR REPLACE FUNCTION public.environment_workload_candidate_secret_refs_valid(input_value jsonb, target_app uuid, target_scope text, desired_refs jsonb) RETURNS boolean
-    LANGUAGE plpgsql STABLE
-    AS $$
-DECLARE frozen_refs jsonb; reviewed_refs jsonb;
-BEGIN
- frozen_refs:=coalesce(input_value->'secret_refs','{}'::jsonb);
- reviewed_refs:=coalesce(desired_refs,'{}'::jsonb);
- IF jsonb_typeof(frozen_refs)<>'object' OR jsonb_typeof(reviewed_refs)<>'object' OR
-    jsonb_typeof(coalesce(input_value->'variables','{}'::jsonb))<>'object' OR
-    jsonb_typeof(coalesce(input_value->'service_bindings','{}'::jsonb))<>'object' THEN
-  RETURN false;
- END IF;
- IF frozen_refs IS DISTINCT FROM reviewed_refs OR
-    frozen_refs IS DISTINCT FROM environment_scoped_secret_refs(target_app,target_scope) THEN
-  RETURN false;
- END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each_text(frozen_refs) entry
-   WHERE entry.key !~ '^[A-Z][A-Z0-9_]{0,127}$' OR entry.value !~ '^secret:[A-Z][A-Z0-9_]{0,127}$') OR
-    EXISTS(SELECT 1 FROM jsonb_object_keys(frozen_refs) secret_key(key)
-      JOIN jsonb_object_keys(coalesce(input_value->'variables','{}'::jsonb)) variable_key(key) USING(key)) OR
-    EXISTS(SELECT 1 FROM jsonb_object_keys(frozen_refs) secret_key(key)
-      JOIN jsonb_each(coalesce(input_value->'service_bindings','{}'::jsonb)) binding ON binding.value->>'env_key'=secret_key.key) THEN
-  RETURN false;
- END IF;
- RETURN true;
-END $$;
-
---
 -- Name: guard_environment_workload_candidate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.environment_workload_activation_authorized(candidate public.deployments) RETURNS boolean
-    LANGUAGE plpgsql
-    AS $$
-DECLARE frozen jsonb; token text; source_uuid uuid; source_generation bigint; source_intent bigint; environment_uuid uuid; revision_uuid uuid;
-BEGIN
- frozen:=candidate.environment_workload_runtime;
- IF frozen IS NULL OR candidate.environment_workload_held OR candidate.status<>'live' THEN RETURN false; END IF;
- token:=nullif(current_setting('gregale.gitops_activation',true),'');
- IF token IS NULL OR token IS DISTINCT FROM current_setting('gregale.gitops_lease',true) THEN RETURN false; END IF;
- BEGIN
-  source_uuid:=(frozen->>'source_id')::uuid;
-  source_generation:=(frozen->>'generation')::bigint;
-  source_intent:=(frozen->>'intent_version')::bigint;
-  environment_uuid:=(frozen->>'environment_id')::uuid;
-  revision_uuid:=(frozen->>'revision_id')::uuid;
- EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
-  RETURN false;
- END;
- RETURN EXISTS(
-  SELECT 1 FROM active_environment_git_sources src
-  JOIN environment_gitops_jobs job ON job.source_id=src.id
-  JOIN environment_workload_graphs graph ON graph.source_id=src.id
-  CROSS JOIN LATERAL jsonb_array_elements(graph.members) member
-  WHERE src.id=source_uuid AND src.mode='enforce' AND NOT src.suspended
-   AND src.generation=source_generation AND src.intent_version=source_intent
-   AND src.environment_id=environment_uuid AND src.approved_revision_id=revision_uuid
-   AND graph.environment_id=src.environment_id AND graph.revision_id=src.approved_revision_id
-   AND graph.generation=src.generation AND graph.intent_version=src.intent_version
-   AND graph.plan_hash=frozen->>'plan_hash' AND graph.phase='prepared'
-   AND member->>'resource'=frozen->>'resource' AND member->>'app_id'=candidate.app_id::text
-   AND member->>'candidate_deployment_id'=candidate.id::text
-   AND job.desired_generation=src.generation AND job.claimed_generation=src.generation
-   AND job.lease_until>clock_timestamp() AND job.lease_token=token AND token<>''
- );
-END $$;
-
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_candidate() RETURNS trigger
+CREATE FUNCTION public.guard_environment_workload_candidate() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
 DECLARE frozen jsonb; src environment_git_sources%ROWTYPE; allowed boolean;
@@ -6826,13 +7465,13 @@ BEGIN
  IF NEW.status='live' THEN
   IF TG_OP='INSERT' THEN
    IF EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.environment_workload_runtime IS NOT NULL)
-    AND NOT public.environment_workload_activation_authorized(NEW) THEN
+    AND NOT environment_workload_activation_authorized(NEW) THEN
     RAISE EXCEPTION 'GitOps-managed workload promotion requires graph activation' USING ERRCODE='23514';
    END IF;
   ELSIF TG_OP='UPDATE' THEN
    IF OLD.status IS DISTINCT FROM 'live' AND
     EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.environment_workload_runtime IS NOT NULL)
-    AND NOT public.environment_workload_activation_authorized(NEW) THEN
+    AND NOT environment_workload_activation_authorized(NEW) THEN
     RAISE EXCEPTION 'GitOps-managed workload promotion requires graph activation' USING ERRCODE='23514';
    END IF;
   END IF;
@@ -6896,15 +7535,16 @@ BEGIN
       NEW.source_url='github://'||src.repository||'@'||rev.commit_sha AND NEW.build_id IS NULL AND NEW.inferred_profile IS NULL AND
       coalesce(NEW.github_source_ref,'')='' AND coalesce(NEW.image_digest,'')=''))
     AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=coalesce(w.runtime,'{}'::jsonb) AND coalesce(frozen->'service_bindings','{}'::jsonb)=coalesce(w.service_bindings,'{}'::jsonb)
-    AND coalesce(frozen->'variables','{}'::jsonb)=coalesce(w.variables,'{}'::jsonb) AND coalesce(frozen->'schedule','null'::jsonb)=coalesce(w.schedule,'null'::jsonb)
+    AND coalesce(frozen->'variables','{}'::jsonb)=coalesce(w.variables,'{}'::jsonb)
+    AND coalesce(frozen->'schedule','null'::jsonb)=coalesce(w.schedule,'null'::jsonb)
     AND jsonb_strip_nulls(frozen->'baseline')=jsonb_strip_nulls(a.manifest)
     AND frozen->>'start_command'=coalesce(a.start_command,'')
     AND frozen->>'app_type'=a.type AND frozen->>'runtime_base'=coalesce(a.runtime,'') AND frozen->>'workload_class'=a.workload_class
     AND coalesce(a.manifest->'env','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb) AND coalesce(a.manifest->'service_bindings','[]'::jsonb) IN ('[]'::jsonb,'null'::jsonb)
-    AND public.environment_workload_candidate_queue_bindings_valid(frozen, NEW.app_id)
-    AND public.environment_workload_candidate_secret_refs_valid(frozen, NEW.app_id, NEW.scope, rev.definition->'workloads'->substr(r.logical_name,10)->'secret_refs')
+    AND environment_workload_candidate_queue_bindings_valid(frozen, NEW.app_id)
+    AND environment_workload_candidate_secret_refs_valid(frozen, NEW.app_id, NEW.scope, rev.definition->'workloads'->substr(r.logical_name,10)->'secret_refs')
     AND (EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/') OR starts_with(f.field_path,'variables/') OR starts_with(f.field_path,'secret_refs/')))
-     OR public.environment_workload_candidate_applied_removal_valid(frozen))) THEN
+     OR environment_workload_candidate_applied_removal_valid(frozen))) THEN
    RAISE EXCEPTION 'environment workload preparation lost its reviewed authority' USING ERRCODE='23514';
   END IF;
   IF frozen ? 'deployment_inputs' AND (
@@ -6920,35 +7560,13 @@ BEGIN
  END IF;
  IF frozen IS NOT NULL AND NEW.status='live' THEN
   IF TG_OP='INSERT' OR OLD.status IS DISTINCT FROM 'live' THEN
-   IF NOT public.environment_workload_activation_authorized(NEW) THEN
+   IF NOT environment_workload_activation_authorized(NEW) THEN
     RAISE EXCEPTION 'environment workload graph is not qualified for activation' USING ERRCODE='23514';
    END IF;
   END IF;
  END IF;
  RETURN NEW;
 END $_$;
-
---
--- Name: guard_environment_workload_hold_state(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_hold_state() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF TG_OP='INSERT' THEN
-  IF NEW.environment_workload_runtime IS NOT NULL AND NOT NEW.environment_workload_held THEN
-   RAISE EXCEPTION 'environment workload candidates must start held' USING ERRCODE='23514';
-  END IF;
- ELSIF OLD.environment_workload_runtime IS NOT NULL AND
-   NEW.environment_workload_held IS DISTINCT FROM OLD.environment_workload_held THEN
-  IF NOT (OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
-   public.environment_workload_activation_authorized(NEW)) THEN
-   RAISE EXCEPTION 'environment workload hold requires graph activation' USING ERRCODE='23514';
-  END IF;
- END IF;
- RETURN NEW;
-END $$;
 
 
 --
@@ -7042,10 +7660,33 @@ END $$;
 
 
 --
+-- Name: guard_environment_workload_hold_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_hold_state() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.environment_workload_runtime IS NOT NULL AND NOT NEW.environment_workload_held THEN
+   RAISE EXCEPTION 'environment workload candidates must start held' USING ERRCODE='23514';
+  END IF;
+ ELSIF OLD.environment_workload_runtime IS NOT NULL AND
+   NEW.environment_workload_held IS DISTINCT FROM OLD.environment_workload_held THEN
+  IF NOT (OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
+   environment_workload_activation_authorized(NEW)) THEN
+   RAISE EXCEPTION 'environment workload hold requires graph activation' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_instance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_instance() RETURNS trigger
+CREATE FUNCTION public.guard_environment_workload_instance() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE q environment_workload_qualification_requests%ROWTYPE; app_ram integer; may_deploy boolean; b environment_qualification_restore_reservations%ROWTYPE;
@@ -7092,11 +7733,15 @@ BEGIN
   SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=q.id AND deployment_id=NEW.deployment_id FOR UPDATE;
  END IF;
  IF q.id IS NULL OR q.phase<>'claimed' OR (q.execution_mode='job' AND
-    (coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object' OR coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
-     OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+    (coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object' OR
+     coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
      OR NOT EXISTS(SELECT 1 FROM environment_workload_graphs g, jsonb_array_elements(g.members) member
        WHERE g.id=q.graph_id AND member->>'resource'=q.resource AND member->>'execution_mode'='job'
         AND coalesce((member->>'job_smoke_configured')::boolean,false)
+        AND coalesce(nullif(member->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)
+        AND coalesce((member->>'service_bindings_configured')::boolean,false)=(coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb)
+        AND coalesce(member->>'queue_bindings_configured','false')='false'
+        AND coalesce(nullif(member->'queue_bindings','null'::jsonb),'{}'::jsonb)='{}'::jsonb
         AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb))) OR q.lease_until<=clock_timestamp()
   OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
   OR q.app_id<>NEW.app_id OR NEW.kind<>'wake' OR NEW.job_id IS NOT NULL
@@ -7117,6 +7762,7 @@ BEGIN
  RETURN NEW;
 END $$;
 
+
 --
 -- Name: guard_environment_workload_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -7129,8 +7775,6 @@ DECLARE
  resource_name text; paths text[]; controller boolean;
 BEGIN
  IF TG_OP='DELETE' THEN row_value:=to_jsonb(OLD); ELSE row_value:=to_jsonb(NEW); END IF;
- -- Parent purges remove their original identity before cascading. Ordinary
- -- scoped-row deletion still requires ownership authority below.
  IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM apps a JOIN accounts c ON c.id=a.account_id
   JOIN project_environments e ON e.account_id=a.account_id AND e.project_id=a.project_id
   WHERE a.id=OLD.app_id AND a.account_id=OLD.account_id AND e.id=OLD.environment_id) THEN
@@ -7145,8 +7789,6 @@ BEGIN
  END IF;
  SELECT s.* INTO src FROM active_environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
   AND s.environment_id=(row_value->>'environment_id')::uuid FOR UPDATE OF s;
- -- ON CONFLICT fires the INSERT trigger before its UPDATE trigger. Compare
- -- against the original scoped row so an unchanged owned field is not an edit.
  IF TG_OP='INSERT' THEN
   SELECT to_jsonb(w) INTO prior FROM app_environment_workload_intents w
    WHERE w.app_id=NEW.app_id AND w.environment_id=NEW.environment_id FOR UPDATE OF w;
@@ -7173,6 +7815,14 @@ BEGIN
    AND a.id<>NEW.app_id AND a.account_id=NEW.account_id AND a.project_id=src.project_id AND a.status<>'deleted')) THEN
   RAISE EXCEPTION 'scoped service binding requires its original environment target' USING ERRCODE='23514';
  END IF;
+ IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.variables) v WHERE
+  v.key !~ '^[A-Z][A-Z0-9_]*$' OR length(v.key)>128 OR jsonb_typeof(v.value)<>'string' OR
+  octet_length(v.value #>> '{}')>32768) THEN
+  RAISE EXCEPTION 'scoped workload variables require valid keys and string values' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP<>'DELETE' AND (SELECT count(*) FROM jsonb_object_keys(NEW.variables))>256 THEN
+  RAISE EXCEPTION 'scoped workload variable count exceeds the platform limit' USING ERRCODE='23514';
+ END IF;
  IF TG_OP<>'DELETE' AND ((SELECT count(*) FROM jsonb_object_keys(NEW.service_bindings))>100 OR EXISTS(
   SELECT 1 FROM jsonb_each(NEW.service_bindings) GROUP BY value->>'env_key' HAVING count(*)>1)) THEN
   RAISE EXCEPTION 'scoped service binding count or environment keys are invalid' USING ERRCODE='23514';
@@ -7184,14 +7834,6 @@ BEGIN
  IF TG_OP<>'DELETE' AND NEW.schedule IS NOT NULL AND NOT EXISTS(SELECT 1 FROM apps a WHERE a.id=NEW.app_id
   AND (NEW.runtime->>'execution_mode'='job' OR a.manifest->>'execution_mode'='job')) THEN
   RAISE EXCEPTION 'scheduled workload requires job execution mode' USING ERRCODE='23514';
- END IF;
- IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.variables) v WHERE
-  v.key !~ '^[A-Z][A-Z0-9_]*$' OR length(v.key)>128 OR jsonb_typeof(v.value)<>'string' OR
-  octet_length(v.value #>> '{}')>32768) THEN
-  RAISE EXCEPTION 'scoped workload variables require valid keys and string values' USING ERRCODE='23514';
- END IF;
- IF TG_OP<>'DELETE' AND (SELECT count(*) FROM jsonb_object_keys(NEW.variables))>256 THEN
-  RAISE EXCEPTION 'scoped workload variable count exceeds the platform limit' USING ERRCODE='23514';
  END IF;
  IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.service_bindings) b
   JOIN project_environments e ON e.id=NEW.environment_id WHERE
@@ -7228,35 +7870,57 @@ $_$;
 CREATE FUNCTION public.guard_environment_workload_job() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE managed boolean; controller boolean; deleting_account boolean;
+DECLARE
+    managed boolean;
+    controller boolean;
+    deleting_account boolean;
 BEGIN
- SELECT EXISTS(SELECT 1 FROM app_environment_workload_intents i WHERE i.job_id=OLD.id) INTO managed;
- IF NOT managed THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
- SELECT EXISTS(
-  SELECT 1 FROM app_environment_workload_intents i
-  JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
-  JOIN environment_gitops_resources r ON r.source_id=s.id AND r.app_id=i.app_id
-  JOIN environment_gitops_jobs j ON j.source_id=s.id
-  WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended AND s.approved_revision_id IS NOT NULL
-   AND j.desired_generation=s.generation AND j.claimed_generation=s.generation
-   AND j.lease_until>clock_timestamp() AND j.lease_token<>''
-   AND j.lease_token=current_setting('gregale.gitops_lease',true)) INTO controller;
- SELECT EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id AND status='deleted_pending') INTO deleting_account;
- IF TG_OP='DELETE' THEN
-  IF NOT controller AND NOT deleting_account THEN
-   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_job_managed',MESSAGE='Job settings are managed by the environment Git source';
-  END IF;
-  RETURN OLD;
- END IF;
- IF ROW(NEW.account_id,NEW.kind,NEW.name,NEW.image_ref,NEW.ram_mb,NEW.task_timeout_s,NEW.max_parallelism,NEW.retry_max,
-   NEW.env_overrides,NEW.status,NEW.command,NEW.cron_schedule,NEW.cron_timezone,NEW.schedule_policy,NEW.failure_rules)
-  IS DISTINCT FROM
-  ROW(OLD.account_id,OLD.kind,OLD.name,OLD.image_ref,OLD.ram_mb,OLD.task_timeout_s,OLD.max_parallelism,OLD.retry_max,
-   OLD.env_overrides,OLD.status,OLD.command,OLD.cron_schedule,OLD.cron_timezone,OLD.schedule_policy,OLD.failure_rules)
-  AND NOT controller AND NOT deleting_account THEN
-  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_job_managed',MESSAGE='Job settings are managed by the environment Git source';
- END IF;
- RETURN NEW;
+    SELECT EXISTS (
+        SELECT 1 FROM app_environment_workload_intents i
+        WHERE i.job_id=OLD.id
+    ) INTO managed;
+    IF NOT managed THEN
+        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1
+        FROM app_environment_workload_intents i
+        JOIN active_environment_git_sources s
+          ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+        JOIN environment_gitops_resources r
+          ON r.source_id=s.id AND r.app_id=i.app_id
+        JOIN environment_gitops_jobs j ON j.source_id=s.id
+        WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
+          AND s.approved_revision_id IS NOT NULL
+          AND j.desired_generation=s.generation AND j.claimed_generation=s.generation
+          AND j.lease_until>clock_timestamp() AND j.lease_token<>''
+          AND j.lease_token=current_setting('gregale.gitops_lease',true)
+    ) INTO controller;
+    SELECT EXISTS (
+        SELECT 1 FROM accounts WHERE id=OLD.account_id AND status='deleted_pending'
+    ) INTO deleting_account;
+
+    IF TG_OP='DELETE' THEN
+        IF NOT controller AND NOT deleting_account THEN
+            RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+                MESSAGE='Job settings are managed by the environment Git source';
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF ROW(NEW.account_id,NEW.kind,NEW.name,NEW.image_ref,NEW.ram_mb,NEW.task_timeout_s,
+           NEW.max_parallelism,NEW.retry_max,NEW.env_overrides,NEW.status,NEW.command,
+           NEW.cron_schedule,NEW.cron_timezone,NEW.schedule_policy,NEW.failure_rules)
+       IS DISTINCT FROM
+       ROW(OLD.account_id,OLD.kind,OLD.name,OLD.image_ref,OLD.ram_mb,OLD.task_timeout_s,
+           OLD.max_parallelism,OLD.retry_max,OLD.env_overrides,OLD.status,OLD.command,
+           OLD.cron_schedule,OLD.cron_timezone,OLD.schedule_policy,OLD.failure_rules)
+       AND NOT controller AND NOT deleting_account THEN
+        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+            MESSAGE='Job settings are managed by the environment Git source';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -7269,18 +7933,22 @@ CREATE FUNCTION public.guard_environment_workload_job_link() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF TG_OP<>'DELETE' AND NEW.job_id IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM jobs j WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id
-   AND j.kind='recurring' AND j.status IN ('paused','active') AND NEW.schedule IS NOT NULL AND NEW.source->>'kind'='image'
-   AND j.image_ref=NEW.source->>'image' AND j.cron_schedule=NEW.schedule->>'cron'
-   AND j.cron_timezone=NEW.schedule->>'timezone'
-   AND j.schedule_policy IS NOT DISTINCT FROM NULLIF(NEW.schedule->'schedule_policy','null'::jsonb)
-   AND j.failure_rules IS NOT DISTINCT FROM NULLIF(NEW.schedule->'failure_rules','null'::jsonb)
-   AND j.env_overrides=NEW.variables) THEN
-  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_job_link_contract',
-   MESSAGE='GitOps Job binding does not match the reviewed image and schedule';
- END IF;
- RETURN NEW;
+    IF TG_OP<>'DELETE' AND NEW.job_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM jobs j
+        WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id
+          AND j.kind='recurring' AND j.status IN ('paused','active')
+          AND NEW.schedule IS NOT NULL AND NEW.source->>'kind'='image'
+          AND j.image_ref=NEW.source->>'image'
+          AND j.env_overrides=NEW.variables
+          AND j.cron_schedule=NEW.schedule->>'cron'
+          AND j.cron_timezone=NEW.schedule->>'timezone'
+          AND j.schedule_policy IS NOT DISTINCT FROM NULLIF(NEW.schedule->'schedule_policy','null'::jsonb)
+          AND j.failure_rules IS NOT DISTINCT FROM NULLIF(NEW.schedule->'failure_rules','null'::jsonb)
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_link_contract',
+            MESSAGE='GitOps Job binding does not match the reviewed image and schedule';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -7354,6 +8022,159 @@ BEGIN
      EXISTS(SELECT 1 FROM instances i WHERE i.id=OLD.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed')))) THEN
    RAISE EXCEPTION 'environment qualification execution lease is stale' USING ERRCODE='23514';
   END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_queue_serving_ack(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_queue_serving_ack() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) THEN
+            RAISE EXCEPTION 'environment queue serving acknowledgements are retained' USING ERRCODE='23514';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,NEW.app_id,NEW.deployment_id,NEW.invocation_id)
+        IS DISTINCT FROM ROW(OLD.graph_id,OLD.binding_id,OLD.mode,OLD.trigger_id,OLD.app_id,OLD.deployment_id,OLD.invocation_id) THEN
+        RAISE EXCEPTION 'environment queue serving acknowledgement identity is immutable' USING ERRCODE='23514';
+    END IF;
+    IF NOT environment_workload_graph_serving_supported(NEW.graph_id) OR
+        NOT environment_workload_queue_serving_ack_authorized(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,
+            NEW.app_id,NEW.deployment_id,NEW.invocation_id) THEN
+        RAISE EXCEPTION 'environment queue serving acknowledgement is outside the supported active graph' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_serving_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_serving_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE completion_only boolean;
+BEGIN
+    IF TG_OP='DELETE' THEN
+        IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) AND
+            NOT environment_workload_serving_authorized(OLD.source_id,OLD.graph_id,OLD.release_set_id) THEN
+            RAISE EXCEPTION 'environment workload serving receipts are immutable' USING ERRCODE='23514';
+        END IF;
+        RETURN OLD;
+    END IF;
+    completion_only:=false;
+    IF TG_OP='UPDATE' THEN
+        completion_only:=OLD.phase='pending' AND NEW.phase='served'
+            AND ROW(NEW.graph_id,NEW.source_id,NEW.source_generation,NEW.intent_version,NEW.revision_id,NEW.plan_hash,
+                NEW.release_set_id,NEW.expected_gateways,NEW.started_at)
+                IS NOT DISTINCT FROM ROW(OLD.graph_id,OLD.source_id,OLD.source_generation,OLD.intent_version,OLD.revision_id,
+                    OLD.plan_hash,OLD.release_set_id,OLD.expected_gateways,OLD.started_at)
+            AND environment_workload_serving_ready(NEW.graph_id);
+    END IF;
+    IF (NOT environment_workload_serving_authorized(NEW.source_id,NEW.graph_id,NEW.release_set_id) AND NOT completion_only) OR
+        NOT EXISTS (SELECT 1 FROM environment_workload_graphs graph
+            WHERE graph.id=NEW.graph_id AND graph.source_id=NEW.source_id AND graph.generation=NEW.source_generation
+                AND graph.intent_version=NEW.intent_version AND graph.revision_id=NEW.revision_id AND graph.plan_hash=NEW.plan_hash) OR
+        NOT environment_workload_graph_serving_supported(NEW.graph_id) THEN
+        RAISE EXCEPTION 'environment workload serving receipt requires its current supported graph and lease' USING ERRCODE='23514';
+    END IF;
+    IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.source_id,NEW.source_generation,NEW.intent_version,NEW.revision_id,NEW.plan_hash,NEW.started_at)
+        IS DISTINCT FROM ROW(OLD.graph_id,OLD.source_id,OLD.source_generation,OLD.intent_version,OLD.revision_id,OLD.plan_hash,OLD.started_at) THEN
+        RAISE EXCEPTION 'environment workload serving receipt identity is immutable' USING ERRCODE='23514';
+    END IF;
+    IF NEW.phase='served' AND NOT environment_workload_serving_ready(NEW.graph_id) THEN
+        RAISE EXCEPTION 'environment workload serving receipt lacks complete gateway and queue acknowledgements' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_serving_route(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_serving_route() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE receipt environment_workload_serving_receipts%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id) THEN
+   SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id;
+   IF NOT environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) THEN
+    RAISE EXCEPTION 'environment workload serving routes are immutable' USING ERRCODE='23514';
+   END IF;
+  END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=NEW.graph_id FOR UPDATE;
+ IF receipt.graph_id IS NULL OR NOT environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) OR
+    receipt.phase<>'pending' OR NOT EXISTS(
+      SELECT 1 FROM project_release_sets release
+      JOIN project_release_members rm ON rm.release_id=release.id AND rm.app_id=NEW.app_id AND rm.deployment_id=NEW.deployment_id
+      JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
+      CROSS JOIN LATERAL jsonb_array_elements(graph.members) member
+      WHERE release.id=receipt.release_set_id AND release.active
+        AND member->>'app_id'=NEW.app_id::text AND member->>'execution_mode' IN ('request','service')
+        AND coalesce(member->'queue_modes','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb)
+        AND ((NEW.cutover_required AND member->>'candidate_deployment_id'=NEW.deployment_id::text) OR
+             (NOT NEW.cutover_required AND nullif(member->>'candidate_deployment_id','') IS NULL AND
+              coalesce(member->'retained_deployments','[]'::jsonb) ? NEW.deployment_id::text))) THEN
+  RAISE EXCEPTION 'environment workload serving route is outside the reviewed active graph' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_serving_route_ack(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_serving_route_ack() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE receipt environment_workload_serving_receipts%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id;
+  IF receipt.graph_id IS NOT NULL AND NOT environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) THEN
+   RAISE EXCEPTION 'environment workload serving acknowledgements are immutable' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=NEW.graph_id FOR UPDATE;
+ IF receipt.graph_id IS NULL OR receipt.phase<>'pending' OR
+    NOT environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) OR
+    NOT (NEW.node_name=ANY(receipt.expected_gateways)) OR
+    NOT EXISTS(SELECT 1 FROM environment_workload_serving_routes WHERE graph_id=NEW.graph_id AND route_generation=NEW.route_generation) THEN
+  RAISE EXCEPTION 'environment workload serving acknowledgement is not expected' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_serving_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_serving_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.traffic_percent IS DISTINCT FROM OLD.traffic_percent AND
+    EXISTS(SELECT 1 FROM deployments managed WHERE managed.app_id=OLD.app_id AND managed.scope=OLD.scope AND managed.environment_workload_runtime IS NOT NULL) AND
+    NOT environment_workload_serving_traffic_authorized(NEW.app_id,NEW.scope,NEW.id,NEW.traffic_percent) AND
+    NOT (NEW.traffic_percent=0 AND OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
+      environment_workload_activation_authorized(NEW)) THEN
+  RAISE EXCEPTION 'GitOps-managed workload traffic requires a current serving transition' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -9074,6 +9895,8 @@ CREATE FUNCTION public.invalidate_lifecycle_successor_routes() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE oldrow jsonb; newrow jsonb; affected uuid; owner uuid; hostname text;
+ watched text[] := ARRAY['status','slug','manifest','visibility','org_id','project_id','account_id',
+                         'only_declared_routes','declared_routes','consumer_auth_mode','maintenance_mode'];
 BEGIN
  IF TG_OP<>'INSERT' THEN oldrow:=to_jsonb(OLD); END IF;
  IF TG_OP<>'DELETE' THEN newrow:=to_jsonb(NEW); END IF;
@@ -9081,9 +9904,17 @@ BEGIN
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE split_part(m->>'successor_url','/',3) IN (oldrow->>'hostname',newrow->>'hostname'));
   RETURN NULL;
  END IF;
+ IF TG_TABLE_NAME='apps' AND TG_OP='UPDATE' AND
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(oldrow) e(k,v) WHERE k=ANY(watched))
+    IS NOT DISTINCT FROM
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(newrow) e(k,v) WHERE k=ANY(watched)) THEN
+  RETURN NULL;
+ END IF;
  FOR affected IN SELECT DISTINCT id FROM (VALUES(coalesce(oldrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN oldrow->>'id' END)::uuid),(coalesce(newrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN newrow->>'id' END)::uuid)) ids(id) WHERE id IS NOT NULL LOOP
   SELECT account_id INTO owner FROM apps WHERE id=affected;
-  PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+  PERFORM 1 FROM accounts WHERE id=owner FOR NO KEY UPDATE;
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND
    ((TG_TABLE_NAME<>'deployments' AND r.app_id=affected) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_app_id'=affected::text AND (TG_TABLE_NAME<>'deployments' OR affected<>r.app_id)));
  END LOOP;
@@ -9766,6 +10597,24 @@ $$;
 
 
 --
+-- Name: valid_object_conditional_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_conditional_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+BEGIN
+ IF NOT coalesce(valid_object_versioned_url_request(r-ARRAY['if_match','if_none_match']),false) OR octet_length(r::text)>32768 THEN RETURN false; END IF;
+ IF NOT (r ? 'if_match' OR r ? 'if_none_match') THEN RETURN true; END IF;
+ IF r->>'method'<>'PUT' OR r ? 'multipart' OR r ? 'if_match' AND r ? 'if_none_match' THEN RETURN false; END IF;
+ IF r ? 'if_match' AND (jsonb_typeof(r->'if_match') IS DISTINCT FROM 'string' OR octet_length(r->>'if_match') NOT BETWEEN 1 AND 256 OR (r->>'if_match') ~ '[\x01-\x1f\x7f]') THEN RETURN false; END IF;
+ IF r ? 'if_none_match' AND (jsonb_typeof(r->'if_none_match') IS DISTINCT FROM 'string' OR r->>'if_none_match'<>'*') THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
 -- Name: valid_object_encryption_snapshot(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9850,23 +10699,6 @@ BEGIN
  END IF;
  IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold') IS DISTINCT FROM 'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
-EXCEPTION WHEN OTHERS THEN RETURN false;
-END $_$;
-
-
---
--- Name: valid_object_versioned_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.valid_object_versioned_url_request(r jsonb) RETURNS boolean
-    LANGUAGE plpgsql IMMUTABLE STRICT
-    AS $_$
-BEGIN
- IF r ? 'version_id' THEN
-  IF r->>'method' NOT IN ('GET','HEAD') OR jsonb_typeof(r->'version_id') IS DISTINCT FROM 'string' OR
-   r->>'version_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN RETURN false; END IF;
- END IF;
- RETURN coalesce(valid_object_event_protected_url_request(r-'version_id'),false);
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $_$;
 
@@ -9979,7 +10811,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_api_key_id uuid,
     url_expires_at timestamp with time zone,
     url_receipt_id uuid,
-    CONSTRAINT object_s3_versioned_url_request CHECK (((url_request IS NULL) OR public.valid_object_versioned_url_request(url_request))),
+    CONSTRAINT object_s3_conditional_url_request CHECK (((url_request IS NULL) OR public.valid_object_conditional_url_request(url_request))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -11278,6 +12110,7 @@ BEGIN
     IF OLD.credential_source = 'customer_sealed'
        AND (NEW.credential_source <> 'customer_sealed' OR NEW.provider_auth_mode <> 'managed') THEN
         DELETE FROM outbound_integration_credentials WHERE integration_id = NEW.id;
+        DELETE FROM outbound_integration_credential_keys WHERE integration_id = NEW.id;
     END IF;
     RETURN NEW;
 END;
@@ -11409,6 +12242,27 @@ BEGIN
  PERFORM capture_event_recovery_invocation_result(NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation,
   NEW.state,NEW.outcome,NEW.attempts,NEW.completed_at);
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: record_event_recovery_workflow_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_workflow_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP IN ('DELETE','UPDATE') THEN
+  PERFORM capture_event_recovery_workflow_result(OLD.id,OLD.app_id,OLD.workflow_name,OLD.resume_count,
+   OLD.status,OLD.updated_at,OLD.finished_at,OLD.cancelled_at IS NOT NULL OR coalesce(OLD.last_error='cancelled by operator',false));
+ END IF;
+ IF TG_OP<>'DELETE' THEN
+  PERFORM capture_event_recovery_workflow_result(NEW.id,NEW.app_id,NEW.workflow_name,NEW.resume_count,
+   NEW.status,NEW.updated_at,NEW.finished_at,NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+  RETURN NEW;
+ END IF;
+ RETURN OLD;
 END $$;
 
 
@@ -11602,6 +12456,23 @@ END $$;
 
 
 --
+-- Name: record_workflow_recovery_failure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_workflow_recovery_failure() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.status IN ('failed','dead','succeeded') AND OLD.resume_count=NEW.resume_count THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM capture_workflow_recovery_failure(NEW.app_id,NEW.id,NEW.workflow_name,NEW.status,NEW.resume_count,NEW.finished_at,
+ NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: refresh_event_routing_backlog(bigint, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11718,6 +12589,33 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+
+--
+-- Name: require_environment_qualification_restore_guest_config(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_environment_qualification_restore_guest_config() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE source_config environment_qualification_config_receipts%ROWTYPE;
+        target_config environment_qualification_config_receipts%ROWTYPE;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'qualification restore guest config evidence is immutable' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO source_config FROM environment_qualification_config_receipts
+  WHERE request_id=NEW.request_id AND attempt=NEW.attempt AND instance_id=NEW.capture_instance_id
+   AND capture_instance_id IS NULL;
+ SELECT * INTO target_config FROM environment_qualification_config_receipts
+  WHERE request_id=NEW.request_id AND attempt=NEW.attempt AND instance_id=NEW.instance_id
+   AND capture_instance_id=NEW.capture_instance_id;
+ IF source_config.instance_id IS NULL OR target_config.instance_id IS NULL
+  OR source_config.graph_id IS DISTINCT FROM target_config.graph_id THEN
+  RAISE EXCEPTION 'restore receipt requires acknowledged source and restored guest configuration' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -13040,6 +13938,23 @@ END $$;
 
 
 --
+-- Name: valid_object_versioned_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_versioned_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+BEGIN
+ IF r ? 'version_id' THEN
+  IF r->>'method' NOT IN ('GET','HEAD') OR jsonb_typeof(r->'version_id') IS DISTINCT FROM 'string' OR
+   r->>'version_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN RETURN false; END IF;
+ END IF;
+ RETURN coalesce(valid_object_event_protected_url_request(r-'version_id'),false);
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $_$;
+
+
+--
 -- Name: valid_object_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13538,7 +14453,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -13591,12 +14506,14 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
+    CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -13665,6 +14582,8 @@ CREATE TABLE public.api_consumer_plans (
     max_units_per_month bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
 );
@@ -13675,6 +14594,13 @@ CREATE TABLE public.api_consumer_plans (
 --
 
 COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).';
+
+
+--
+-- Name: COLUMN api_consumer_plans.alert_thresholds_percent; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
 
 
 --
@@ -13712,10 +14638,10 @@ COMMENT ON COLUMN public.api_consumer_rate_cards.included_units_per_month IS 'Fr
 
 
 --
--- Name: COLUMN api_consumer_rate_cards.plan_id; Type: COMMENT; Schema: public; Owner: -
+-- Name: COLUMN api_consumer_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.api_consumer_rate_cards.plan_id IS 'Plan whose price history this card belongs to; NULL is the app default plan.';
+COMMENT ON COLUMN public.api_consumer_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.';
 
 
 --
@@ -13726,10 +14652,10 @@ COMMENT ON COLUMN public.api_consumer_rate_cards.route_weights IS 'Units charged
 
 
 --
--- Name: COLUMN api_consumer_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+-- Name: COLUMN api_consumer_rate_cards.plan_id; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.api_consumer_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per consumer per UTC calendar month in minute order; empty means the single price and allowance apply.';
+COMMENT ON COLUMN public.api_consumer_rate_cards.plan_id IS 'Plan whose price history this card belongs to; NULL is the app default plan.';
 
 
 --
@@ -13756,6 +14682,34 @@ CREATE TABLE public.api_consumer_route_usage_minutes (
 --
 
 COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
+
+
+--
+-- Name: api_consumer_usage_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_usage_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    threshold_percent integer NOT NULL,
+    limit_units bigint NOT NULL,
+    used_units bigint NOT NULL,
+    crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_usage_alerts_month_chk CHECK ((month_start = (date_trunc('month'::text, (month_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_usage_alerts_threshold_chk CHECK (((threshold_percent >= 1) AND (threshold_percent <= 100))),
+    CONSTRAINT api_consumer_usage_alerts_units_chk CHECK (((limit_units > 0) AND (used_units >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_usage_alerts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_usage_alerts IS 'One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.';
 
 
 --
@@ -14086,7 +15040,6 @@ CREATE TABLE public.app_environment_workload_intents (
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
     environment_id uuid NOT NULL,
-    job_id uuid,
     source jsonb,
     runtime jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -14095,10 +15048,11 @@ CREATE TABLE public.app_environment_workload_intents (
     service_bindings jsonb DEFAULT '{}'::jsonb NOT NULL,
     schedule jsonb,
     variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    job_id uuid,
     CONSTRAINT app_environment_workload_intents_runtime_check CHECK ((jsonb_typeof(runtime) = 'object'::text)),
     CONSTRAINT app_environment_workload_intents_service_bindings_check CHECK ((jsonb_typeof(service_bindings) = 'object'::text)),
-    CONSTRAINT app_environment_workload_intents_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text)),
     CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text))),
+    CONSTRAINT app_environment_workload_intents_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text)),
     CONSTRAINT environment_workload_job_schedule_shape CHECK (((schedule IS NULL) OR ((jsonb_typeof(schedule) = 'object'::text) AND (jsonb_typeof((schedule -> 'cron'::text)) = 'string'::text) AND (btrim((schedule ->> 'cron'::text)) <> ''::text) AND (jsonb_typeof((schedule -> 'timezone'::text)) = 'string'::text) AND (btrim((schedule ->> 'timezone'::text)) <> ''::text)))),
     CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text, 'function'::text])))))
 );
@@ -14389,6 +15343,20 @@ CREATE TABLE public.app_log_drains (
 
 
 --
+-- Name: app_mcp_task_compatibility; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_mcp_task_compatibility (
+    app_id uuid NOT NULL,
+    handlers jsonb NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_mcp_task_compatibility_handlers_shape CHECK (((jsonb_typeof(handlers) = 'array'::text) AND (jsonb_array_length(handlers) <= 256))),
+    CONSTRAINT app_mcp_task_compatibility_handlers_size CHECK ((octet_length((handlers)::text) <= 131072))
+);
+
+
+--
 -- Name: app_openapi_docs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14485,6 +15453,20 @@ CREATE TABLE public.app_registry_credentials (
     CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
     CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
     CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
+);
+
+
+--
+-- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_priorities (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_priorities_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20))),
+    CONSTRAINT app_route_priorities_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -14689,6 +15671,19 @@ CREATE TABLE public.app_service_address_cursors (
     account_id uuid NOT NULL,
     last_index integer NOT NULL,
     CONSTRAINT app_service_address_cursors_last_index_chk CHECK (((last_index >= 0) AND (last_index <= 65534)))
+);
+
+
+--
+-- Name: app_service_wake_ahead; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_wake_ahead (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -14951,7 +15946,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -15126,7 +16121,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
     CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
     CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text, 'binary'::text])))),
     CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
     CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
     CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
@@ -16419,6 +17414,10 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     outcome_only boolean DEFAULT false NOT NULL,
     depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     dependencies_only boolean DEFAULT false NOT NULL,
+    selected_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    change_reason jsonb DEFAULT 'null'::jsonb NOT NULL,
+    CONSTRAINT customer_operation_workflow_change_reason_check CHECK ((jsonb_typeof(change_reason) = ANY (ARRAY['object'::text, 'null'::text]))),
+    CONSTRAINT customer_operation_workflow_selected_paths_check CHECK (((jsonb_typeof(selected_paths) = 'array'::text) AND (jsonb_array_length(selected_paths) <= 8))),
     CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
     CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
     CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
@@ -16459,6 +17458,59 @@ CREATE TABLE public.customer_operation_workflow_states (
     CONSTRAINT customer_operation_workflow_states_subject_id_check CHECK ((((octet_length(subject_id) >= 1) AND (octet_length(subject_id) <= 256)) AND (subject_id !~ '[\x00-\x1f\x7f]'::text))),
     CONSTRAINT customer_operation_workflow_states_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT customer_operation_workflow_states_workflow_check CHECK ((workflow ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: customer_workflow_playbook_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_playbook_progress (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    case_key text NOT NULL,
+    revision bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_playbook_progress_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_playbook_progress_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_notifications (
+    subscription_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_readiness_notifications_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_notifications_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_subscriptions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid,
+    operator boolean NOT NULL,
+    scope text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_evaluation_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT customer_workflow_readiness_subscriptions_check CHECK ((operator OR (tenant_id IS NOT NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_subscriptions_scope_check CHECK ((((length(scope) >= 1) AND (length(scope) <= 40)) AND (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))
 );
 
 
@@ -16655,7 +17707,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])))
 );
 
 
@@ -16789,6 +17841,46 @@ CREATE SEQUENCE public.deployment_logs_seq_seq
 --
 
 ALTER SEQUENCE public.deployment_logs_seq_seq OWNED BY public.deployment_logs.seq;
+
+
+--
+-- Name: deployment_mcp_task_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_task_holds (
+    deployment_id uuid NOT NULL,
+    detail text NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    first_held_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    recovery_channel text DEFAULT ''::text NOT NULL,
+    recovery_payload jsonb,
+    owner_node text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_until timestamp with time zone,
+    claim_generation bigint DEFAULT 0 NOT NULL,
+    wake_requested boolean DEFAULT false NOT NULL,
+    last_recovery_outcome text DEFAULT ''::text NOT NULL,
+    last_recovery_at timestamp with time zone,
+    last_recovery_error_code text DEFAULT ''::text NOT NULL,
+    CONSTRAINT deployment_mcp_task_holds_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT deployment_mcp_task_holds_detail_check CHECK ((octet_length(detail) <= 8192)),
+    CONSTRAINT deployment_mcp_task_holds_last_recovery_error_code_check CHECK ((length(last_recovery_error_code) <= 128)),
+    CONSTRAINT deployment_mcp_task_holds_last_recovery_outcome_check CHECK ((last_recovery_outcome = ANY (ARRAY[''::text, 'held'::text, 'retry'::text, 'recovered'::text, 'inactive'::text, 'cancelled'::text]))),
+    CONSTRAINT deployment_mcp_task_holds_recovery_channel_check CHECK ((recovery_channel = ANY (ARRAY[''::text, 'snapshot_written'::text, 'deployment_ready'::text]))),
+    CONSTRAINT deployment_mcp_task_holds_recovery_payload_check CHECK ((octet_length((recovery_payload)::text) <= 65536))
+);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_task_migration_overrides (
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    used_at timestamp with time zone
+);
 
 
 --
@@ -17277,18 +18369,6 @@ ALTER TABLE public.edge_rule_change_log ALTER COLUMN id ADD GENERATED ALWAYS AS 
 
 
 --
--- Name: edge_rule_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.edge_rule_generation_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
 -- Name: edge_rule_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17327,6 +18407,18 @@ ALTER TABLE public.edge_rule_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: edge_rule_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.edge_rule_generation_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
 
 
 --
@@ -17423,7 +18515,7 @@ CREATE TABLE public.edge_rules (
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
     CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
@@ -17494,6 +18586,20 @@ CREATE TABLE public.email_verification_tokens (
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: entity_outbox_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_outbox_acceptances (
+    message_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT entity_outbox_acceptances_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -17911,6 +19017,23 @@ CREATE TABLE public.environment_management_overrides (
 
 
 --
+-- Name: environment_qualification_config_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_config_receipts (
+    request_id uuid NOT NULL,
+    attempt bigint NOT NULL,
+    graph_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    capture_instance_id uuid,
+    api_env_sha256 text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_config_receipts_api_env_sha256_check CHECK ((api_env_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_qualification_config_receipts_attempt_check CHECK ((attempt > 0))
+);
+
+
+--
 -- Name: environment_qualification_executions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17931,82 +19054,27 @@ CREATE TABLE public.environment_qualification_executions (
     CONSTRAINT environment_qualification_executions_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT environment_qualification_executions_retirement_check CHECK (((retirement IS NULL) OR (jsonb_typeof(retirement) = 'object'::text))),
     CONSTRAINT environment_qualification_native_receipt_canonical CHECK (((retirement IS NULL) OR ((retirement ->> 'kind'::text) <> 'native_retired'::text) OR (((retirement ->> 'receipt_id'::text) = (((retirement ->> 'receipt_id'::text))::uuid)::text) AND ((retirement ->> 'kernel_boot_id'::text) = (((retirement ->> 'kernel_boot_id'::text))::uuid)::text) AND ((retirement ->> 'native_generation'::text) = (((retirement ->> 'native_generation'::text))::uuid)::text)))),
-    CONSTRAINT environment_qualification_no_effects_receipt_canonical CHECK (
-        retirement IS NULL OR retirement->>'kind' <> 'native_effects_absent' OR
-        (retirement->>'receipt_id' = (retirement->>'receipt_id')::uuid::text AND
-         retirement->>'kernel_boot_id' = (retirement->>'kernel_boot_id')::uuid::text AND
-         NOT (retirement ? 'native_generation')))
+    CONSTRAINT environment_qualification_no_effects_receipt_canonical CHECK (((retirement IS NULL) OR ((retirement ->> 'kind'::text) <> 'native_effects_absent'::text) OR (((retirement ->> 'receipt_id'::text) = (((retirement ->> 'receipt_id'::text))::uuid)::text) AND ((retirement ->> 'kernel_boot_id'::text) = (((retirement ->> 'kernel_boot_id'::text))::uuid)::text) AND (NOT (retirement ? 'native_generation'::text)))))
 );
 
 
 --
--- Name: environment_qualification_restore_reservations; Type: TABLE; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.environment_qualification_restore_reservations (
-    instance_id uuid NOT NULL,
-    capture_instance_id uuid NOT NULL,
-    request_id uuid NOT NULL,
-    attempt bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_restore_reservation_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT environment_qualification_restore_reservations_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_restore_reservations_check CHECK ((instance_id <> capture_instance_id))
-);
-
-
---
--- Name: environment_qualification_snapshot_receipts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_qualification_snapshot_receipts (
-    instance_id uuid NOT NULL,
-    snapshot jsonb NOT NULL,
-    inputs jsonb NOT NULL,
-    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_snapshot_receipts_inputs_check CHECK ((jsonb_typeof(inputs) = 'object'::text)),
-    CONSTRAINT environment_qualification_snapshot_receipts_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
-);
-
-
---
--- Name: environment_qualification_restore_receipts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_qualification_restore_receipts (
-    request_id uuid NOT NULL,
-    attempt bigint NOT NULL,
-    capture_instance_id uuid NOT NULL,
-    instance_id uuid NOT NULL,
-    runtime_inputs jsonb NOT NULL,
-    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_restore_receipts_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_restore_receipts_capture_check CHECK ((instance_id <> capture_instance_id)),
-    CONSTRAINT environment_qualification_restore_receipts_runtime_inputs_check CHECK ((jsonb_typeof(runtime_inputs) = 'object'::text))
-);
-
-
---
--- Name: environment_qualification_smoke_receipts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_qualification_smoke_receipts (
+CREATE TABLE public.environment_qualification_framework_ready_receipts (
     request_id uuid NOT NULL,
     attempt bigint NOT NULL,
     graph_id uuid NOT NULL,
     capture_instance_id uuid NOT NULL,
     instance_id uuid NOT NULL,
-    resource text NOT NULL,
-    policy_id text NOT NULL,
-    policy_sha256 text NOT NULL,
-    result_sha256 text NOT NULL,
+    runtime text NOT NULL,
+    warmup_ms bigint NOT NULL,
     recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_smoke_receipts_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_smoke_receipts_target_check CHECK ((instance_id <> capture_instance_id)),
-    CONSTRAINT environment_qualification_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT environment_qualification_smoke_receipts_policy_id_check CHECK ((policy_id ~ '^[a-z][a-z0-9._-]{0,63}$'::text)),
-    CONSTRAINT environment_qualification_smoke_receipts_policy_sha256_check CHECK ((policy_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT environment_qualification_smoke_receipts_result_sha256_check CHECK ((result_sha256 ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT environment_qualification_framework_ready_recei_warmup_ms_check CHECK (((warmup_ms >= 0) AND (warmup_ms <= '4294967295'::bigint))),
+    CONSTRAINT environment_qualification_framework_ready_receipt_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_framework_ready_receipt_runtime_check CHECK ((runtime ~ '^[a-z0-9][a-z0-9._-]{0,31}$'::text)),
+    CONSTRAINT environment_qualification_framework_ready_receipts_check CHECK ((instance_id <> capture_instance_id))
 );
 
 
@@ -18027,55 +19095,85 @@ CREATE TABLE public.environment_qualification_job_smoke_receipts (
     error_class text NOT NULL,
     signal integer NOT NULL,
     recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_job_smoke_receipt_policy_sha256_check CHECK ((policy_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_qualification_job_smoke_receipt_result_sha256_check CHECK ((result_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT environment_qualification_job_smoke_receipts_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = 'job-exit-v1'::text)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_policy_sha256_check CHECK ((policy_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_result_sha256_check CHECK ((result_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_exit_check CHECK ((exit_code = 0)),
     CONSTRAINT environment_qualification_job_smoke_receipts_error_class_check CHECK ((error_class = 'succeeded'::text)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_signal_check CHECK ((signal = 0)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_pkey PRIMARY KEY (request_id, attempt),
-    CONSTRAINT environment_qualification_job_smoke_receipts_instance_id_key UNIQUE (instance_id)
+    CONSTRAINT environment_qualification_job_smoke_receipts_exit_code_check CHECK ((exit_code = 0)),
+    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = 'job-exit-v2'::text)),
+    CONSTRAINT environment_qualification_job_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT environment_qualification_job_smoke_receipts_signal_check CHECK ((signal = 0))
 );
 
 
 --
--- Name: environment_qualification_config_receipts; Type: TABLE; Schema: public; Owner: -
+-- Name: environment_qualification_restore_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.environment_qualification_config_receipts (
+CREATE TABLE public.environment_qualification_restore_receipts (
     request_id uuid NOT NULL,
     attempt bigint NOT NULL,
-    graph_id uuid NOT NULL,
+    capture_instance_id uuid NOT NULL,
     instance_id uuid NOT NULL,
-    capture_instance_id uuid,
-    api_env_sha256 text NOT NULL,
+    runtime_inputs jsonb NOT NULL,
     recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_config_receipts_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_config_receipts_sha_check CHECK ((api_env_sha256 ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT environment_qualification_restore_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_restore_receipts_check CHECK ((instance_id <> capture_instance_id)),
+    CONSTRAINT environment_qualification_restore_receipts_runtime_inputs_check CHECK ((jsonb_typeof(runtime_inputs) = 'object'::text))
 );
 
 
 --
--- Name: environment_qualification_framework_ready_receipts; Type: TABLE; Schema: public; Owner: -
+-- Name: environment_qualification_restore_reservations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.environment_qualification_framework_ready_receipts (
+CREATE TABLE public.environment_qualification_restore_reservations (
+    instance_id uuid NOT NULL,
+    capture_instance_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    attempt bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_restore_reservation_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_qualification_restore_reservations_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_restore_reservations_check CHECK ((instance_id <> capture_instance_id))
+);
+
+
+--
+-- Name: environment_qualification_smoke_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_smoke_receipts (
     request_id uuid NOT NULL,
     attempt bigint NOT NULL,
     graph_id uuid NOT NULL,
     capture_instance_id uuid NOT NULL,
     instance_id uuid NOT NULL,
-    runtime text NOT NULL,
-    warmup_ms bigint NOT NULL,
+    resource text NOT NULL,
+    policy_id text NOT NULL,
+    policy_sha256 text NOT NULL,
+    result_sha256 text NOT NULL,
     recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_qualification_framework_ready_receipts_attempt_check CHECK ((attempt > 0)),
-    CONSTRAINT environment_qualification_framework_ready_receipts_runtime_check CHECK ((runtime ~ '^[a-z0-9][a-z0-9._-]{0,31}$'::text)),
-    CONSTRAINT environment_qualification_framework_ready_receipts_warmup_check CHECK ((warmup_ms >= 0 AND warmup_ms <= 4294967295)),
-    CONSTRAINT environment_qualification_framework_ready_receipts_target_check CHECK ((instance_id <> capture_instance_id)),
-    CONSTRAINT environment_qualification_framework_ready_receipts_pkey PRIMARY KEY (request_id, attempt),
-    CONSTRAINT environment_qualification_framework_ready_receipts_instance_id_key UNIQUE (instance_id)
+    CONSTRAINT environment_qualification_smoke_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_smoke_receipts_check CHECK ((instance_id <> capture_instance_id)),
+    CONSTRAINT environment_qualification_smoke_receipts_policy_id_check CHECK ((policy_id ~ '^[a-z][a-z0-9._-]{0,63}$'::text)),
+    CONSTRAINT environment_qualification_smoke_receipts_policy_sha256_check CHECK ((policy_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_qualification_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT environment_qualification_smoke_receipts_result_sha256_check CHECK ((result_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: environment_qualification_snapshot_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_snapshot_receipts (
+    instance_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    inputs jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_snapshot_receipts_inputs_check CHECK ((jsonb_typeof(inputs) = 'object'::text)),
+    CONSTRAINT environment_qualification_snapshot_receipts_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
 );
 
 
@@ -18108,6 +19206,76 @@ CREATE TABLE public.environment_workload_graphs (
     CONSTRAINT environment_workload_graphs_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'prepared'::text, 'failed'::text]))),
     CONSTRAINT environment_workload_graphs_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT environment_workload_graphs_resource_ids_check CHECK ((jsonb_typeof(resource_ids) = 'object'::text))
+);
+
+
+--
+-- Name: environment_workload_serving_queue_acks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_serving_queue_acks (
+    graph_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    mode text NOT NULL,
+    trigger_id uuid,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    invocation_id uuid NOT NULL,
+    acknowledged_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_workload_serving_queue_acks_mode_check CHECK ((mode = ANY (ARRAY['push'::text, 'pull'::text])))
+);
+
+
+--
+-- Name: environment_workload_serving_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_serving_receipts (
+    graph_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    release_set_id uuid NOT NULL,
+    source_generation bigint NOT NULL,
+    intent_version bigint NOT NULL,
+    revision_id uuid NOT NULL,
+    plan_hash text NOT NULL,
+    expected_gateways text[] NOT NULL,
+    phase text DEFAULT 'pending'::text NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    served_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_workload_serving_receipts_check CHECK (((phase = 'served'::text) = (served_at IS NOT NULL))),
+    CONSTRAINT environment_workload_serving_receipts_expected_gateways_check CHECK ((cardinality(expected_gateways) >= 0)),
+    CONSTRAINT environment_workload_serving_receipts_intent_version_check CHECK ((intent_version > 0)),
+    CONSTRAINT environment_workload_serving_receipts_phase_check CHECK ((phase = ANY (ARRAY['pending'::text, 'served'::text]))),
+    CONSTRAINT environment_workload_serving_receipts_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_workload_serving_receipts_source_generation_check CHECK ((source_generation > 0))
+);
+
+
+--
+-- Name: environment_workload_serving_route_acks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_serving_route_acks (
+    graph_id uuid NOT NULL,
+    route_generation bigint NOT NULL,
+    node_name text NOT NULL,
+    acknowledged_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_workload_serving_route_acks_node_name_check CHECK (((length(btrim(node_name)) >= 1) AND (length(btrim(node_name)) <= 255)))
+);
+
+
+--
+-- Name: environment_workload_serving_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_serving_routes (
+    graph_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    cutover_required boolean NOT NULL,
+    route_generation bigint NOT NULL,
+    CONSTRAINT environment_workload_serving_routes_route_generation_check CHECK ((route_generation > 0))
 );
 
 
@@ -18358,14 +19526,18 @@ CREATE TABLE public.event_recovery_history (
     state text NOT NULL,
     previous_rate integer NOT NULL,
     rate integer NOT NULL,
-    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text]))),
+    target_position bigint,
+    target_run_id uuid,
+    target_resume_count integer,
+    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text, 'workflow_cancelled'::text]))),
     CONSTRAINT event_recovery_history_actor_id_check CHECK (((length(actor_id) > 0) AND (octet_length(actor_id) <= 256))),
     CONSTRAINT event_recovery_history_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'internal'::text, 'system'::text]))),
     CONSTRAINT event_recovery_history_previous_rate_check CHECK (((previous_rate >= 0) AND (previous_rate <= 100))),
     CONSTRAINT event_recovery_history_previous_state_check CHECK ((previous_state = ANY (ARRAY[''::text, 'running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
     CONSTRAINT event_recovery_history_rate_check CHECK (((rate >= 1) AND (rate <= 100))),
     CONSTRAINT event_recovery_history_reason_check CHECK ((octet_length(reason) <= 512)),
-    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text])))
+    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT event_recovery_history_target_check CHECK ((((action = 'workflow_cancelled'::text) AND ((target_position >= 1) AND (target_position <= 25)) AND (target_run_id IS NOT NULL) AND ((target_resume_count >= 1) AND (target_resume_count <= 16)) AND (target_position IS NOT NULL) AND (target_resume_count IS NOT NULL)) OR ((action <> 'workflow_cancelled'::text) AND (target_position IS NULL) AND (target_run_id IS NULL) AND (target_resume_count IS NULL))))
 );
 
 
@@ -18395,7 +19567,7 @@ ALTER SEQUENCE public.event_recovery_history_id_seq OWNED BY public.event_recove
 CREATE TABLE public.event_recovery_items (
     job_id uuid NOT NULL,
     "position" bigint NOT NULL,
-    outbox_id bigint NOT NULL,
+    outbox_id bigint,
     subscription_id text NOT NULL,
     event_source text NOT NULL,
     event_id text NOT NULL,
@@ -18414,7 +19586,7 @@ CREATE TABLE public.event_recovery_items (
     CONSTRAINT event_recovery_items_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'changed'::text, 'receipt_expired'::text, 'target_unavailable'::text, 'cancelled'::text, 'expired'::text]))),
     CONSTRAINT event_recovery_items_replay_identity_chk CHECK ((((replay_invocation_id IS NULL) AND (replay_generation IS NULL) AND (replay_created_at IS NULL)) OR ((replay_invocation_id IS NOT NULL) AND (replay_generation IS NOT NULL) AND (replay_generation >= 0) AND (replay_created_at IS NOT NULL) AND (state = 'queued'::text)))),
     CONSTRAINT event_recovery_items_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'queued'::text, 'skipped'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_items_subscription_id_check CHECK ((subscription_id <> ''::text))
+    CONSTRAINT event_recovery_items_target_check CHECK ((((outbox_id IS NOT NULL) AND (subscription_id <> ''::text) AND (NOT (expected_progress ? 'run_id'::text))) OR ((outbox_id IS NULL) AND (subscription_id = ''::text) AND (event_source = ''::text) AND (event_id = ''::text) AND (event_type = ''::text) AND (COALESCE((expected_progress ->> 'run_id'::text), ''::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND (COALESCE(jsonb_typeof((expected_progress -> 'expected_resume_count'::text)), ''::text) = 'number'::text) AND ((((expected_progress ->> 'expected_resume_count'::text))::integer >= 0) AND (((expected_progress ->> 'expected_resume_count'::text))::integer <= 16)))))
 );
 
 
@@ -18448,14 +19620,15 @@ CREATE TABLE public.event_recovery_jobs (
     request_id uuid,
     notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    execution_attention_next_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
-    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text) AND (((COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'workflow'::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_runs'::text)), ''::text) = 'object'::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'routing'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_routing'::text)), ''::text) = 'object'::text)))))),
     CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
     CONSTRAINT event_recovery_jobs_completion_chk CHECK (((state = ANY (ARRAY['running'::text, 'paused'::text])) = (completed_at IS NULL))),
     CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text]) = '{}'::jsonb))),
+    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'event_recovery.execution_attention'::text]) = '{}'::jsonb))),
     CONSTRAINT event_recovery_jobs_pause_chk CHECK (((state = 'paused'::text) = (paused_at IS NOT NULL))),
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
@@ -18463,6 +19636,28 @@ CREATE TABLE public.event_recovery_jobs (
     CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
     CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
     CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
+);
+
+
+--
+-- Name: event_recovery_workflow_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_workflow_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    run_id uuid NOT NULL,
+    resume_number integer NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_recovery_workflow_results_check CHECK ((recorded_at >= admitted_at)),
+    CONSTRAINT event_recovery_workflow_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= admitted_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_workflow_results_check2 CHECK (((state <> 'superseded'::text) OR (completed_at IS NULL))),
+    CONSTRAINT event_recovery_workflow_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_workflow_results_resume_number_check CHECK ((resume_number > 0)),
+    CONSTRAINT event_recovery_workflow_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -20184,7 +21379,7 @@ CREATE TABLE public.job_runs (
     exclusive_operation_id uuid,
     exclusive_generation bigint,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
-    CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 1) AND (cardinality(command) <= 64)))),
+    CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 0) AND (cardinality(command) <= 64)))),
     CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
     CONSTRAINT job_runs_effective_env_snapshot_check CHECK (((effective_env_snapshot IS NULL) OR (jsonb_typeof(effective_env_snapshot) = 'object'::text))),
     CONSTRAINT job_runs_exclusive_generation_check CHECK ((((exclusive_operation_id IS NULL) AND (exclusive_generation IS NULL)) OR ((exclusive_operation_id IS NOT NULL) AND (exclusive_generation > 0)))),
@@ -23061,7 +24256,11 @@ CREATE TABLE public.outbound_admission_leases (
     lease_id uuid NOT NULL,
     integration_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    binding_app_id uuid,
+    ai_reserved_tokens bigint DEFAULT 0 NOT NULL,
+    ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0)))
 );
 
 
@@ -23085,12 +24284,152 @@ CREATE TABLE public.outbound_admission_state (
     retry_budget_policy_per_minute integer DEFAULT 0 NOT NULL,
     provider_cooldown_until timestamp with time zone,
     provider_cooldown_policy_revision bigint DEFAULT 0 NOT NULL,
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    daily_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    monthly_usage_month date DEFAULT (date_trunc('month'::text, (now() AT TIME ZONE 'UTC'::text)))::date NOT NULL,
+    monthly_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_admission_state_ai_cost_chk CHECK (((daily_ai_cost_millicents >= 0) AND (monthly_ai_cost_millicents >= 0))),
     CONSTRAINT outbound_admission_state_circuit_failure_count_check CHECK ((circuit_failure_count >= 0)),
     CONSTRAINT outbound_admission_state_circuit_policy_chk CHECK ((((circuit_policy_failure_threshold = 0) AND (circuit_policy_open_seconds = 0)) OR (((circuit_policy_failure_threshold >= 1) AND (circuit_policy_failure_threshold <= 20)) AND ((circuit_policy_open_seconds >= 1) AND (circuit_policy_open_seconds <= 300))))),
+    CONSTRAINT outbound_admission_state_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
     CONSTRAINT outbound_admission_state_daily_request_count_chk CHECK ((daily_request_count >= 0)),
     CONSTRAINT outbound_admission_state_retry_budget_policy_per_minute_check CHECK (((retry_budget_policy_per_minute >= 0) AND (retry_budget_policy_per_minute <= 3000))),
     CONSTRAINT outbound_admission_state_retry_budget_tokens_check CHECK (((retry_budget_tokens >= (0)::double precision) AND (retry_budget_tokens <= (3000)::double precision))),
     CONSTRAINT outbound_admission_state_tokens_check CHECK ((tokens >= (0)::double precision))
+);
+
+
+--
+-- Name: outbound_ai_budget_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_budget_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    integration_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    budget text NOT NULL,
+    app_id uuid,
+    period_start date NOT NULL,
+    threshold_percent smallint NOT NULL,
+    limit_value bigint NOT NULL,
+    used_value bigint NOT NULL,
+    crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_budget_alerts_app_chk CHECK (((budget = 'app_daily_tokens'::text) = (app_id IS NOT NULL))),
+    CONSTRAINT outbound_ai_budget_alerts_budget_chk CHECK ((budget = ANY (ARRAY['daily_tokens'::text, 'app_daily_tokens'::text, 'daily_cost'::text, 'monthly_cost'::text]))),
+    CONSTRAINT outbound_ai_budget_alerts_threshold_chk CHECK ((threshold_percent = ANY (ARRAY[80, 100]))),
+    CONSTRAINT outbound_ai_budget_alerts_values_chk CHECK (((limit_value >= 1) AND (used_value >= 0)))
+);
+
+
+--
+-- Name: outbound_ai_price_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_entries (
+    price_list_id uuid NOT NULL,
+    model_prefix text NOT NULL,
+    input_millicents_per_mtok bigint NOT NULL,
+    cached_input_millicents_per_mtok bigint,
+    cache_write_millicents_per_mtok bigint,
+    output_millicents_per_mtok bigint NOT NULL,
+    CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000)))))
+);
+
+
+--
+-- Name: outbound_ai_price_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_lists (
+    id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    effective_from timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_request_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_request_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    integration_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    caller text NOT NULL,
+    route_id uuid,
+    model text NOT NULL,
+    status smallint NOT NULL,
+    outcome text NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    cached_input_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    duration_ms integer NOT NULL,
+    ttfb_ms integer,
+    attempts smallint NOT NULL,
+    CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
+    CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
+    CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT outbound_ai_request_log_values_chk CHECK (((input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (duration_ms >= 0) AND ((ttfb_ms IS NULL) OR (ttfb_ms >= 0)) AND ((attempts >= 0) AND (attempts <= 100))))
+);
+
+
+--
+-- Name: outbound_ai_route_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_route_targets (
+    route_id uuid NOT NULL,
+    "position" smallint NOT NULL,
+    integration_id uuid NOT NULL,
+    model text,
+    CONSTRAINT outbound_ai_route_targets_model_chk CHECK (((model IS NULL) OR (((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))),
+    CONSTRAINT outbound_ai_route_targets_position_chk CHECK ((("position" >= 1) AND ("position" <= 5)))
+);
+
+
+--
+-- Name: outbound_ai_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_routes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    format text DEFAULT 'native'::text NOT NULL,
+    CONSTRAINT outbound_ai_routes_format_chk CHECK ((format = ANY (ARRAY['native'::text, 'openai'::text]))),
+    CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: outbound_ai_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    caller text NOT NULL,
+    model text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    usage_unknown_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    cached_input_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
+    CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
+    CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))
 );
 
 
@@ -23103,7 +24442,13 @@ CREATE TABLE public.outbound_app_binding_usage (
     app_id uuid NOT NULL,
     daily_usage_date date DEFAULT ((now() AT TIME ZONE 'UTC'::text))::date NOT NULL,
     daily_request_count bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT outbound_app_binding_usage_daily_request_count_check CHECK ((daily_request_count >= 0))
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    minute_window_start timestamp with time zone,
+    minute_request_count integer DEFAULT 0 NOT NULL,
+    minute_ai_token_count bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_app_binding_usage_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
+    CONSTRAINT outbound_app_binding_usage_daily_request_count_check CHECK ((daily_request_count >= 0)),
+    CONSTRAINT outbound_app_binding_usage_minute_chk CHECK (((minute_request_count >= 0) AND (minute_ai_token_count >= 0)))
 );
 
 
@@ -23119,7 +24464,14 @@ CREATE TABLE public.outbound_app_bindings (
     allowed_methods text[],
     allowed_path_prefixes text[],
     daily_request_limit bigint,
+    ai_daily_token_limit bigint,
+    ai_requests_per_minute integer,
+    ai_tokens_per_minute bigint,
+    ai_allowed_models text[],
+    ai_max_output_tokens integer,
     CONSTRAINT outbound_app_binding_route_pair_chk CHECK ((((allowed_methods IS NULL) AND (allowed_path_prefixes IS NULL)) OR ((allowed_methods IS NOT NULL) AND (allowed_path_prefixes IS NOT NULL) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_app_bindings_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint)))),
+    CONSTRAINT outbound_app_bindings_ai_guardrails_chk CHECK ((((ai_requests_per_minute IS NULL) OR ((ai_requests_per_minute >= 1) AND (ai_requests_per_minute <= 100000))) AND ((ai_tokens_per_minute IS NULL) OR ((ai_tokens_per_minute >= 1) AND (ai_tokens_per_minute <= 1000000000))) AND ((ai_max_output_tokens IS NULL) OR ((ai_max_output_tokens >= 1) AND (ai_max_output_tokens <= 1000000))) AND ((ai_allowed_models IS NULL) OR (((cardinality(ai_allowed_models) >= 1) AND (cardinality(ai_allowed_models) <= 32)) AND (array_position(ai_allowed_models, NULL::text) IS NULL))))),
     CONSTRAINT outbound_app_bindings_daily_request_limit_chk CHECK (((daily_request_limit IS NULL) OR ((daily_request_limit >= 1) AND (daily_request_limit <= 100000000))))
 );
 
@@ -23132,6 +24484,22 @@ CREATE TABLE public.outbound_integration_apps (
     integration_id uuid NOT NULL,
     app_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_integration_credential_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_integration_credential_keys (
+    id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    label text NOT NULL,
+    authorization_sealed bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_integration_credential_keys_label_chk CHECK ((label ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text)),
+    CONSTRAINT outbound_integration_credential_keys_sealed_chk CHECK (((octet_length(authorization_sealed) >= 1) AND (octet_length(authorization_sealed) <= 65536)))
 );
 
 
@@ -23193,7 +24561,16 @@ CREATE TABLE public.outbound_integrations (
     retry_budget_per_minute integer DEFAULT 0 NOT NULL,
     response_cache_ttl_seconds integer DEFAULT 0 NOT NULL,
     runs_enabled boolean DEFAULT false NOT NULL,
+    ai_provider text,
+    ai_daily_token_limit bigint,
+    ai_daily_cost_limit_millicents bigint,
+    ai_monthly_cost_limit_millicents bigint,
+    ai_request_log_enabled boolean DEFAULT false NOT NULL,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_integrations_ai_cost_limits_chk CHECK ((((ai_daily_cost_limit_millicents IS NULL) AND (ai_monthly_cost_limit_millicents IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_daily_cost_limit_millicents IS NULL) OR ((ai_daily_cost_limit_millicents >= 1) AND (ai_daily_cost_limit_millicents <= '1000000000000'::bigint))) AND ((ai_monthly_cost_limit_millicents IS NULL) OR ((ai_monthly_cost_limit_millicents >= 1) AND (ai_monthly_cost_limit_millicents <= '1000000000000'::bigint)))))),
+    CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
+    CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text, 'gemini'::text, 'azure_openai'::text, 'bedrock'::text, 'vertex'::text])))),
+    CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
     CONSTRAINT outbound_integrations_burst_check CHECK ((burst > 0)),
@@ -23363,11 +24740,29 @@ CREATE TABLE public.platform_tenant_rate_cards (
     price_millicents_per_unit bigint NOT NULL,
     effective_from timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
     CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
 );
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.included_units_per_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.included_units_per_month IS 'Free request units per tenant per UTC calendar month across all attributed apps, consumed in minute order while this card is effective.';
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.tiers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.';
 
 
 --
@@ -25375,7 +26770,7 @@ CREATE TABLE public.request_telemetry (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -25434,7 +26829,7 @@ CREATE TABLE public.request_telemetry_202610 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -25492,7 +26887,7 @@ CREATE TABLE public.request_telemetry_202611 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -25550,7 +26945,7 @@ CREATE TABLE public.request_telemetry_202612 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -25656,7 +27051,7 @@ CREATE TABLE public.request_telemetry_default (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -26674,24 +28069,6 @@ CREATE TABLE public.saved_route_requirements (
 
 
 --
--- Name: scenario_test_members; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.scenario_test_members (
-    account_id uuid NOT NULL,
-    run_id text NOT NULL,
-    workload_name text NOT NULL,
-    app_id uuid NOT NULL,
-    chaos_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
-    chaos_expires_at timestamp with time zone,
-    chaos_generation uuid,
-    CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
-    CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
-    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
-);
-
-
---
 -- Name: scenario_test_chaos_matches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26706,6 +28083,24 @@ CREATE TABLE public.scenario_test_chaos_matches (
     CONSTRAINT scenario_test_chaos_matches_matches_check CHECK ((matches >= 0)),
     CONSTRAINT scenario_test_chaos_matches_rule_id_check CHECK ((rule_id ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT scenario_test_chaos_matches_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text))
+);
+
+
+--
+-- Name: scenario_test_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_test_members (
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    workload_name text NOT NULL,
+    app_id uuid NOT NULL,
+    chaos_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
+    chaos_expires_at timestamp with time zone,
+    chaos_generation uuid,
+    CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
+    CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
 );
 
 
@@ -27692,6 +29087,265 @@ CREATE TABLE public.workflow_operation_effects (
 
 
 --
+-- Name: workflow_recovery_action_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_action_receipts (
+    job_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    response jsonb NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    CONSTRAINT workflow_recovery_action_receipts_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT workflow_recovery_action_receipts_response_check CHECK ((jsonb_typeof(response) = 'object'::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_capture; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_capture (
+    singleton boolean NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    max_entries integer NOT NULL,
+    retention_seconds bigint NOT NULL,
+    CONSTRAINT workflow_recovery_failure_capture_max_entries_check CHECK ((max_entries > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_retention_seconds_check CHECK ((retention_seconds > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_singleton_check CHECK (singleton),
+    CONSTRAINT workflow_recovery_failure_capture_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_evidence (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    workflow text NOT NULL,
+    resume_count integer NOT NULL,
+    failure_status text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    eligibility_observed_at timestamp with time zone,
+    eligibility jsonb,
+    CONSTRAINT workflow_failure_eligibility_shape CHECK ((((eligibility IS NULL) AND (eligibility_observed_at IS NULL)) OR ((eligibility IS NOT NULL) AND (eligibility_observed_at IS NOT NULL) AND (jsonb_typeof(eligibility) = 'object'::text) AND (jsonb_typeof((eligibility -> 'blockers'::text)) = 'array'::text) AND (eligibility ? 'reason'::text) AND (eligibility ? 'observed_at'::text) AND ((eligibility ->> 'reason'::text) = ANY (ARRAY['eligible'::text, 'capacity'::text, 'resume_ineligible'::text, 'resume_limit_reached'::text, 'run_not_retained'::text, 'changed'::text, 'parent_not_retained'::text, 'inspection_error'::text])) AND (((eligibility ->> 'observed_at'::text))::timestamp with time zone = eligibility_observed_at)))),
+    CONSTRAINT workflow_recovery_failure_evidence_check CHECK (((completed_at IS NULL) OR (completed_at <= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_check1 CHECK ((isfinite(eligibility_observed_at) AND (eligibility_observed_at >= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_completed_at_check CHECK (((completed_at IS NULL) OR isfinite(completed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_failure_status_check CHECK ((failure_status = ANY (ARRAY['failed'::text, 'dead'::text]))),
+    CONSTRAINT workflow_recovery_failure_evidence_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT workflow_recovery_failure_evidence_resume_count_check CHECK ((resume_count >= 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_workflow_check CHECK ((workflow <> ''::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_failure_evidence ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_failure_evidence_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_health_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_health_incidents (
+    app_id uuid NOT NULL,
+    incident jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_health_incidents_incident_check CHECK (((jsonb_typeof(incident) = 'object'::text) AND ((jsonb_typeof((incident -> 'episode_id'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'opened_at'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'candidate_since'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'observed_at'::text)) = 'string'::text) IS TRUE) AND (((incident ->> 'status'::text) = ANY (ARRAY['healthy'::text, 'inactive'::text, 'paused'::text, 'blocked'::text, 'stalled'::text, 'unknown'::text])) IS TRUE) AND ((jsonb_typeof((incident -> 'reason'::text)) = 'string'::text) IS TRUE) AND ((NOT (incident ? 'closed_at'::text)) OR (jsonb_typeof((incident -> 'closed_at'::text)) = 'string'::text)) AND ((NOT (incident ? 'alert_notification'::text)) OR ((jsonb_typeof((incident -> 'alert_notification'::text)) = 'object'::text) AND ((((incident -> 'alert_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE))) AND ((NOT (incident ? 'recovery_notification'::text)) OR ((incident ? 'closed_at'::text) AND (incident ? 'alert_notification'::text) AND (jsonb_typeof((incident -> 'recovery_notification'::text)) = 'object'::text) AND ((((incident -> 'recovery_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE)))))
+);
+
+
+--
+-- Name: workflow_recovery_history_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_history_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_history_candidate_evidence_check CHECK (((((entry ->> 'kind'::text) <> 'candidates_observed'::text) OR ((jsonb_typeof((entry -> 'candidate_evidence'::text)) = 'object'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'decisions'::text)) = 'array'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'policy'::text)) = 'object'::text) AND (((entry -> 'candidate_evidence'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'candidate_evidence'::text) ->> 'review_id'::text) = (entry ->> 'review_id'::text)) AND (((entry -> 'candidate_evidence'::text) ->> 'job_id'::text) = (entry ->> 'job_id'::text)) AND (((entry -> 'candidate_evidence'::text) -> 'policy_version'::text) = (entry -> 'policy_version'::text)) AND ((((entry -> 'candidate_evidence'::text) ->> 'observed_at'::text))::timestamp with time zone = occurred_at) AND (NOT ((entry -> 'candidate_evidence'::text) ? 'plan'::text)))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_check CHECK ((((jsonb_typeof(entry) = 'object'::text) AND ((entry -> 'durable'::text) = 'true'::jsonb) AND ((entry ->> 'id'::text) = ('audit:'::text || (id)::text)) AND ((entry ->> 'kind'::text) = ANY (ARRAY['candidates_observed'::text, 'policy_changed'::text, 'policy_paused'::text, 'retry_transition'::text, 'health_opened'::text, 'health_changed'::text, 'health_closed'::text, 'health_alert_captured'::text, 'health_recovered_captured'::text])) AND (jsonb_typeof((entry -> 'reason'::text)) = 'string'::text) AND (jsonb_typeof((entry -> 'outcome'::text)) = 'string'::text) AND (((entry ->> 'policy_version'::text))::bigint > 0) AND (((entry ->> 'occurred_at'::text))::timestamp with time zone = occurred_at) AND (((entry ->> 'kind'::text) <> 'policy_changed'::text) OR (jsonb_typeof((entry -> 'policy'::text)) = 'object'::text))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT workflow_recovery_history_events_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT workflow_recovery_history_events_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: workflow_recovery_history_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_history_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_history_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policies (
+    app_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    policy jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    next_evaluate_at timestamp with time zone NOT NULL,
+    last_evaluated_at timestamp with time zone,
+    job_cursor uuid,
+    status text NOT NULL,
+    next_execute_at timestamp with time zone DEFAULT now() NOT NULL,
+    automatic_failures integer DEFAULT 0 NOT NULL,
+    automatic_paused_at timestamp with time zone,
+    automatic_pause_reason text DEFAULT ''::text NOT NULL,
+    next_health_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_recovery_policies_automatic_failures_check CHECK ((automatic_failures >= 0)),
+    CONSTRAINT workflow_recovery_policies_next_health_at_check CHECK (isfinite(next_health_at)),
+    CONSTRAINT workflow_recovery_policies_policy_check CHECK (((jsonb_typeof(policy) = 'object'::text) AND ((policy ->> 'mode'::text) = ANY (ARRAY['preview'::text, 'automatic_retry'::text])))),
+    CONSTRAINT workflow_recovery_policies_status_check CHECK ((status = ANY (ARRAY['disabled'::text, 'monitoring'::text, 'review_limit'::text, 'paused'::text]))),
+    CONSTRAINT workflow_recovery_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: workflow_recovery_policy_controls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_controls (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    operation text NOT NULL,
+    reason text NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    controlled_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_controls_actor_id_check CHECK ((length(actor_id) > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'system'::text, 'internal'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_operation_check CHECK ((operation = ANY (ARRAY['pause'::text, 'resume'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
+);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_execution_charges (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    applied_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: workflow_recovery_policy_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_executions (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    "position" bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    child_job_id uuid,
+    applied_at timestamp with time zone,
+    result jsonb,
+    suppression jsonb,
+    blocked_notification jsonb,
+    next_blocked_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_evaluation jsonb,
+    CONSTRAINT workflow_recovery_policy_executions_blocked_notification_check CHECK (((blocked_notification IS NULL) OR ((jsonb_typeof(blocked_notification) = 'object'::text) AND ((blocked_notification ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text]))))),
+    CONSTRAINT workflow_recovery_policy_executions_check CHECK (((status = 'applied'::text) = ((child_job_id IS NOT NULL) AND (applied_at IS NOT NULL)))),
+    CONSTRAINT workflow_recovery_policy_executions_check1 CHECK (((result IS NULL) OR (status = 'applied'::text))),
+    CONSTRAINT workflow_recovery_policy_executions_check2 CHECK (((suppression IS NULL) OR ((jsonb_typeof(suppression) = 'object'::text) AND (status = 'suppressed'::text) AND (reason = 'operator_suppressed'::text)))),
+    CONSTRAINT workflow_recovery_policy_executions_last_evaluation_check CHECK (((last_evaluation IS NULL) OR ((jsonb_typeof(last_evaluation) = 'object'::text) AND ((jsonb_typeof((last_evaluation -> 'evaluated_at'::text)) = 'string'::text) IS TRUE) AND (((last_evaluation ->> 'reason'::text) = ANY (ARRAY['hourly_budget'::text, 'cooldown'::text, 'execution_quota'::text, 'evidence_unknown'::text, 'outstanding_retry'::text, 'admission_wait'::text, 'execution_wait'::text, 'retry_running'::text, 'inspection_error'::text, 'child_created'::text, 'result_recorded'::text, 'suppressed'::text])) IS TRUE) AND ((NOT (last_evaluation ? 'waiting_since'::text)) OR (jsonb_typeof((last_evaluation -> 'waiting_since'::text)) = 'string'::text)) AND (((last_evaluation ->> 'reason'::text) <> ALL (ARRAY['child_created'::text, 'result_recorded'::text, 'suppressed'::text])) OR (NOT (last_evaluation ? 'waiting_since'::text)))))),
+    CONSTRAINT workflow_recovery_policy_executions_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_position_check CHECK (("position" > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_result_check CHECK (((result IS NULL) OR ((jsonb_typeof(result) = 'object'::text) AND (((result -> 'complete'::text) = 'true'::jsonb) IS TRUE)))),
+    CONSTRAINT workflow_recovery_policy_executions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'suppressed'::text])))
+);
+
+
+--
+-- Name: workflow_recovery_policy_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_reviews (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    review jsonb NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    review_decision jsonb,
+    CONSTRAINT workflow_recovery_policy_reviews_review_check CHECK ((jsonb_typeof(review) = 'object'::text)),
+    CONSTRAINT workflow_recovery_policy_reviews_review_decision_check CHECK (((review_decision IS NULL) OR ((jsonb_typeof(review_decision) = 'object'::text) AND ((review_decision ->> 'decision'::text) = ANY (ARRAY['approved'::text, 'dismissed'::text])) AND (review_decision ?& ARRAY['reason'::text, 'decided_at'::text, 'actor_kind'::text, 'actor_id'::text]))))
+);
+
+
+--
+-- Name: workflow_recovery_policy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_targets (
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    action text NOT NULL,
+    prepared_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_targets_action_check CHECK ((action = ANY (ARRAY['cancel'::text, 'retry'::text]))),
+    CONSTRAINT workflow_recovery_policy_targets_resume_count_check CHECK (((resume_count >= 1) AND (resume_count <= 16)))
+);
+
+
+--
+-- Name: workflow_recovery_review_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_review_notifications (
+    review_id uuid NOT NULL,
+    next_at timestamp with time zone DEFAULT now() NOT NULL,
+    receipt jsonb,
+    next_completion_at timestamp with time zone DEFAULT now() NOT NULL,
+    completion jsonb,
+    CONSTRAINT workflow_recovery_review_notifications_completion_check CHECK (((completion IS NULL) OR ((jsonb_typeof(completion) = 'object'::text) AND ((completion ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) AND (completion ?& ARRAY['event_id'::text, 'status'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'result'::text]) AND (jsonb_typeof((completion -> 'result'::text)) = 'object'::text) AND ((((completion -> 'result'::text) ->> 'complete'::text) = 'true'::text) IS TRUE)))),
+    CONSTRAINT workflow_recovery_review_notifications_receipt_check CHECK (((receipt IS NULL) OR ((jsonb_typeof(receipt) = 'object'::text) AND ((receipt ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text, 'suppressed'::text])) AND (receipt ?& ARRAY['event_id'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'reason'::text]))))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28163,6 +29817,22 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 
 --
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_once_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_once_uniq UNIQUE (consumer_id, month_start, threshold_percent);
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_usage_events api_consumer_usage_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28435,6 +30105,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_openapi_docs app_openapi_docs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28488,6 +30166,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_route_priorities app_route_priorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -28568,6 +30254,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -29235,6 +30929,30 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_pkey PRIMARY KEY (subscription_id, sequence);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29336,6 +31054,22 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_mcp_task_holds deployment_mcp_task_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_holds
+    ADD CONSTRAINT deployment_mcp_task_holds_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -29627,6 +31361,14 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 
 --
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_pkey PRIMARY KEY (message_id);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29819,6 +31561,22 @@ ALTER TABLE ONLY public.environment_management_overrides
 
 
 --
+-- Name: environment_qualification_config_receipts environment_qualification_config_receipts_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_config_receipts
+    ADD CONSTRAINT environment_qualification_config_receipts_instance_id_key UNIQUE (instance_id);
+
+
+--
+-- Name: environment_qualification_config_receipts environment_qualification_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_config_receipts
+    ADD CONSTRAINT environment_qualification_config_receipts_pkey PRIMARY KEY (request_id, attempt, instance_id);
+
+
+--
 -- Name: environment_qualification_executions environment_qualification_executions_cleanup_token_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29835,19 +31593,35 @@ ALTER TABLE ONLY public.environment_qualification_executions
 
 
 --
--- Name: environment_qualification_restore_reservations environment_qualification_restore_reserv_request_id_attempt_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_recei_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.environment_qualification_restore_reservations
-    ADD CONSTRAINT environment_qualification_restore_reserv_request_id_attempt_key UNIQUE (request_id, attempt);
+ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
+    ADD CONSTRAINT environment_qualification_framework_ready_recei_instance_id_key UNIQUE (instance_id);
 
 
 --
--- Name: environment_qualification_restore_reservations environment_qualification_restore_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.environment_qualification_restore_reservations
-    ADD CONSTRAINT environment_qualification_restore_reservations_pkey PRIMARY KEY (instance_id);
+ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
+    ADD CONSTRAINT environment_qualification_framework_ready_receipts_pkey PRIMARY KEY (request_id, attempt);
+
+
+--
+-- Name: environment_qualification_job_smoke_receipts environment_qualification_job_smoke_receipts_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_job_smoke_receipts
+    ADD CONSTRAINT environment_qualification_job_smoke_receipts_instance_id_key UNIQUE (instance_id);
+
+
+--
+-- Name: environment_qualification_job_smoke_receipts environment_qualification_job_smoke_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_job_smoke_receipts
+    ADD CONSTRAINT environment_qualification_job_smoke_receipts_pkey PRIMARY KEY (request_id, attempt);
 
 
 --
@@ -29867,6 +31641,22 @@ ALTER TABLE ONLY public.environment_qualification_restore_receipts
 
 
 --
+-- Name: environment_qualification_restore_reservations environment_qualification_restore_reserv_request_id_attempt_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_restore_reservations
+    ADD CONSTRAINT environment_qualification_restore_reserv_request_id_attempt_key UNIQUE (request_id, attempt);
+
+
+--
+-- Name: environment_qualification_restore_reservations environment_qualification_restore_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_restore_reservations
+    ADD CONSTRAINT environment_qualification_restore_reservations_pkey PRIMARY KEY (instance_id);
+
+
+--
 -- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29880,22 +31670,6 @@ ALTER TABLE ONLY public.environment_qualification_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_smoke_receipts
     ADD CONSTRAINT environment_qualification_smoke_receipts_pkey PRIMARY KEY (request_id, attempt);
-
-
---
--- Name: environment_qualification_config_receipts environment_qualification_config_receipts_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_config_receipts
-    ADD CONSTRAINT environment_qualification_config_receipts_instance_id_key UNIQUE (instance_id);
-
-
---
--- Name: environment_qualification_config_receipts environment_qualification_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_config_receipts
-    ADD CONSTRAINT environment_qualification_config_receipts_pkey PRIMARY KEY (request_id, attempt, instance_id);
 
 
 --
@@ -29944,6 +31718,54 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 ALTER TABLE ONLY public.environment_workload_qualification_requests
     ADD CONSTRAINT environment_workload_qualification_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_workload_serving_queue_acks environment_workload_serving_queue_acks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_queue_acks
+    ADD CONSTRAINT environment_workload_serving_queue_acks_pkey PRIMARY KEY (graph_id, binding_id);
+
+
+--
+-- Name: environment_workload_serving_receipts environment_workload_serving_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_receipts
+    ADD CONSTRAINT environment_workload_serving_receipts_pkey PRIMARY KEY (graph_id);
+
+
+--
+-- Name: environment_workload_serving_routes environment_workload_serving_rout_graph_id_route_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_routes
+    ADD CONSTRAINT environment_workload_serving_rout_graph_id_route_generation_key UNIQUE (graph_id, route_generation);
+
+
+--
+-- Name: environment_workload_serving_route_acks environment_workload_serving_route_acks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_route_acks
+    ADD CONSTRAINT environment_workload_serving_route_acks_pkey PRIMARY KEY (graph_id, route_generation, node_name);
+
+
+--
+-- Name: environment_workload_serving_routes environment_workload_serving_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_routes
+    ADD CONSTRAINT environment_workload_serving_routes_pkey PRIMARY KEY (graph_id, app_id);
+
+
+--
+-- Name: environment_workload_serving_routes environment_workload_serving_routes_route_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_routes
+    ADD CONSTRAINT environment_workload_serving_routes_route_generation_key UNIQUE (route_generation);
 
 
 --
@@ -30040,6 +31862,14 @@ ALTER TABLE ONLY public.event_recovery_items
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_pkey PRIMARY KEY (job_id, "position");
 
 
 --
@@ -31907,6 +33737,70 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 
 --
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_pkey PRIMARY KEY (price_list_id, model_prefix);
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_request_log outbound_ai_request_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_log
+    ADD CONSTRAINT outbound_ai_request_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_pkey PRIMARY KEY (route_id, "position");
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, caller, model);
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31928,6 +33822,22 @@ ALTER TABLE ONLY public.outbound_app_bindings
 
 ALTER TABLE ONLY public.outbound_integration_apps
     ADD CONSTRAINT outbound_integration_apps_pkey PRIMARY KEY (integration_id, app_id);
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_label_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_label_key UNIQUE (integration_id, label);
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_pkey PRIMARY KEY (id);
 
 
 --
@@ -33651,6 +35561,14 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_test_chaos_matches scenario_test_chaos_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_chaos_matches
+    ADD CONSTRAINT scenario_test_chaos_matches_pkey PRIMARY KEY (account_id, run_id, caller_app_id, generation, rule_id);
+
+
+--
 -- Name: scenario_test_members scenario_test_members_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33664,14 +35582,6 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_pkey PRIMARY KEY (account_id, run_id, workload_name);
-
-
---
--- Name: scenario_test_chaos_matches scenario_test_chaos_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.scenario_test_chaos_matches
-    ADD CONSTRAINT scenario_test_chaos_matches_pkey PRIMARY KEY (account_id, run_id, caller_app_id, generation, rule_id);
 
 
 --
@@ -34131,6 +36041,134 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 
 --
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_pkey PRIMARY KEY (job_id, request_id);
+
+
+--
+-- Name: workflow_recovery_failure_capture workflow_recovery_failure_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_capture
+    ADD CONSTRAINT workflow_recovery_failure_capture_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_eviden_app_id_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_eviden_app_id_run_id_resume_count_key UNIQUE (app_id, run_id, resume_count);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key UNIQUE (app_id, job_id, fingerprint);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_pkey PRIMARY KEY (app_id, run_id, resume_count, action);
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_pkey PRIMARY KEY (review_id);
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34379,6 +36417,13 @@ CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_co
 
 
 --
+-- Name: api_consumer_usage_alerts_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_usage_alerts_lookup_idx ON public.api_consumer_usage_alerts USING btree (account_id, app_id, consumer_id, crossed_at DESC);
+
+
+--
 -- Name: api_consumer_usage_events_app_window_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34474,6 +36519,13 @@ CREATE INDEX app_cpu_policy_node_status_observed_idx ON public.app_cpu_policy_no
 --
 
 CREATE INDEX app_egress_policy_node_status_observed_idx ON public.app_egress_policy_node_status USING btree (observed_at);
+
+
+--
+-- Name: app_environment_workload_intents_job_id_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_environment_workload_intents_job_id_uniq ON public.app_environment_workload_intents USING btree (job_id) WHERE (job_id IS NOT NULL);
 
 
 --
@@ -34645,6 +36697,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 
 
 --
+-- Name: app_route_priorities_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34726,6 +36785,13 @@ CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx ON public.app_secre
 --
 
 CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_service_wake_ahead_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
 
 
 --
@@ -35772,6 +37838,27 @@ CREATE INDEX customer_operations_tenant_subject_history_idx ON public.customer_o
 
 
 --
+-- Name: customer_workflow_playbook_progress_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_playbook_progress_case ON public.customer_workflow_playbook_progress USING btree (account_id, app_id, tenant_id, case_key, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_workflow_readiness_subscriptions USING btree (next_evaluation_at, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions USING btree (account_id, app_id, operator, scope);
+
+
+--
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35898,6 +37985,13 @@ CREATE INDEX deployment_audit_deployment_idx ON public.deployment_audit USING bt
 
 
 --
+-- Name: deployment_audit_worker_drain_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_audit_worker_drain_idx ON public.deployment_audit USING btree (deployment_id, id DESC) WHERE (kind = ANY (ARRAY['deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text]));
+
+
+--
 -- Name: deployment_image_preparations_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35909,6 +38003,13 @@ CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_imag
 --
 
 CREATE INDEX deployment_logs_seq_idx ON public.deployment_logs USING btree (deployment_id, seq DESC);
+
+
+--
+-- Name: deployment_mcp_task_holds_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_mcp_task_holds_due_idx ON public.deployment_mcp_task_holds USING btree (next_attempt_at) WHERE (recovery_payload IS NOT NULL);
 
 
 --
@@ -36353,10 +38454,6 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
--- Name: app_environment_workload_intents_job_id_uniq; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX app_environment_workload_intents_job_id_uniq ON public.app_environment_workload_intents USING btree (job_id) WHERE (job_id IS NOT NULL);
 -- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -36497,6 +38594,13 @@ CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_re
 
 
 --
+-- Name: event_recovery_execution_attention_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_execution_attention_pending_idx ON public.event_recovery_jobs USING btree (execution_attention_next_at, id) WHERE (((selection ->> 'mode'::text) = 'workflow'::text) AND (execution_finished_at IS NULL) AND (NOT (notification_receipts ? 'event_recovery.execution_attention'::text)));
+
+
+--
 -- Name: event_recovery_execution_notification_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -36529,6 +38633,20 @@ CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USI
 --
 
 CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_workflow_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_workflow_identity_idx ON public.event_recovery_items USING btree ((((expected_progress ->> 'run_id'::text))::uuid)) WHERE ((state = 'queued'::text) AND (expected_progress ? 'run_id'::text));
+
+
+--
+-- Name: event_recovery_items_workflow_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_items_workflow_run_key ON public.event_recovery_items USING btree (job_id, ((expected_progress ->> 'run_id'::text))) WHERE (outbox_id IS NULL);
 
 
 --
@@ -38884,6 +41002,55 @@ CREATE INDEX outbound_admission_leases_expiry_idx ON public.outbound_admission_l
 
 
 --
+-- Name: outbound_ai_budget_alerts_once_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), period_start, threshold_percent);
+
+
+--
+-- Name: outbound_ai_budget_alerts_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_budget_alerts_recent_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, crossed_at DESC);
+
+
+--
+-- Name: outbound_ai_price_lists_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_request_log_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_prune_idx ON public.outbound_ai_request_log USING btree (created_at);
+
+
+--
+-- Name: outbound_ai_request_log_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_log USING btree (integration_id, created_at DESC, id DESC);
+
+
+--
+-- Name: outbound_ai_route_targets_integration_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_route_targets USING btree (integration_id);
+
+
+--
+-- Name: outbound_ai_usage_daily_usage_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_usage_daily_usage_date_idx ON public.outbound_ai_usage_daily USING btree (usage_date);
+
+
+--
 -- Name: outbound_app_bindings_integration_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39885,17 +42052,17 @@ CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verific
 
 
 --
--- Name: scenario_test_members_run_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING btree (account_id, run_id);
-
-
---
 -- Name: scenario_test_chaos_matches_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX scenario_test_chaos_matches_run_idx ON public.scenario_test_chaos_matches USING btree (account_id, run_id, generation);
+
+
+--
+-- Name: scenario_test_members_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING btree (account_id, run_id);
 
 
 --
@@ -39939,17 +42106,19 @@ CREATE INDEX schedule_occurrences_job_history ON public.schedule_occurrences USI
 
 CREATE UNIQUE INDEX schedule_occurrences_job_identity ON public.schedule_occurrences USING btree (job_id, schedule_revision, scheduled_for) WHERE (job_id IS NOT NULL);
 
--- Name: schedule_occurrences_succeeded_job_release_proof; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX schedule_occurrences_succeeded_job_release_proof ON public.schedule_occurrences USING btree (job_id, schedule_revision, finished_at, id) WHERE ((job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (status = 'succeeded'::text));
-
 
 --
 -- Name: schedule_occurrences_pending; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX schedule_occurrences_pending ON public.schedule_occurrences USING btree (status, scheduled_for, id) WHERE (status = ANY (ARRAY['pending'::text, 'waiting_replacement'::text]));
+
+
+--
+-- Name: schedule_occurrences_succeeded_job_release_proof; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_succeeded_job_release_proof ON public.schedule_occurrences USING btree (job_id, schedule_revision, finished_at, id) WHERE ((job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (status = 'succeeded'::text));
 
 
 --
@@ -40436,10 +42605,143 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 
 
 --
+-- Name: workflow_failure_eligibility_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_failure_eligibility_queue_idx ON public.workflow_recovery_failure_evidence USING btree (eligibility_observed_at NULLS FIRST, observed_at, id);
+
+
+--
 -- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_sequence ON public.workflow_recovery_failure_evidence USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_time ON public.workflow_recovery_failure_evidence USING btree (app_id, observed_at, id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_observed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_observed ON public.workflow_recovery_failure_evidence USING btree (observed_at, id);
+
+
+--
+-- Name: workflow_recovery_history_events_app_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_recorded ON public.workflow_recovery_history_events USING btree (app_id, recorded_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_sequence ON public.workflow_recovery_history_events USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_time ON public.workflow_recovery_history_events USING btree (app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_recorded ON public.workflow_recovery_history_events USING btree (recorded_at, id);
+
+
+--
+-- Name: workflow_recovery_policies_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_due ON public.workflow_recovery_policies USING btree (next_evaluate_at, app_id) WHERE enabled;
+
+
+--
+-- Name: workflow_recovery_policies_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_health_idx ON public.workflow_recovery_policies USING btree (next_health_at, app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_controls_app_idx ON public.workflow_recovery_policy_controls USING btree (app_id, controlled_at);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_execution_charges_budget ON public.workflow_recovery_policy_execution_charges USING btree (app_id, applied_at);
+
+
+--
+-- Name: workflow_recovery_policy_executions_applied; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_applied ON public.workflow_recovery_policy_executions USING btree (app_id, applied_at) WHERE (status = 'applied'::text);
+
+
+--
+-- Name: workflow_recovery_policy_executions_blocked_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_blocked_idx ON public.workflow_recovery_policy_executions USING btree (next_blocked_at, app_id, action_id) WHERE (blocked_notification IS NULL);
+
+
+--
+-- Name: workflow_recovery_policy_executions_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_pending ON public.workflow_recovery_policy_executions USING btree (app_id, policy_version, review_id, "position") WHERE (status = 'pending'::text);
+
+
+--
+-- Name: workflow_recovery_policy_reviews_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_reviews_app ON public.workflow_recovery_policy_reviews USING btree (app_id, id);
+
+
+--
+-- Name: workflow_recovery_policy_targets_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_targets_budget ON public.workflow_recovery_policy_targets USING btree (app_id, prepared_at);
+
+
+--
+-- Name: workflow_recovery_review_completion_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_completion_pending ON public.workflow_recovery_review_notifications USING btree (next_completion_at, review_id) WHERE (completion IS NULL);
+
+
+--
+-- Name: workflow_recovery_review_notifications_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_notifications_pending ON public.workflow_recovery_review_notifications USING btree (next_at, review_id) WHERE (receipt IS NULL);
 
 
 --
@@ -42109,41 +44411,6 @@ CREATE TRIGGER environment_qualification_capture_retirement_guard BEFORE UPDATE 
 
 
 --
--- Name: environment_qualification_restore_reservations environment_qualification_restore_reservation_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER environment_qualification_restore_reservation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_restore_reservation();
-
-
---
--- Name: environment_qualification_restore_receipts environment_qualification_restore_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER environment_qualification_restore_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_restore_receipt();
-
-
---
--- Name: environment_qualification_restore_receipts environment_qualification_restore_guest_config_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER environment_qualification_restore_guest_config_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_receipts FOR EACH ROW EXECUTE FUNCTION public.require_environment_qualification_restore_guest_config();
-
-
---
--- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER environment_qualification_smoke_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_smoke_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_smoke_receipt();
-
-
---
--- Name: environment_qualification_job_smoke_receipts environment_qualification_job_smoke_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER environment_qualification_job_smoke_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_job_smoke_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_job_smoke_receipt();
-
-
---
 -- Name: environment_qualification_config_receipts environment_qualification_config_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42158,10 +44425,45 @@ CREATE TRIGGER environment_qualification_framework_ready_receipt_guard BEFORE IN
 
 
 --
+-- Name: environment_qualification_job_smoke_receipts environment_qualification_job_smoke_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_job_smoke_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_job_smoke_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_job_smoke_receipt();
+
+
+--
+-- Name: environment_qualification_restore_receipts environment_qualification_restore_guest_config_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_restore_guest_config_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_receipts FOR EACH ROW EXECUTE FUNCTION public.require_environment_qualification_restore_guest_config();
+
+
+--
+-- Name: environment_qualification_restore_receipts environment_qualification_restore_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_restore_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_restore_receipt();
+
+
+--
+-- Name: environment_qualification_restore_reservations environment_qualification_restore_reservation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_restore_reservation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_restore_reservations FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_restore_reservation();
+
+
+--
 -- Name: environment_qualification_executions environment_qualification_restore_retirement_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER environment_qualification_restore_retirement_guard BEFORE UPDATE ON public.environment_qualification_executions FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_restore_retirement();
+
+
+--
+-- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_smoke_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_smoke_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_smoke_receipt();
 
 
 --
@@ -42214,17 +44516,41 @@ CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDA
 
 
 --
--- Name: app_environment_workload_intents guard_environment_workload_job_link; Type: TRIGGER; Schema: public; Owner: -
+-- Name: environment_workload_serving_queue_acks environment_workload_queue_serving_ack_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER guard_environment_workload_job_link BEFORE INSERT OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job_link();
+CREATE TRIGGER environment_workload_queue_serving_ack_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_serving_queue_acks FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_queue_serving_ack();
 
 
 --
--- Name: jobs guard_environment_workload_job; Type: TRIGGER; Schema: public; Owner: -
+-- Name: environment_workload_serving_receipts environment_workload_serving_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER guard_environment_workload_job BEFORE DELETE OR UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job();
+CREATE TRIGGER environment_workload_serving_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_serving_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_receipt();
+
+
+--
+-- Name: environment_workload_serving_route_acks environment_workload_serving_route_ack_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_workload_serving_route_ack_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_serving_route_acks FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_route_ack();
+
+
+--
+-- Name: environment_workload_serving_routes environment_workload_serving_route_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_workload_serving_route_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_serving_routes FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_route();
+
+
+--
+-- Name: deployments environment_workload_serving_traffic_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_workload_serving_traffic_guard BEFORE UPDATE OF traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_traffic();
+
+
+--
 -- Name: event_subscription_work_bindings event_delivery_age_binding_ordering; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42271,6 +44597,13 @@ CREATE TRIGGER event_recovery_admitted_result AFTER INSERT OR UPDATE OF state, r
 --
 
 CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE OF state, attempts, replay_generation, completed_at, outcome ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_invocation_result();
+
+
+--
+-- Name: workflow_runs event_recovery_workflow_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_workflow_result BEFORE DELETE OR UPDATE OF status, resume_count, finished_at, cancelled_at, last_error ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_workflow_result();
 
 
 --
@@ -42421,13 +44754,6 @@ CREATE TRIGGER guard_environment_workload_candidate BEFORE INSERT OR UPDATE ON p
 
 
 --
--- Name: deployments guard_environment_workload_hold_state; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER guard_environment_workload_hold_state BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_hold_state();
-
-
---
 -- Name: environment_workload_graphs guard_environment_workload_graph; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42435,10 +44761,31 @@ CREATE TRIGGER guard_environment_workload_graph BEFORE INSERT OR DELETE OR UPDAT
 
 
 --
+-- Name: deployments guard_environment_workload_hold_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_hold_state BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_hold_state();
+
+
+--
 -- Name: instances guard_environment_workload_instance; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER guard_environment_workload_instance BEFORE INSERT OR DELETE OR UPDATE OF id, app_id, deployment_id, node_id, wake_id, mode, ram_mb, kind, job_id, state, netns, host_ip, guest_uid, framework_ready_at ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_instance();
+
+
+--
+-- Name: jobs guard_environment_workload_job; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_job BEFORE DELETE OR UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job();
+
+
+--
+-- Name: app_environment_workload_intents guard_environment_workload_job_link; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_job_link BEFORE INSERT OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job_link();
 
 
 --
@@ -43555,6 +45902,13 @@ CREATE TRIGGER outbound_app_binding_owner_guard BEFORE INSERT OR UPDATE OF accou
 
 
 --
+-- Name: outbound_integration_credential_keys outbound_credential_key_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER outbound_credential_key_owner_guard BEFORE INSERT OR UPDATE OF integration_id, account_id, authorization_sealed ON public.outbound_integration_credential_keys FOR EACH ROW EXECUTE FUNCTION public.guard_outbound_credential_owner();
+
+
+--
 -- Name: outbound_integration_credentials outbound_credential_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -44346,6 +46700,13 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 
 
 --
+-- Name: workflow_runs workflow_recovery_failure_evidence_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status, resume_count ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_workflow_recovery_failure();
+
+
+--
 -- Name: workflow_runs workflow_runs_capture_dead_letter_event; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -44608,6 +46969,38 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_usage_alerts api_consumer_usage_alerts_plan_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_usage_alerts
+    ADD CONSTRAINT api_consumer_usage_alerts_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
 
 
 --
@@ -45123,6 +47516,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_openapi_docs app_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45192,6 +47593,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -45336,6 +47753,22 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -46259,6 +48692,62 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.customer_workflow_readiness_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: data_upstreams data_upstreams_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46360,6 +48849,22 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_task_holds deployment_mcp_task_holds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_holds
+    ADD CONSTRAINT deployment_mcp_task_holds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -46771,6 +49276,22 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 
 --
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: entity_outbox_acceptances entity_outbox_acceptances_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_outbox_acceptances
+    ADD CONSTRAINT entity_outbox_acceptances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46971,51 +49492,11 @@ ALTER TABLE ONLY public.environment_management_overrides
 
 
 --
--- Name: environment_qualification_executions environment_qualification_executions_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_executions
-    ADD CONSTRAINT environment_qualification_executions_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
-
-
---
--- Name: environment_qualification_restore_reservations environment_qualification_restore_rese_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_restore_reservations
-    ADD CONSTRAINT environment_qualification_restore_rese_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
-
-
---
--- Name: environment_qualification_restore_receipts environment_qualification_restore_receipts_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_restore_receipts
-    ADD CONSTRAINT environment_qualification_restore_receipts_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
-
-
---
--- Name: environment_qualification_restore_receipts environment_qualification_restore_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_restore_receipts
-    ADD CONSTRAINT environment_qualification_restore_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
-
-
---
--- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_smoke_receipts
-    ADD CONSTRAINT environment_qualification_smoke_receipts_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
-
-
---
--- Name: environment_qualification_config_receipts environment_qualification_config_receipts_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_config_receipts environment_qualification_config_recei_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.environment_qualification_config_receipts
-    ADD CONSTRAINT environment_qualification_config_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id);
+    ADD CONSTRAINT environment_qualification_config_recei_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_executions(instance_id);
 
 
 --
@@ -47035,59 +49516,51 @@ ALTER TABLE ONLY public.environment_qualification_config_receipts
 
 
 --
--- Name: environment_qualification_config_receipts environment_qualification_config_receipts_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_config_receipts environment_qualification_config_receipts_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.environment_qualification_config_receipts
-    ADD CONSTRAINT environment_qualification_config_receipts_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+    ADD CONSTRAINT environment_qualification_config_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id);
 
 
 --
--- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipts_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_executions environment_qualification_executions_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
-    ADD CONSTRAINT environment_qualification_framework_ready_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id);
-
-
---
--- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipts_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
-    ADD CONSTRAINT environment_qualification_framework_ready_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id);
+ALTER TABLE ONLY public.environment_qualification_executions
+    ADD CONSTRAINT environment_qualification_executions_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
 
 
 --
--- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipts_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_re_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
-    ADD CONSTRAINT environment_qualification_framework_ready_receipts_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
+    ADD CONSTRAINT environment_qualification_framework_re_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
 
 
 --
--- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_rece_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
-    ADD CONSTRAINT environment_qualification_framework_ready_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+    ADD CONSTRAINT environment_qualification_framework_ready_rece_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
 
 
 --
--- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_recei_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.environment_qualification_smoke_receipts
-    ADD CONSTRAINT environment_qualification_smoke_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id);
+ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
+    ADD CONSTRAINT environment_qualification_framework_ready_recei_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id);
 
 
 --
--- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: environment_qualification_framework_ready_receipts environment_qualification_framework_ready_receipt_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.environment_qualification_smoke_receipts
-    ADD CONSTRAINT environment_qualification_smoke_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+ALTER TABLE ONLY public.environment_qualification_framework_ready_receipts
+    ADD CONSTRAINT environment_qualification_framework_ready_receipt_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id);
 
 
 --
@@ -47104,6 +49577,54 @@ ALTER TABLE ONLY public.environment_qualification_job_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_job_smoke_receipts
     ADD CONSTRAINT environment_qualification_job_smoke_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+
+
+--
+-- Name: environment_qualification_restore_receipts environment_qualification_restore_rece_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_restore_receipts
+    ADD CONSTRAINT environment_qualification_restore_rece_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
+
+
+--
+-- Name: environment_qualification_restore_receipts environment_qualification_restore_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_restore_receipts
+    ADD CONSTRAINT environment_qualification_restore_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+
+
+--
+-- Name: environment_qualification_restore_reservations environment_qualification_restore_rese_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_restore_reservations
+    ADD CONSTRAINT environment_qualification_restore_rese_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
+
+
+--
+-- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receip_capture_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_smoke_receipts
+    ADD CONSTRAINT environment_qualification_smoke_receip_capture_instance_id_fkey FOREIGN KEY (capture_instance_id) REFERENCES public.environment_qualification_snapshot_receipts(instance_id);
+
+
+--
+-- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_smoke_receipts
+    ADD CONSTRAINT environment_qualification_smoke_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id);
+
+
+--
+-- Name: environment_qualification_smoke_receipts environment_qualification_smoke_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_smoke_receipts
+    ADD CONSTRAINT environment_qualification_smoke_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
 
 
 --
@@ -47160,6 +49681,46 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 ALTER TABLE ONLY public.environment_workload_qualification_requests
     ADD CONSTRAINT environment_workload_qualification_requests_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_serving_queue_acks environment_workload_serving_queue_acks_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_queue_acks
+    ADD CONSTRAINT environment_workload_serving_queue_acks_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_serving_receipts environment_workload_serving_receipts_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_receipts
+    ADD CONSTRAINT environment_workload_serving_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_serving_receipts environment_workload_serving_receipts_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_receipts
+    ADD CONSTRAINT environment_workload_serving_receipts_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_serving_route_acks environment_workload_serving_rou_graph_id_route_generation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_route_acks
+    ADD CONSTRAINT environment_workload_serving_rou_graph_id_route_generation_fkey FOREIGN KEY (graph_id, route_generation) REFERENCES public.environment_workload_serving_routes(graph_id, route_generation) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_serving_routes environment_workload_serving_routes_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_serving_routes
+    ADD CONSTRAINT environment_workload_serving_routes_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_serving_receipts(graph_id) ON DELETE CASCADE;
 
 
 --
@@ -47264,6 +49825,14 @@ ALTER TABLE ONLY public.event_recovery_jobs
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --
@@ -49523,6 +52092,78 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 
 --
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_price_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_price_list_id_fkey FOREIGN KEY (price_list_id) REFERENCES public.outbound_ai_price_lists(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_request_log outbound_ai_request_log_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_log
+    ADD CONSTRAINT outbound_ai_request_log_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_route_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.outbound_ai_routes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_binding_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49568,6 +52209,22 @@ ALTER TABLE ONLY public.outbound_integration_apps
 
 ALTER TABLE ONLY public.outbound_integration_apps
     ADD CONSTRAINT outbound_integration_apps_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --
@@ -51875,22 +54532,6 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
--- Name: scenario_test_members scenario_test_members_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.scenario_test_members
-    ADD CONSTRAINT scenario_test_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: scenario_test_members scenario_test_members_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.scenario_test_members
-    ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
 -- Name: scenario_test_chaos_matches scenario_test_chaos_matches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51904,6 +54545,22 @@ ALTER TABLE ONLY public.scenario_test_chaos_matches
 
 ALTER TABLE ONLY public.scenario_test_chaos_matches
     ADD CONSTRAINT scenario_test_chaos_matches_caller_app_id_fkey FOREIGN KEY (caller_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_members scenario_test_members_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_members scenario_test_members_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -52411,6 +55068,118 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 
 --
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52531,757 +55300,6 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 
 --
--- Environment workload serving receipts (migration 20261009150000001).
 --
 
-CREATE TABLE public.environment_workload_serving_receipts (
-    graph_id uuid NOT NULL,
-    source_id uuid NOT NULL,
-    release_set_id uuid NOT NULL,
-    source_generation bigint NOT NULL,
-    intent_version bigint NOT NULL,
-    revision_id uuid NOT NULL,
-    plan_hash text NOT NULL,
-    expected_gateways text[] NOT NULL,
-    phase text DEFAULT 'pending'::text NOT NULL,
-    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    served_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_workload_serving_receipts_pkey PRIMARY KEY (graph_id),
-    CONSTRAINT environment_workload_serving_receipts_source_generation_check CHECK ((source_generation > 0)),
-    CONSTRAINT environment_workload_serving_receipts_intent_version_check CHECK ((intent_version > 0)),
-    CONSTRAINT environment_workload_serving_receipts_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT environment_workload_serving_receipts_expected_gateways_check CHECK ((cardinality(expected_gateways) > 0)),
-    CONSTRAINT environment_workload_serving_receipts_phase_check CHECK ((phase = ANY (ARRAY['pending'::text, 'served'::text]))),
-    CONSTRAINT environment_workload_serving_receipts_served_at_check CHECK (((phase = 'served'::text) = (served_at IS NOT NULL))),
-    CONSTRAINT environment_workload_serving_receipts_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE,
-    CONSTRAINT environment_workload_serving_receipts_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE
-);
 
-CREATE TABLE public.environment_workload_serving_routes (
-    graph_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    cutover_required boolean NOT NULL,
-    route_generation bigint NOT NULL,
-    CONSTRAINT environment_workload_serving_routes_pkey PRIMARY KEY (graph_id, app_id),
-    CONSTRAINT environment_workload_serving_routes_route_generation_key UNIQUE (route_generation),
-    CONSTRAINT environment_workload_serving_routes_graph_route_generation_key UNIQUE (graph_id, route_generation),
-    CONSTRAINT environment_workload_serving_routes_route_generation_check CHECK ((route_generation > 0)),
-    CONSTRAINT environment_workload_serving_routes_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_serving_receipts(graph_id) ON DELETE CASCADE
-);
-
-CREATE TABLE public.environment_workload_serving_route_acks (
-    graph_id uuid NOT NULL,
-    route_generation bigint NOT NULL,
-    node_name text NOT NULL,
-    acknowledged_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_workload_serving_route_acks_pkey PRIMARY KEY (graph_id, route_generation, node_name),
-    CONSTRAINT environment_workload_serving_route_acks_node_name_check CHECK ((length(btrim(node_name)) BETWEEN 1 AND 255)),
-    CONSTRAINT environment_workload_serving_route_acks_graph_route_generation_fkey FOREIGN KEY (graph_id, route_generation) REFERENCES public.environment_workload_serving_routes(graph_id, route_generation) ON DELETE CASCADE
-);
-
-CREATE FUNCTION public.environment_workload_serving_authorized(target_source uuid, target_graph uuid, target_release uuid) RETURNS boolean
-    LANGUAGE sql STABLE AS $$
- SELECT EXISTS (
-  SELECT 1
-  FROM active_environment_git_sources src
-  JOIN environment_gitops_jobs job ON job.source_id=src.id
-  JOIN environment_workload_graphs graph ON graph.id=target_graph AND graph.source_id=src.id
-  JOIN project_environments env ON env.id=src.environment_id
-  JOIN project_release_sets release ON release.id=target_release AND release.project_id=src.project_id
-      AND release.environment_slug=env.slug AND release.active
-  WHERE src.id=target_source AND src.mode='enforce' AND NOT src.suspended
-    AND src.generation=graph.generation AND src.intent_version=graph.intent_version
-    AND src.approved_revision_id=graph.revision_id AND graph.phase='prepared'
-    AND job.desired_generation=src.generation AND job.claimed_generation=src.generation
-    AND job.lease_until>clock_timestamp() AND job.lease_token<>''
-    AND job.lease_token=current_setting('gregale.gitops_lease',true)
-    AND current_setting('gregale.gitops_serving',true)=job.lease_token
- )
-$$;
-
-CREATE FUNCTION public.guard_environment_workload_serving_receipt() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
- IF TG_OP='DELETE' THEN
-  IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) AND
-     NOT public.environment_workload_serving_authorized(OLD.source_id,OLD.graph_id,OLD.release_set_id) THEN
-   RAISE EXCEPTION 'environment workload serving receipts are immutable' USING ERRCODE='23514';
-  END IF;
-  RETURN OLD;
- END IF;
- IF NOT public.environment_workload_serving_authorized(NEW.source_id,NEW.graph_id,NEW.release_set_id) OR
-    NOT EXISTS (SELECT 1 FROM environment_workload_graphs graph
-      WHERE graph.id=NEW.graph_id AND graph.source_id=NEW.source_id AND graph.generation=NEW.source_generation
-        AND graph.intent_version=NEW.intent_version AND graph.revision_id=NEW.revision_id AND graph.plan_hash=NEW.plan_hash) THEN
-  RAISE EXCEPTION 'environment workload serving receipt requires its current lease and active graph' USING ERRCODE='23514';
- END IF;
- IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.source_id,NEW.source_generation,NEW.intent_version,NEW.revision_id,NEW.plan_hash,NEW.started_at)
-   IS DISTINCT FROM ROW(OLD.graph_id,OLD.source_id,OLD.source_generation,OLD.intent_version,OLD.revision_id,OLD.plan_hash,OLD.started_at) THEN
-  RAISE EXCEPTION 'environment workload serving receipt identity is immutable' USING ERRCODE='23514';
- END IF;
- IF NEW.phase='served' AND (NOT EXISTS(SELECT 1 FROM environment_workload_serving_routes r WHERE r.graph_id=NEW.graph_id) OR
-    (SELECT count(*) FROM environment_workload_serving_routes r WHERE r.graph_id=NEW.graph_id) <
-      (SELECT jsonb_array_length(graph.members) FROM environment_workload_graphs graph WHERE graph.id=NEW.graph_id) OR
-    EXISTS(SELECT 1 FROM environment_workload_graphs graph, jsonb_array_elements(graph.members) member
-      WHERE graph.id=NEW.graph_id AND (member->>'execution_mode' NOT IN ('request','service') OR
-        coalesce(member->'queue_modes','{}'::jsonb) NOT IN ('{}'::jsonb,'null'::jsonb))) OR
-    EXISTS(SELECT 1 FROM environment_workload_serving_routes r WHERE r.graph_id=NEW.graph_id AND
-      (SELECT count(*) FROM environment_workload_serving_route_acks a WHERE a.graph_id=r.graph_id AND a.route_generation=r.route_generation)
-       < cardinality(NEW.expected_gateways))) THEN
-  RAISE EXCEPTION 'environment workload serving receipt lacks complete gateway acknowledgements' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-CREATE TRIGGER environment_workload_serving_receipt_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON public.environment_workload_serving_receipts
-    FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_receipt();
-
-CREATE FUNCTION public.guard_environment_workload_serving_route() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-DECLARE receipt environment_workload_serving_receipts%ROWTYPE;
-BEGIN
- IF TG_OP='DELETE' THEN
-  IF EXISTS(SELECT 1 FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id) THEN
-   SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id;
-   IF NOT public.environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) THEN
-    RAISE EXCEPTION 'environment workload serving routes are immutable' USING ERRCODE='23514';
-   END IF;
-  END IF;
-  RETURN OLD;
- END IF;
- SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=NEW.graph_id FOR UPDATE;
- IF receipt.graph_id IS NULL OR NOT public.environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) OR
-    receipt.phase<>'pending' OR NOT EXISTS(
-      SELECT 1 FROM project_release_sets release
-      JOIN project_release_members rm ON rm.release_id=release.id AND rm.app_id=NEW.app_id AND rm.deployment_id=NEW.deployment_id
-      JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
-      CROSS JOIN LATERAL jsonb_array_elements(graph.members) member
-      WHERE release.id=receipt.release_set_id AND release.active
-        AND member->>'app_id'=NEW.app_id::text AND member->>'execution_mode' IN ('request','service')
-        AND coalesce(member->'queue_modes','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb)
-        AND ((NEW.cutover_required AND member->>'candidate_deployment_id'=NEW.deployment_id::text) OR
-             (NOT NEW.cutover_required AND nullif(member->>'candidate_deployment_id','') IS NULL AND
-              coalesce(member->'retained_deployments','[]'::jsonb) ? NEW.deployment_id::text))) THEN
-  RAISE EXCEPTION 'environment workload serving route is outside the reviewed active graph' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-CREATE TRIGGER environment_workload_serving_route_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON public.environment_workload_serving_routes
-    FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_route();
-
-CREATE FUNCTION public.guard_environment_workload_serving_route_ack() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-DECLARE receipt environment_workload_serving_receipts%ROWTYPE;
-BEGIN
- IF TG_OP='DELETE' THEN
-  SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=OLD.graph_id;
-  IF receipt.graph_id IS NOT NULL AND NOT public.environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) THEN
-   RAISE EXCEPTION 'environment workload serving acknowledgements are immutable' USING ERRCODE='23514';
-  END IF;
-  RETURN OLD;
- END IF;
- SELECT * INTO receipt FROM environment_workload_serving_receipts WHERE graph_id=NEW.graph_id FOR UPDATE;
- IF receipt.graph_id IS NULL OR receipt.phase<>'pending' OR
-    NOT public.environment_workload_serving_authorized(receipt.source_id,receipt.graph_id,receipt.release_set_id) OR
-    NOT (NEW.node_name=ANY(receipt.expected_gateways)) OR
-    NOT EXISTS(SELECT 1 FROM environment_workload_serving_routes WHERE graph_id=NEW.graph_id AND route_generation=NEW.route_generation) THEN
-  RAISE EXCEPTION 'environment workload serving acknowledgement is not expected' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-CREATE TRIGGER environment_workload_serving_route_ack_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON public.environment_workload_serving_route_acks
-    FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_route_ack();
-
-CREATE FUNCTION public.environment_workload_serving_traffic_authorized(target_app uuid, target_scope text, target_deployment uuid, target_traffic integer) RETURNS boolean
-    LANGUAGE sql STABLE AS $$
- SELECT EXISTS (
-  SELECT 1
-  FROM active_environment_git_sources src
-  JOIN environment_gitops_jobs job ON job.source_id=src.id
-  JOIN project_environments env ON env.id=src.environment_id AND env.slug=target_scope
-  JOIN environment_workload_graphs graph ON graph.source_id=src.id AND graph.phase='prepared'
-  JOIN environment_workload_serving_receipts receipt ON receipt.graph_id=graph.id AND receipt.phase='pending'
-  JOIN environment_workload_serving_routes route ON route.graph_id=receipt.graph_id AND route.app_id=target_app
-  JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
-  JOIN project_release_members rm ON rm.release_id=release.id AND rm.app_id=route.app_id AND rm.deployment_id=route.deployment_id
-  CROSS JOIN LATERAL jsonb_array_elements(graph.members) member
-  WHERE src.id=receipt.source_id AND src.mode='enforce' AND NOT src.suspended
-    AND src.generation=graph.generation AND src.intent_version=graph.intent_version
-    AND src.approved_revision_id=graph.revision_id AND graph.plan_hash=receipt.plan_hash
-    AND member->>'app_id'=target_app::text AND member->>'execution_mode' IN ('request','service')
-    AND coalesce(member->'queue_modes','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb)
-    AND route.cutover_required AND member->>'candidate_deployment_id'=route.deployment_id::text
-    AND job.desired_generation=src.generation AND job.claimed_generation=src.generation
-    AND job.lease_until>clock_timestamp() AND job.lease_token<>''
-    AND job.lease_token=current_setting('gregale.gitops_lease',true)
-    AND current_setting('gregale.gitops_serving',true)=job.lease_token
-    AND ((target_deployment=route.deployment_id AND target_traffic=100) OR
-         (target_deployment<>route.deployment_id AND target_traffic=0))
- )
-$$;
-
-CREATE FUNCTION public.guard_environment_workload_serving_traffic() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
- IF NEW.traffic_percent IS DISTINCT FROM OLD.traffic_percent AND
-    EXISTS(SELECT 1 FROM deployments managed WHERE managed.app_id=OLD.app_id AND managed.scope=OLD.scope AND managed.environment_workload_runtime IS NOT NULL) AND
-    NOT public.environment_workload_serving_traffic_authorized(NEW.app_id,NEW.scope,NEW.id,NEW.traffic_percent) AND
-    NOT (NEW.traffic_percent=0 AND OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
-      public.environment_workload_activation_authorized(NEW)) THEN
-  RAISE EXCEPTION 'GitOps-managed workload traffic requires a current serving transition' USING ERRCODE='23514';
- END IF;
- RETURN NEW;
-END $$;
-
-CREATE TRIGGER environment_workload_serving_traffic_guard
-    BEFORE UPDATE OF traffic_percent ON public.deployments
-    FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_serving_traffic();
-
---
-CREATE TABLE environment_workload_serving_queue_acks (
-    graph_id uuid NOT NULL REFERENCES environment_workload_graphs(id) ON DELETE CASCADE,
-    binding_id uuid NOT NULL,
-    mode text NOT NULL CHECK (mode IN ('push','pull')),
-    trigger_id uuid,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    invocation_id uuid NOT NULL,
-    acknowledged_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (graph_id, binding_id)
-);
-
-CREATE OR REPLACE FUNCTION public.environment_workload_queue_serving_ack_authorized(
-    target_graph uuid,
-    target_binding uuid,
-    target_mode text,
-    target_trigger uuid,
-    target_app uuid,
-    target_deployment uuid,
-    target_invocation uuid
-) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-SELECT EXISTS (
-    SELECT 1
-    FROM environment_workload_graphs graph
-    JOIN active_environment_git_sources source ON source.id=graph.source_id
-    JOIN project_environments environment ON environment.id=source.environment_id
-    JOIN project_release_sets release ON release.project_id=source.project_id
-        AND release.environment_slug=environment.slug AND release.active
-    JOIN project_release_members release_member ON release_member.release_id=release.id
-        AND release_member.app_id=target_app AND release_member.deployment_id=target_deployment
-    JOIN deployments deployment ON deployment.id=target_deployment AND deployment.app_id=target_app
-        AND deployment.status='live' AND NOT deployment.environment_workload_held
-        AND deployment.scope=environment.slug
-    JOIN invocations invocation ON invocation.id=target_invocation AND invocation.app_id=target_app
-        AND invocation.source='queue' AND invocation.state='completed'
-        AND invocation.completed_at IS NOT NULL AND invocation.deployment_scope=environment.slug
-        AND invocation.queue_binding_id=target_binding
-    CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
-    CROSS JOIN LATERAL jsonb_each(coalesce(graph_member.value->'queue_bindings','{}'::jsonb)) AS queue_binding(name,value)
-    JOIN queue_bindings binding ON binding.id=target_binding
-        AND binding.app_id=target_app AND binding.account_id=source.account_id AND binding.environment_id=source.environment_id
-        AND binding.deployment_scope=environment.slug AND binding.name=queue_binding.name
-        AND binding.mode=target_mode AND binding.enabled
-        AND ((binding.workload_class='worker' AND graph_member.value->>'execution_mode'='worker') OR
-            (binding.workload_class='http' AND graph_member.value->>'execution_mode'='request'
-                AND graph_member.value->>'function'='true'))
-        AND binding.retired_at IS NULL
-    WHERE graph.id=target_graph AND graph.phase='prepared'
-        AND source.mode='enforce' AND NOT source.suspended
-        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
-        AND source.approved_revision_id=graph.revision_id
-        AND graph.environment_id=source.environment_id
-        AND ((graph_member.value->>'execution_mode'='worker' AND binding.workload_class='worker'
-                AND target_mode IN ('push','pull')) OR
-            (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'
-                AND binding.workload_class='http' AND target_mode='push'))
-        AND graph_member.value->>'app_id'=target_app::text
-        AND coalesce(queue_binding.value->>'binding_id','')=binding.id::text
-        AND queue_binding.value->'contract'->>'mode'=target_mode
-        AND queue_binding.value->'contract'->>'workload_class'=binding.workload_class
-        AND queue_binding.value->'contract'->>'enabled'='true'
-        AND queue_binding.value->'contract'->>'queue_name'=binding.queue_name
-        AND queue_binding.value->'contract'->>'max_concurrency'=binding.max_concurrency::text
-        AND coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)=binding.retry_policy
-        AND ((target_mode='push' AND target_trigger IS NOT NULL
-                AND coalesce(queue_binding.value->>'trigger_id','')=target_trigger::text
-                AND EXISTS (
-                    SELECT 1 FROM triggers queue_trigger
-                    JOIN trigger_records record ON record.trigger_id=queue_trigger.id
-                        AND record.item_identifier=invocation.id::text AND record.state='succeeded'
-                    WHERE queue_trigger.id=target_trigger AND queue_trigger.account_id=source.account_id
-                        AND queue_trigger.app_id=target_app AND queue_trigger.queue_binding_id=binding.id
-                        AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
-                        AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
-                        AND queue_trigger.queue_binding_scope=environment.slug
-                        AND queue_trigger.queue_binding_environment_id=source.environment_id)) OR
-            (target_mode='pull' AND target_trigger IS NULL
-                AND coalesce(queue_binding.value->>'trigger_id','')=''))
-        AND (graph_member.value->>'candidate_deployment_id'=target_deployment::text OR
-            (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL AND
-             coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? target_deployment::text))
-)
-$$;
-
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_queue_serving_ack() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP='DELETE' THEN
-        IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) THEN
-            RAISE EXCEPTION 'environment queue serving acknowledgements are retained' USING ERRCODE='23514';
-        END IF;
-        RETURN OLD;
-    END IF;
-    IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,NEW.app_id,NEW.deployment_id,NEW.invocation_id)
-        IS DISTINCT FROM ROW(OLD.graph_id,OLD.binding_id,OLD.mode,OLD.trigger_id,OLD.app_id,OLD.deployment_id,OLD.invocation_id) THEN
-        RAISE EXCEPTION 'environment queue serving acknowledgement identity is immutable' USING ERRCODE='23514';
-    END IF;
-    IF NOT public.environment_workload_graph_serving_supported(NEW.graph_id) OR
-        NOT public.environment_workload_queue_serving_ack_authorized(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,
-            NEW.app_id,NEW.deployment_id,NEW.invocation_id) THEN
-        RAISE EXCEPTION 'environment queue serving acknowledgement is outside the supported active graph' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-END $$;
-
-CREATE TRIGGER environment_workload_queue_serving_ack_guard
-BEFORE INSERT OR UPDATE OR DELETE ON environment_workload_serving_queue_acks
-FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_queue_serving_ack();
-
-ALTER TABLE environment_workload_serving_receipts
-    DROP CONSTRAINT environment_workload_serving_receipts_expected_gateways_check;
-ALTER TABLE environment_workload_serving_receipts
-    ADD CONSTRAINT environment_workload_serving_receipts_expected_gateways_check
-    CHECK (cardinality(expected_gateways) >= 0);
-
-CREATE FUNCTION public.environment_workload_graph_serving_supported(target_graph uuid) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-SELECT EXISTS (
-    SELECT 1 FROM environment_workload_graphs graph
-    WHERE graph.id=target_graph AND CASE WHEN jsonb_typeof(graph.members)='array'
-        THEN jsonb_array_length(graph.members)>0 ELSE false END
-        AND NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            WHERE NOT coalesce((
-                (
-                    graph_member.value->>'execution_mode' IN ('request','service')
-                    AND coalesce(graph_member.value->>'service_bindings_configured','false')='false'
-                    AND coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb
-                    AND NOT EXISTS (
-                        SELECT 1 FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                        WHERE queue_binding.value->'contract'->>'enabled'='true'
-                    )
-                ) OR (
-                    graph_member.value->>'execution_mode'='request'
-                    AND graph_member.value->>'function'='true'
-                    AND coalesce(graph_member.value->>'service_bindings_configured','false')='false'
-                    AND jsonb_typeof(graph_member.value->'queue_modes')='object'
-                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))>0
-                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))=(
-                        SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                        WHERE queue_binding.value->'contract'->>'enabled'='true'
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)) AS queue_mode(name,value)
-                        WHERE queue_mode.value<>'"push"'::jsonb OR NOT EXISTS (
-                            SELECT 1
-                            FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                            WHERE queue_binding.name=queue_mode.name
-                                AND queue_binding.value->'contract'->>'enabled'='true'
-                                AND queue_binding.value->'contract'->>'mode'='push'
-                                AND queue_binding.value->'contract'->>'workload_class'='http'
-                                AND coalesce(queue_binding.value->>'binding_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                                AND coalesce(queue_binding.value->>'trigger_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                        )
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                        WHERE queue_binding.value->'contract'->>'enabled'='true'
-                            AND NOT (coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb) ? queue_binding.name)
-                    )
-                ) OR (
-                    graph_member.value->>'execution_mode'='worker'
-                    AND coalesce(graph_member.value->>'service_bindings_configured','false')='false'
-                    AND jsonb_typeof(graph_member.value->'queue_modes')='object'
-                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))>0
-                    AND (SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)))=(
-                        SELECT count(*) FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                        WHERE queue_binding.value->'contract'->>'enabled'='true'
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb)) AS queue_mode(name,value)
-                        WHERE queue_mode.value NOT IN ('"push"'::jsonb,'"pull"'::jsonb) OR NOT EXISTS (
-                            SELECT 1
-                            FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                            WHERE queue_binding.name=queue_mode.name
-                                AND queue_binding.value->'contract'->>'enabled'='true'
-                                AND queue_binding.value->'contract'->>'mode'=queue_mode.value#>>'{}'
-                                AND queue_binding.value->'contract'->>'workload_class'='worker'
-                                AND coalesce(queue_binding.value->>'binding_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                                AND ((queue_mode.value='"push"'::jsonb AND coalesce(queue_binding.value->>'trigger_id','') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-                                    OR (queue_mode.value='"pull"'::jsonb AND coalesce(queue_binding.value->>'trigger_id','')=''))
-                        )
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-                        WHERE queue_binding.value->'contract'->>'enabled'='true'
-                            AND NOT (coalesce(nullif(graph_member.value->'queue_modes','null'::jsonb),'{}'::jsonb) ? queue_binding.name)
-                    )
-                )
-            ),false)
-        )
-        AND NOT EXISTS (
-            SELECT 1
-            FROM active_environment_git_sources source
-            JOIN project_environments environment ON environment.id=source.environment_id
-            CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
-            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
-            LEFT JOIN triggers queue_trigger ON queue_trigger.id::text=queue_binding.value->>'trigger_id'
-            WHERE source.id=graph.source_id
-                AND graph.id=target_graph
-                AND (graph_member.value->>'execution_mode'='worker' OR
-                    (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
-                AND queue_binding.value->'contract'->>'enabled'='true'
-                AND (binding.id IS NULL
-                    OR binding.app_id::text IS DISTINCT FROM graph_member.value->>'app_id'
-                    OR binding.account_id IS DISTINCT FROM source.account_id
-                    OR binding.environment_id IS DISTINCT FROM source.environment_id
-                    OR binding.deployment_scope IS DISTINCT FROM environment.slug
-                    OR binding.name IS DISTINCT FROM queue_binding.name
-                    OR binding.queue_name IS DISTINCT FROM queue_binding.value->'contract'->>'queue_name'
-                    OR binding.mode IS DISTINCT FROM queue_binding.value->'contract'->>'mode'
-                    OR binding.workload_class IS DISTINCT FROM queue_binding.value->'contract'->>'workload_class'
-                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
-                    OR binding.max_concurrency::text IS DISTINCT FROM queue_binding.value->'contract'->>'max_concurrency'
-                    OR binding.retry_policy IS DISTINCT FROM coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)
-                    OR binding.retired_at IS NOT NULL
-                    OR (binding.mode='push' AND (queue_trigger.id IS NULL
-                        OR queue_trigger.app_id IS DISTINCT FROM binding.app_id
-                        OR queue_trigger.account_id IS DISTINCT FROM source.account_id
-                        OR queue_trigger.queue_binding_id IS DISTINCT FROM binding.id
-                        OR NOT queue_trigger.enabled
-                        OR queue_trigger.kind IS DISTINCT FROM 'queue'
-                        OR queue_trigger.source IS DISTINCT FROM 'queue'
-                        OR queue_trigger.slug IS DISTINCT FROM queue_binding.value->'contract'->>'queue_name'
-                        OR queue_trigger.queue_binding_scope IS DISTINCT FROM environment.slug
-                        OR queue_trigger.queue_binding_environment_id IS DISTINCT FROM source.environment_id))
-                    OR (binding.mode='pull' AND (coalesce(queue_binding.value->>'trigger_id','')<>'' OR queue_trigger.id IS NOT NULL))
-                    OR binding.mode NOT IN ('push','pull'))
-        )
-)
-$$;
-
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_queue_serving_ack() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP='DELETE' THEN
-        IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) THEN
-            RAISE EXCEPTION 'environment queue serving acknowledgements are retained' USING ERRCODE='23514';
-        END IF;
-        RETURN OLD;
-    END IF;
-    IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,NEW.app_id,NEW.deployment_id,NEW.invocation_id)
-        IS DISTINCT FROM ROW(OLD.graph_id,OLD.binding_id,OLD.mode,OLD.trigger_id,OLD.app_id,OLD.deployment_id,OLD.invocation_id) THEN
-        RAISE EXCEPTION 'environment queue serving acknowledgement identity is immutable' USING ERRCODE='23514';
-    END IF;
-    IF NOT public.environment_workload_graph_serving_supported(NEW.graph_id) OR
-        NOT public.environment_workload_queue_serving_ack_authorized(NEW.graph_id,NEW.binding_id,NEW.mode,NEW.trigger_id,
-            NEW.app_id,NEW.deployment_id,NEW.invocation_id) THEN
-        RAISE EXCEPTION 'environment queue serving acknowledgement is outside the supported active graph' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-END $$;
-
-CREATE OR REPLACE FUNCTION public.environment_workload_activation_authorized(candidate public.deployments) RETURNS boolean
-LANGUAGE plpgsql AS $$
-DECLARE frozen jsonb; token text; source_uuid uuid; source_generation bigint; source_intent bigint; environment_uuid uuid; revision_uuid uuid;
-BEGIN
-    frozen:=candidate.environment_workload_runtime;
-    IF frozen IS NULL OR candidate.environment_workload_held OR candidate.status<>'live' THEN RETURN false; END IF;
-    token:=nullif(current_setting('gregale.gitops_activation',true),'');
-    IF token IS NULL OR token IS DISTINCT FROM current_setting('gregale.gitops_lease',true) THEN RETURN false; END IF;
-    BEGIN
-        source_uuid:=(frozen->>'source_id')::uuid;
-        source_generation:=(frozen->>'generation')::bigint;
-        source_intent:=(frozen->>'intent_version')::bigint;
-        environment_uuid:=(frozen->>'environment_id')::uuid;
-        revision_uuid:=(frozen->>'revision_id')::uuid;
-    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
-        RETURN false;
-    END;
-    RETURN EXISTS (
-        SELECT 1
-        FROM active_environment_git_sources source
-        JOIN environment_gitops_jobs job ON job.source_id=source.id
-        JOIN environment_workload_graphs graph ON graph.source_id=source.id
-        CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
-        WHERE source.id=source_uuid AND source.mode='enforce' AND NOT source.suspended
-            AND source.generation=source_generation AND source.intent_version=source_intent
-            AND source.environment_id=environment_uuid AND source.approved_revision_id=revision_uuid
-            AND graph.environment_id=source.environment_id AND graph.revision_id=source.approved_revision_id
-            AND graph.generation=source.generation AND graph.intent_version=source.intent_version
-            AND graph.plan_hash=frozen->>'plan_hash' AND graph.phase='prepared'
-            AND public.environment_workload_graph_serving_supported(graph.id)
-            AND graph_member.value->>'resource'=frozen->>'resource'
-            AND graph_member.value->>'app_id'=candidate.app_id::text
-            AND graph_member.value->>'candidate_deployment_id'=candidate.id::text
-            AND job.desired_generation=source.generation AND job.claimed_generation=source.generation
-            AND job.lease_until>clock_timestamp() AND job.lease_token=token AND token<>''
-    );
-END $$;
-
-CREATE FUNCTION public.environment_workload_scheduled_job_acks(target_graph uuid, target_release uuid)
-RETURNS TABLE(app_id text,job_id text,job_run_id text,occurrence_id text,acknowledged_at timestamptz,service_bindings jsonb)
-LANGUAGE sql STABLE AS $$
-SELECT member.value->>'app_id',managed_job.id::text,proof.run_id::text,proof.occurrence_id::text,proof.finished_at,
-    coalesce(intent.service_bindings,'{}'::jsonb)
-FROM environment_workload_graphs graph
-JOIN active_environment_git_sources source ON source.id=graph.source_id
-JOIN project_environments environment ON environment.id=source.environment_id
-JOIN project_release_sets release ON release.id=target_release AND release.project_id=source.project_id
-CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS member(value)
-JOIN app_environment_workload_intents intent ON intent.account_id=source.account_id
-    AND intent.environment_id=source.environment_id AND intent.app_id::text=member.value->>'app_id'
-    AND intent.job_id::text=member.value->>'job_id'
-JOIN jobs managed_job ON managed_job.id=intent.job_id
-JOIN project_release_members release_member ON release_member.release_id=release.id
-    AND release_member.app_id=intent.app_id
-JOIN deployments deployment ON deployment.id=release_member.deployment_id
-    AND deployment.app_id=release_member.app_id AND deployment.status='live'
-    AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
-JOIN LATERAL (
-    SELECT occurrence.id AS occurrence_id,run.id AS run_id,occurrence.finished_at
-    FROM schedule_occurrences occurrence
-    JOIN job_runs run ON run.id=occurrence.job_run_id AND run.job_id=managed_job.id
-    WHERE occurrence.job_id=managed_job.id
-        AND occurrence.schedule_revision=managed_job.schedule_revision
-        AND occurrence.status='succeeded' AND occurrence.finished_at IS NOT NULL
-        AND occurrence.created_at>=release.created_at
-        AND occurrence.started_at IS NOT NULL AND occurrence.started_at>=release.created_at
-        AND run.occurrence_id=occurrence.id AND run.trigger_kind='scheduled'
-        AND run.aggregate_status='succeeded' AND run.finished_at IS NOT NULL
-        AND run.created_at>=release.created_at AND run.started_at IS NOT NULL AND run.started_at>=release.created_at
-        AND run.finished_at>=release.created_at
-        AND occurrence.finished_at>=run.finished_at
-        AND run.image_ref_snapshot=managed_job.image_ref
-        AND run.image_resolved_digest_snapshot=managed_job.image_resolved_digest
-        AND run.image_storage_key_snapshot=managed_job.image_storage_key
-        AND run.retry_max=managed_job.retry_max
-        AND run.task_timeout_s=managed_job.task_timeout_s
-        AND run.parallelism=managed_job.max_parallelism
-        AND run.command=managed_job.command
-        AND run.ram_mb_snapshot=managed_job.ram_mb
-        AND run.env_overrides=managed_job.env_overrides
-        AND run.effective_env_snapshot=managed_job.env_overrides || run.env_overrides
-        AND run.failure_rules IS NOT DISTINCT FROM managed_job.failure_rules
-        AND run.execution_class='standard' AND run.failure_policy='continue' AND run.tasks=1
-        AND run.input_manifest_version=0 AND coalesce(run.input_digest,'')=''
-        AND run.input_manifest_uri IS NULL AND run.input_manifest_sha256 IS NULL
-    ORDER BY occurrence.finished_at,occurrence.id
-    LIMIT 1
-) proof ON true
-WHERE graph.id=target_graph AND graph.phase='prepared'
-    AND source.mode='enforce' AND NOT source.suspended
-    AND source.generation=graph.generation AND source.intent_version=graph.intent_version
-    AND source.approved_revision_id=graph.revision_id
-    AND release.active AND release.environment_slug=environment.slug
-    AND member.value->>'execution_mode'='job'
-    AND member.value->>'schedule_configured'='true'
-    AND member.value->>'job_smoke_configured'='true'
-    AND managed_job.id::text=member.value->>'job_id'
-    AND managed_job.account_id=source.account_id AND managed_job.kind='recurring' AND managed_job.status='active'
-    AND managed_job.image_materialization_status='ready'
-    AND coalesce(managed_job.image_storage_key,'')<>''
-    AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
-    AND intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
-    AND intent.schedule IS NOT NULL AND managed_job.cron_schedule=intent.schedule->>'cron'
-    AND managed_job.cron_timezone=intent.schedule->>'timezone'
-    AND managed_job.schedule_policy IS NOT DISTINCT FROM NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
-    AND managed_job.failure_rules IS NOT DISTINCT FROM NULLIF(intent.schedule->'failure_rules','null'::jsonb)
-    AND managed_job.max_parallelism=1 AND managed_job.retry_max=0
-    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0 AND cardinality(managed_job.command)=0
-    AND managed_job.env_overrides=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
-    AND coalesce(nullif(intent.variables,'null'::jsonb),'{}'::jsonb)=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
-    AND coalesce(nullif(member.value->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(intent.service_bindings,'{}'::jsonb)
-    AND coalesce(member.value->>'service_bindings_configured','false')=(coalesce(intent.service_bindings,'{}'::jsonb)<>'{}'::jsonb)::text
-    AND coalesce(member.value->>'queue_bindings_configured','false')='false'
-    AND coalesce(nullif(member.value->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb
-    AND (member.value->>'candidate_deployment_id'=deployment.id::text OR
-        (nullif(member.value->>'candidate_deployment_id','') IS NULL
-            AND coalesce(member.value->'retained_deployments','[]'::jsonb) ? deployment.id::text))
-$$;
-
-CREATE FUNCTION public.environment_workload_scheduled_jobs_ready(target_graph uuid, target_release uuid) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-SELECT (SELECT count(*) FROM environment_workload_graphs graph
-    CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS member(value)
-    WHERE graph.id=target_graph AND member.value->>'execution_mode'='job') =
-    (SELECT count(*) FROM public.environment_workload_scheduled_job_acks(target_graph,target_release))
-$$;
-
-CREATE FUNCTION public.environment_workload_serving_ready(target_graph uuid) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-SELECT EXISTS (
-    SELECT 1
-    FROM environment_workload_serving_receipts receipt
-    JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
-    JOIN active_environment_git_sources source ON source.id=receipt.source_id
-    JOIN project_environments environment ON environment.id=source.environment_id
-    JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
-    WHERE receipt.graph_id=target_graph AND source.mode='enforce' AND NOT source.suspended
-        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
-        AND source.approved_revision_id=graph.revision_id
-        AND public.environment_workload_graph_serving_supported(graph.id)
-        AND public.environment_workload_scheduled_jobs_ready(target_graph,release.id)
-        AND (SELECT count(*) FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)=(
-            SELECT count(*) FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            WHERE graph_member.value->>'execution_mode' IN ('request','service')
-        )
-        AND NOT EXISTS (
-            SELECT 1 FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            WHERE graph_member.value->>'execution_mode' IN ('request','service')
-                AND NOT EXISTS (
-                    SELECT 1 FROM environment_workload_serving_routes route
-                    JOIN project_release_members release_member ON release_member.release_id=release.id
-                        AND release_member.app_id=route.app_id AND release_member.deployment_id=route.deployment_id
-                    WHERE route.graph_id=graph.id AND route.app_id::text=graph_member.value->>'app_id'
-                        AND ((route.cutover_required AND route.deployment_id::text=graph_member.value->>'candidate_deployment_id') OR
-                            (NOT route.cutover_required AND nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
-                                AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? route.deployment_id::text))
-                )
-        )
-        AND (NOT EXISTS (SELECT 1 FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)
-            OR cardinality(receipt.expected_gateways)>0)
-        AND NOT EXISTS (
-            SELECT 1 FROM environment_workload_serving_routes route
-            WHERE route.graph_id=graph.id AND (SELECT count(*) FROM environment_workload_serving_route_acks ack
-                WHERE ack.graph_id=route.graph_id AND ack.route_generation=route.route_generation)<>cardinality(receipt.expected_gateways)
-        )
-        AND NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
-            WHERE (graph_member.value->>'execution_mode'='worker' OR
-                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
-                AND queue_binding.value->'contract'->>'enabled'='true'
-                AND (binding.id IS NULL OR binding.app_id::text<>graph_member.value->>'app_id'
-                    OR binding.account_id<>source.account_id
-                    OR binding.environment_id<>source.environment_id OR binding.deployment_scope<>environment.slug
-                    OR binding.name<>queue_binding.name OR binding.queue_name<>queue_binding.value->'contract'->>'queue_name'
-                    OR binding.mode<>queue_binding.value->'contract'->>'mode'
-                    OR binding.workload_class<>queue_binding.value->'contract'->>'workload_class'
-                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
-                    OR binding.max_concurrency::text<>queue_binding.value->'contract'->>'max_concurrency'
-                    OR coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)<>binding.retry_policy
-                    OR binding.retired_at IS NOT NULL
-                    OR (binding.mode='push' AND NOT EXISTS (
-                        SELECT 1 FROM triggers queue_trigger
-                        WHERE queue_trigger.id::text=queue_binding.value->>'trigger_id'
-                            AND queue_trigger.app_id=binding.app_id AND queue_trigger.queue_binding_id=binding.id
-                            AND queue_trigger.account_id=source.account_id
-                            AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
-                            AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
-                            AND queue_trigger.queue_binding_scope=environment.slug
-                            AND queue_trigger.queue_binding_environment_id=source.environment_id
-                    ))
-                    OR (binding.mode='pull' AND coalesce(queue_binding.value->>'trigger_id','')<>'')
-                    OR binding.mode NOT IN ('push','pull'))
-        )
-        AND (SELECT count(*) FROM environment_workload_serving_queue_acks ack WHERE ack.graph_id=graph.id)=(
-            SELECT count(*)
-            FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-            WHERE (graph_member.value->>'execution_mode'='worker' OR
-                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
-                AND queue_binding.value->'contract'->>'enabled'='true'
-        )
-        AND NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(graph.members) AS graph_member(value)
-            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
-            LEFT JOIN environment_workload_serving_queue_acks ack ON ack.graph_id=graph.id
-                AND ack.binding_id::text=queue_binding.value->>'binding_id'
-            WHERE (graph_member.value->>'execution_mode'='worker' OR
-                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
-                AND queue_binding.value->'contract'->>'enabled'='true'
-                AND (ack.graph_id IS NULL OR ack.mode<>queue_binding.value->'contract'->>'mode'
-                    OR ack.app_id::text<>graph_member.value->>'app_id'
-                    OR (ack.mode='push' AND ack.trigger_id::text<>queue_binding.value->>'trigger_id')
-                    OR (ack.mode='pull' AND ack.trigger_id IS NOT NULL)
-                    OR NOT EXISTS (
-                        SELECT 1 FROM project_release_members release_member
-                        JOIN deployments deployment ON deployment.id=release_member.deployment_id
-                            AND deployment.app_id=release_member.app_id AND deployment.status='live'
-                            AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
-                        WHERE release_member.release_id=release.id AND release_member.app_id=ack.app_id
-                            AND release_member.deployment_id=ack.deployment_id
-                            AND (graph_member.value->>'candidate_deployment_id'=ack.deployment_id::text OR
-                                (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
-                                    AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? ack.deployment_id::text))
-                    ))
-        )
-)
-$$;
-
-CREATE OR REPLACE FUNCTION public.guard_environment_workload_serving_receipt() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE completion_only boolean;
-BEGIN
-    IF TG_OP='DELETE' THEN
-        IF EXISTS (SELECT 1 FROM environment_workload_graphs WHERE id=OLD.graph_id) AND
-            NOT public.environment_workload_serving_authorized(OLD.source_id,OLD.graph_id,OLD.release_set_id) THEN
-            RAISE EXCEPTION 'environment workload serving receipts are immutable' USING ERRCODE='23514';
-        END IF;
-        RETURN OLD;
-    END IF;
-    completion_only:=false;
-    IF TG_OP='UPDATE' THEN
-        completion_only:=OLD.phase='pending' AND NEW.phase='served'
-            AND ROW(NEW.graph_id,NEW.source_id,NEW.source_generation,NEW.intent_version,NEW.revision_id,NEW.plan_hash,
-                NEW.release_set_id,NEW.expected_gateways,NEW.started_at)
-                IS NOT DISTINCT FROM ROW(OLD.graph_id,OLD.source_id,OLD.source_generation,OLD.intent_version,OLD.revision_id,
-                    OLD.plan_hash,OLD.release_set_id,OLD.expected_gateways,OLD.started_at)
-            AND public.environment_workload_serving_ready(NEW.graph_id);
-    END IF;
-    IF (NOT public.environment_workload_serving_authorized(NEW.source_id,NEW.graph_id,NEW.release_set_id) AND NOT completion_only) OR
-        NOT EXISTS (SELECT 1 FROM environment_workload_graphs graph
-            WHERE graph.id=NEW.graph_id AND graph.source_id=NEW.source_id AND graph.generation=NEW.source_generation
-                AND graph.intent_version=NEW.intent_version AND graph.revision_id=NEW.revision_id AND graph.plan_hash=NEW.plan_hash) OR
-        NOT public.environment_workload_graph_serving_supported(NEW.graph_id) THEN
-        RAISE EXCEPTION 'environment workload serving receipt requires its current supported graph and lease' USING ERRCODE='23514';
-    END IF;
-    IF TG_OP='UPDATE' AND ROW(NEW.graph_id,NEW.source_id,NEW.source_generation,NEW.intent_version,NEW.revision_id,NEW.plan_hash,NEW.started_at)
-        IS DISTINCT FROM ROW(OLD.graph_id,OLD.source_id,OLD.source_generation,OLD.intent_version,OLD.revision_id,OLD.plan_hash,OLD.started_at) THEN
-        RAISE EXCEPTION 'environment workload serving receipt identity is immutable' USING ERRCODE='23514';
-    END IF;
-    IF NEW.phase='served' AND NOT public.environment_workload_serving_ready(NEW.graph_id) THEN
-        RAISE EXCEPTION 'environment workload serving receipt lacks complete gateway and queue acknowledgements' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-END $$;
-
---
--- Name: entity_outbox_acceptances; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.entity_outbox_acceptances (
-    message_id uuid PRIMARY KEY,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
-    fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);

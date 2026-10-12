@@ -106,7 +106,8 @@ func NewServiceTCPProxy(cfg ServiceTCPProxyConfig) (*ServiceTCPProxy, error) {
 		accounts: &serviceTCPAccountSessions{current: make(map[string]int)},
 		chaos: serviceTCPChaosController{
 			groups: make(map[serviceTCPChaosKey]*serviceTCPChaosGroup), resolve: cfg.ResolveChaos,
-			observe: cfg.Services.observeChaosMatch,
+			observe:        cfg.Services.observeChaosMatch,
+			observeAttempt: cfg.Services.observeTCPAttempt,
 		},
 	}, nil
 }

@@ -674,6 +674,24 @@ func TestTierD_DelayedTaskGet_HappyPath(t *testing.T) {
 	}
 }
 
+// production-us hunt #9: a dead_letter task printed only id, scheduled_at
+// and state; the attempts and the error that explain it needed --json.
+func TestTierD_DelayedTaskGet_ShowsWhyATaskDeadLettered(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"dead_letter","method":"GET","path":"/status/503","attempts":3,"last_error":"invoke: application or gateway returned retryable HTTP 503","created_at":"2029-12-31T23:59:58Z","completed_at":"2030-01-01T00:00:09Z"}`
+	authedFakeAPI(t, body, http.StatusOK)
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	for _, want := range []string{"dead_letter", "GET /status/503", "attempts:      3", "retryable HTTP 503", "completed_at:  2030-01-01T00:00:09Z"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestTierD_DelayedTaskCancel_NoArgExitsOne(t *testing.T) {
 	resetJSONOut(t)
 	if code := cmdDelayedTaskCancel(nil); code != 1 {

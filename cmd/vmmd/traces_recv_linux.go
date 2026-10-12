@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// startTraceReceiver registers the ADR-934 guest trace channel when the
+// startTraceReceiver registers the ADR-958 guest trace channel when the
 // installation enables it.
 func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM) (func(), error) {
 	if os.Getenv("FAAS_GUEST_TRACING_ENABLED") != "1" {

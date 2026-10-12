@@ -120,6 +120,7 @@ func TestWorkerScopedPoolChangesOnlySelectedEnvironment(t *testing.T) {
 			if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, scope, 0, TriggerWorkerPool); err != nil {
 				t.Fatal(err)
 			}
+			engine.WaitWorkerStops()
 			after, _ := store.InstanceByID(ctx, selected.ID)
 			other, _ := store.InstanceByID(ctx, neighbor.ID)
 			if after.State != string(state.StateStopped) || other.State != string(state.StateRunning) || vmm.stopInstanceOnNodeN != 1 {
@@ -128,6 +129,7 @@ func TestWorkerScopedPoolChangesOnlySelectedEnvironment(t *testing.T) {
 			if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, scope, 2, TriggerWorkerPool); err != nil {
 				t.Fatal(err)
 			}
+			engine.WaitWorkerStops()
 			counts := scopedWorkerCounts(t, store, app.ID)
 			if counts[scope] != 2 || counts[neighborScope] != 1 || engine.ledger.Concurrency(app.ID) != 3 {
 				t.Fatalf("scoped scale-out = %v, ledger=%d", counts, engine.ledger.Concurrency(app.ID))
@@ -151,6 +153,7 @@ func testWorkerScopedDemandLifecycle(t *testing.T, store state.Store) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	// Pro's three-worker account cap includes staging's existing resident.
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 2 || counts["staging"] != 1 || vmm.coldBoots != 2 {
@@ -163,6 +166,7 @@ func testWorkerScopedDemandLifecycle(t *testing.T, store state.Store) {
 	}
 	// Lifecycle notifications use the same scoped demand contract as ticks.
 	engine.ReconcileWorkerApp(ctx, app.ID)
+	engine.WaitWorkerStops()
 	counts = scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 0 || counts["staging"] != 1 || vmm.stopInstanceOnNodeN != 2 {
 		t.Fatalf("scoped scale-in = %v, stops=%d", counts, vmm.stopInstanceOnNodeN)
@@ -192,6 +196,7 @@ func TestWorkerScopedCooldownDoesNotHoldColdNeighbor(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 1 || counts["staging"] != 2 {
 		t.Fatalf("cooldown crossed environment boundary: %v", counts)
@@ -220,6 +225,7 @@ func TestWorkerScopedCooldownRetainsTerminationHistory(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if scopedWorkerCounts(t, store, app.ID)["default"] != 1 || vmm.stopInstanceOnNodeN != 1 {
 		t.Fatal("first scale-in should not inherit an admission cooldown")
 	}
@@ -229,6 +235,7 @@ func TestWorkerScopedCooldownRetainsTerminationHistory(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if scopedWorkerCounts(t, store, app.ID)["default"] != 1 || vmm.stopInstanceOnNodeN != 1 {
 		t.Fatal("removed replica's termination did not hold the next scale-in")
 	}
@@ -236,6 +243,7 @@ func TestWorkerScopedCooldownRetainsTerminationHistory(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if scopedWorkerCounts(t, store, app.ID)["default"] != 0 || vmm.stopInstanceOnNodeN != 2 {
 		t.Fatal("expired scoped cooldown retained an empty pool")
 	}
@@ -263,6 +271,7 @@ func TestWorkerScopedPoolRetiresOnlySelectedOldGeneration(t *testing.T) {
 	if err := engine.ReconcileWorkerPoolForScope(context.Background(), app.ID, "default", 1, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	for id, want := range map[string]string{old.ID: string(state.StateStopped), latest.ID: string(state.StateRunning), neighbor.ID: string(state.StateRunning)} {
 		got, err := store.InstanceByID(context.Background(), id)
 		if err != nil || got.State != want {
@@ -287,6 +296,7 @@ func TestWorkerScopedPoolHoldsDuringMigration(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("migration granted pool teardown: %v", err)
 	}
+	engine.WaitWorkerStops()
 	if vmm.destroys != 0 || vmm.stopInstanceOnNodeN != 0 || vmm.coldBoots != 0 {
 		t.Fatal("migration hold mutated a VM")
 	}
@@ -294,6 +304,7 @@ func TestWorkerScopedPoolHoldsDuringMigration(t *testing.T) {
 	if err := engine.ReconcileWorkerPoolForScope(context.Background(), app.ID, "staging", 0, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	got, _ := store.InstanceByID(context.Background(), ins.ID)
 	other, _ := store.InstanceByID(context.Background(), neighbor.ID)
 	if got.State != string(state.StateMigrating) || other.State != string(state.StateStopped) {
@@ -314,6 +325,7 @@ func TestWorkerScopedPoolHonorsManifestReplicaBounds(t *testing.T) {
 		if err := engine.ReconcileWorkerPoolForScope(context.Background(), app.ID, "default", desired, TriggerWorkerPool); err != nil {
 			t.Fatal(err)
 		}
+		engine.WaitWorkerStops()
 		counts := scopedWorkerCounts(t, store, app.ID)
 		if counts["default"] != 2 || counts["staging"] != 0 {
 			t.Fatalf("replica bounds or environment ignored: %v", counts)
@@ -341,6 +353,7 @@ func TestWorkerScopedDemandKeepsBindingCapsIndependent(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 3 || counts["staging"] != 1 {
 		t.Fatalf("scoped binding demand = %v; want default=3 staging=1", counts)
@@ -386,6 +399,7 @@ func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *test
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 1 || counts["staging"] != 0 || vmm.stopInstanceOnNodeN != 1 || vmm.coldBoots != 0 {
 		t.Fatalf("retirement changed leased scope or admitted workers: counts=%v stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
@@ -396,6 +410,7 @@ func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *test
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts = scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 0 || counts["staging"] != 0 || vmm.stopInstanceOnNodeN != 2 || vmm.coldBoots != 0 {
 		t.Fatalf("completed lease did not release retirement hold: counts=%v stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
@@ -435,6 +450,7 @@ func TestWorkerScopedDemandReadFailurePreservesAllPools(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err == nil {
 		t.Fatal("missing demand was treated as an empty queue")
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 1 || counts["staging"] != 1 || vmm.stopInstanceOnNodeN != 0 || vmm.coldBoots != 0 {
 		t.Fatalf("read failure mutated fleet: %v, stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
@@ -451,10 +467,12 @@ func TestWorkerScopedPoolRejectsUnqualifiedScope(t *testing.T) {
 		if err := engine.ReconcileWorkerPoolForScope(context.Background(), app.ID, scope, 0, ""); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("scope %q accepted: %v", scope, err)
 		}
+		engine.WaitWorkerStops()
 	}
 	if err := engine.ReconcileWorkerPoolForScope(context.Background(), app.ID, "default", -1, ""); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if vmm.stopInstanceOnNodeN != 0 {
 		t.Fatal("invalid selector stopped workers")
 	}
@@ -483,6 +501,7 @@ func TestWorkerScopedDemandArbitratesTargetsAndDoesNotBroadcastLag(t *testing.T)
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["default"] != 4 || counts["staging"] != 1 {
 		t.Fatalf("scoped arbitration = %v; want default=4 staging=1", counts)
@@ -498,6 +517,7 @@ func TestWorkerScopedDemandArbitratesTargetsAndDoesNotBroadcastLag(t *testing.T)
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounter(t, ops, "schedd_scale_up_decisions_total", map[string]string{"app": app.ID, "outcome": "admit"}); got != 2 {
 		t.Fatalf("unchanged fleet reported another admission: %v", got)
 	}
@@ -541,6 +561,7 @@ func TestWorkerScopedDemandUnknownLagPreservesFleet(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(context.Background(), app.ID, TriggerWorkerPool); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("unscoped lag authorized environment mutation: %v", err)
 	}
+	engine.WaitWorkerStops()
 	if scopedWorkerCounts(t, store, app.ID)["staging"] != 1 || vmm.stopInstanceOnNodeN != 0 {
 		t.Fatal("missing lag removed neighboring worker")
 	}
@@ -578,6 +599,7 @@ func TestWorkerCustomMetricScalesOnFreshAppBacklog(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatalf("bootstrap worker before first custom metric: %v", err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
 		t.Fatalf("missing initial metric should start the configured minimum of 1 worker, got %d", got)
 	}
@@ -587,6 +609,7 @@ func TestWorkerCustomMetricScalesOnFreshAppBacklog(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 5 {
 		t.Fatalf("fresh custom backlog desired ceil(10/2)=5 replicas, got %d", got)
 	}
@@ -596,8 +619,110 @@ func TestWorkerCustomMetricScalesOnFreshAppBacklog(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
 		t.Fatalf("empty custom backlog should return to the minimum of 1 replica, got %d", got)
+	}
+}
+
+func TestWorkerCustomMetricScalesFromZeroAndBackToZero(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "mcp-worker-zero@example.test", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "mcp-task-observer", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1,
+		Manifest: state.AppManifest{
+			ExecutionMode:  api.ExecutionModeWorker,
+			WorkerReplicas: &state.WorkerScaling{Min: 1, Max: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observerDeployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: observer.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-task-observer", Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, observerDeployment.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	seedScopedWorker(t, store, observer, observerDeployment)
+	metricName := "mcp_tasks_outstanding"
+	target := 2.0
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: "mcp-worker-zero", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 5,
+		Manifest: state.AppManifest{
+			ExecutionMode: api.ExecutionModeWorker,
+			WorkerReplicas: &state.WorkerScaling{
+				Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName,
+				Target: target, ObserverAppSlug: observer.Slug,
+			},
+		},
+		ScalingPolicy: &state.ScalingPolicy{MinInstances: 0, MaxInstances: 5,
+			Target: &state.ScalingTarget{Metric: api.ScalingMetricCustom, Name: metricName, Value: target}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:mcp-worker-zero", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	// With a separately running observer, the configured zero minimum stays
+	// empty until the observer publishes a fresh backlog metric.
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile before observer metric: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 {
+		t.Fatalf("worker pool before backlog = %d, want zero", got)
+	}
+
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 8, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile fresh backlog: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 4 {
+		t.Fatalf("backlog of 8 at target 2 should create four workers, got %d", got)
+	}
+
+	staleHeartbeat := time.Now().Add(-time.Duration(api.CustomMetricFreshnessSeconds+1) * time.Second)
+	if err := store.PutCustomMetric(ctx, app.ID, mcpTasksObserverHeartbeatMetric, 1, staleHeartbeat, api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, metricName, 0, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile while observer heartbeat is stale: %v", err)
+	}
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 4 {
+		t.Fatalf("stale observer heartbeat changed worker pool to %d replicas, want it held at 4", got)
+	}
+	if err := store.PutCustomMetric(ctx, app.ID, mcpTasksObserverHeartbeatMetric, 1, time.Now(), api.MaxCustomMetricsPerApp); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile with ready observer and fresh heartbeat: %v", err)
+	}
+	// adr: 426 — scale-in uses the background graceful-stop contract.
+	engine.WaitWorkerStops()
+	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 {
+		t.Fatalf("fresh zero metric should return worker pool to zero, got %d", got)
 	}
 }
 
@@ -644,6 +769,7 @@ func TestWorkerCustomMetricMissingOrStalePreservesFleet(t *testing.T) {
 			if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("missing custom metric error = %v, want conflict", err)
 			}
+			engine.WaitWorkerStops()
 			if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 {
 				t.Fatalf("missing/stale custom metric changed worker fleet to %d replicas", got)
 			}
@@ -705,6 +831,7 @@ func TestWorkerReconcileHonorsPinnedStageReplicas(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	counts := scopedWorkerCounts(t, store, app.ID)
 	if counts["staging"] != 2 || counts["default"] != 0 || vmm.stopInstanceOnNodeN != 1 {
 		t.Fatalf("deployed pool settings: counts=%v stops=%d", counts, vmm.stopInstanceOnNodeN)
@@ -717,6 +844,7 @@ func TestWorkerReconcileHonorsPinnedStageReplicas(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if counts := scopedWorkerCounts(t, store, app.ID); counts["staging"] != 2 || vmm.stopInstanceOnNodeN != 1 {
 		t.Fatalf("production mode changed stage pool: counts=%v stops=%d", counts, vmm.stopInstanceOnNodeN)
 	}

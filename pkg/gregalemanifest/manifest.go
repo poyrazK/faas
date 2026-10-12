@@ -399,6 +399,26 @@ type AsyncRoute struct {
 	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
 }
 
+// TemplatedPathWarnings lists async routes whose match_path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a route only matches
+// the literal braces and never receives traffic. These are warnings, not
+// errors, so an existing manifest keeps deploying; the edge-rules API already
+// rejects new templated paths.
+func (m *Manifest) TemplatedPathWarnings() []string {
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for i, route := range m.AsyncRoutes {
+		if glob, templated := api.EdgeRuleTemplatedPath(route.MatchPath); templated {
+			out = append(out, fmt.Sprintf(
+				"async_routes[%d].match_path %q is an OpenAPI template, not a glob, so the route never matches a request; use %q",
+				i, route.MatchPath, glob))
+		}
+	}
+	return out
+}
+
 // Validate checks the manifest-only constraints for an async route. API-level
 // action validation is shared by constructing the same DTO used by edge rules.
 func (r AsyncRoute) Validate(index int) error {
@@ -1415,9 +1435,12 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
-	Release       *ReleaseConfig        `yaml:"release,omitempty"`
-	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
-	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
+	// Functions declares several functions deployed from one manifest, each
+	// as its own app (ADR-985). Mutually exclusive with Function.
+	Functions []FunctionSpec   `yaml:"functions,omitempty"`
+	Release   *ReleaseConfig   `yaml:"release,omitempty"`
+	Lifecycle *LifecycleConfig `yaml:"lifecycle,omitempty"`
+	Scaling   *ScalingConfig   `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
 	// inherited by invocations unless a binding or invocation overrides it.
 	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
@@ -1701,21 +1724,23 @@ func (w *WorkerSpec) DrainTimeoutSeconds() int {
 
 // WorkerScaleSpec defines autoscaling parameters for background workers.
 type WorkerScaleSpec struct {
-	Min    int     `yaml:"min"`
-	Max    int     `yaml:"max"`
-	Metric string  `yaml:"metric"`
-	Name   string  `yaml:"name,omitempty"`
-	Target float64 `yaml:"target,omitempty"`
+	Min             int     `yaml:"min"`
+	Max             int     `yaml:"max"`
+	Metric          string  `yaml:"metric"`
+	Name            string  `yaml:"name,omitempty"`
+	Target          float64 `yaml:"target,omitempty"`
+	ObserverAppSlug string  `yaml:"observer_app_slug,omitempty"`
 }
 
 // ToAPI converts WorkerScaleSpec to api.WorkerScaling.
 func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	return &api.WorkerScaling{
-		Min:    s.Min,
-		Max:    s.Max,
-		Metric: s.Metric,
-		Name:   s.Name,
-		Target: s.Target,
+		Min:             s.Min,
+		Max:             s.Max,
+		Metric:          s.Metric,
+		Name:            s.Name,
+		Target:          s.Target,
+		ObserverAppSlug: s.ObserverAppSlug,
 	}
 }
 
@@ -1771,6 +1796,14 @@ func (s WorkerScaleSpec) Validate() error {
 	if s.Max < s.Min {
 		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
 	}
+	if s.ObserverAppSlug != "" {
+		if !api.ValidAppSlug(s.ObserverAppSlug) {
+			return fmt.Errorf("observer_app_slug %q is not a valid app slug", s.ObserverAppSlug)
+		}
+		if s.Metric != api.ScalingMetricCustom || s.Name != "mcp_tasks_outstanding" {
+			return fmt.Errorf("observer_app_slug requires the mcp_tasks_outstanding custom metric")
+		}
+	}
 	if s.Metric == "" {
 		if s.Name != "" || s.Target != 0 {
 			return fmt.Errorf("name and target require a worker metric")
@@ -1779,6 +1812,9 @@ func (s WorkerScaleSpec) Validate() error {
 	}
 	if problem := api.ValidateScalingTargets("worker.scale", []api.ScalingTarget{{Metric: s.Metric, Name: s.Name, Value: s.Target}}); problem != nil {
 		return fmt.Errorf("%s", problem.Detail)
+	}
+	if s.Min == 0 && s.Metric == api.ScalingMetricCustom && s.Name == "mcp_tasks_outstanding" && s.ObserverAppSlug == "" {
+		return fmt.Errorf("observer_app_slug is required to scale MCP task workers to zero")
 	}
 	return nil
 }
@@ -2028,6 +2064,9 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if err := m.validateFunctions(plan); err != nil {
+		return err
 	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
