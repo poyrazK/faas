@@ -56,7 +56,7 @@ jobs:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
     # Cold, serialized compilation of APID and its importers needs headroom.
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
