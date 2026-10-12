@@ -346,6 +346,36 @@
   failed_when: false
   notify: reload postgresql
 
+# Memory sizing from host RAM (defaults/main.yml). shared_buffers is
+# PGC_POSTMASTER, so a changed file restarts PostgreSQL once. Debian's
+# postgresql.conf includes conf.d; a host without that directory (the chroot
+# image build) keeps the packaged defaults.
+- name: postgres — find the conf.d include directory
+  ansible.builtin.stat:
+    path: "{{ postgres_config_dir }}/conf.d"
+  register: postgres_conf_d
+
+- name: postgres — size memory from host RAM (restart-needed)
+  ansible.builtin.template:
+    src: 90-gregale-memory.conf.j2
+    dest: "{{ postgres_config_dir }}/conf.d/90-gregale-memory.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  when:
+    - postgres_conf_d.stat.isdir | default(false)
+    - (ansible_memtotal_mb | int) >= (faas_postgres_memory_sizing_min_mb | int)
+  notify: restart postgresql
+
+- name: postgres — keep the packaged memory defaults on a small host
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/conf.d/90-gregale-memory.conf"
+    state: absent
+  when:
+    - postgres_conf_d.stat.isdir | default(false)
+    - (ansible_memtotal_mb | int) < (faas_postgres_memory_sizing_min_mb | int)
+  notify: restart postgresql
+
 # TCP keepalives — reap backends whose client host vanished.
 #
 # Without these, Postgres inherits the OS default (tcp_keepalives_idle 7200 s)

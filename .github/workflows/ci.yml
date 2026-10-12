@@ -1653,6 +1653,7 @@ jobs:
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
           ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
+          ansible-playbook -i localhost, -c local tests/postgres_memory_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
