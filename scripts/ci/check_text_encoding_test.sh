@@ -132,6 +132,19 @@ func page(rows []string, limit int) []string {
 EOF
 expect accept "rule2 ignores slice pagination" "$d"
 
+# --- RULE 2: emptying a buffer for reuse is not truncation. -----------------
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/h.go" <<'EOF'
+package thing
+
+type scanner struct{ line []byte }
+
+func (s *scanner) reset() {
+	s.line = s.line[:0]
+}
+EOF
+expect accept "rule2 ignores a [:0] buffer reset" "$d"
+
 # --- The real tree must be clean. -------------------------------------------
 repo_root="$(cd "${here}/../.." && pwd)"
 if bash "$checker" "$repo_root" >/dev/null 2>&1; then
