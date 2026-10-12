@@ -58,12 +58,7 @@ func MCPProbeRPCMethod(body []byte) (string, bool) {
 	if len(body) == 0 || len(body) > MCPProbeMaxRequestBytes {
 		return "", false
 	}
-	var request struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Method  string          `json:"method"`
-		Params  json.RawMessage `json:"params"`
-	}
+	var request MCPProbeRPCRequest
 	if json.Unmarshal(body, &request) != nil || !mcpProbeJSONHasUniqueKeys(body) || request.JSONRPC != "2.0" {
 		return "", false
 	}

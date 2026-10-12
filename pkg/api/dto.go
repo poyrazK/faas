@@ -4364,6 +4364,15 @@ type MCPInstanceHealthProbeResponse struct {
 	HealthBodyTooLarge bool   `json:"health_body_too_large,omitempty"`
 }
 
+// MCPProbeRPCRequest is the read-only JSON-RPC envelope accepted by an instance
+// protocol probe. IDs may be strings or numbers and are omitted for notifications.
+type MCPProbeRPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
 // MCPInstanceProtocolProbeRequest carries one bounded, read-only JSON-RPC
 // request to a fixed endpoint on one platform-selected running instance.
 type MCPInstanceProtocolProbeRequest struct {
