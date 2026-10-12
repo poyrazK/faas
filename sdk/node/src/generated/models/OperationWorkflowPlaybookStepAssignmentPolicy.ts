@@ -23,7 +23,7 @@ export type OperationWorkflowPlaybookStepAssignmentPolicy = {
    */
   owner: string;
   /**
-   * OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list review; bounded to seven days.
+   * OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days.
    */
   complete_after_seconds: number;
 };

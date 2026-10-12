@@ -81390,6 +81390,42 @@ components:
         checklist_complete:
           type: boolean
           description: OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never proves application state or execution.
+    OperationWorkflowPlaybookStepDependency:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookStepDependency. One step waits for all named prerequisite reviews in the same pinned outcome checklist; unknown labels, self-edges, duplicates and cycles are rejected.
+      required: [label, prerequisites]
+      properties:
+        label:
+          type: string
+          description: OperationWorkflowPlaybookStepDependency.label. Exact declared dependent step label, unique within the graph.
+        prerequisites:
+          type: array
+          minItems: 1
+          maxItems: 15
+          uniqueItems: true
+          description: OperationWorkflowPlaybookStepDependency.prerequisites. Exact declared prerequisites; each must be reviewed complete with its own prerequisites satisfied.
+          items:
+            type: string
+    OperationWorkflowPlaybookStepReadiness:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution authority.
+      required: [status, waiting_for, review_suggested]
+      properties:
+        status:
+          type: string
+          enum: [ready, waiting]
+          description: OperationWorkflowPlaybookStepReadiness.status. Whether all declared prerequisite reviews are complete and their dependency chains satisfied.
+        waiting_for:
+          type: array
+          maxItems: 15
+          description: OperationWorkflowPlaybookStepReadiness.waiting_for. Direct prerequisites currently missing complete and ready reviews; empty for ready steps.
+          items:
+            type: string
+        review_suggested:
+          type: boolean
+          description: OperationWorkflowPlaybookStepReadiness.review_suggested. A previously completed dependent step now has unsatisfied prerequisites; original review is preserved.
     OperationWorkflowPlaybookStepAssignmentPolicy:
       type: object
       additionalProperties: false
@@ -81419,7 +81455,7 @@ components:
           format: int64
           minimum: 1
           maximum: 604800
-          description: OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list review; bounded to seven days.
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days.
     OperationWorkflowPlaybookStepAssignmentReference:
       type: object
       additionalProperties: false
@@ -81442,6 +81478,9 @@ components:
       description: OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
       required: [progress_id, outcome_code, item_index, label, status, due_at, last_step_owner, manual_owner, history, history_truncated]
       properties:
+        readiness:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
+          description: OperationWorkflowPlaybookStepAssignment.readiness. Latest accepted prerequisite observation; existing human queue coordination remains unchanged when prerequisites reopen.
         source_revision:
           type: integer
           format: int64
@@ -81493,6 +81532,12 @@ components:
       description: OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
       required: [outcome_code, description]
       properties:
+        follow_up_dependencies:
+          type: array
+          maxItems: 16
+          description: OperationWorkflowPlaybookOutcomeGuidance.follow_up_dependencies. Optional pinned acyclic prerequisite graph within this outcome's follow-up steps.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookStepDependency'
         follow_up_assignments:
           type: array
           maxItems: 16
@@ -81867,6 +81912,9 @@ components:
       - note
       - evidence
       properties:
+        readiness:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
+          description: OperationWorkflowPlaybookProgressItem.readiness. Ephemeral human-step prerequisite check, separate from application transition readiness.
         owner:
           type: string
           maxLength: 256

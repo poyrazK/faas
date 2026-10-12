@@ -129,6 +129,7 @@ type OperationWorkflowPlaybookProgressUpdateRequest struct {
 	Evidence    []OperationWorkflowPlaybookEvidence `json:"evidence"`
 }
 type OperationWorkflowPlaybookProgressItem struct {
+	Readiness     *OperationWorkflowPlaybookStepReadiness `json:"readiness,omitempty"`
 	Owner         string                                  `json:"owner,omitempty"`
 	DueAt         *time.Time                              `json:"due_at,omitempty"`
 	EvidenceCheck *OperationWorkflowPlaybookEvidenceCheck `json:"evidence_check,omitempty"`
@@ -344,11 +345,12 @@ type OperationWorkflowPlaybookOutcomeAcceptancePolicy struct {
 
 // Plain-text application guidance conveys meaning and suggested human follow-up, never execution authority.
 type OperationWorkflowPlaybookOutcomeGuidance struct {
-	FollowUpAssignments []OperationWorkflowPlaybookStepAssignmentPolicy `json:"follow_up_assignments,omitempty" yaml:"follow_up_assignments,omitempty" toml:"follow_up_assignments"`
-	FollowUpSteps       []string                                        `json:"follow_up_steps,omitempty" yaml:"follow_up_steps,omitempty" toml:"follow_up_steps"`
-	OutcomeCode         string                                          `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
-	Description         string                                          `json:"description" yaml:"description" toml:"description"`
-	SuggestedFollowUp   string                                          `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
+	FollowUpDependencies []OperationWorkflowPlaybookStepDependency       `json:"follow_up_dependencies,omitempty" yaml:"follow_up_dependencies,omitempty" toml:"follow_up_dependencies"`
+	FollowUpAssignments  []OperationWorkflowPlaybookStepAssignmentPolicy `json:"follow_up_assignments,omitempty" yaml:"follow_up_assignments,omitempty" toml:"follow_up_assignments"`
+	FollowUpSteps        []string                                        `json:"follow_up_steps,omitempty" yaml:"follow_up_steps,omitempty" toml:"follow_up_steps"`
+	OutcomeCode          string                                          `json:"outcome_code" yaml:"outcome_code" toml:"outcome_code"`
+	Description          string                                          `json:"description" yaml:"description" toml:"description"`
+	SuggestedFollowUp    string                                          `json:"suggested_follow_up,omitempty" yaml:"suggested_follow_up,omitempty" toml:"suggested_follow_up"`
 }
 
 // Outcome follow-up tracks human work against the immutable reported outcome captured on first review.
@@ -373,6 +375,7 @@ type OperationWorkflowPlaybookStepAssignmentReference struct {
 	Notification OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
 }
 type OperationWorkflowPlaybookStepAssignment struct {
+	Readiness        *OperationWorkflowPlaybookStepReadiness       `json:"readiness,omitempty"`
 	SourceRevision   int64                                         `json:"source_revision,omitempty"`
 	Response         *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
 	ProgressID       string                                        `json:"progress_id"`
@@ -385,4 +388,14 @@ type OperationWorkflowPlaybookStepAssignment struct {
 	ManualOwner      bool                                          `json:"manual_owner"`
 	History          []OperationWorkflowReadinessAssignmentChange  `json:"history"`
 	HistoryTruncated bool                                          `json:"history_truncated"`
+}
+
+type OperationWorkflowPlaybookStepDependency struct {
+	Label         string   `json:"label" yaml:"label" toml:"label"`
+	Prerequisites []string `json:"prerequisites" yaml:"prerequisites" toml:"prerequisites"`
+}
+type OperationWorkflowPlaybookStepReadiness struct {
+	Status          string   `json:"status"`
+	WaitingFor      []string `json:"waiting_for"`
+	ReviewSuggested bool     `json:"review_suggested"`
 }

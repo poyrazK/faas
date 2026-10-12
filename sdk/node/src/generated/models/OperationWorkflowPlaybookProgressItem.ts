@@ -4,10 +4,15 @@
 /* eslint-disable */
 import type { OperationWorkflowPlaybookEvidence } from './OperationWorkflowPlaybookEvidence.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
+import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflowPlaybookStepReadiness.js';
 /**
  * OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgressItem = {
+  /**
+   * OperationWorkflowPlaybookProgressItem.readiness. Ephemeral human-step prerequisite check, separate from application transition readiness.
+   */
+  readiness?: OperationWorkflowPlaybookStepReadiness;
   /**
    * OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded with the step review.
    */

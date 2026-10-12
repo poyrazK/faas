@@ -200,6 +200,9 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	if err != nil {
 		return *p, err
 	}
+	if req.Status == "completed" && followUpIndex >= 0 && playbookStepReadiness(*p, req.OutcomeCode, *items, req.ItemIndex).Status != "ready" {
+		return *p, ErrConflict
+	}
 	if req.Status == "completed" && len(evidence) == 0 {
 		return *p, ErrInvalidArgument
 	}
@@ -212,9 +215,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 			for _, policy := range guidance.FollowUpAssignments {
 				for i := range *items {
 					if (*items)[i].Label == policy.Label {
-						due := now.Add(time.Duration(policy.CompleteAfterSeconds) * time.Second)
 						(*items)[i].Owner = policy.Owner
-						(*items)[i].DueAt = &due
 					}
 				}
 			}
@@ -229,6 +230,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	p.Revision++
 	p.UpdatedAt = now
 	if followUpIndex >= 0 {
+		activateReadyPlaybookStepDeadlines(p, followUpIndex, now)
 		follow := &p.OutcomeFollowUps[followUpIndex]
 		follow.CompletedCount = 0
 		for _, step := range follow.Items {
@@ -245,7 +247,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		}
 	}
 	p.ChecklistComplete = len(p.Items) > 0 && p.CompletedCount == len(p.Items)
-	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{OutcomeCode: req.OutcomeCode, Revision: p.Revision, ItemIndex: req.ItemIndex, Item: item, At: now, Actor: actor})
+	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{OutcomeCode: req.OutcomeCode, Revision: p.Revision, ItemIndex: req.ItemIndex, Item: (*items)[req.ItemIndex], At: now, Actor: actor})
 	if len(p.History) > api.OperationWorkflowPlaybookProgressHistoryMax {
 		p.History = p.History[len(p.History)-api.OperationWorkflowPlaybookProgressHistoryMax:]
 		p.HistoryTruncated = true
@@ -257,10 +259,19 @@ func clonePlaybookProgress(p api.OperationWorkflowPlaybookProgress) api.Operatio
 	p.Items = slices.Clone(p.Items)
 	for i := range p.Items {
 		p.Items[i].EvidenceCheck = nil
+		p.Items[i].Readiness = nil
 	}
 	p.History = slices.Clone(p.History)
 	for i := range p.History {
 		p.History[i].Item.EvidenceCheck = nil
+		p.History[i].Item.Readiness = nil
+	}
+	p.OutcomeFollowUps = slices.Clone(p.OutcomeFollowUps)
+	for i := range p.OutcomeFollowUps {
+		p.OutcomeFollowUps[i].Items = slices.Clone(p.OutcomeFollowUps[i].Items)
+		for j := range p.OutcomeFollowUps[i].Items {
+			p.OutcomeFollowUps[i].Items[j].Readiness = nil
+		}
 	}
 	raw, _ := json.Marshal(p)
 	var out api.OperationWorkflowPlaybookProgress

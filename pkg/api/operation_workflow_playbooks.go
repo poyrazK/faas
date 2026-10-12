@@ -77,6 +77,11 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 				labels[label] = true
 			}
 
+			dependencies, err := canonicalPlaybookStepDependencies(guidance.FollowUpDependencies, guidance.FollowUpSteps)
+			if err != nil {
+				return nil, err
+			}
+			r.OutcomeGuidance[j].FollowUpDependencies = dependencies
 			assignmentCount += len(guidance.FollowUpAssignments)
 			if assignmentCount > OperationWorkflowPlaybookEvidenceMax {
 				return nil, fmt.Errorf("workflow playbook step assignments exceed their limit")
@@ -138,5 +143,55 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 		}
 	}
 	slices.SortFunc(out, func(a, b OperationWorkflowPlaybook) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+func canonicalPlaybookStepDependencies(input []OperationWorkflowPlaybookStepDependency, labels []string) ([]OperationWorkflowPlaybookStepDependency, error) {
+	if len(input) > OperationWorkflowPlaybookEvidenceMax {
+		return nil, fmt.Errorf("workflow playbook step dependencies exceed their limit")
+	}
+	out := slices.Clone(input)
+	edges := map[string][]string{}
+	for i := range out {
+		d := &out[i]
+		if !slices.Contains(labels, d.Label) || len(d.Prerequisites) == 0 || len(d.Prerequisites) >= OperationWorkflowPlaybookEvidenceMax {
+			return nil, fmt.Errorf("workflow playbook step dependency is invalid")
+		}
+		if _, exists := edges[d.Label]; exists {
+			return nil, fmt.Errorf("workflow playbook step dependency is duplicated")
+		}
+		d.Prerequisites = slices.Clone(d.Prerequisites)
+		slices.Sort(d.Prerequisites)
+		for j, label := range d.Prerequisites {
+			if label == d.Label || !slices.Contains(labels, label) || (j > 0 && d.Prerequisites[j-1] == label) {
+				return nil, fmt.Errorf("workflow playbook step prerequisite is invalid or duplicated")
+			}
+		}
+		edges[d.Label] = d.Prerequisites
+	}
+	colors := map[string]int{}
+	var visit func(string) bool
+	visit = func(label string) bool {
+		if colors[label] == 1 {
+			return false
+		}
+		if colors[label] == 2 {
+			return true
+		}
+		colors[label] = 1
+		for _, before := range edges[label] {
+			if !visit(before) {
+				return false
+			}
+		}
+		colors[label] = 2
+		return true
+	}
+	for label := range edges {
+		if !visit(label) {
+			return nil, fmt.Errorf("workflow playbook step dependencies contain a cycle")
+		}
+	}
+	slices.SortFunc(out, func(a, b OperationWorkflowPlaybookStepDependency) int { return strings.Compare(a.Label, b.Label) })
 	return out, nil
 }

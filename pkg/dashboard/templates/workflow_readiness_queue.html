@@ -311,6 +311,7 @@
  };
  window.renderPlaybookStepAssignment = (parent,step) => {
   if(!step)return;
+  if(step.readiness){text(parent,'Step readiness: '+step.readiness.status+(step.readiness.waiting_for.length ? ' · Waiting for '+step.readiness.waiting_for.join(', ') : ''));if(step.readiness.review_suggested)text(parent,'Review suggested: a completed step has reopened prerequisites.');}
   window.renderEscalationResponse(parent,step.response);
   text(parent,'Assigned outcome step · '+step.outcome_code+' · '+step.label+' · '+step.status+' · original deadline '+new Date(step.due_at).toLocaleString());
   if(step.manual_owner)text(parent,'Queue ownership is protected after a manual change or fallback; checklist owner updates do not overwrite it.');
@@ -770,11 +771,12 @@
     const saved=p.outcome_follow_ups?.find(f=>f.outcome_code===guidance.outcome_code);
     const current=p.business_outcome;
     const canStart=current && ['achieved','different_outcome'].includes(current.status) && current.evidence.reported_outcome_code===guidance.outcome_code;
-    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[],owner:guidance.follow_up_assignments?.find(a=>a.label===label)?.owner||''})),not_started:true,can_start:canStart});
+    lists.push(saved || {outcome_code:guidance.outcome_code,items:guidance.follow_up_steps.map(label=>({label,status:'pending',note:'',evidence:[],owner:guidance.follow_up_assignments?.find(a=>a.label===label)?.owner||'',readiness:{status:guidance.follow_up_dependencies?.some(d=>d.label===label)?'waiting':'ready',waiting_for:guidance.follow_up_dependencies?.find(d=>d.label===label)?.prerequisites||[],review_suggested:false}})),not_started:true,can_start:canStart});
    }
    for(const list of lists){
     if(list.outcome_code){section.append(node('h5','Outcome follow-up · '+list.outcome_code));section.append(node('p',list.not_started ? (list.can_start ? 'First review will capture this current reported outcome.' : 'A fresh report of this outcome is required before the first review.') : list.completed_count+'/'+list.items.length+' steps reviewed complete'+(list.checklist_complete?' · Follow-up checklist complete':'')));if(list.observation){const evidence=list.observation.evidence;section.append(node('p','Original outcome report '+evidence.report_id+' · Revision '+evidence.state_revision+' · Captured '+clock(evidence.checked_at)+'. Later application changes do not rewrite this record.'));} }
     list.items.forEach((item,index)=>{
+    if(item.readiness){section.append(node('p','Step readiness: '+item.readiness.status+(item.readiness.waiting_for.length ? ' · Waiting for '+item.readiness.waiting_for.join(', ') : '')));if(item.readiness.review_suggested)section.append(node('p','Review suggested: this completed step now has unmet prerequisites. Its original review is preserved.'));}
     if(item.evidence_check){
      const check=item.evidence_check;
      section.append(node('p','Current requirement for '+item.label+': '+check.status.replace(/_/g,' ')+' · '+check.reason.replace(/_/g,' ')+' · Checked '+clock(check.checked_at)));
@@ -785,15 +787,16 @@
     for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
     if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}
     const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
-    for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;status.append(option);}status.value=item.status;
+    for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;if(value==='completed' && item.readiness?.status==='waiting')option.disabled=true;status.append(option);}status.value=item.status;
     const assignment=p.playbook.outcome_guidance?.find(g=>g.outcome_code===list.outcome_code)?.follow_up_assignments?.find(a=>a.label===item.label);if(assignment?.acknowledge_after_seconds)edit.append(node('p','Acknowledge within '+assignment.acknowledge_after_seconds+' seconds after queue delivery'+(assignment.fallback_owner ? ' · Fallback team: '+assignment.fallback_owner : '')+'.'));
-    const owner=list.outcome_code ? node('input','') : null;if(owner){owner.value=item.owner||'';owner.maxLength=256;owner.setAttribute('aria-label','Assigned team for '+item.label);edit.append(node('p','Step owner'+(item.due_at?' · Due '+clock(item.due_at):' · Deadline starts on first list review')),owner);}
+    const owner=list.outcome_code ? node('input','') : null;if(owner){owner.value=item.owner||'';owner.maxLength=256;owner.setAttribute('aria-label','Assigned team for '+item.label);edit.append(node('p','Step owner'+(item.due_at?' · Due '+clock(item.due_at):' · Deadline starts when this step first becomes ready')),owner);}
     const note=node('textarea','');note.required=true;note.maxLength=1024;note.value=item.note;note.setAttribute('aria-label','Review note for '+item.label);
     const evidence=node('textarea','');evidence.value=(item.evidence||[]).map(e=>e.operation_id+(e.milestone_id?'/'+e.milestone_id:'')).join('\n');evidence.setAttribute('aria-label','Evidence references for '+item.label);
     edit.append(node('p','Evidence: one operation UUID per line, optionally followed by /milestone-ID. Completed items require evidence.'),status,note,evidence);
     const button=node('button','Save review');button.type='submit';edit.append(button);
     edit.addEventListener('submit',event=>{event.preventDefault();if(!edit.reportValidity())return;
      const refs=evidence.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const separator=line.indexOf('/');return separator<0?{operation_id:line}:{operation_id:line.slice(0,separator),milestone_id:line.slice(separator+1)};});
+     if(status.value==='completed' && item.readiness?.status==='waiting'){message.textContent='Review the prerequisite steps complete before completing this step.';return;}
      if(status.value==='completed'&&!refs.length){message.textContent='Completed items require operation or milestone evidence.';return;}
      void savePlaybookProgress(p.id,{revision:p.revision,outcome_code:list.outcome_code || undefined,owner:owner ? owner.value : undefined,item_index:index,status:status.value,note:note.value,evidence:refs},button);
     });section.append(edit);

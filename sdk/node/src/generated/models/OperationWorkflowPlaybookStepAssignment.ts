@@ -2,12 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflowPlaybookStepReadiness.js';
 import type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';
 import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
 /**
  * OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
  */
 export type OperationWorkflowPlaybookStepAssignment = {
+  /**
+   * OperationWorkflowPlaybookStepAssignment.readiness. Latest accepted prerequisite observation; existing human queue coordination remains unchanged when prerequisites reopen.
+   */
+  readiness?: OperationWorkflowPlaybookStepReadiness;
   /**
    * OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain intervening owner changes; incomplete source history prevents fallback.
    */

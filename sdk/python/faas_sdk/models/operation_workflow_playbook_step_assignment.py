@@ -14,6 +14,7 @@ from ..models.operation_workflow_playbook_step_assignment_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
     from ..models.operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
     from ..models.operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
 
@@ -51,6 +52,9 @@ class OperationWorkflowPlaybookStepAssignment:
     """OperationWorkflowPlaybookStepAssignment.history. Bounded retained checklist and inbox assignment changes."""
     history_truncated: bool
     """OperationWorkflowPlaybookStepAssignment.history_truncated. Older ownership changes are no longer retained."""
+    readiness: OperationWorkflowPlaybookStepReadiness | Unset = UNSET
+    """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
+    authority."""
     source_revision: int | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain
     intervening owner changes; incomplete source history prevents fallback."""
@@ -83,6 +87,10 @@ class OperationWorkflowPlaybookStepAssignment:
 
         history_truncated = self.history_truncated
 
+        readiness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness, Unset):
+            readiness = self.readiness.to_dict()
+
         source_revision = self.source_revision
 
         response: dict[str, Any] | Unset = UNSET
@@ -105,6 +113,8 @@ class OperationWorkflowPlaybookStepAssignment:
                 "history_truncated": history_truncated,
             }
         )
+        if readiness is not UNSET:
+            field_dict["readiness"] = readiness
         if source_revision is not UNSET:
             field_dict["source_revision"] = source_revision
         if response is not UNSET:
@@ -114,6 +124,7 @@ class OperationWorkflowPlaybookStepAssignment:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
         from ..models.operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
         from ..models.operation_workflow_readiness_escalation_response import (
             OperationWorkflowReadinessEscalationResponse,
@@ -145,6 +156,13 @@ class OperationWorkflowPlaybookStepAssignment:
 
         history_truncated = d.pop("history_truncated")
 
+        _readiness = d.pop("readiness", UNSET)
+        readiness: OperationWorkflowPlaybookStepReadiness | Unset
+        if isinstance(_readiness, Unset):
+            readiness = UNSET
+        else:
+            readiness = OperationWorkflowPlaybookStepReadiness.from_dict(_readiness)
+
         source_revision = d.pop("source_revision", UNSET)
 
         _response = d.pop("response", UNSET)
@@ -165,6 +183,7 @@ class OperationWorkflowPlaybookStepAssignment:
             manual_owner=manual_owner,
             history=history,
             history_truncated=history_truncated,
+            readiness=readiness,
             source_revision=source_revision,
             response=response,
         )

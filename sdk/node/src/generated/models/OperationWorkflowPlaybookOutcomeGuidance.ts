@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookStepAssignmentPolicy } from './OperationWorkflowPlaybookStepAssignmentPolicy.js';
+import type { OperationWorkflowPlaybookStepDependency } from './OperationWorkflowPlaybookStepDependency.js';
 /**
  * OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes outcome acceptance.
  */
 export type OperationWorkflowPlaybookOutcomeGuidance = {
+  /**
+   * OperationWorkflowPlaybookOutcomeGuidance.follow_up_dependencies. Optional pinned acyclic prerequisite graph within this outcome's follow-up steps.
+   */
+  follow_up_dependencies?: Array<OperationWorkflowPlaybookStepDependency>;
   /**
    * OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for declared steps; at most 16 assignments across the entire playbook.
    */

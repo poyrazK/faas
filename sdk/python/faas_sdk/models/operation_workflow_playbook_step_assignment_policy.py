@@ -23,7 +23,7 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
     """OperationWorkflowPlaybookStepAssignmentPolicy.owner. Required trimmed control-free UTF-8 team label."""
     complete_after_seconds: int
     """OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list
-    review; bounded to seven days."""
+    review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days."""
     acknowledge_after_seconds: int | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue
     delivery; zero disables. Separate from the original step completion deadline."""

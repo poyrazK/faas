@@ -824,7 +824,7 @@ export interface OperationWorkflowPlaybookGuidance { playbook: OperationWorkflow
 export interface OperationWorkflowPlaybookProgressStartRequest { playbook_id: string; playbook_version: number; contract_version: number; reporting_operation_id: string }
 export interface OperationWorkflowPlaybookEvidence { operation_id: string; milestone_id?: string }
 export interface OperationWorkflowPlaybookProgressUpdateRequest { owner?: string; outcome_code?: string; revision: number; item_index: number; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[] }
-export interface OperationWorkflowPlaybookProgressItem { owner?: string; due_at?: string; evidence_check?: OperationWorkflowPlaybookEvidenceCheck; label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
+export interface OperationWorkflowPlaybookProgressItem { readiness?: OperationWorkflowPlaybookStepReadiness; owner?: string; due_at?: string; evidence_check?: OperationWorkflowPlaybookEvidenceCheck; label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
 export interface OperationWorkflowPlaybookProgressChange { outcome_code?: string; revision: number; item_index: number; item: OperationWorkflowPlaybookProgressItem; at: string; actor: string }
 export interface OperationWorkflowPlaybookProgress { outcome_follow_ups?: OperationWorkflowPlaybookOutcomeFollowUp[]; outcome_deadline_at?: string; start_state_revision?: number; business_outcome?: OperationWorkflowPlaybookBusinessOutcome; disposition?: 'active' | 'retired' | 'replaced'; latest_review?: OperationWorkflowPlaybookReview; reviews?: OperationWorkflowPlaybookReview[]; reviews_truncated?: boolean; replaces_progress_ids?: string[]; applicability?: OperationWorkflowPlaybookApplicability; id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }
 
@@ -851,10 +851,13 @@ export interface OperationWorkflowPlaybookCompletionReviewEvent { review_id: str
 
 export interface OperationWorkflowPlaybookOutcomeAcceptancePolicy { alternative_outcome_codes: string[] }
 
-export interface OperationWorkflowPlaybookOutcomeGuidance { follow_up_assignments?: OperationWorkflowPlaybookStepAssignmentPolicy[]; follow_up_steps?: string[]; outcome_code: string; description: string; suggested_follow_up?: string }
+export interface OperationWorkflowPlaybookOutcomeGuidance { follow_up_dependencies?: OperationWorkflowPlaybookStepDependency[]; follow_up_assignments?: OperationWorkflowPlaybookStepAssignmentPolicy[]; follow_up_steps?: string[]; outcome_code: string; description: string; suggested_follow_up?: string }
 
 export interface OperationWorkflowPlaybookOutcomeFollowUp { outcome_code: string; observation: OperationWorkflowPlaybookBusinessOutcome; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean }
 
 export interface OperationWorkflowPlaybookStepAssignmentPolicy { acknowledge_after_seconds?: number; fallback_owner?: string; label: string; owner: string; complete_after_seconds: number }
 export interface OperationWorkflowPlaybookStepAssignmentReference { outcome_code: string; item_index: number; notification: OperationWorkflowReadinessOutcomeEscalationReference }
-export interface OperationWorkflowPlaybookStepAssignment { source_revision?: number; response?: OperationWorkflowReadinessEscalationResponse; progress_id: string; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; due_at: string; last_step_owner: string; manual_owner: boolean; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
+export interface OperationWorkflowPlaybookStepAssignment { readiness?: OperationWorkflowPlaybookStepReadiness; source_revision?: number; response?: OperationWorkflowReadinessEscalationResponse; progress_id: string; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; due_at: string; last_step_owner: string; manual_owner: boolean; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
+
+export interface OperationWorkflowPlaybookStepDependency { label: string; prerequisites: string[] }
+export interface OperationWorkflowPlaybookStepReadiness { status: 'ready' | 'waiting'; waiting_for: string[]; review_suggested: boolean }

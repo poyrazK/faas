@@ -9,6 +9,7 @@ import (
 func projectWorkflowPlaybookBusinessOutcomes(out *api.OperationWorkflowCase) {
 	for i := range out.PlaybookProgress {
 		p := &out.PlaybookProgress[i]
+		projectPlaybookStepReadiness(p)
 		p.BusinessOutcome = nil
 		if p.Playbook.ExpectedOutcomeCode == "" {
 			continue

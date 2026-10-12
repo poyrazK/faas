@@ -13,7 +13,7 @@ func publishPlaybookStepAssignments(r *readinessSubscriptionRecord, index int, p
 	notices := []api.OperationWorkflowReadinessNotification{}
 	for _, follow := range p.OutcomeFollowUps {
 		for itemIndex, item := range follow.Items {
-			if item.DueAt == nil || item.Status == "completed" || len(w.StepAssignments) >= api.OperationWorkflowPlaybookEvidenceMax {
+			if item.DueAt == nil || item.Status == "completed" || playbookStepReadiness(p, follow.OutcomeCode, follow.Items, itemIndex).Status != "ready" || len(w.StepAssignments) >= api.OperationWorkflowPlaybookEvidenceMax {
 				continue
 			}
 			if slices.ContainsFunc(w.StepAssignments, func(ref api.OperationWorkflowPlaybookStepAssignmentReference) bool {
@@ -23,7 +23,8 @@ func publishPlaybookStepAssignments(r *readinessSubscriptionRecord, index int, p
 			}
 			n := readinessSubscriptionNotify(r, "playbook_outcome_step_assigned", "An outcome follow-up step is assigned for human review. Its deadline is pinned to list enrollment; completion does not establish application execution.", nil)
 			n.PlaybookEvidence = &api.OperationWorkflowPlaybookEvidenceEvent{WatchID: w.ID, ProgressID: w.ProgressID, PlatformTenantID: w.PlatformTenantID, Subject: w.Subject, Workflow: w.Workflow, InstanceID: w.InstanceID, ContractVersion: w.ContractVersion, PlaybookID: w.PlaybookID, PlaybookVersion: w.PlaybookVersion, CheckedAt: w.EvaluatedAt, Changes: []api.OperationWorkflowPlaybookEvidenceChange{}, BusinessOutcome: &follow.Observation}
-			n.PlaybookStep = &api.OperationWorkflowPlaybookStepAssignment{SourceRevision: p.Revision, ProgressID: p.ID, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Label: item.Label, Status: item.Status, DueAt: *item.DueAt, LastStepOwner: item.Owner, History: []api.OperationWorkflowReadinessAssignmentChange{}}
+			ready := playbookStepReadiness(p, follow.OutcomeCode, follow.Items, itemIndex)
+			n.PlaybookStep = &api.OperationWorkflowPlaybookStepAssignment{Readiness: &ready, SourceRevision: p.Revision, ProgressID: p.ID, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Label: item.Label, Status: item.Status, DueAt: *item.DueAt, LastStepOwner: item.Owner, History: []api.OperationWorkflowReadinessAssignmentChange{}}
 			n.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: item.Owner, FollowUpAt: item.DueAt, UpdatedAt: n.CreatedAt, UpdatedBy: "system:playbook-step-assignment"}
 			for _, guidance := range p.Playbook.OutcomeGuidance {
 				if guidance.OutcomeCode != follow.OutcomeCode {
@@ -66,6 +67,13 @@ func syncPlaybookStepAssignment(n api.OperationWorkflowReadinessNotification, p 
 		return n, false
 	}
 	step := *n.PlaybookStep
+	for _, follow := range p.OutcomeFollowUps {
+		if follow.OutcomeCode == step.OutcomeCode {
+			ready := playbookStepReadiness(p, follow.OutcomeCode, follow.Items, step.ItemIndex)
+			step.Readiness = &ready
+			break
+		}
+	}
 	c := *n.Coordination
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if step.Response != nil && p.Revision > step.SourceRevision {

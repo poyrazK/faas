@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
     from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+    from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookProgressItem")
@@ -36,6 +37,9 @@ class OperationWorkflowPlaybookProgressItem:
     evidence: list[OperationWorkflowPlaybookEvidence]
     """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
     availability is not guaranteed."""
+    readiness: OperationWorkflowPlaybookStepReadiness | Unset = UNSET
+    """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
+    authority."""
     owner: str | Unset = UNSET
     """OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded
     with the step review."""
@@ -64,6 +68,10 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = evidence_item_data.to_dict()
             evidence.append(evidence_item)
 
+        readiness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness, Unset):
+            readiness = self.readiness.to_dict()
+
         owner = self.owner
 
         due_at: str | Unset = UNSET
@@ -90,6 +98,8 @@ class OperationWorkflowPlaybookProgressItem:
                 "evidence": evidence,
             }
         )
+        if readiness is not UNSET:
+            field_dict["readiness"] = readiness
         if owner is not UNSET:
             field_dict["owner"] = owner
         if due_at is not UNSET:
@@ -107,6 +117,7 @@ class OperationWorkflowPlaybookProgressItem:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
+        from ..models.operation_workflow_playbook_step_readiness import OperationWorkflowPlaybookStepReadiness
 
         d = dict(src_dict)
         label = d.pop("label")
@@ -121,6 +132,13 @@ class OperationWorkflowPlaybookProgressItem:
             evidence_item = OperationWorkflowPlaybookEvidence.from_dict(evidence_item_data)
 
             evidence.append(evidence_item)
+
+        _readiness = d.pop("readiness", UNSET)
+        readiness: OperationWorkflowPlaybookStepReadiness | Unset
+        if isinstance(_readiness, Unset):
+            readiness = UNSET
+        else:
+            readiness = OperationWorkflowPlaybookStepReadiness.from_dict(_readiness)
 
         owner = d.pop("owner", UNSET)
 
@@ -152,6 +170,7 @@ class OperationWorkflowPlaybookProgressItem:
             status=status,
             note=note,
             evidence=evidence,
+            readiness=readiness,
             owner=owner,
             due_at=due_at,
             evidence_check=evidence_check,
