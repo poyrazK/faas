@@ -4,10 +4,15 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlaybookEvidenceChange } from './OperationWorkflowPlaybookEvidenceChange.js';
+import type { OperationWorkflowPlaybookOutcomeChange } from './OperationWorkflowPlaybookOutcomeChange.js';
 /**
  * OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceEvent = {
+  /**
+   * OperationWorkflowPlaybookEvidenceEvent.outcome_change. Optional grouped business-result change; requirement changes may be empty for an outcome-only notification.
+   */
+  outcome_change?: OperationWorkflowPlaybookOutcomeChange;
   /**
    * OperationWorkflowPlaybookEvidenceEvent.watch_id. Pinned case identity or retained watch metadata.
    */

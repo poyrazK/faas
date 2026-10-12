@@ -1,0 +1,23 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
+/**
+ * OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
+ */
+export type OperationWorkflowPlaybookBusinessOutcome = {
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.status. Only a fresh comparable explicit terminal outcome establishes achieved or different outcome. Missing state, stale reports, missing terminal outcome and contract changes are unavailable.
+   */
+  status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable';
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.reason. Stable comparison reason; changing clocks and report revisions alone does not change the business result.
+   */
+  reason: string;
+  /**
+   * OperationWorkflowPlaybookBusinessOutcome.evidence. Shared application-outcome observation with report identity and clock. Under unavailable, the inner evaluator status is unknown and any reported code is diagnostic, not a comparable business result.
+   */
+  evidence: OperationWorkflowReadinessBusinessOutcome;
+};
+

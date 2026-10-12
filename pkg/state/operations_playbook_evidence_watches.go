@@ -64,11 +64,12 @@ func configurePlaybookEvidenceWatch(ctx context.Context, store playbookEvidenceW
 	if r.Progress.Revision != req.ProgressRevision || req.Enabled && !workflowPlaybookProgressActive(r.Progress) {
 		return out, ErrConflict
 	}
-	if req.Enabled && (len(r.Progress.Playbook.EvidenceRequirements) == 0 || len(playbookEvidenceWatchItems(r.Progress)) != len(r.Progress.Playbook.EvidenceRequirements)) {
+	if req.Enabled && (len(r.Progress.Playbook.EvidenceRequirements) == 0 && r.Progress.Playbook.ExpectedOutcomeCode == "" || len(playbookEvidenceWatchItems(r.Progress)) != len(r.Progress.Playbook.EvidenceRequirements)) {
 		return out, ErrInvalidArgument
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	out = api.OperationWorkflowPlaybookEvidenceWatch{ID: uuid.NewString(), ProgressID: r.Progress.ID, SubscriptionID: req.SubscriptionID, Status: "active", Owner: req.Owner, Subject: api.OperationSubject{Type: r.SubjectType, ID: r.SubjectID}, Workflow: r.Workflow, InstanceID: r.InstanceID, ContractVersion: r.Progress.ContractVersion, PlaybookID: r.Progress.Playbook.ID, PlaybookVersion: r.Progress.Playbook.Version, CreatedAt: now, UpdatedAt: now, UpdatedBy: actor, EvaluatedAt: overview.EvidenceCheckedAt, Items: playbookEvidenceWatchItems(r.Progress)}
+	out = api.OperationWorkflowPlaybookEvidenceWatch{ID: uuid.NewString(), ProgressID: r.Progress.ID, SubscriptionID: req.SubscriptionID, Status: "active", Owner: req.Owner, Subject: api.OperationSubject{Type: r.SubjectType, ID: r.SubjectID}, Workflow: r.Workflow, InstanceID: r.InstanceID, ContractVersion: r.Progress.ContractVersion, PlaybookID: r.Progress.Playbook.ID, PlaybookVersion: r.Progress.Playbook.Version, CreatedAt: now, UpdatedAt: now, UpdatedBy: actor, EvaluatedAt: overview.EvidenceCheckedAt, Items: playbookEvidenceWatchItems(r.Progress), BusinessOutcome: r.Progress.BusinessOutcome}
+	guardPlaybookWatchOutcome(&out, out.BusinessOutcome, r.Progress.StartStateRevision)
 	if operator {
 		out.PlatformTenantID = r.Tenant
 	}
@@ -97,10 +98,16 @@ func configurePlaybookEvidenceWatchRecord(r *readinessSubscriptionRecord, identi
 		}
 		w.ID = old.ID
 		w.CreatedAt = old.CreatedAt
+		if req.Enabled {
+			w.OutcomeStateRevision = max(w.OutcomeStateRevision, old.OutcomeStateRevision)
+			guardPlaybookWatchOutcome(&w, w.BusinessOutcome, w.OutcomeStateRevision)
+		}
 		w.Revision = old.Revision + 1
 		if !req.Enabled {
 			w.Status, w.StopReason = "stopped", "disabled"
 			w.Items = old.Items
+			w.BusinessOutcome = old.BusinessOutcome
+			w.OutcomeStateRevision = old.OutcomeStateRevision
 			w.EvaluatedAt = old.EvaluatedAt
 		}
 		r.Subscription.PlaybookEvidenceWatches[index] = w
@@ -125,6 +132,7 @@ func configurePlaybookEvidenceWatchRecord(r *readinessSubscriptionRecord, identi
 }
 
 type playbookEvidenceWatchUpdate struct {
+	OutcomeChange    *api.OperationWorkflowPlaybookOutcomeChange
 	Watch            api.OperationWorkflowPlaybookEvidenceWatch
 	ProgressRevision int64
 	Changes          []api.OperationWorkflowPlaybookEvidenceChange
@@ -185,6 +193,10 @@ func evaluatePlaybookEvidenceWatches(ctx context.Context, store readinessSubscri
 			if !workflowPlaybookProgressActive(p) {
 				break
 			}
+			guardPlaybookWatchOutcome(&u.Watch, p.BusinessOutcome, p.StartStateRevision)
+			if w.BusinessOutcome != nil && u.Watch.BusinessOutcome != nil && playbookBusinessOutcomeKey(w.BusinessOutcome) != playbookBusinessOutcomeKey(u.Watch.BusinessOutcome) {
+				u.OutcomeChange = &api.OperationWorkflowPlaybookOutcomeChange{BeforeStatus: w.BusinessOutcome.Status, BeforeReason: w.BusinessOutcome.Reason, BeforeReportedOutcomeCode: w.BusinessOutcome.Evidence.ReportedOutcomeCode, After: *u.Watch.BusinessOutcome}
+			}
 			u.Watch.Items = playbookEvidenceWatchItems(p)
 			u.Watch.EvaluatedAt = overview.EvidenceCheckedAt
 			for _, current := range u.Watch.Items {
@@ -225,12 +237,16 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 		return nil
 	}
 	r.Subscription.PlaybookEvidenceWatches[index] = u.Watch
-	if len(u.Changes) == 0 {
+	if len(u.Changes) == 0 && u.OutcomeChange == nil {
 		return nil
 	}
 	w := u.Watch
 	n := readinessSubscriptionNotify(r, "playbook_evidence_changed", "Watched checklist evidence changed. Review the reported requirements; original human reviews and application state are preserved.", nil)
-	n.PlaybookEvidence = &api.OperationWorkflowPlaybookEvidenceEvent{WatchID: w.ID, ProgressID: w.ProgressID, PlatformTenantID: w.PlatformTenantID, Subject: w.Subject, Workflow: w.Workflow, InstanceID: w.InstanceID, ContractVersion: w.ContractVersion, PlaybookID: w.PlaybookID, PlaybookVersion: w.PlaybookVersion, CheckedAt: w.EvaluatedAt, Changes: u.Changes}
+	if u.OutcomeChange != nil {
+		n.Kind = "playbook_outcome_changed"
+		n.Explanation = "The application-reported business result for a watched playbook changed. Human checklist progress is preserved; causation and execution authority are not inferred."
+	}
+	n.PlaybookEvidence = &api.OperationWorkflowPlaybookEvidenceEvent{WatchID: w.ID, ProgressID: w.ProgressID, PlatformTenantID: w.PlatformTenantID, Subject: w.Subject, Workflow: w.Workflow, InstanceID: w.InstanceID, ContractVersion: w.ContractVersion, PlaybookID: w.PlaybookID, PlaybookVersion: w.PlaybookVersion, CheckedAt: w.EvaluatedAt, Changes: append([]api.OperationWorkflowPlaybookEvidenceChange{}, u.Changes...), OutcomeChange: u.OutcomeChange}
 	n.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: w.Owner, UpdatedAt: n.CreatedAt, UpdatedBy: "system:playbook-evidence-watch"}
 	return []api.OperationWorkflowReadinessNotification{n}
 }
@@ -276,5 +292,6 @@ func readPlaybookEvidenceWatchCase(ctx context.Context, store workflowCaseBacken
 		}
 	}
 	projectWorkflowPlaybookEvidence(&out, source)
+	projectWorkflowPlaybookBusinessOutcomes(&out)
 	return out, nil
 }

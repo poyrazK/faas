@@ -3,11 +3,20 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
 import type { OperationWorkflowPlaybookEvidenceCheck } from './OperationWorkflowPlaybookEvidenceCheck.js';
 /**
  * OperationWorkflowPlaybookEvidenceWatch. Opt-in durable checklist evidence monitoring; advisory observations preserve human reviews and application business authority.
  */
 export type OperationWorkflowPlaybookEvidenceWatch = {
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for the pinned expectation; retained report regressions cannot establish a new result. Preserved across configuration edits and unavailable observations.
+   */
+  outcome_state_revision?: number;
+  /**
+   * OperationWorkflowPlaybookEvidenceWatch.business_outcome. Latest retained observation of the pinned expected outcome. Enabling captures a silent baseline; ongoing polling observes result changes independently of human completion.
+   */
+  business_outcome?: OperationWorkflowPlaybookBusinessOutcome;
   /**
    * OperationWorkflowPlaybookEvidenceWatch.id. Pinned case identity or retained watch metadata.
    */

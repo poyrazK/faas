@@ -96,6 +96,9 @@ func startWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookPr
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// Stable identity makes a retried start return the original checklist, never reset it.
 	r.Progress = api.OperationWorkflowPlaybookProgress{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.key()+"/"+op.DefinitionID+"/"+matched.Playbook.ID+"/"+fmt.Sprint(matched.Playbook.Version)+"/"+fmt.Sprint(matched.ContractVersion))).String(), Revision: 1, Disposition: "active", Playbook: matched.Playbook, ContractVersion: matched.ContractVersion, DefinitionID: op.DefinitionID, ReportingOperationID: op.ID, Items: []api.OperationWorkflowPlaybookProgressItem{}, History: []api.OperationWorkflowPlaybookProgressChange{}, CreatedAt: now, UpdatedAt: now, CreatedBy: actor}
+	if matched.Playbook.ExpectedOutcomeCode != "" && overview.Instance != nil && overview.Instance.State != nil {
+		r.Progress.StartStateRevision = overview.Instance.State.Revision
+	}
 	for _, label := range matched.Playbook.RequiredEvidence {
 		r.Progress.Items = append(r.Progress.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
 	}
@@ -163,6 +166,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	return store.savePlaybookProgress(ctx, r, req.Revision)
 }
 func clonePlaybookProgress(p api.OperationWorkflowPlaybookProgress) api.OperationWorkflowPlaybookProgress {
+	p.BusinessOutcome = nil
 	p.Items = slices.Clone(p.Items)
 	for i := range p.Items {
 		p.Items[i].EvidenceCheck = nil

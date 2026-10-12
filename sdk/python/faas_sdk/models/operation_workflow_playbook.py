@@ -38,6 +38,9 @@ class OperationWorkflowPlaybook:
     summary: str
     """OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or surrounding
     whitespace."""
+    expected_outcome_code: str | Unset = UNSET
+    """OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with
+    guidance; does not infer causation or close coordination."""
     owner: str | Unset = UNSET
     """OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
     ownership."""
@@ -64,6 +67,8 @@ class OperationWorkflowPlaybook:
         match_code = self.match_code
 
         summary = self.summary
+
+        expected_outcome_code = self.expected_outcome_code
 
         owner = self.owner
 
@@ -93,6 +98,8 @@ class OperationWorkflowPlaybook:
                 "summary": summary,
             }
         )
+        if expected_outcome_code is not UNSET:
+            field_dict["expected_outcome_code"] = expected_outcome_code
         if owner is not UNSET:
             field_dict["owner"] = owner
         if evidence_requirements is not UNSET:
@@ -123,6 +130,8 @@ class OperationWorkflowPlaybook:
 
         summary = d.pop("summary")
 
+        expected_outcome_code = d.pop("expected_outcome_code", UNSET)
+
         owner = d.pop("owner", UNSET)
 
         _evidence_requirements = d.pop("evidence_requirements", UNSET)
@@ -148,6 +157,7 @@ class OperationWorkflowPlaybook:
             match_kind=match_kind,
             match_code=match_code,
             summary=summary,
+            expected_outcome_code=expected_outcome_code,
             owner=owner,
             evidence_requirements=evidence_requirements,
             required_evidence=required_evidence,

@@ -265,8 +265,10 @@
  };
  window.renderReadinessVerification = (parent, notification, scope) => {
   if(notification.playbook_evidence){const event=notification.playbook_evidence;
-   text(parent,'Checklist evidence changed · '+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
+   text(parent,'Playbook observation changed · '+event.playbook_id+' v'+event.playbook_version+' · '+event.subject.type+': '+event.subject.id+' · '+event.workflow+' / '+event.instance_id);
    text(parent,'Checklist '+event.progress_id+' · Checked '+new Date(event.checked_at).toLocaleString());
+   if(event.outcome_change){const change=event.outcome_change,current=change.after;text(parent,'Business result: '+change.before_status.replace(/_/g,' ')+' → '+current.status.replace(/_/g,' '));text(parent,'Expected: '+current.evidence.expected_outcome_code+' · Reported: '+(current.evidence.reported_outcome_code||'none'));text(parent,current.evidence.explanation);text(parent,'Checklist completion and this application result are separate observations.');}
+
    for(const change of event.changes){text(parent,change.after.requirement.label+': '+change.before_status+' → '+change.after.status+' · '+change.after.reason.replace(/_/g,' '));if(change.after.review_suggested)text(parent,'Review suggested for this completed checklist item.');}
    text(parent,'These observations preserve the original checklist reviews. Refresh the case for current evidence.');
    const open=document.createElement('button');open.type='button';open.textContent='Open current workflow case';open.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('gregale-workflow-case',{detail:{scope,tenant_id:event.platform_tenant_id||panel.dataset.tenant,subject_type:event.subject.type,subject_id:event.subject.id,workflow:event.workflow,instance_id:event.instance_id}})));parent.append(open);
@@ -678,8 +680,8 @@
   });section.append(form);
  }
  function mountPlaybookEvidenceWatch(section,p){
-  if(!(p.playbook.evidence_requirements||[]).length)return;
-  const form=node('form','');section.append(form);form.append(node('p','Monitor requirement changes in a readiness inbox. Enabling saves a baseline; later changes notify the responsible team.'));
+  if(!(p.playbook.evidence_requirements||[]).length&&!p.playbook.expected_outcome_code)return;
+  const form=node('form','');section.append(form);form.append(node('p','Monitor requirement and business-result changes in a readiness inbox. Enabling saves a baseline; later changes notify the responsible team.'));
   const destinations=node('select','');destinations.setAttribute('aria-label','Monitoring inbox for '+p.playbook.id);const empty=node('option','Load inbox destinations');empty.value='';destinations.append(empty);form.append(destinations);
   const refresh=node('button','Load monitoring destinations');refresh.type='button';form.append(refresh);
   const enabled=node('input','');enabled.type='checkbox';enabled.disabled=(p.disposition||'active')!=='active';const enabledLabel=node('label','Monitor this checklist ');enabledLabel.append(enabled);form.append(enabledLabel);
@@ -702,6 +704,8 @@
    const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
    section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
    mountPlaybookEvidenceWatch(section,p);
+   if(p.business_outcome){const result=p.business_outcome,evidence=result.evidence;section.append(node('p','Business result: '+result.status.replace(/_/g,' ')+' · Expected: '+evidence.expected_outcome_code+' · Reported: '+(evidence.reported_outcome_code||'none')),node('p',evidence.explanation),node('p','Observed '+clock(evidence.checked_at)+' · '+result.reason.replace(/_/g,' ')));if(evidence.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(evidence.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Business-result reporting operation');link.href=url.href;section.append(link);}section.append(node('p','This application result does not close the checklist or establish that the playbook caused it.'));}
+
    const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
    if(!p.items.length)section.append(node('p','No evidence items were declared; checklist completion is not asserted.'));
    const applicability=p.applicability;

@@ -45,6 +45,13 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 	e.Status = n.Kind
 	if event := n.PlaybookEvidence; event != nil {
 		e.PlaybookProgressID = event.ProgressID
+		if event.OutcomeChange != nil {
+			outcome := event.OutcomeChange.After.Evidence
+			e.ExpectedOutcomeCode = outcome.ExpectedOutcomeCode
+			e.ReportedOutcomeCode = outcome.ReportedOutcomeCode
+			e.StateRevision = outcome.StateRevision
+			links(e, outcome.ReportingOperationID)
+		}
 		for _, change := range event.Changes {
 			links(e, change.After.ReportingOperationID)
 			if change.After.Evidence != nil {

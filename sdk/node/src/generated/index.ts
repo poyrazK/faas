@@ -1211,6 +1211,7 @@ export type { OperationWorkflowPlannedEffect } from './models/OperationWorkflowP
 export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkflowPlannedInvariant.js';
 export type { OperationWorkflowPlaybook } from './models/OperationWorkflowPlaybook.js';
 export type { OperationWorkflowPlaybookApplicability } from './models/OperationWorkflowPlaybookApplicability.js';
+export type { OperationWorkflowPlaybookBusinessOutcome } from './models/OperationWorkflowPlaybookBusinessOutcome.js';
 export type { OperationWorkflowPlaybookEvidence } from './models/OperationWorkflowPlaybookEvidence.js';
 export type { OperationWorkflowPlaybookEvidenceChange } from './models/OperationWorkflowPlaybookEvidenceChange.js';
 export type { OperationWorkflowPlaybookEvidenceCheck } from './models/OperationWorkflowPlaybookEvidenceCheck.js';
@@ -1219,6 +1220,7 @@ export type { OperationWorkflowPlaybookEvidenceRequirement } from './models/Oper
 export type { OperationWorkflowPlaybookEvidenceWatch } from './models/OperationWorkflowPlaybookEvidenceWatch.js';
 export type { OperationWorkflowPlaybookEvidenceWatchRequest } from './models/OperationWorkflowPlaybookEvidenceWatchRequest.js';
 export type { OperationWorkflowPlaybookGuidance } from './models/OperationWorkflowPlaybookGuidance.js';
+export type { OperationWorkflowPlaybookOutcomeChange } from './models/OperationWorkflowPlaybookOutcomeChange.js';
 export type { OperationWorkflowPlaybookProgress } from './models/OperationWorkflowPlaybookProgress.js';
 export type { OperationWorkflowPlaybookProgressChange } from './models/OperationWorkflowPlaybookProgressChange.js';
 export type { OperationWorkflowPlaybookProgressItem } from './models/OperationWorkflowPlaybookProgressItem.js';

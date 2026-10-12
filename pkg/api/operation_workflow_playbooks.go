@@ -39,6 +39,9 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 		if ValidateOperationWorkflowName(r.ID) != nil || seen[r.ID] || r.Version < 1 || r.Version > OperationWorkflowContractVersionMax || !slices.Contains([]string{"blocker", "missing_milestone", "missing_dependency", "pending_verification", "requirement"}, r.MatchKind) || !workflowPlaybookMatchCode.MatchString(r.MatchCode) || !text(r.Summary, OperationWorkflowPlaybookSummaryMaxBytes, true) || !text(r.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, false) || len(r.RequiredEvidence) > OperationWorkflowPlaybookEvidenceMax || !link(r.RunbookURL) || !link(r.ActionURL) {
 			return nil, fmt.Errorf("workflow playbook is invalid or duplicated")
 		}
+		if r.ExpectedOutcomeCode != "" && ValidateOperationWorkflowStateName(r.ExpectedOutcomeCode) != nil {
+			return nil, fmt.Errorf("workflow playbook expected outcome code is invalid")
+		}
 		seen[r.ID] = true
 		r.RequiredEvidence = append([]string(nil), r.RequiredEvidence...)
 		slices.Sort(r.RequiredEvidence)

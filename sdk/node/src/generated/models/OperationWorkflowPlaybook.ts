@@ -8,6 +8,10 @@ import type { OperationWorkflowPlaybookEvidenceRequirement } from './OperationWo
  */
 export type OperationWorkflowPlaybook = {
   /**
+   * OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with guidance; does not infer causation or close coordination.
+   */
+  expected_outcome_code?: string;
+  /**
    * OperationWorkflowPlaybook.id. Unique bounded lowercase identifier within the workflow contract.
    */
   id: string;

@@ -79224,6 +79224,7 @@ components:
           - outcome_deadline_reached
           - escalation_response_overdue
           - playbook_evidence_changed
+          - playbook_outcome_changed
         created_at:
           type: string
           description: OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a
@@ -80912,6 +80913,15 @@ components:
         - evaluated_at
         - items
       properties:
+        outcome_state_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for the pinned expectation; retained report regressions cannot establish a new result. Preserved across configuration edits and unavailable observations.
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+          description: OperationWorkflowPlaybookEvidenceWatch.business_outcome. Latest retained observation of the pinned expected outcome. Enabling captures a silent baseline; ongoing polling observes result changes independently of human completion.
         id:
           type: string
           format: uuid
@@ -81050,6 +81060,9 @@ components:
         - checked_at
         - changes
       properties:
+        outcome_change:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookOutcomeChange'
+          description: OperationWorkflowPlaybookEvidenceEvent.outcome_change. Optional grouped business-result change; requirement changes may be empty for an outcome-only notification.
         watch_id:
           type: string
           format: uuid
@@ -81106,6 +81119,41 @@ components:
           description: OperationWorkflowPlaybookEvidenceEvent.changes. Grouped
             changes in requirement status or diagnostic reason; excludes observation
             clocks and report counters.
+    OperationWorkflowPlaybookBusinessOutcome:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently changes the expected outcome.
+      required: [status, reason, evidence]
+      properties:
+        status:
+          type: string
+          enum: [pending, achieved, different_outcome, unavailable]
+          description: OperationWorkflowPlaybookBusinessOutcome.status. Only a fresh comparable explicit terminal outcome establishes achieved or different outcome. Missing state, stale reports, missing terminal outcome and contract changes are unavailable.
+        reason:
+          type: string
+          description: OperationWorkflowPlaybookBusinessOutcome.reason. Stable comparison reason; changing clocks and report revisions alone does not change the business result.
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
+          description: OperationWorkflowPlaybookBusinessOutcome.evidence. Shared application-outcome observation with report identity and clock. Under unavailable, the inner evaluator status is unknown and any reported code is diagnostic, not a comparable business result.
+    OperationWorkflowPlaybookOutcomeChange:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookOutcomeChange. Saved before/after playbook result observation, separate from checklist review and business causation.
+      required: [before_status, before_reason, after]
+      properties:
+        before_status:
+          type: string
+          description: OperationWorkflowPlaybookOutcomeChange.before_status. Prior observed playbook business-result status.
+        before_reason:
+          type: string
+          description: OperationWorkflowPlaybookOutcomeChange.before_reason. Prior comparison reason.
+        before_reported_outcome_code:
+          type: string
+          maxLength: 64
+          description: OperationWorkflowPlaybookOutcomeChange.before_reported_outcome_code. Prior retained reported code, including diagnostic codes when comparability was unavailable.
+        after:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+          description: OperationWorkflowPlaybookOutcomeChange.after. New exact-case result and reporting evidence.
     OperationWorkflowPlaybookEvidenceRequirement:
       type: object
       additionalProperties: false
@@ -81200,6 +81248,12 @@ components:
         and links are never executed by Gregale.
       required: [id, version, summary, match_kind, match_code]
       properties:
+        expected_outcome_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9-]{0,63}$
+          description: OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with guidance; does not infer causation or close coordination.
         id:
           type: string
           description: OperationWorkflowPlaybook.id. Unique bounded lowercase identifier within the workflow contract.
@@ -81473,6 +81527,15 @@ components:
       - history
       - history_truncated
       properties:
+        start_state_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook with an expected outcome starts; earlier reports cannot establish its business result.
+        business_outcome:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
+          description: OperationWorkflowPlaybookProgress.business_outcome. Live exact-case result in case reads only; absent from durable progress, review history and mutation responses.
         disposition:
           type: string
           enum:

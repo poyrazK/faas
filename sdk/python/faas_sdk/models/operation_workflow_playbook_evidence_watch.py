@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
     from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
 
 
@@ -68,6 +69,14 @@ class OperationWorkflowPlaybookEvidenceWatch:
     items: list[OperationWorkflowPlaybookEvidenceCheck]
     """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
     checklist reviews."""
+    outcome_state_revision: int | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for
+    the pinned expectation; retained report regressions cannot establish a new result. Preserved across
+    configuration edits and unavailable observations."""
+    business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
+    changes the expected outcome."""
     stop_reason: str | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceWatch.stop_reason. Disabled or stopped because the exact checklist was
     closed or unavailable."""
@@ -113,6 +122,12 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        outcome_state_revision = self.outcome_state_revision
+
+        business_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome, Unset):
+            business_outcome = self.business_outcome.to_dict()
+
         stop_reason = self.stop_reason
 
         platform_tenant_id: str | Unset = UNSET
@@ -142,6 +157,10 @@ class OperationWorkflowPlaybookEvidenceWatch:
                 "items": items,
             }
         )
+        if outcome_state_revision is not UNSET:
+            field_dict["outcome_state_revision"] = outcome_state_revision
+        if business_outcome is not UNSET:
+            field_dict["business_outcome"] = business_outcome
         if stop_reason is not UNSET:
             field_dict["stop_reason"] = stop_reason
         if platform_tenant_id is not UNSET:
@@ -152,6 +171,7 @@ class OperationWorkflowPlaybookEvidenceWatch:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
         from ..models.operation_workflow_playbook_evidence_check import OperationWorkflowPlaybookEvidenceCheck
 
         d = dict(src_dict)
@@ -194,6 +214,15 @@ class OperationWorkflowPlaybookEvidenceWatch:
 
             items.append(items_item)
 
+        outcome_state_revision = d.pop("outcome_state_revision", UNSET)
+
+        _business_outcome = d.pop("business_outcome", UNSET)
+        business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset
+        if isinstance(_business_outcome, Unset):
+            business_outcome = UNSET
+        else:
+            business_outcome = OperationWorkflowPlaybookBusinessOutcome.from_dict(_business_outcome)
+
         stop_reason = d.pop("stop_reason", UNSET)
 
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
@@ -221,6 +250,8 @@ class OperationWorkflowPlaybookEvidenceWatch:
             updated_by=updated_by,
             evaluated_at=evaluated_at,
             items=items,
+            outcome_state_revision=outcome_state_revision,
+            business_outcome=business_outcome,
             stop_reason=stop_reason,
             platform_tenant_id=platform_tenant_id,
         )

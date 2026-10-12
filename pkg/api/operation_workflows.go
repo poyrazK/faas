@@ -116,6 +116,7 @@ type OperationWorkflowPlaybookEvidenceCheck struct {
 }
 
 type OperationWorkflowPlaybook struct {
+	ExpectedOutcomeCode  string                                         `json:"expected_outcome_code,omitempty" yaml:"expected_outcome_code,omitempty" toml:"expected_outcome_code"`
 	EvidenceRequirements []OperationWorkflowPlaybookEvidenceRequirement `json:"evidence_requirements,omitempty" yaml:"evidence_requirements,omitempty" toml:"evidence_requirements"`
 	ID                   string                                         `json:"id" yaml:"id" toml:"id"`
 	Version              int                                            `json:"version" yaml:"version" toml:"version"`
@@ -172,11 +173,13 @@ type OperationWorkflowPlaybookProgressChange struct {
 	Actor     string                                `json:"actor"`
 }
 type OperationWorkflowPlaybookProgress struct {
-	Disposition         string                            `json:"disposition,omitempty"`
-	LatestReview        *OperationWorkflowPlaybookReview  `json:"latest_review,omitempty"`
-	Reviews             []OperationWorkflowPlaybookReview `json:"reviews,omitempty"`
-	ReviewsTruncated    bool                              `json:"reviews_truncated,omitempty"`
-	ReplacesProgressIDs []string                          `json:"replaces_progress_ids,omitempty"`
+	StartStateRevision  int64                                     `json:"start_state_revision,omitempty"`
+	BusinessOutcome     *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
+	Disposition         string                                    `json:"disposition,omitempty"`
+	LatestReview        *OperationWorkflowPlaybookReview          `json:"latest_review,omitempty"`
+	Reviews             []OperationWorkflowPlaybookReview         `json:"reviews,omitempty"`
+	ReviewsTruncated    bool                                      `json:"reviews_truncated,omitempty"`
+	ReplacesProgressIDs []string                                  `json:"replaces_progress_ids,omitempty"`
 
 	Applicability        *OperationWorkflowPlaybookApplicability   `json:"applicability,omitempty"`
 	ID                   string                                    `json:"id"`
@@ -242,25 +245,27 @@ type OperationWorkflowPlaybookEvidenceWatchRequest struct {
 
 // Watch revisions fence configuration changes; polling does not advance them.
 type OperationWorkflowPlaybookEvidenceWatch struct {
-	ID               string                                   `json:"id"`
-	ProgressID       string                                   `json:"progress_id"`
-	SubscriptionID   string                                   `json:"subscription_id"`
-	Revision         int64                                    `json:"revision"`
-	Status           string                                   `json:"status"`
-	StopReason       string                                   `json:"stop_reason,omitempty"`
-	Owner            string                                   `json:"owner"`
-	PlatformTenantID string                                   `json:"platform_tenant_id,omitempty"`
-	Subject          OperationSubject                         `json:"subject"`
-	Workflow         string                                   `json:"workflow"`
-	InstanceID       string                                   `json:"instance_id"`
-	ContractVersion  int                                      `json:"contract_version"`
-	PlaybookID       string                                   `json:"playbook_id"`
-	PlaybookVersion  int                                      `json:"playbook_version"`
-	CreatedAt        time.Time                                `json:"created_at"`
-	UpdatedAt        time.Time                                `json:"updated_at"`
-	UpdatedBy        string                                   `json:"updated_by"`
-	EvaluatedAt      time.Time                                `json:"evaluated_at"`
-	Items            []OperationWorkflowPlaybookEvidenceCheck `json:"items"`
+	OutcomeStateRevision int64                                     `json:"outcome_state_revision,omitempty"`
+	BusinessOutcome      *OperationWorkflowPlaybookBusinessOutcome `json:"business_outcome,omitempty"`
+	ID                   string                                    `json:"id"`
+	ProgressID           string                                    `json:"progress_id"`
+	SubscriptionID       string                                    `json:"subscription_id"`
+	Revision             int64                                     `json:"revision"`
+	Status               string                                    `json:"status"`
+	StopReason           string                                    `json:"stop_reason,omitempty"`
+	Owner                string                                    `json:"owner"`
+	PlatformTenantID     string                                    `json:"platform_tenant_id,omitempty"`
+	Subject              OperationSubject                          `json:"subject"`
+	Workflow             string                                    `json:"workflow"`
+	InstanceID           string                                    `json:"instance_id"`
+	ContractVersion      int                                       `json:"contract_version"`
+	PlaybookID           string                                    `json:"playbook_id"`
+	PlaybookVersion      int                                       `json:"playbook_version"`
+	CreatedAt            time.Time                                 `json:"created_at"`
+	UpdatedAt            time.Time                                 `json:"updated_at"`
+	UpdatedBy            string                                    `json:"updated_by"`
+	EvaluatedAt          time.Time                                 `json:"evaluated_at"`
+	Items                []OperationWorkflowPlaybookEvidenceCheck  `json:"items"`
 }
 type OperationWorkflowPlaybookEvidenceChange struct {
 	BeforeStatus string                                 `json:"before_status"`
@@ -268,6 +273,7 @@ type OperationWorkflowPlaybookEvidenceChange struct {
 	After        OperationWorkflowPlaybookEvidenceCheck `json:"after"`
 }
 type OperationWorkflowPlaybookEvidenceEvent struct {
+	OutcomeChange    *OperationWorkflowPlaybookOutcomeChange   `json:"outcome_change,omitempty"`
 	WatchID          string                                    `json:"watch_id"`
 	ProgressID       string                                    `json:"progress_id"`
 	PlatformTenantID string                                    `json:"platform_tenant_id,omitempty"`
@@ -279,4 +285,17 @@ type OperationWorkflowPlaybookEvidenceEvent struct {
 	PlaybookVersion  int                                       `json:"playbook_version"`
 	CheckedAt        time.Time                                 `json:"checked_at"`
 	Changes          []OperationWorkflowPlaybookEvidenceChange `json:"changes"`
+}
+
+// Business results are observed separately from human progress and do not establish causation.
+type OperationWorkflowPlaybookBusinessOutcome struct {
+	Status   string                                    `json:"status"`
+	Reason   string                                    `json:"reason"`
+	Evidence OperationWorkflowReadinessBusinessOutcome `json:"evidence"`
+}
+type OperationWorkflowPlaybookOutcomeChange struct {
+	BeforeStatus              string                                   `json:"before_status"`
+	BeforeReason              string                                   `json:"before_reason"`
+	BeforeReportedOutcomeCode string                                   `json:"before_reported_outcome_code,omitempty"`
+	After                     OperationWorkflowPlaybookBusinessOutcome `json:"after"`
 }

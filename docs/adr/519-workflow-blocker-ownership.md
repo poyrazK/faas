@@ -1623,3 +1623,30 @@ reference validation preserve that identity and tenant boundary. Dashboard and
 SDKs expose monitoring controls and evidence changes. Existing storage handles
 the payloads; no migration, additional worker, external messaging or automatic
 application/checklist lifecycle mutation is introduced.
+
+## Pinned playbook business expectations and result observations
+
+Optional expected outcome codes use existing bounded outcome slug validation and
+enter canonical rule fingerprints. Starting progress pins the original comparable
+state revision; frozen expectations survive subsequent guidance changes. Shared
+business-result interpretation now serves both existing readiness completion
+watches and playbook case observations, preserving fresh terminal-code semantics.
+Missing/stale/contract-changed/older evidence remains unavailable for playbooks;
+nonterminal state is pending, and explicit terminal codes distinguish achieved
+from different outcome. Human checklist completion and causal attribution remain
+separate. Progress writers strip live result metadata while retaining the start
+revision and frozen rule.
+
+Existing durable checklist watches capture outcome baselines, including playbooks
+without live evidence selectors. Status/reason or comparable terminal-code changes
+publish one outcome notice, grouping simultaneous requirement changes. Clocks,
+report counters and description changes do not notify. Retain a monotonic comparable
+outcome revision across unavailable observations and configuration changes to
+prevent retained-report regressions from becoming new results. Existing identity,
+lease, writer-lock and progress-revision fences apply to publication and closure.
+
+Case and watch reads reuse scoped evidence without extra queries or worker phases.
+Dashboard, timeline, OpenAPI and all SDKs expose expectations, current business
+results and grouped changes. Existing playbooks and readiness outcome behavior
+remain compatible; no migration, application action or automatic checklist closure
+is introduced.

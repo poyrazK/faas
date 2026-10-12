@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
     from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
+    from ..models.operation_workflow_playbook_outcome_change import OperationWorkflowPlaybookOutcomeChange
 
 
 T = TypeVar("T", bound="OperationWorkflowPlaybookEvidenceEvent")
@@ -47,6 +48,9 @@ class OperationWorkflowPlaybookEvidenceEvent:
     changes: list[OperationWorkflowPlaybookEvidenceChange]
     """OperationWorkflowPlaybookEvidenceEvent.changes. Grouped changes in requirement status or diagnostic reason;
     excludes observation clocks and report counters."""
+    outcome_change: OperationWorkflowPlaybookOutcomeChange | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeChange. Saved before/after playbook result observation, separate from
+    checklist review and business causation."""
     platform_tenant_id: UUID | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceEvent.platform_tenant_id. Exact evidence customer, included only for
     operator watches and deliveries."""
@@ -75,6 +79,10 @@ class OperationWorkflowPlaybookEvidenceEvent:
             changes_item = changes_item_data.to_dict()
             changes.append(changes_item)
 
+        outcome_change: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_change, Unset):
+            outcome_change = self.outcome_change.to_dict()
+
         platform_tenant_id: str | Unset = UNSET
         if not isinstance(self.platform_tenant_id, Unset):
             platform_tenant_id = str(self.platform_tenant_id)
@@ -95,6 +103,8 @@ class OperationWorkflowPlaybookEvidenceEvent:
                 "changes": changes,
             }
         )
+        if outcome_change is not UNSET:
+            field_dict["outcome_change"] = outcome_change
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
 
@@ -104,6 +114,7 @@ class OperationWorkflowPlaybookEvidenceEvent:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
         from ..models.operation_workflow_playbook_evidence_change import OperationWorkflowPlaybookEvidenceChange
+        from ..models.operation_workflow_playbook_outcome_change import OperationWorkflowPlaybookOutcomeChange
 
         d = dict(src_dict)
         watch_id = UUID(d.pop("watch_id"))
@@ -131,6 +142,13 @@ class OperationWorkflowPlaybookEvidenceEvent:
 
             changes.append(changes_item)
 
+        _outcome_change = d.pop("outcome_change", UNSET)
+        outcome_change: OperationWorkflowPlaybookOutcomeChange | Unset
+        if isinstance(_outcome_change, Unset):
+            outcome_change = UNSET
+        else:
+            outcome_change = OperationWorkflowPlaybookOutcomeChange.from_dict(_outcome_change)
+
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
         platform_tenant_id: UUID | Unset
         if isinstance(_platform_tenant_id, Unset):
@@ -149,6 +167,7 @@ class OperationWorkflowPlaybookEvidenceEvent:
             playbook_version=playbook_version,
             checked_at=checked_at,
             changes=changes,
+            outcome_change=outcome_change,
             platform_tenant_id=platform_tenant_id,
         )
 

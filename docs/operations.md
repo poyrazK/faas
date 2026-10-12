@@ -3172,3 +3172,56 @@ notices remain scoped to the notification's exact customer and subject.
 No migration or new worker is required: existing JSON subscription and inbox
 storage retain configurations and observations. Existing subscriptions without
 explicit checklist watches preserve their behavior.
+
+### Track the application result expected by a playbook
+
+Playbooks may declare `expected_outcome_code`, using the same bounded lowercase
+outcome slug as application reports (for example, `payment-confirmed`):
+
+```yaml
+playbooks:
+  - id: payment-review
+    version: 2
+    match_kind: blocker
+    match_code: payment
+    summary: Confirm payment and review fulfillment.
+    expected_outcome_code: payment-confirmed
+    required_evidence:
+      - Payment verified
+```
+
+The code is part of the immutable rule and definition fingerprint. Starting a
+matched checklist freezes the expectation and original `start_state_revision`.
+Later deployments do not change this goal. Live `business_outcome` appears beside
+progress in case reads, independently of checklist completion and evidence
+satisfaction. The dashboard links the result's reporting operation.
+
+Status is `pending` for fresh comparable nonterminal state, `achieved` when an
+explicit fresh terminal outcome equals the expectation, `different_outcome` for
+another explicit terminal code, or `unavailable` when state is missing/stale,
+the contract differs, retained state precedes the start revision, the pinned rule
+is invalid, or terminal state has no outcome code. The nested `evidence` contains
+the shared outcome evaluator's report identity, revision, clock, reported code
+and explanation; its `unknown` maps to playbook `unavailable`. Diagnostic codes
+under unavailable are not comparable business results. Changed guidance is shown
+by applicability separately; it does not silently replace the frozen expectation.
+
+The existing opt-in evidence-watch endpoint also accepts playbooks with only an
+expected outcome and no live checklist selectors. Enabling captures a silent
+result baseline. Subsequent result status/reason changes, or a different comparable
+terminal outcome code, produce `playbook_outcome_changed` in the chosen durable
+inbox. The notice may also contain simultaneous requirement changes. Clock,
+report-counter and description-only updates stay quiet. Watches retain their
+highest comparable `outcome_state_revision`, including across configuration edits
+and unavailable observations, so pruning cannot make an older report establish a
+new result. Current case reads compare with the start revision; watch observations
+also compare with this retained latest-observation revision.
+
+Retirement/replacement and stale human revisions use the same publication fences
+as evidence notices. The worker reuses its scoped evidence read and introduces no
+additional queries or polling phase. Result observations are ephemeral on progress
+and durable only in watch baselines/inbox notices. Neither achieved results nor
+human completion closes the other, and neither establishes that playbook work
+caused the application's outcome. Legacy playbooks omit the expectation and keep
+their existing behavior. No migration, external delivery or business action is
+introduced.

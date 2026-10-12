@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
 import type { OperationWorkflowPlaybookApplicability } from './OperationWorkflowPlaybookApplicability.js';
+import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
 import type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflowPlaybookProgressChange.js';
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlaybookReview.js';
@@ -11,6 +12,14 @@ import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlayboo
  * OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgress = {
+  /**
+   * OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook with an expected outcome starts; earlier reports cannot establish its business result.
+   */
+  start_state_revision?: number;
+  /**
+   * OperationWorkflowPlaybookProgress.business_outcome. Live exact-case result in case reads only; absent from durable progress, review history and mutation responses.
+   */
+  business_outcome?: OperationWorkflowPlaybookBusinessOutcome;
   /**
    * OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active. Closed checklists reject item edits and further decisions; this is not business success.
    */
