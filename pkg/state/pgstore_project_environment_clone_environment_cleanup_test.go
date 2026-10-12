@@ -391,7 +391,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "scope", "workflow_state"} {
+	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -402,6 +402,8 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		}
 		if borrower == "foreign_key" {
 			_, err = tx.Exec(ctx, "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('racing.example.com',$1,$2)", appID, native.Plan.EnvironmentID)
+		} else if borrower == "workflow_readiness" {
+			_, err = tx.Exec(ctx, "LOCK TABLE customer_workflow_readiness_subscriptions IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_state" {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_operation_workflow_states IN ROW EXCLUSIVE MODE")
 		} else {
