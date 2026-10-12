@@ -538,6 +538,18 @@ the client through the gateway with its first chunk 0.8 ms after the headers
 and the second 1.97 s later, matching the handler's 2 s pause, and with both
 `Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
 runner core.
+Request timeouts have per-plan ceilings: Free 30 s, Hobby 1 min, Pro 5 min,
+Scale 15 min (ADR-1150, `Limits.RequestBudgetMaxMs`). The gateway passes the
+budget left to the guest in `X-Faas-Deadline-Ms`, and the runner bounds an
+invocation by the longer of that and 30 s. Evidence, 2026-10-12 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set): a Pro function with `request_timeout_s=120` and the default
+30 s idle timeout streamed four ticks over 36.1 s through the gateway. Its
+handler saw `X-Faas-Deadline-Ms=119999`, not the 86400000 the client sent.
+The first attempt was cut at 29.5 s: on single-box installs schedd's stats
+poller read only the empty capacity-stream cache, so the idle reaper never
+saw the in-flight request. The poller now reads vmmd `Stats` directly when
+schedd has no owner node.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
