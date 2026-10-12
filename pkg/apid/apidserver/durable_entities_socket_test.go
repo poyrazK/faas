@@ -26,7 +26,10 @@ func TestDurableEntitySocketReplaysAfterReconnectAndRechecksAppAdmission(t *test
 	defer server.Close()
 	dial := func() *websocket.Conn {
 		t.Helper()
-		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/connect?namespace=counters&key=customer:456", http.Header{"Authorization": []string{"Bearer " + e.key}})
+		conn, handshake, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/connect?namespace=counters&key=customer:456", http.Header{"Authorization": []string{"Bearer " + e.key}})
+		if handshake != nil {
+			handshake.Body.Close()
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +93,10 @@ func TestDurableEntitySocketRevokedCredentialCannotDispatchNextFrame(t *testing.
 	e.s.durable.Sockets = entitysocket.New()
 	server := httptest.NewServer(e.h)
 	defer server.Close()
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/connect?namespace=counters&key=customer:456", http.Header{"Authorization": []string{"Bearer " + e.key}})
+	conn, handshake, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/apps/"+app.Slug+"/entities/connect?namespace=counters&key=customer:456", http.Header{"Authorization": []string{"Bearer " + e.key}})
+	if handshake != nil {
+		handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

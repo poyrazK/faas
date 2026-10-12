@@ -147,7 +147,10 @@ func TestDurableEntitySocketTenantQuotaSharedBrowserAndServiceConnections(t *tes
 		}
 		time.Sleep(time.Millisecond)
 	}
-	service, _, err := websocket.DefaultDialer.Dial(base+"/entities/connect?namespace=counters&key=different-object", http.Header{"Authorization": []string{"Bearer " + e.key}})
+	service, serviceResponse, err := websocket.DefaultDialer.Dial(base+"/entities/connect?namespace=counters&key=different-object", http.Header{"Authorization": []string{"Bearer " + e.key}})
+	if serviceResponse != nil {
+		serviceResponse.Body.Close()
+	}
 	if err != nil {
 		t.Fatal("released slot not reusable", err)
 	}
