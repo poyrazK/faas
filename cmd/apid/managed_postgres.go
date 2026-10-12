@@ -43,7 +43,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	baseProvisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	baseProvisioningGate := managedpostgres.NewProvisioningGate(registry, getenv, time.Now)
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
 		if metrics != nil {
@@ -51,7 +51,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		}
 		return enabled
 	}
-	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
+	canaryAccountGate := managedpostgres.NewCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
 		allowed := canaryAccountGate(accountID)
 		if metrics != nil {

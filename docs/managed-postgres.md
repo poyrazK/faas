@@ -33,8 +33,8 @@ operations and `postgres:manage` for create, restore, delete, and binding
 operations. Binding credentials are delivered through the existing app-secret
 surface after the binding saga reaches `ready`.
 
-Keep `provisioning_enabled` false outside an isolated provider qualification
-environment. The lifecycle service and background discovery also require all
+Keep `provisioning_enabled` false until approving an isolated qualification
+run. The normal staging lifecycle service and background discovery require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7`,
@@ -52,6 +52,25 @@ keeps all qualified staging accounts eligible. Empty entries, entries longer
 than 255 characters, or lists larger than 100 accounts fail closed. Reads and
 all deletion/revocation paths remain available outside the allowlist so an
 operator can drain a canary safely before expanding it.
+
+An operator may enable a production **test account canary** with
+`FAAS_ENVIRONMENT=production` and `FAAS_MANAGED_POSTGRES_PRODUCTION_CANARY=true`.
+This requires a complete v8 approval artifact at
+`FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH`, a matching nonempty account
+allowlist, an approval lifetime of at most 24 hours, and enabled usage metering
+with positive prices and ceilings for compute, storage, history, egress and
+estimated cost. Environment-only approval cannot open production admission.
+Customer entitlements and usage freshness still apply; expiration closes new
+provisioning without a daemon restart. Reads and cleanup continue.
+
+This test canary permits evaluation through the production API before native
+guest acceptance is complete. It does not establish general availability or
+prove guest recovery. Run qualification against an isolated marked catalog,
+deploy the signed release using the normal production workflow, and retain the
+provider key until every test resource has been drained. Admission ceilings
+do not stop existing provider resources or guarantee a zero bill. See
+[ADR-1000](adr/1000-managed-postgres-production-test-canary.md) and the
+[activation runbook](managed-postgres-preview-runbook.md#production-test-account-canary).
 
 ## Provider health
 
