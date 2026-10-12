@@ -526,6 +526,17 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	// progress as soon as the remote deletion path recovers.
 	l.retryRemoteDeleteBacklog(ctx, now)
 
+	// Stale rows inside a kept deployment (every re-captured init snapshot
+	// supersedes the previous one) are outside the rollback window's reach.
+	// Their retention eviction used to run only in the one-shot startup FC
+	// sweep, so they accumulated until imaged restarted (production-us
+	// hunt #9: 381 stale snapshots, 215 GB of 275 GB, one app 103 of them).
+	if n, err := l.evictExpiredStaleSnapshots(ctx); err != nil {
+		l.log.Warn("imaged: gc stale retention", "err", err)
+	} else if n > 0 {
+		l.log.Info("imaged: gc evicted expired stale snapshots", "evicted", n)
+	}
+
 	rows, err := l.store.ListSnapshotsForGC(ctx)
 	if err != nil {
 		l.log.Warn("imaged: gc list", "err", err)
@@ -713,22 +724,14 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		l.runAppProtocolSweep(ctx)
 		return false
 	}
-	// Reclaim expired stale rows and their storage artifacts together. Deleting
-	// rows first loses the deployment and app keys needed to find the files.
-	expired, err := l.store.ListSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
+	evicted, err := l.evictExpiredStaleSnapshots(ctx)
 	if err != nil {
-		l.log.Warn("imaged: fc sweep list expired", "err", err)
+		l.log.Warn("imaged: fc sweep evict", "err", err)
 		// mark-stale succeeded; partial eviction still counts as progress.
 		// F3 still runs.
 		l.runAppProtocolSweep(ctx)
 		return true
 	}
-	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(expired)); err != nil {
-		l.log.Warn("imaged: fc sweep evict", "err", err)
-		l.runAppProtocolSweep(ctx)
-		return true
-	}
-	evicted := len(expired)
 	// F3 (Layer 6): app-protocol stale-mark sweep. ADR-127 §D1 —
 	// flips non-stale {http2, grpc} snapshots whose persisted base-image
 	// generation differs from this binary. Operates on the base-image
@@ -746,6 +749,24 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		"fc_version", ver, "marked_stale", n, "evicted", evicted,
 		"app_protocol_marked_stale", apN)
 	return true
+}
+
+// evictExpiredStaleSnapshots reclaims rows that have been stale for longer
+// than api.SnapshotStaleRetention together with their storage artifacts.
+// Deleting rows first loses the deployment and app keys needed to find the
+// files.
+func (l *Loop) evictExpiredStaleSnapshots(ctx context.Context) (int, error) {
+	expired, err := l.store.ListSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
+	if err != nil {
+		return 0, fmt.Errorf("list expired stale snapshots: %w", err)
+	}
+	if len(expired) == 0 {
+		return 0, nil
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(expired)); err != nil {
+		return 0, fmt.Errorf("evict expired stale snapshots: %w", err)
+	}
+	return len(expired), nil
 }
 
 func snapshotTargets(rows []state.SnapshotForGC) []deleteTarget {
