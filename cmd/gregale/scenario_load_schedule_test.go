@@ -20,6 +20,107 @@ func loadStage(duration string, target int) testLoadStageSpec {
 	return testLoadStageSpec{Duration: duration, Target: &target}
 }
 
+func TestLoadChaosScheduleValidationAndPhaseEvidence(t *testing.T) {
+	faultRule := testChaosRule{To: "cache", Kind: "latency", Percent: 100, Latency: "100ms", MinMatches: 1}
+	schedule := []testLoadChaosPhaseSpec{
+		{Name: "baseline", Duration: "1s"},
+		{Name: "slow-cache", Duration: "1s", Rules: []testChaosRule{faultRule}},
+		{Name: "recovery", Duration: "1s"},
+	}
+	spec := testLoadSpec{Duration: "3s", ChaosSchedule: schedule}
+	if err := validateTestLoadSpec(&spec); err != nil {
+		t.Fatalf("valid schedule rejected: %v", err)
+	}
+	for name, invalid := range map[string]testLoadSpec{
+		"duration mismatch": {Duration: "4s", ChaosSchedule: schedule},
+		"iterations":        {Iterations: 3, ChaosSchedule: schedule},
+		"fault at recovery": {Duration: "3s", ChaosSchedule: []testLoadChaosPhaseSpec{schedule[0], schedule[1], {Name: "recovery", Duration: "1s", Rules: []testChaosRule{faultRule}}}},
+		"adjacent faults":   {Duration: "3s", ChaosSchedule: []testLoadChaosPhaseSpec{schedule[0], schedule[1], {Name: "outage", Duration: "1s", Rules: []testChaosRule{faultRule}}}},
+		"no fault":          {Duration: "3s", ChaosSchedule: []testLoadChaosPhaseSpec{{Name: "baseline", Duration: "1s"}, {Name: "hold", Duration: "1s"}, {Name: "recovery", Duration: "1s"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateTestLoadSpec(&invalid); err == nil {
+				t.Fatal("invalid chaos schedule accepted")
+			}
+		})
+	}
+
+	probe := func(name string) testHTTPRequest {
+		step := loadTestStep()
+		step.Name = name
+		return step
+	}
+	scenario := testScenario{
+		Project:  "checkout",
+		Services: map[string]testService{"cache": {Fixture: testDeliverySinkFixture}},
+		Steps: []testScenarioStep{
+			{Name: "baseline", Requests: []testHTTPRequest{probe("baseline-probe")}},
+			{Name: "scheduled-load", Requests: []testHTTPRequest{probe("fault-probe")}, Load: &spec},
+			{Name: "recovery-check", Requests: []testHTTPRequest{probe("recovery-probe")}},
+		},
+	}
+	if err := validateTestScenarioSteps(scenario, nil); err != nil {
+		t.Fatalf("valid staged schedule rejected: %v", err)
+	}
+	manifestPath := filepath.Join(t.TempDir(), "gregale-test.yaml")
+	manifest := `version: 1
+scenarios:
+  scheduled-load:
+    project: checkout
+    requests: [{name: smoke, method: GET, path: /health, expect: {status: 200}}]
+    load:
+      duration: 3s
+      chaos_schedule:
+        - {name: baseline, duration: 1s}
+        - name: slow-cache
+          duration: 1s
+          rules: [{to: cache, kind: latency, latency: 100ms, percent: 100}]
+        - {name: recovery, duration: 1s}
+`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestManifest(manifestPath); err == nil || !strings.Contains(err.Error(), "only valid on a staged step load") {
+		t.Fatalf("top-level chaos schedule validation = %v", err)
+	}
+	noRecovery := scenario
+	noRecovery.Steps = []testScenarioStep{
+		scenario.Steps[0],
+		{Name: "extra-baseline", Requests: []testHTTPRequest{probe("extra-baseline-probe")}},
+		{Name: "scheduled-last", Requests: []testHTTPRequest{probe("last-fault-probe")}, Load: &spec},
+	}
+	if err := validateTestScenarioSteps(noRecovery, nil); err == nil || !strings.Contains(err.Error(), "recovery step") {
+		t.Fatalf("schedule without a later recovery check = %v", err)
+	}
+
+	clock := newTestLoadPhaseClock(3)
+	start := time.Now()
+	clock.start(start)
+	clock.transition(1, start.Add(100*time.Millisecond))
+	clock.transition(2, start.Add(200*time.Millisecond))
+	clock.finish(start.Add(300 * time.Millisecond))
+	cfg := &testLoadConfig{Duration: 300 * time.Millisecond, RequestLimit: 100, ChaosSchedule: []testLoadChaosPhase{
+		{Name: "baseline", Duration: 100 * time.Millisecond},
+		{Name: "slow-cache", Duration: 100 * time.Millisecond, Rules: []testChaosRule{faultRule}},
+		{Name: "recovery", Duration: 100 * time.Millisecond},
+	}, ChaosPhaseClock: clock}
+	makeStepSamples := func() testLoadStepSamples {
+		return testLoadStepSamples{evidence: testLoadStepEvidence{Name: "probe", testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}}}}
+	}
+	collector := &testLoadCollector{
+		phaseClock:  clock,
+		steps:       []testLoadStepSamples{makeStepSamples()},
+		chaosPhases: []testLoadPhaseSamples{{steps: []testLoadStepSamples{makeStepSamples()}}, {steps: []testLoadStepSamples{makeStepSamples()}}, {steps: []testLoadStepSamples{makeStepSamples()}}},
+	}
+	for _, offset := range []time.Duration{50 * time.Millisecond, 150 * time.Millisecond, 250 * time.Millisecond} {
+		collector.recordAt(0, testHTTPRequestEvidence{Status: 200, Passed: true}, time.Millisecond, start.Add(offset))
+	}
+	report := collector.report(cfg, 300*time.Millisecond)
+	if len(report.ChaosPhases) != 3 || report.ChaosPhases[0].Requests != 1 || report.ChaosPhases[1].Requests != 1 || report.ChaosPhases[2].Requests != 1 {
+		t.Fatalf("phase load metrics = %+v", report.ChaosPhases)
+	}
+}
+
 func TestLoadStagesAndStepBudgetConfiguration(t *testing.T) {
 	zero := 0.0
 	scenario := testScenario{Requests: []testHTTPRequest{loadTestStep()}, Load: &testLoadSpec{VUs: 1, Pacing: "50ms", Stages: []testLoadStageSpec{loadStage("1s", 3), loadStage("2s", 0)}, Thresholds: testLoadThresholds{Steps: map[string]testLoadStepThresholdSpec{"ping": {P95: "100ms", ErrorRate: &zero}}}}}

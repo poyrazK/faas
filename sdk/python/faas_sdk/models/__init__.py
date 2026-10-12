@@ -494,6 +494,7 @@ from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -633,6 +634,9 @@ from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCa
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
+from .create_platform_tenant_self_workflow_readiness_subscription_body import (
+    CreatePlatformTenantSelfWorkflowReadinessSubscriptionBody,
+)
 from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
 from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
 from .create_platform_tenant_webhook_request_event_filter_item import CreatePlatformTenantWebhookRequestEventFilterItem
@@ -1590,7 +1594,17 @@ from .list_account_workflow_attention_priority import ListAccountWorkflowAttenti
 from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
 from .list_account_workflow_attention_sort import ListAccountWorkflowAttentionSort
 from .list_account_workflow_performance_instances_cohort import ListAccountWorkflowPerformanceInstancesCohort
+from .list_account_workflow_performance_instances_condition_evidence_status import (
+    ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus,
+)
+from .list_account_workflow_performance_instances_condition_result import (
+    ListAccountWorkflowPerformanceInstancesConditionResult,
+)
 from .list_account_workflow_performance_instances_dimension import ListAccountWorkflowPerformanceInstancesDimension
+from .list_account_workflow_performance_instances_gap_status import ListAccountWorkflowPerformanceInstancesGapStatus
+from .list_account_workflow_performance_instances_kind import ListAccountWorkflowPerformanceInstancesKind
+from .list_account_workflow_readiness_follow_ups_due import ListAccountWorkflowReadinessFollowUpsDue
+from .list_account_workflow_readiness_queue_requirement import ListAccountWorkflowReadinessQueueRequirement
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1636,8 +1650,26 @@ from .list_platform_tenant_self_workflow_attention_sort import ListPlatformTenan
 from .list_platform_tenant_self_workflow_performance_instances_cohort import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesCohort,
 )
+from .list_platform_tenant_self_workflow_performance_instances_condition_evidence_status import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesConditionEvidenceStatus,
+)
+from .list_platform_tenant_self_workflow_performance_instances_condition_result import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult,
+)
 from .list_platform_tenant_self_workflow_performance_instances_dimension import (
     ListPlatformTenantSelfWorkflowPerformanceInstancesDimension,
+)
+from .list_platform_tenant_self_workflow_performance_instances_gap_status import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus,
+)
+from .list_platform_tenant_self_workflow_performance_instances_kind import (
+    ListPlatformTenantSelfWorkflowPerformanceInstancesKind,
+)
+from .list_platform_tenant_self_workflow_readiness_follow_ups_due import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsDue,
+)
+from .list_platform_tenant_self_workflow_readiness_queue_requirement import (
+    ListPlatformTenantSelfWorkflowReadinessQueueRequirement,
 )
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
@@ -2022,6 +2054,9 @@ from .operation_business_compensation import OperationBusinessCompensation
 from .operation_business_compensation_payload import OperationBusinessCompensationPayload
 from .operation_business_compensation_payload_kind import OperationBusinessCompensationPayloadKind
 from .operation_business_compensation_status import OperationBusinessCompensationStatus
+from .operation_business_condition_definition import OperationBusinessConditionDefinition
+from .operation_business_condition_result import OperationBusinessConditionResult
+from .operation_business_condition_result_result import OperationBusinessConditionResultResult
 from .operation_business_decision import OperationBusinessDecision
 from .operation_business_decision_payload import OperationBusinessDecisionPayload
 from .operation_business_decision_payload_kind import OperationBusinessDecisionPayloadKind
@@ -2121,6 +2156,11 @@ from .operation_tenant_identity import OperationTenantIdentity
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
 from .operation_workflow_action_preview_response_reason import OperationWorkflowActionPreviewResponseReason
+from .operation_workflow_active_condition_group import OperationWorkflowActiveConditionGroup
+from .operation_workflow_active_condition_group_condition_result import (
+    OperationWorkflowActiveConditionGroupConditionResult,
+)
+from .operation_workflow_active_condition_summary import OperationWorkflowActiveConditionSummary
 from .operation_workflow_artifact_response import OperationWorkflowArtifactResponse
 from .operation_workflow_attention_entry import OperationWorkflowAttentionEntry
 from .operation_workflow_attention_entry_reasons_item import OperationWorkflowAttentionEntryReasonsItem
@@ -2138,8 +2178,52 @@ from .operation_workflow_blocker_priority import OperationWorkflowBlockerPriorit
 from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
 from .operation_workflow_bottlenecks import OperationWorkflowBottlenecks
 from .operation_workflow_bottlenecks_incomplete_reasons_item import OperationWorkflowBottlenecksIncompleteReasonsItem
+from .operation_workflow_case import OperationWorkflowCase
+from .operation_workflow_case_action import OperationWorkflowCaseAction
+from .operation_workflow_case_guidance_status import OperationWorkflowCaseGuidanceStatus
+from .operation_workflow_change_reason import OperationWorkflowChangeReason
+from .operation_workflow_condition_change import OperationWorkflowConditionChange
+from .operation_workflow_condition_change_source import OperationWorkflowConditionChangeSource
+from .operation_workflow_condition_change_status import OperationWorkflowConditionChangeStatus
+from .operation_workflow_condition_comparison import OperationWorkflowConditionComparison
+from .operation_workflow_condition_comparison_status import OperationWorkflowConditionComparisonStatus
+from .operation_workflow_condition_coverage import OperationWorkflowConditionCoverage
+from .operation_workflow_condition_coverage_entry import OperationWorkflowConditionCoverageEntry
+from .operation_workflow_condition_coverage_entry_status import OperationWorkflowConditionCoverageEntryStatus
+from .operation_workflow_condition_coverage_instance import OperationWorkflowConditionCoverageInstance
+from .operation_workflow_condition_evidence import OperationWorkflowConditionEvidence
+from .operation_workflow_condition_freshness import OperationWorkflowConditionFreshness
+from .operation_workflow_condition_freshness_status import OperationWorkflowConditionFreshnessStatus
+from .operation_workflow_condition_outcome_group import OperationWorkflowConditionOutcomeGroup
+from .operation_workflow_condition_outcome_group_condition_result import (
+    OperationWorkflowConditionOutcomeGroupConditionResult,
+)
+from .operation_workflow_condition_outcome_summary import OperationWorkflowConditionOutcomeSummary
+from .operation_workflow_condition_refresh_owner_group import OperationWorkflowConditionRefreshOwnerGroup
+from .operation_workflow_condition_refresh_priority import OperationWorkflowConditionRefreshPriority
+from .operation_workflow_condition_refresh_progress import OperationWorkflowConditionRefreshProgress
+from .operation_workflow_condition_refresh_progress_change import OperationWorkflowConditionRefreshProgressChange
+from .operation_workflow_condition_refresh_progress_change_status import (
+    OperationWorkflowConditionRefreshProgressChangeStatus,
+)
+from .operation_workflow_condition_refresh_progress_count import OperationWorkflowConditionRefreshProgressCount
+from .operation_workflow_condition_refresh_progress_count_status import (
+    OperationWorkflowConditionRefreshProgressCountStatus,
+)
+from .operation_workflow_condition_refresh_progress_instance import OperationWorkflowConditionRefreshProgressInstance
 from .operation_workflow_control_response import OperationWorkflowControlResponse
+from .operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
+from .operation_workflow_coordination_timeline_event import OperationWorkflowCoordinationTimelineEvent
+from .operation_workflow_coordination_timeline_options import OperationWorkflowCoordinationTimelineOptions
+from .operation_workflow_coordination_timeline_source import OperationWorkflowCoordinationTimelineSource
 from .operation_workflow_decision import OperationWorkflowDecision
+from .operation_workflow_decision_outcome_evidence import OperationWorkflowDecisionOutcomeEvidence
+from .operation_workflow_decision_outcome_evidence_observed_condition_results_item import (
+    OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem,
+)
+from .operation_workflow_decision_outcome_group import OperationWorkflowDecisionOutcomeGroup
+from .operation_workflow_decision_outcome_group_kind import OperationWorkflowDecisionOutcomeGroupKind
+from .operation_workflow_decision_outcome_summary import OperationWorkflowDecisionOutcomeSummary
 from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
 from .operation_workflow_dependency import OperationWorkflowDependency
 from .operation_workflow_dependency_finding import OperationWorkflowDependencyFinding
@@ -2157,21 +2241,59 @@ from .operation_workflow_dependent_instance_dependency_status import OperationWo
 from .operation_workflow_duration_distribution import OperationWorkflowDurationDistribution
 from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .operation_workflow_gap_progress_group import OperationWorkflowGapProgressGroup
+from .operation_workflow_gap_progress_group_gap_status import OperationWorkflowGapProgressGroupGapStatus
+from .operation_workflow_gap_queue_guidance import OperationWorkflowGapQueueGuidance
+from .operation_workflow_gap_queue_guidance_status import OperationWorkflowGapQueueGuidanceStatus
+from .operation_workflow_gap_queue_priority import OperationWorkflowGapQueuePriority
 from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
 from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
 from .operation_workflow_instance_step import OperationWorkflowInstanceStep
 from .operation_workflow_instance_transition import OperationWorkflowInstanceTransition
 from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
+from .operation_workflow_missing_condition_group import OperationWorkflowMissingConditionGroup
+from .operation_workflow_missing_condition_progress import OperationWorkflowMissingConditionProgress
+from .operation_workflow_missing_condition_progress_change import OperationWorkflowMissingConditionProgressChange
+from .operation_workflow_missing_condition_progress_change_status import (
+    OperationWorkflowMissingConditionProgressChangeStatus,
+)
+from .operation_workflow_missing_condition_progress_count import OperationWorkflowMissingConditionProgressCount
+from .operation_workflow_missing_condition_progress_count_status import (
+    OperationWorkflowMissingConditionProgressCountStatus,
+)
+from .operation_workflow_missing_condition_progress_instance import OperationWorkflowMissingConditionProgressInstance
+from .operation_workflow_new_missing_condition_progress import OperationWorkflowNewMissingConditionProgress
+from .operation_workflow_new_missing_condition_progress_change import OperationWorkflowNewMissingConditionProgressChange
+from .operation_workflow_new_missing_condition_progress_change_status import (
+    OperationWorkflowNewMissingConditionProgressChangeStatus,
+)
+from .operation_workflow_new_missing_condition_progress_count import OperationWorkflowNewMissingConditionProgressCount
+from .operation_workflow_new_missing_condition_progress_count_status import (
+    OperationWorkflowNewMissingConditionProgressCountStatus,
+)
+from .operation_workflow_new_missing_condition_progress_instance import (
+    OperationWorkflowNewMissingConditionProgressInstance,
+)
 from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
 from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+from .operation_workflow_outcome_link import OperationWorkflowOutcomeLink
+from .operation_workflow_outcome_link_status import OperationWorkflowOutcomeLinkStatus
 from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
 from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
 from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+from .operation_workflow_path_decision_result import OperationWorkflowPathDecisionResult
+from .operation_workflow_path_selection import OperationWorkflowPathSelection
 from .operation_workflow_performance_cohort import OperationWorkflowPerformanceCohort
 from .operation_workflow_performance_coverage_reason import OperationWorkflowPerformanceCoverageReason
 from .operation_workflow_performance_coverage_reason_reason import OperationWorkflowPerformanceCoverageReasonReason
 from .operation_workflow_performance_group import OperationWorkflowPerformanceGroup
+from .operation_workflow_performance_group_condition_evidence_status import (
+    OperationWorkflowPerformanceGroupConditionEvidenceStatus,
+)
+from .operation_workflow_performance_group_condition_result import OperationWorkflowPerformanceGroupConditionResult
 from .operation_workflow_performance_group_dimension import OperationWorkflowPerformanceGroupDimension
+from .operation_workflow_performance_group_gap_status import OperationWorkflowPerformanceGroupGapStatus
+from .operation_workflow_performance_group_kind import OperationWorkflowPerformanceGroupKind
 from .operation_workflow_performance_instance import OperationWorkflowPerformanceInstance
 from .operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
 from .operation_workflow_performance_instances_response_cohort import (
@@ -2181,10 +2303,118 @@ from .operation_workflow_performance_summary import OperationWorkflowPerformance
 from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
 from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
 from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
+from .operation_workflow_playbook import OperationWorkflowPlaybook
+from .operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
+from .operation_workflow_playbook_applicability_status import OperationWorkflowPlaybookApplicabilityStatus
+from .operation_workflow_playbook_evidence import OperationWorkflowPlaybookEvidence
+from .operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
+from .operation_workflow_playbook_match_kind import OperationWorkflowPlaybookMatchKind
+from .operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
+from .operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
+from .operation_workflow_playbook_progress_disposition import OperationWorkflowPlaybookProgressDisposition
+from .operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
+from .operation_workflow_playbook_progress_item_status import OperationWorkflowPlaybookProgressItemStatus
+from .operation_workflow_playbook_progress_start_request import OperationWorkflowPlaybookProgressStartRequest
+from .operation_workflow_playbook_progress_update_request import OperationWorkflowPlaybookProgressUpdateRequest
+from .operation_workflow_playbook_progress_update_request_status import (
+    OperationWorkflowPlaybookProgressUpdateRequestStatus,
+)
+from .operation_workflow_playbook_review import OperationWorkflowPlaybookReview
+from .operation_workflow_playbook_review_decision import OperationWorkflowPlaybookReviewDecision
+from .operation_workflow_playbook_review_request import OperationWorkflowPlaybookReviewRequest
+from .operation_workflow_playbook_review_request_decision import OperationWorkflowPlaybookReviewRequestDecision
 from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+from .operation_workflow_prerequisite_recovery import OperationWorkflowPrerequisiteRecovery
+from .operation_workflow_prerequisite_recovery_reason import OperationWorkflowPrerequisiteRecoveryReason
+from .operation_workflow_prerequisite_recovery_steps_item import OperationWorkflowPrerequisiteRecoveryStepsItem
+from .operation_workflow_readiness_assignment_change import OperationWorkflowReadinessAssignmentChange
+from .operation_workflow_readiness_assignment_change_reason import OperationWorkflowReadinessAssignmentChangeReason
+from .operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
+from .operation_workflow_readiness_business_outcome_event import OperationWorkflowReadinessBusinessOutcomeEvent
+from .operation_workflow_readiness_business_outcome_event_previous_status import (
+    OperationWorkflowReadinessBusinessOutcomeEventPreviousStatus,
+)
+from .operation_workflow_readiness_business_outcome_status import OperationWorkflowReadinessBusinessOutcomeStatus
+from .operation_workflow_readiness_business_outcome_watch import OperationWorkflowReadinessBusinessOutcomeWatch
+from .operation_workflow_readiness_business_outcome_watch_last_notified_status import (
+    OperationWorkflowReadinessBusinessOutcomeWatchLastNotifiedStatus,
+)
+from .operation_workflow_readiness_change import OperationWorkflowReadinessChange
+from .operation_workflow_readiness_change_added_reasons_item import OperationWorkflowReadinessChangeAddedReasonsItem
+from .operation_workflow_readiness_change_changed_categories_item import (
+    OperationWorkflowReadinessChangeChangedCategoriesItem,
+)
+from .operation_workflow_readiness_change_resolved_reasons_item import (
+    OperationWorkflowReadinessChangeResolvedReasonsItem,
+)
+from .operation_workflow_readiness_change_status import OperationWorkflowReadinessChangeStatus
+from .operation_workflow_readiness_comparison_request import OperationWorkflowReadinessComparisonRequest
+from .operation_workflow_readiness_comparison_request_change import OperationWorkflowReadinessComparisonRequestChange
+from .operation_workflow_readiness_comparison_response import OperationWorkflowReadinessComparisonResponse
+from .operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
+from .operation_workflow_readiness_completion_evidence import OperationWorkflowReadinessCompletionEvidence
+from .operation_workflow_readiness_completion_outcome import OperationWorkflowReadinessCompletionOutcome
+from .operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
+from .operation_workflow_readiness_completion_request_outcome import OperationWorkflowReadinessCompletionRequestOutcome
+from .operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
+from .operation_workflow_readiness_coordination_request import OperationWorkflowReadinessCoordinationRequest
+from .operation_workflow_readiness_coordination_request_status import (
+    OperationWorkflowReadinessCoordinationRequestStatus,
+)
+from .operation_workflow_readiness_coordination_status import OperationWorkflowReadinessCoordinationStatus
+from .operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+from .operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
+from .operation_workflow_readiness_escalation_response_event import OperationWorkflowReadinessEscalationResponseEvent
+from .operation_workflow_readiness_escalation_response_status import OperationWorkflowReadinessEscalationResponseStatus
+from .operation_workflow_readiness_evidence import OperationWorkflowReadinessEvidence
+from .operation_workflow_readiness_evidence_category import OperationWorkflowReadinessEvidenceCategory
+from .operation_workflow_readiness_evidence_change import OperationWorkflowReadinessEvidenceChange
+from .operation_workflow_readiness_evidence_change_kind import OperationWorkflowReadinessEvidenceChangeKind
+from .operation_workflow_readiness_evidence_status import OperationWorkflowReadinessEvidenceStatus
+from .operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
+from .operation_workflow_readiness_follow_up_options import OperationWorkflowReadinessFollowUpOptions
+from .operation_workflow_readiness_follow_up_options_due import OperationWorkflowReadinessFollowUpOptionsDue
+from .operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
+from .operation_workflow_readiness_handoff import OperationWorkflowReadinessHandoff
+from .operation_workflow_readiness_inbox_response import OperationWorkflowReadinessInboxResponse
+from .operation_workflow_readiness_notification import OperationWorkflowReadinessNotification
+from .operation_workflow_readiness_notification_check import OperationWorkflowReadinessNotificationCheck
+from .operation_workflow_readiness_notification_kind import OperationWorkflowReadinessNotificationKind
+from .operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+from .operation_workflow_readiness_outcome_escalation_policy import OperationWorkflowReadinessOutcomeEscalationPolicy
+from .operation_workflow_readiness_outcome_escalation_reference import (
+    OperationWorkflowReadinessOutcomeEscalationReference,
+)
 from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
+from .operation_workflow_readiness_queue_entry import OperationWorkflowReadinessQueueEntry
+from .operation_workflow_readiness_queue_response import OperationWorkflowReadinessQueueResponse
 from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
 from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
+from .operation_workflow_readiness_snapshot import OperationWorkflowReadinessSnapshot
+from .operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
+from .operation_workflow_readiness_snapshot_entry_advisories_item import (
+    OperationWorkflowReadinessSnapshotEntryAdvisoriesItem,
+)
+from .operation_workflow_readiness_snapshot_entry_reasons_item import OperationWorkflowReadinessSnapshotEntryReasonsItem
+from .operation_workflow_readiness_snapshot_version import OperationWorkflowReadinessSnapshotVersion
+from .operation_workflow_readiness_subscription import OperationWorkflowReadinessSubscription
+from .operation_workflow_readiness_subscription_events_item import OperationWorkflowReadinessSubscriptionEventsItem
+from .operation_workflow_readiness_subscription_request import OperationWorkflowReadinessSubscriptionRequest
+from .operation_workflow_readiness_subscription_request_events_item import (
+    OperationWorkflowReadinessSubscriptionRequestEventsItem,
+)
+from .operation_workflow_readiness_subscription_status import OperationWorkflowReadinessSubscriptionStatus
+from .operation_workflow_readiness_subscriptions_response import OperationWorkflowReadinessSubscriptionsResponse
+from .operation_workflow_readiness_verification_change import OperationWorkflowReadinessVerificationChange
+from .operation_workflow_readiness_verification_change_before_status import (
+    OperationWorkflowReadinessVerificationChangeBeforeStatus,
+)
+from .operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
+from .operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
+from .operation_workflow_readiness_verification_watch_item import OperationWorkflowReadinessVerificationWatchItem
+from .operation_workflow_readiness_verification_watch_item_status import (
+    OperationWorkflowReadinessVerificationWatchItemStatus,
+)
 from .operation_workflow_reconciliation import OperationWorkflowReconciliation
 from .operation_workflow_reconciliation_payload import OperationWorkflowReconciliationPayload
 from .operation_workflow_reconciliation_payload_kind import OperationWorkflowReconciliationPayloadKind
@@ -2193,6 +2423,31 @@ from .operation_workflow_related_instance import OperationWorkflowRelatedInstanc
 from .operation_workflow_related_instance_status import OperationWorkflowRelatedInstanceStatus
 from .operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
 from .operation_workflow_resolution_verification_status import OperationWorkflowResolutionVerificationStatus
+from .operation_workflow_retained_milestone import OperationWorkflowRetainedMilestone
+from .operation_workflow_retained_milestone_freshness import OperationWorkflowRetainedMilestoneFreshness
+from .operation_workflow_retained_milestone_freshness_rule import OperationWorkflowRetainedMilestoneFreshnessRule
+from .operation_workflow_retained_milestone_group import OperationWorkflowRetainedMilestoneGroup
+from .operation_workflow_retained_milestone_group_result import OperationWorkflowRetainedMilestoneGroupResult
+from .operation_workflow_retained_milestone_invalidation import OperationWorkflowRetainedMilestoneInvalidation
+from .operation_workflow_retained_milestone_invalidation_rule import OperationWorkflowRetainedMilestoneInvalidationRule
+from .operation_workflow_retained_milestone_path import OperationWorkflowRetainedMilestonePath
+from .operation_workflow_retained_milestone_path_result import OperationWorkflowRetainedMilestonePathResult
+from .operation_workflow_retained_milestone_requirement import OperationWorkflowRetainedMilestoneRequirement
+from .operation_workflow_retained_milestone_status import OperationWorkflowRetainedMilestoneStatus
+from .operation_workflow_revision_change import OperationWorkflowRevisionChange
+from .operation_workflow_revision_change_kind import OperationWorkflowRevisionChangeKind
+from .operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
+from .operation_workflow_revision_comparison_status import OperationWorkflowRevisionComparisonStatus
+from .operation_workflow_revision_evidence import OperationWorkflowRevisionEvidence
+from .operation_workflow_revision_evidence_kind import OperationWorkflowRevisionEvidenceKind
+from .operation_workflow_rule_comparison import OperationWorkflowRuleComparison
+from .operation_workflow_rule_comparison_single_version_status import OperationWorkflowRuleComparisonSingleVersionStatus
+from .operation_workflow_rule_comparison_status import OperationWorkflowRuleComparisonStatus
+from .operation_workflow_rule_comparison_summary import OperationWorkflowRuleComparisonSummary
+from .operation_workflow_rule_version_cohort import OperationWorkflowRuleVersionCohort
+from .operation_workflow_rule_version_outcome import OperationWorkflowRuleVersionOutcome
+from .operation_workflow_rule_version_overlap import OperationWorkflowRuleVersionOverlap
+from .operation_workflow_rule_version_statistics import OperationWorkflowRuleVersionStatistics
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_duration import OperationWorkflowStateDuration
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
@@ -2213,6 +2468,8 @@ from .operation_workflow_transition import OperationWorkflowTransition
 from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
 from .operation_workflow_transition_readiness_advisories_item import OperationWorkflowTransitionReadinessAdvisoriesItem
 from .operation_workflow_transition_readiness_reasons_item import OperationWorkflowTransitionReadinessReasonsItem
+from .operation_workflow_transition_reporting import OperationWorkflowTransitionReporting
+from .operation_workflow_transition_reporting_status import OperationWorkflowTransitionReportingStatus
 from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
 from .operation_workflow_unmet_effect_reason import OperationWorkflowUnmetEffectReason
 from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
@@ -4107,6 +4364,7 @@ __all__ = (
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -4238,6 +4496,7 @@ __all__ = (
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
+    "CreatePlatformTenantSelfWorkflowReadinessSubscriptionBody",
     "CreatePlatformTenantWebhookRequest",
     "CreatePlatformTenantWebhookRequestDeliveryFormat",
     "CreatePlatformTenantWebhookRequestEventFilterItem",
@@ -5171,7 +5430,13 @@ __all__ = (
     "ListAccountWorkflowAttentionReason",
     "ListAccountWorkflowAttentionSort",
     "ListAccountWorkflowPerformanceInstancesCohort",
+    "ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus",
+    "ListAccountWorkflowPerformanceInstancesConditionResult",
     "ListAccountWorkflowPerformanceInstancesDimension",
+    "ListAccountWorkflowPerformanceInstancesGapStatus",
+    "ListAccountWorkflowPerformanceInstancesKind",
+    "ListAccountWorkflowReadinessFollowUpsDue",
+    "ListAccountWorkflowReadinessQueueRequirement",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -5213,7 +5478,13 @@ __all__ = (
     "ListPlatformTenantSelfWorkflowAttentionReason",
     "ListPlatformTenantSelfWorkflowAttentionSort",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesCohort",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionEvidenceStatus",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesConditionResult",
     "ListPlatformTenantSelfWorkflowPerformanceInstancesDimension",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesGapStatus",
+    "ListPlatformTenantSelfWorkflowPerformanceInstancesKind",
+    "ListPlatformTenantSelfWorkflowReadinessFollowUpsDue",
+    "ListPlatformTenantSelfWorkflowReadinessQueueRequirement",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -5577,6 +5848,9 @@ __all__ = (
     "OperationBusinessCompensationPayload",
     "OperationBusinessCompensationPayloadKind",
     "OperationBusinessCompensationStatus",
+    "OperationBusinessConditionDefinition",
+    "OperationBusinessConditionResult",
+    "OperationBusinessConditionResultResult",
     "OperationBusinessDecision",
     "OperationBusinessDecisionPayload",
     "OperationBusinessDecisionPayloadKind",
@@ -5676,6 +5950,9 @@ __all__ = (
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
     "OperationWorkflowActionPreviewResponseReason",
+    "OperationWorkflowActiveConditionGroup",
+    "OperationWorkflowActiveConditionGroupConditionResult",
+    "OperationWorkflowActiveConditionSummary",
     "OperationWorkflowArtifactResponse",
     "OperationWorkflowAttentionEntry",
     "OperationWorkflowAttentionEntryReasonsItem",
@@ -5693,8 +5970,44 @@ __all__ = (
     "OperationWorkflowBlockerResolution",
     "OperationWorkflowBottlenecks",
     "OperationWorkflowBottlenecksIncompleteReasonsItem",
+    "OperationWorkflowCase",
+    "OperationWorkflowCaseAction",
+    "OperationWorkflowCaseGuidanceStatus",
+    "OperationWorkflowChangeReason",
+    "OperationWorkflowConditionChange",
+    "OperationWorkflowConditionChangeSource",
+    "OperationWorkflowConditionChangeStatus",
+    "OperationWorkflowConditionComparison",
+    "OperationWorkflowConditionComparisonStatus",
+    "OperationWorkflowConditionCoverage",
+    "OperationWorkflowConditionCoverageEntry",
+    "OperationWorkflowConditionCoverageEntryStatus",
+    "OperationWorkflowConditionCoverageInstance",
+    "OperationWorkflowConditionEvidence",
+    "OperationWorkflowConditionFreshness",
+    "OperationWorkflowConditionFreshnessStatus",
+    "OperationWorkflowConditionOutcomeGroup",
+    "OperationWorkflowConditionOutcomeGroupConditionResult",
+    "OperationWorkflowConditionOutcomeSummary",
+    "OperationWorkflowConditionRefreshOwnerGroup",
+    "OperationWorkflowConditionRefreshPriority",
+    "OperationWorkflowConditionRefreshProgress",
+    "OperationWorkflowConditionRefreshProgressChange",
+    "OperationWorkflowConditionRefreshProgressChangeStatus",
+    "OperationWorkflowConditionRefreshProgressCount",
+    "OperationWorkflowConditionRefreshProgressCountStatus",
+    "OperationWorkflowConditionRefreshProgressInstance",
     "OperationWorkflowControlResponse",
+    "OperationWorkflowCoordinationTimeline",
+    "OperationWorkflowCoordinationTimelineEvent",
+    "OperationWorkflowCoordinationTimelineOptions",
+    "OperationWorkflowCoordinationTimelineSource",
     "OperationWorkflowDecision",
+    "OperationWorkflowDecisionOutcomeEvidence",
+    "OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem",
+    "OperationWorkflowDecisionOutcomeGroup",
+    "OperationWorkflowDecisionOutcomeGroupKind",
+    "OperationWorkflowDecisionOutcomeSummary",
     "OperationWorkflowDecisionReason",
     "OperationWorkflowDependency",
     "OperationWorkflowDependencyFinding",
@@ -5712,21 +6025,47 @@ __all__ = (
     "OperationWorkflowDurationDistribution",
     "OperationWorkflowEffectRequirement",
     "OperationWorkflowEvidenceMilestone",
+    "OperationWorkflowGapProgressGroup",
+    "OperationWorkflowGapProgressGroupGapStatus",
+    "OperationWorkflowGapQueueGuidance",
+    "OperationWorkflowGapQueueGuidanceStatus",
+    "OperationWorkflowGapQueuePriority",
     "OperationWorkflowInstanceMilestoneRef",
     "OperationWorkflowInstanceSnapshot",
     "OperationWorkflowInstanceStep",
     "OperationWorkflowInstanceTransition",
     "OperationWorkflowInvariantRequirement",
+    "OperationWorkflowMissingConditionGroup",
+    "OperationWorkflowMissingConditionProgress",
+    "OperationWorkflowMissingConditionProgressChange",
+    "OperationWorkflowMissingConditionProgressChangeStatus",
+    "OperationWorkflowMissingConditionProgressCount",
+    "OperationWorkflowMissingConditionProgressCountStatus",
+    "OperationWorkflowMissingConditionProgressInstance",
+    "OperationWorkflowNewMissingConditionProgress",
+    "OperationWorkflowNewMissingConditionProgressChange",
+    "OperationWorkflowNewMissingConditionProgressChangeStatus",
+    "OperationWorkflowNewMissingConditionProgressCount",
+    "OperationWorkflowNewMissingConditionProgressCountStatus",
+    "OperationWorkflowNewMissingConditionProgressInstance",
     "OperationWorkflowOutcomeEntry",
     "OperationWorkflowOutcomeGroup",
+    "OperationWorkflowOutcomeLink",
+    "OperationWorkflowOutcomeLinkStatus",
     "OperationWorkflowOutcomesResponse",
     "OperationWorkflowOutcomeSummary",
     "OperationWorkflowOutcomeSummaryGroupBy",
+    "OperationWorkflowPathDecisionResult",
+    "OperationWorkflowPathSelection",
     "OperationWorkflowPerformanceCohort",
     "OperationWorkflowPerformanceCoverageReason",
     "OperationWorkflowPerformanceCoverageReasonReason",
     "OperationWorkflowPerformanceGroup",
+    "OperationWorkflowPerformanceGroupConditionEvidenceStatus",
+    "OperationWorkflowPerformanceGroupConditionResult",
     "OperationWorkflowPerformanceGroupDimension",
+    "OperationWorkflowPerformanceGroupGapStatus",
+    "OperationWorkflowPerformanceGroupKind",
     "OperationWorkflowPerformanceInstance",
     "OperationWorkflowPerformanceInstancesResponse",
     "OperationWorkflowPerformanceInstancesResponseCohort",
@@ -5734,10 +6073,96 @@ __all__ = (
     "OperationWorkflowPlannedDecision",
     "OperationWorkflowPlannedEffect",
     "OperationWorkflowPlannedInvariant",
+    "OperationWorkflowPlaybook",
+    "OperationWorkflowPlaybookApplicability",
+    "OperationWorkflowPlaybookApplicabilityStatus",
+    "OperationWorkflowPlaybookEvidence",
+    "OperationWorkflowPlaybookGuidance",
+    "OperationWorkflowPlaybookMatchKind",
+    "OperationWorkflowPlaybookProgress",
+    "OperationWorkflowPlaybookProgressChange",
+    "OperationWorkflowPlaybookProgressDisposition",
+    "OperationWorkflowPlaybookProgressItem",
+    "OperationWorkflowPlaybookProgressItemStatus",
+    "OperationWorkflowPlaybookProgressStartRequest",
+    "OperationWorkflowPlaybookProgressUpdateRequest",
+    "OperationWorkflowPlaybookProgressUpdateRequestStatus",
+    "OperationWorkflowPlaybookReview",
+    "OperationWorkflowPlaybookReviewDecision",
+    "OperationWorkflowPlaybookReviewRequest",
+    "OperationWorkflowPlaybookReviewRequestDecision",
     "OperationWorkflowPolicyRequirement",
+    "OperationWorkflowPrerequisiteRecovery",
+    "OperationWorkflowPrerequisiteRecoveryReason",
+    "OperationWorkflowPrerequisiteRecoveryStepsItem",
+    "OperationWorkflowReadinessAssignmentChange",
+    "OperationWorkflowReadinessAssignmentChangeReason",
+    "OperationWorkflowReadinessBusinessOutcome",
+    "OperationWorkflowReadinessBusinessOutcomeEvent",
+    "OperationWorkflowReadinessBusinessOutcomeEventPreviousStatus",
+    "OperationWorkflowReadinessBusinessOutcomeStatus",
+    "OperationWorkflowReadinessBusinessOutcomeWatch",
+    "OperationWorkflowReadinessBusinessOutcomeWatchLastNotifiedStatus",
+    "OperationWorkflowReadinessChange",
+    "OperationWorkflowReadinessChangeAddedReasonsItem",
+    "OperationWorkflowReadinessChangeChangedCategoriesItem",
+    "OperationWorkflowReadinessChangeResolvedReasonsItem",
+    "OperationWorkflowReadinessChangeStatus",
+    "OperationWorkflowReadinessComparisonRequest",
+    "OperationWorkflowReadinessComparisonRequestChange",
+    "OperationWorkflowReadinessComparisonResponse",
+    "OperationWorkflowReadinessCompletion",
+    "OperationWorkflowReadinessCompletionEvidence",
+    "OperationWorkflowReadinessCompletionOutcome",
+    "OperationWorkflowReadinessCompletionRequest",
+    "OperationWorkflowReadinessCompletionRequestOutcome",
+    "OperationWorkflowReadinessCoordination",
+    "OperationWorkflowReadinessCoordinationRequest",
+    "OperationWorkflowReadinessCoordinationRequestStatus",
+    "OperationWorkflowReadinessCoordinationStatus",
+    "OperationWorkflowReadinessDueReminder",
+    "OperationWorkflowReadinessEscalationResponse",
+    "OperationWorkflowReadinessEscalationResponseEvent",
+    "OperationWorkflowReadinessEscalationResponseStatus",
+    "OperationWorkflowReadinessEvidence",
+    "OperationWorkflowReadinessEvidenceCategory",
+    "OperationWorkflowReadinessEvidenceChange",
+    "OperationWorkflowReadinessEvidenceChangeKind",
+    "OperationWorkflowReadinessEvidenceStatus",
+    "OperationWorkflowReadinessFollowUp",
+    "OperationWorkflowReadinessFollowUpOptions",
+    "OperationWorkflowReadinessFollowUpOptionsDue",
+    "OperationWorkflowReadinessFollowUpsResponse",
+    "OperationWorkflowReadinessHandoff",
+    "OperationWorkflowReadinessInboxResponse",
+    "OperationWorkflowReadinessNotification",
+    "OperationWorkflowReadinessNotificationCheck",
+    "OperationWorkflowReadinessNotificationKind",
+    "OperationWorkflowReadinessOutcomeEscalation",
+    "OperationWorkflowReadinessOutcomeEscalationPolicy",
+    "OperationWorkflowReadinessOutcomeEscalationReference",
     "OperationWorkflowReadinessOverview",
+    "OperationWorkflowReadinessQueueEntry",
+    "OperationWorkflowReadinessQueueResponse",
     "OperationWorkflowReadinessRequest",
     "OperationWorkflowReadinessResponse",
+    "OperationWorkflowReadinessSnapshot",
+    "OperationWorkflowReadinessSnapshotEntry",
+    "OperationWorkflowReadinessSnapshotEntryAdvisoriesItem",
+    "OperationWorkflowReadinessSnapshotEntryReasonsItem",
+    "OperationWorkflowReadinessSnapshotVersion",
+    "OperationWorkflowReadinessSubscription",
+    "OperationWorkflowReadinessSubscriptionEventsItem",
+    "OperationWorkflowReadinessSubscriptionRequest",
+    "OperationWorkflowReadinessSubscriptionRequestEventsItem",
+    "OperationWorkflowReadinessSubscriptionsResponse",
+    "OperationWorkflowReadinessSubscriptionStatus",
+    "OperationWorkflowReadinessVerificationChange",
+    "OperationWorkflowReadinessVerificationChangeBeforeStatus",
+    "OperationWorkflowReadinessVerificationEvent",
+    "OperationWorkflowReadinessVerificationWatch",
+    "OperationWorkflowReadinessVerificationWatchItem",
+    "OperationWorkflowReadinessVerificationWatchItemStatus",
     "OperationWorkflowReconciliation",
     "OperationWorkflowReconciliationPayload",
     "OperationWorkflowReconciliationPayloadKind",
@@ -5746,6 +6171,31 @@ __all__ = (
     "OperationWorkflowRelatedInstanceStatus",
     "OperationWorkflowResolutionVerification",
     "OperationWorkflowResolutionVerificationStatus",
+    "OperationWorkflowRetainedMilestone",
+    "OperationWorkflowRetainedMilestoneFreshness",
+    "OperationWorkflowRetainedMilestoneFreshnessRule",
+    "OperationWorkflowRetainedMilestoneGroup",
+    "OperationWorkflowRetainedMilestoneGroupResult",
+    "OperationWorkflowRetainedMilestoneInvalidation",
+    "OperationWorkflowRetainedMilestoneInvalidationRule",
+    "OperationWorkflowRetainedMilestonePath",
+    "OperationWorkflowRetainedMilestonePathResult",
+    "OperationWorkflowRetainedMilestoneRequirement",
+    "OperationWorkflowRetainedMilestoneStatus",
+    "OperationWorkflowRevisionChange",
+    "OperationWorkflowRevisionChangeKind",
+    "OperationWorkflowRevisionComparison",
+    "OperationWorkflowRevisionComparisonStatus",
+    "OperationWorkflowRevisionEvidence",
+    "OperationWorkflowRevisionEvidenceKind",
+    "OperationWorkflowRuleComparison",
+    "OperationWorkflowRuleComparisonSingleVersionStatus",
+    "OperationWorkflowRuleComparisonStatus",
+    "OperationWorkflowRuleComparisonSummary",
+    "OperationWorkflowRuleVersionCohort",
+    "OperationWorkflowRuleVersionOutcome",
+    "OperationWorkflowRuleVersionOverlap",
+    "OperationWorkflowRuleVersionStatistics",
     "OperationWorkflowState",
     "OperationWorkflowStateDuration",
     "OperationWorkflowStateHistoryEntry",
@@ -5766,6 +6216,8 @@ __all__ = (
     "OperationWorkflowTransitionReadiness",
     "OperationWorkflowTransitionReadinessAdvisoriesItem",
     "OperationWorkflowTransitionReadinessReasonsItem",
+    "OperationWorkflowTransitionReporting",
+    "OperationWorkflowTransitionReportingStatus",
     "OperationWorkflowUnmetEffect",
     "OperationWorkflowUnmetEffectReason",
     "OperationWorkflowUnmetInvariant",

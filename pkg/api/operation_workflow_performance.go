@@ -4,17 +4,25 @@ import "time"
 
 // OperationWorkflowPerformanceOptions selects a single app/environment/workflow.
 type OperationWorkflowPerformanceOptions struct {
+	BaselineToken                    string `json:"baseline_token,omitempty"`
 	AppID, Scope, Workflow, TenantID string
 }
 
 // OperationWorkflowPerformanceSummary compares complete retained histories by cohort.
 type OperationWorkflowPerformanceSummary struct {
-	CohortToken string                             `json:"cohort_token"`
-	EvaluatedAt time.Time                          `json:"evaluated_at"`
-	Workflow    string                             `json:"workflow"`
-	CohortLimit int                                `json:"cohort_limit"`
-	Completed   OperationWorkflowPerformanceCohort `json:"completed"`
-	Ongoing     OperationWorkflowPerformanceCohort `json:"ongoing"`
+	NewMissingProgress *OperationWorkflowNewMissingConditionProgress `json:"new_missing_progress,omitempty"`
+	MissingProgress    *OperationWorkflowMissingConditionProgress    `json:"missing_progress,omitempty"`
+	ConditionCoverage  *OperationWorkflowConditionCoverage           `json:"condition_coverage,omitempty"`
+	RefreshProgress    *OperationWorkflowConditionRefreshProgress    `json:"refresh_progress,omitempty"`
+	ActiveConditions   *OperationWorkflowActiveConditionSummary      `json:"active_conditions,omitempty"`
+	ConditionOutcomes  *OperationWorkflowConditionOutcomeSummary     `json:"condition_outcomes,omitempty"`
+	DecisionOutcomes   *OperationWorkflowDecisionOutcomeSummary      `json:"decision_outcomes,omitempty"`
+	CohortToken        string                                        `json:"cohort_token"`
+	EvaluatedAt        time.Time                                     `json:"evaluated_at"`
+	Workflow           string                                        `json:"workflow"`
+	CohortLimit        int                                           `json:"cohort_limit"`
+	Completed          OperationWorkflowPerformanceCohort            `json:"completed"`
+	Ongoing            OperationWorkflowPerformanceCohort            `json:"ongoing"`
 }
 
 type OperationWorkflowDurationDistribution struct {
@@ -71,4 +79,223 @@ type OperationWorkflowVerificationPerformance struct {
 	Owner                  string                                `json:"owner"`
 	PendingResolutionCount int64                                 `json:"pending_resolution_count"`
 	Duration               OperationWorkflowDurationDistribution `json:"duration"`
+}
+
+// OperationWorkflowDecisionOutcomeSummary groups completed workflows by reported business decisions and paths.
+type OperationWorkflowDecisionOutcomeSummary struct {
+	RuleComparisons                 *OperationWorkflowRuleComparisonSummary `json:"rule_comparisons,omitempty"`
+	MatchingWorkflowCount           int64                                   `json:"matching_workflow_count"`
+	SampledWorkflowCount            int64                                   `json:"sampled_workflow_count"`
+	LinkedWorkflowCount             int64                                   `json:"linked_workflow_count"`
+	ExcludedIncompleteWorkflowCount int64                                   `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount     int64                                   `json:"missing_outcome_workflow_count"`
+	UnclassifiedWorkflowCount       int64                                   `json:"unclassified_workflow_count"`
+	CohortTruncated                 bool                                    `json:"cohort_truncated"`
+	GroupsTruncated                 bool                                    `json:"groups_truncated"`
+	Groups                          []OperationWorkflowDecisionOutcomeGroup `json:"groups"`
+}
+
+// OperationWorkflowDecisionOutcomeGroup counts each workflow once per exact group.
+type OperationWorkflowDecisionOutcomeGroup struct {
+	Kind            string                                `json:"kind"`
+	ContractVersion int                                   `json:"contract_version"`
+	DecisionCode    string                                `json:"decision_code,omitempty"`
+	RuleID          string                                `json:"rule_id,omitempty"`
+	RuleVersion     string                                `json:"rule_version,omitempty"`
+	GroupID         string                                `json:"group_id,omitempty"`
+	PathID          string                                `json:"path_id,omitempty"`
+	OutcomeCode     string                                `json:"outcome_code"`
+	CompletionTime  OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime     OperationWorkflowDurationDistribution `json:"blocked_time"`
+}
+
+// OperationWorkflowRuleComparisonSummary compares observed rule versions within the completed sample.
+type OperationWorkflowRuleComparisonSummary struct {
+	SampledWorkflowCount      int64                             `json:"sampled_workflow_count"`
+	UnattributedWorkflowCount int64                             `json:"unattributed_workflow_count"`
+	ComparisonsTruncated      bool                              `json:"comparisons_truncated"`
+	Comparisons               []OperationWorkflowRuleComparison `json:"comparisons"`
+}
+type OperationWorkflowRuleComparison struct {
+	SingleVersionStatus               string                                   `json:"single_version_status"`
+	MultiVersionWorkflowCount         int64                                    `json:"multi_version_workflow_count"`
+	EligibleMultiVersionWorkflowCount int64                                    `json:"eligible_multi_version_workflow_count"`
+	ExamplesTruncated                 bool                                     `json:"examples_truncated"`
+	MultiVersionExamples              []OperationWorkflowRuleVersionOverlap    `json:"multi_version_examples"`
+	ContractVersion                   int                                      `json:"contract_version"`
+	DecisionCode                      string                                   `json:"decision_code"`
+	RuleID                            string                                   `json:"rule_id"`
+	Status                            string                                   `json:"status"`
+	VersionsTruncated                 bool                                     `json:"versions_truncated"`
+	Versions                          []OperationWorkflowRuleVersionStatistics `json:"versions"`
+}
+type OperationWorkflowRuleVersionStatistics struct {
+	SingleVersion                   *OperationWorkflowRuleVersionCohort   `json:"single_version,omitempty"`
+	RuleVersion                     string                                `json:"rule_version"`
+	ObservedWorkflowCount           int64                                 `json:"observed_workflow_count"`
+	EligibleWorkflowCount           int64                                 `json:"eligible_workflow_count"`
+	ExcludedIncompleteWorkflowCount int64                                 `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount     int64                                 `json:"missing_outcome_workflow_count"`
+	CompletionTime                  OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime                     OperationWorkflowDurationDistribution `json:"blocked_time"`
+	OutcomesTruncated               bool                                  `json:"outcomes_truncated"`
+	Outcomes                        []OperationWorkflowRuleVersionOutcome `json:"outcomes"`
+}
+type OperationWorkflowRuleVersionOutcome struct {
+	OutcomeCode           string `json:"outcome_code"`
+	WorkflowCount         int64  `json:"workflow_count"`
+	ProportionBasisPoints int64  `json:"proportion_basis_points"`
+}
+
+// OperationWorkflowRuleVersionCohort restricts outcomes to complete workflows reporting exactly one version for the comparison identity.
+type OperationWorkflowRuleVersionCohort struct {
+	EligibleWorkflowCount int64                                 `json:"eligible_workflow_count"`
+	CompletionTime        OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
+	OutcomesTruncated     bool                                  `json:"outcomes_truncated"`
+	Outcomes              []OperationWorkflowRuleVersionOutcome `json:"outcomes"`
+}
+
+// OperationWorkflowRuleVersionOverlap is a bounded example of observed version overlap, not proof of a policy replacement.
+type OperationWorkflowRuleVersionOverlap struct {
+	PlatformTenantID  string                                     `json:"platform_tenant_id,omitempty"`
+	Subject           OperationSubject                           `json:"subject"`
+	InstanceID        string                                     `json:"instance_id"`
+	OperationID       string                                     `json:"operation_id"`
+	HistoryComplete   bool                                       `json:"history_complete"`
+	Eligible          bool                                       `json:"eligible"`
+	EvidenceTruncated bool                                       `json:"evidence_truncated"`
+	Evidence          []OperationWorkflowDecisionOutcomeEvidence `json:"evidence"`
+}
+
+// OperationWorkflowConditionOutcomeSummary groups completed runs by explicitly reported condition results.
+type OperationWorkflowConditionOutcomeSummary struct {
+	MatchingWorkflowCount                  int64                                    `json:"matching_workflow_count"`
+	SampledWorkflowCount                   int64                                    `json:"sampled_workflow_count"`
+	LinkedWorkflowCount                    int64                                    `json:"linked_workflow_count"`
+	ChangingResultWorkflowCount            int64                                    `json:"changing_result_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                    `json:"excluded_incomplete_workflow_count"`
+	MissingOutcomeWorkflowCount            int64                                    `json:"missing_outcome_workflow_count"`
+	UnclassifiedWorkflowCount              int64                                    `json:"unclassified_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                    `json:"excluded_condition_evidence_workflow_count"`
+	CohortTruncated                        bool                                     `json:"cohort_truncated"`
+	GroupsTruncated                        bool                                     `json:"groups_truncated"`
+	Groups                                 []OperationWorkflowConditionOutcomeGroup `json:"groups"`
+}
+
+// OperationWorkflowConditionOutcomeGroup counts a workflow once per observed result; result groups may overlap.
+type OperationWorkflowConditionOutcomeGroup struct {
+	ContractVersion             int                                   `json:"contract_version"`
+	DecisionCode                string                                `json:"decision_code"`
+	RuleID                      string                                `json:"rule_id"`
+	RuleVersion                 string                                `json:"rule_version"`
+	ConditionID                 string                                `json:"condition_id"`
+	ConditionDescription        string                                `json:"condition_description"`
+	ConditionResult             string                                `json:"condition_result"`
+	OutcomeCode                 string                                `json:"outcome_code"`
+	ChangingResultWorkflowCount int64                                 `json:"changing_result_workflow_count"`
+	CompletionTime              OperationWorkflowDurationDistribution `json:"completion_time"`
+	BlockedTime                 OperationWorkflowDurationDistribution `json:"blocked_time"`
+}
+
+// OperationWorkflowActiveConditionSummary describes latest explicit snapshots in ongoing runs.
+type OperationWorkflowActiveConditionSummary struct {
+	OverdueWorkflowCount                   int64                                         `json:"overdue_workflow_count"`
+	OverdueConditionCount                  int64                                         `json:"overdue_condition_count"`
+	RefreshOwnersTruncated                 bool                                          `json:"refresh_owners_truncated"`
+	RefreshOwners                          []OperationWorkflowConditionRefreshOwnerGroup `json:"refresh_owners"`
+	MatchingWorkflowCount                  int64                                         `json:"matching_workflow_count"`
+	SampledWorkflowCount                   int64                                         `json:"sampled_workflow_count"`
+	LinkedWorkflowCount                    int64                                         `json:"linked_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                         `json:"excluded_incomplete_workflow_count"`
+	ExcludedAmbiguousWorkflowCount         int64                                         `json:"excluded_ambiguous_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                         `json:"excluded_condition_evidence_workflow_count"`
+	UnclassifiedWorkflowCount              int64                                         `json:"unclassified_workflow_count"`
+	CohortTruncated                        bool                                          `json:"cohort_truncated"`
+	GroupsTruncated                        bool                                          `json:"groups_truncated"`
+	Groups                                 []OperationWorkflowActiveConditionGroup       `json:"groups"`
+}
+
+// OperationWorkflowActiveConditionGroup measures full workflow durations, not condition latency.
+type OperationWorkflowActiveConditionGroup struct {
+	WithinBudgetWorkflowCount int64                                 `json:"within_budget_workflow_count"`
+	OverdueWorkflowCount      int64                                 `json:"overdue_workflow_count"`
+	NoBudgetWorkflowCount     int64                                 `json:"no_budget_workflow_count"`
+	ContractVersion           int                                   `json:"contract_version"`
+	DecisionCode              string                                `json:"decision_code"`
+	RuleID                    string                                `json:"rule_id"`
+	RuleVersion               string                                `json:"rule_version"`
+	ConditionID               string                                `json:"condition_id"`
+	ConditionDescription      string                                `json:"condition_description"`
+	ConditionResult           string                                `json:"condition_result"`
+	StaleWorkflowCount        int64                                 `json:"stale_workflow_count"`
+	ElapsedTime               OperationWorkflowDurationDistribution `json:"elapsed_time"`
+	BlockedTime               OperationWorkflowDurationDistribution `json:"blocked_time"`
+	EvidenceAge               OperationWorkflowDurationDistribution `json:"evidence_age"`
+}
+
+// OperationWorkflowConditionFreshness measures report age against the pinned definition, not condition truth.
+type OperationWorkflowConditionFreshness struct {
+	RefreshOwner          string     `json:"refresh_owner,omitempty"`
+	RefreshInstructions   string     `json:"refresh_instructions,omitempty"`
+	Status                string     `json:"status"`
+	EvidenceMaxAgeSeconds int64      `json:"evidence_max_age_seconds,omitempty"`
+	RefreshDueAt          *time.Time `json:"refresh_due_at,omitempty"`
+	OverdueSeconds        int64      `json:"overdue_seconds,omitempty"`
+}
+
+// OperationWorkflowConditionRefreshOwnerGroup counts ongoing runs once per refresh owner; owner groups overlap.
+type OperationWorkflowConditionRefreshOwnerGroup struct {
+	Owner                 string                                `json:"owner,omitempty"`
+	Unassigned            bool                                  `json:"unassigned"`
+	OverdueConditionCount int64                                 `json:"overdue_condition_count"`
+	ElapsedTime           OperationWorkflowDurationDistribution `json:"elapsed_time"`
+	BlockedTime           OperationWorkflowDurationDistribution `json:"blocked_time"`
+}
+
+// OperationWorkflowConditionRefreshPriority explains ranking within the ongoing sampled cohort.
+type OperationWorkflowConditionRefreshPriority struct {
+	OldestEvidence           OperationWorkflowDecisionOutcomeEvidence `json:"oldest_evidence"`
+	OldestEvidenceAgeSeconds int64                                    `json:"oldest_evidence_age_seconds"`
+	BlockedSeconds           int64                                    `json:"blocked_seconds"`
+	RefreshOwners            []string                                 `json:"refresh_owners"`
+	UnassignedConditionCount int64                                    `json:"unassigned_condition_count"`
+	Explanation              string                                   `json:"explanation"`
+}
+
+// OperationWorkflowConditionRefreshProgress compares retained reports in current sampled cohorts, not saved cohort membership.
+type OperationWorkflowConditionRefreshProgress struct {
+	BaselineAt                             time.Time                                           `json:"baseline_at"`
+	EvaluatedAt                            time.Time                                           `json:"evaluated_at"`
+	SampledWorkflowCount                   int64                                               `json:"sampled_workflow_count"`
+	ComparedWorkflowCount                  int64                                               `json:"compared_workflow_count"`
+	NoBaselineWorkflowCount                int64                                               `json:"no_baseline_workflow_count"`
+	NoOverdueBaselineWorkflowCount         int64                                               `json:"no_overdue_baseline_workflow_count"`
+	ExcludedIncompleteWorkflowCount        int64                                               `json:"excluded_incomplete_workflow_count"`
+	ExcludedAmbiguousWorkflowCount         int64                                               `json:"excluded_ambiguous_workflow_count"`
+	ExcludedConditionEvidenceWorkflowCount int64                                               `json:"excluded_condition_evidence_workflow_count"`
+	NewerReportConditionCount              int64                                               `json:"newer_report_condition_count"`
+	Statuses                               []OperationWorkflowConditionRefreshProgressCount    `json:"statuses"`
+	Items                                  []OperationWorkflowConditionRefreshProgressInstance `json:"items"`
+}
+type OperationWorkflowConditionRefreshProgressCount struct {
+	Status         string `json:"status"`
+	ConditionCount int64  `json:"condition_count"`
+}
+type OperationWorkflowConditionRefreshProgressInstance struct {
+	PlatformTenantID              string                                            `json:"platform_tenant_id,omitempty"`
+	Subject                       OperationSubject                                  `json:"subject"`
+	State                         OperationWorkflowState                            `json:"state"`
+	BaselineOverdueConditionCount int64                                             `json:"baseline_overdue_condition_count"`
+	NewerReportConditionCount     int64                                             `json:"newer_report_condition_count"`
+	Statuses                      []OperationWorkflowConditionRefreshProgressCount  `json:"statuses"`
+	ChangesTruncated              bool                                              `json:"changes_truncated"`
+	Changes                       []OperationWorkflowConditionRefreshProgressChange `json:"changes"`
+}
+type OperationWorkflowConditionRefreshProgressChange struct {
+	Status      string                                    `json:"status"`
+	NewerReport bool                                      `json:"newer_report"`
+	Before      OperationWorkflowDecisionOutcomeEvidence  `json:"before"`
+	After       *OperationWorkflowDecisionOutcomeEvidence `json:"after,omitempty"`
+	Explanation string                                    `json:"explanation"`
 }

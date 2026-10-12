@@ -7,6 +7,16 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Deployed PostgreSQL starter qualification — 2026-10-12
+
+The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
+thirteen phases, including the shipped Node starter, real public API rotation,
+restored pools and failed-hook cold fallback. The portable public API and restricted
+TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
+record the narrowed API build and outstanding guest execution. The internal GCE
+node failed preflight with existing jail/mount leaks and provides nested diagnostics
+only. Supported native KVM qualification remains pending; provisioning stays disabled.
+
 ## Local built validators and project publication — 2026-10-10
 
 [ADR-948](adr/948-built-validator-artifacts-and-project-publication.md) adds explicit

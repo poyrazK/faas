@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0; }
+    footer { font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.85rem; }
+    .good { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .pending { background: #fef3c7; color: #92400e; }
+    .neutral { background: #f3f4f6; color: #374151; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .table-scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.65rem; vertical-align: top; }
+    caption { text-align: left; padding-bottom: 0.75rem; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; }
+    input, select, button { font: inherit; padding: 0.4rem; }
+    ol li { padding-bottom: 0.75rem; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+<header><h1>Transition readiness</h1><a href="{{.Data.ListURL}}?scope={{.Data.Options.Scope}}">Customer Operations</a></header>
+<main>
+<p>Declared requirements determine readiness. Reporting and verification advisories provide context. Your application supplies evidence and authorizes execution.</p>
+<form method="get" action="{{.Data.QueueURL}}">
+<label>Environment <input name="scope" value="{{.Data.Options.Scope}}" required></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}"></label>
+<label>Workflow <input name="workflow" value="{{.Data.Options.Workflow}}"></label>
+<label>Target Operation <input name="target_operation" value="{{.Data.Options.TargetOperation}}"></label>
+<label>Blocker or verification owner <input name="owner" value="{{.Data.Options.Owner}}"></label>
+<label><input type="checkbox" name="unassigned" value="true" {{if .Data.Options.Unassigned}}checked{{end}}>Unassigned blocker or verification</label>
+<label>Unmet requirement <input name="requirement" value="{{.Data.Options.Requirement}}" placeholder="e.g. dependency_unmet"></label>
+<label>Rows <input type="number" name="limit" min="1" max="100" value="{{.Data.Options.Limit}}"></label>
+<button type="submit">Filter</button>
+</form>
+<p>{{.Data.Result.SampledWorkflowCount}} workflows sampled of {{.Data.Result.MatchingWorkflowCount}} ongoing workflows. {{.Data.Result.EvaluatedTransitionCount}} of {{.Data.Result.DeclaredTransitionCount}} candidate transitions evaluated. Matching sample: {{.Data.Result.UnmetTransitionCount}} unmet, {{.Data.Result.ReadyTransitionCount}} ready.</p>
+{{if .Data.Result.WorkflowSampleTruncated}}<p>Workflow sample limited to the 100 most recently updated workflows. Narrow the customer or workflow filter to inspect more.</p>{{end}}
+{{if .Data.Result.TransitionSampleTruncated}}<p>Transition sample limited to 100 current-state edges per workflow.</p>{{end}}
+{{if .Data.Result.HasMore}}<p>More matching transitions exist in this sample. Narrow the filters or increase the row limit.</p>{{end}}
+{{if .Data.Result.ExcludedChangedWorkflowCount}}<p>{{.Data.Result.ExcludedChangedWorkflowCount}} workflows changed during evaluation and were excluded. Refresh to reevaluate.</p>{{end}}
+{{if .Data.Result.NoTransitionWorkflowCount}}<p>{{.Data.Result.NoTransitionWorkflowCount}} sampled workflows have no matching declared current-state transition.</p>{{end}}
+<p>Live evaluation: {{.Data.Result.SampledAt}} – {{.Data.Result.EvaluatedAt}}. Counts cover the evaluated sample; refresh before acting.</p>
+
+<section class="card" id="readiness-comparison" data-compare-url="{{.Data.CompareURL}}" data-list-url="{{.Data.ListURL}}" data-scope="{{.Data.Options.Scope}}" data-tenant="{{.Data.Options.TenantID}}">
+<h2>Readiness changes</h2>
+<p>Save the returned transitions in this browser tab, then compare them with fresh evidence. Changed contracts, completed workflows and unavailable transitions are reported separately. Saved data is advisory; the application authorizes execution.</p>
+<textarea id="readiness-snapshot" hidden>{{.Data.SnapshotJSON}}</textarea>
+<button type="button" id="readiness-save">Save this view</button>
+<button type="button" id="readiness-clear">Clear saved view</button>
+<label>Show changes <select id="readiness-change"><option value="">All</option><option value="newly_ready">Newly ready</option><option value="newly_blocked">Newly blocked</option><option value="changed">Evidence changed</option><option value="unchanged">Unchanged</option><option value="unavailable">Not comparable</option></select></label>
+<button type="button" id="readiness-compare">Compare saved view</button>
+<p id="readiness-comparison-message" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table hidden id="readiness-changes"><thead><tr><th>Workflow / transition</th><th>Readiness change</th><th>Evidence</th></tr></thead><tbody></tbody></table></div>
+<noscript><p>Enable JavaScript to save and compare views. The API and SDKs also accept saved queue snapshots.</p></noscript>
+</section>
+
+<section class="card" id="workflow-timeline" data-case-url="{{.Data.CaseURL}}" data-url="{{.Data.TimelineURL}}" data-list-url="{{.Data.ListURL}}" data-queue-url="{{.Data.QueueURL}}">
+<h2>Workflow coordination timeline</h2>
+<p>Read retained coordination events for one exact business workflow instance. Times use your browser's local timezone. Latest snapshots do not reconstruct every earlier edit; gaps and deleted inboxes limit this history.</p>
+<form id="workflow-timeline-form">
+<label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="Blank for account-owned workflows"></label>
+<label>Subject type <input name="subject_type" required maxlength="63"></label>
+<label>Subject ID <input name="subject_id" required maxlength="256"></label>
+<label>Workflow <input name="workflow" required maxlength="63" value="{{.Data.Options.Workflow}}"></label>
+<label>Instance <input name="instance_id" required maxlength="256"></label>
+<label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+<button type="submit">Load timeline</button>
+<button type="button" id="workflow-case-load">Load case overview</button>
+<p>The case overview combines current business evidence, retained open follow-ups and advisory next steps. Choose an exact customer to read application-owned workflow reports.</p>
+</form>
+<p id="workflow-timeline-message" role="status" aria-live="polite"></p>
+<div id="workflow-case-overview" aria-live="polite"></div>
+<ul id="workflow-timeline-sources"></ul>
+<ul id="workflow-timeline-limitations"></ul>
+<ol id="workflow-timeline-items" aria-live="polite"></ol>
+<button type="button" id="workflow-timeline-more" hidden>Load more events</button>
+<noscript><p>Enable JavaScript to read the timeline, or use the API and SDKs.</p></noscript>
+</section>
+
+<section class="card" id="readiness-followups" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
+<h2>Follow-up work queue</h2>
+<p role="status" aria-live="polite">Due reminders for these filters: <strong id="readiness-due-reminder-count">Checking…</strong></p>
+<button type="button" id="readiness-show-reminders">Show due reminders</button>
+<p>Due reminders are published periodically and stay with their original notification. Reschedule or clear the follow-up to retire its reminder.</p>
+<p>Pending follow-ups across this application's readiness inboxes, ordered by due time with overdue items first. Follow-up ownership tracks coordination; current readiness must be checked against application evidence.</p>
+<form id="readiness-work-form">
+<label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
+<label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="All customers"></label>
+<label>Follow-up owner <input name="owner" maxlength="256" placeholder="All owners"></label>
+<label>Workflow <input name="workflow" maxlength="63" value="{{.Data.Options.Workflow}}" placeholder="All workflows"></label>
+<label>Due <select name="due"><option value="all">All pending</option><option value="overdue">Overdue</option><option value="upcoming">Upcoming</option></select></label>
+<label><input type="checkbox" name="reminder_only" value="true" id="readiness-reminder-only"> Published due reminders only</label>
+<label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+<button type="submit">Load follow-ups</button>
+</form>
+<p id="readiness-work-message" role="status" aria-live="polite"></p>
+<ol id="readiness-work-items" aria-live="polite"></ol>
+<button type="button" id="readiness-work-more" hidden>Load more follow-ups</button>
+<p>Follow-ups share each inbox's latest-100 notification retention window. Pages are live and can move when work is edited; reload to rebuild the queue.</p>
+<noscript><p>The API and SDKs can list pending follow-ups across readiness inboxes.</p></noscript>
+</section>
+<section class="card" id="readiness-subscriptions" data-url="{{.Data.SubscriptionsURL}}" data-list-url="{{.Data.ListURL}}" data-scope="{{.Data.Options.Scope}}" data-tenant="{{.Data.Options.TenantID}}" data-workflow="{{.Data.Options.Workflow}}" data-operation="{{.Data.Options.TargetOperation}}" data-owner="{{.Data.Options.Owner}}" data-unassigned="{{.Data.Options.Unassigned}}">
+<h2>Readiness subscriptions</h2>
+<p>Save a watch using this view's customer, workflow, target Operation and owner filters. Notifications stay in a durable inbox while this page is closed. New observations establish a baseline; subsequent changes can notify you. Discovery and evidence coverage are bounded.</p>
+<form id="readiness-subscription-form">
+<label>Subscription name <input name="name" required maxlength="63" pattern="[a-z][a-z0-9-]*" placeholder="warehouse-ready"></label>
+<label><input type="checkbox" name="event" value="newly_ready" checked>Newly ready</label>
+<label><input type="checkbox" name="event" value="newly_blocked" checked>Newly blocked</label>
+<label><input type="checkbox" name="event" value="reassigned" checked>Reassigned</label>
+<label><input type="checkbox" name="event" value="unavailable" checked>Evidence unavailable</label>
+<button type="submit">Create subscription</button>
+</form>
+<p>Requirement and row-limit filters apply to the queue only. Subscriptions watch all requirements on matching transitions.</p>
+<button type="button" id="readiness-subscription-refresh">Load subscriptions</button>
+<label>Inbox <select id="readiness-subscription-select"><option value="">Load a subscription</option></select></label>
+<button type="button" id="readiness-inbox-refresh">Refresh inbox</button>
+<button type="button" id="readiness-inbox-more" hidden>Load more notifications</button>
+<button type="button" id="readiness-subscription-delete">Delete subscription and inbox</button>
+<p id="readiness-subscription-message" role="status" aria-live="polite"></p>
+<label>Follow-up owner <input id="readiness-followup-owner-filter" maxlength="256"></label>
+<label><input type="checkbox" id="readiness-followup-pending-filter"> Only pending follow-ups</label>
+<p>Filters apply to loaded retained notifications. Read and acknowledgment are shared by this inbox.</p>
+<ol id="readiness-inbox" aria-live="polite"></ol>
+<noscript><p>The API and SDKs can create subscriptions and read their inboxes.</p></noscript>
+</section>
+<table><thead><tr><th>Workflow</th><th>Transition</th><th>Readiness requirements</th><th>Owners and blockers</th><th>Reporting advisories</th><th>Evidence</th></tr></thead><tbody>
+{{range .Data.Items}}<tr>
+<td>{{.Entry.Workflow}} / {{.Entry.InstanceID}}<br>{{.Entry.Subject.Type}}: {{.Entry.Subject.ID}}<br>{{.Entry.PlatformTenantID}}</td>
+<td>{{.Entry.Transition.Operation}}<br>{{.Entry.Transition.From}} → {{.Entry.Transition.To}}</td>
+<td>{{if .Entry.Ready}}Ready against declared requirements{{else}}Unmet{{end}}{{range .Entry.Reasons}}<p>{{.}}</p>{{end}}{{range .Entry.MissingMilestones}}<p>Required milestone: {{.}}</p>{{end}}{{range .Entry.MissingDependencyWorkflows}}<p>Missing prerequisite workflow: {{.}}</p>{{end}}</td>
+<td>{{range .Entry.Owners}}<p>{{.}}</p>{{end}}{{if .Entry.Unassigned}}<p>Unassigned</p>{{end}}{{range .Entry.Blockers}}<p>{{.Code}}: {{.Description}} — {{.Owner}}<br>{{.NextAction}}</p>{{end}}</td>
+<td>{{range .Entry.Advisories}}<p>{{.}}</p>{{end}}<p>Reporting: {{.Entry.ReportingStatus}}; {{.Entry.MissingReportCount}} missing, {{.Entry.OverdueReportCount}} overdue</p><p>{{.Entry.PendingVerificationCount}} pending verification obligations</p>{{if .Entry.PendingVerificationsTruncated}}<p>Showing the first 16 obligations; owner filters include all retained pending obligations.</p>{{end}}{{range .Entry.PendingVerifications}}<p>{{.Resolution.Code}}: {{.Resolution.Description}}<br>Verification owner: {{if .Resolution.VerificationOwner}}{{.Resolution.VerificationOwner}}{{else}}unassigned{{end}}<br>Expected milestone: {{.Resolution.VerificationMilestoneName}} {{.Resolution.VerificationMilestoneID}}<br><a href="{{$.Data.ListURL}}/{{if .Resolution.VerificationOperationID}}{{.Resolution.VerificationOperationID}}{{else}}{{.ResolutionOperationID}}{{end}}?scope={{$.Data.Options.Scope}}">Verification Operation</a> · <a href="{{$.Data.ListURL}}/{{.ResolutionOperationID}}?scope={{$.Data.Options.Scope}}">Resolution report</a></p>{{end}}</td>
+<td><a href="{{.HistoryURL}}">Detailed readiness and supporting Operations</a><br><a href="{{.OperationURL}}">Current reporting Operation</a><br>Revision {{.Entry.StateRevision}}, contract {{.Entry.ContractVersion}}</td>
+</tr>{{else}}<tr><td colspan="6">No matching transitions in the evaluated sample.</td></tr>{{end}}
+</tbody></table></main>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel = document.getElementById('readiness-comparison');
+ const message = document.getElementById('readiness-comparison-message');
+ const table = document.getElementById('readiness-changes');
+ const compare = document.getElementById('readiness-compare');
+ const storageKey = 'gregale:readiness:' + panel.dataset.listUrl + ':' + panel.dataset.scope + ':' + panel.dataset.tenant;
+ let snapshot;
+ try { snapshot = JSON.parse(document.getElementById('readiness-snapshot').value); }
+ catch { message.textContent = 'This view cannot be saved. Refresh to retry.'; return; }
+ const describeSaved = () => {
+  try {
+   const raw = sessionStorage.getItem(storageKey);
+   const saved = raw ? JSON.parse(raw) : null;
+   if (saved && saved.query !== snapshot.query) { sessionStorage.removeItem(storageKey); message.textContent = 'The saved view belonged to another account or scope and was cleared.'; compare.disabled = true; return; }
+   compare.disabled = !saved;
+   message.textContent = saved ? 'Saved ' + saved.items.length + ' transitions at ' + saved.captured_at + '. Comparing keeps this baseline until you save a new view.' : 'No view saved in this tab. Save this view to start tracking changes.';
+  } catch { compare.disabled = true; message.textContent = 'Browser storage is unavailable. Use the API or SDK to compare snapshots.'; }
+ };
+ document.getElementById('readiness-save').addEventListener('click', () => {
+  try { sessionStorage.setItem(storageKey, JSON.stringify(snapshot)); table.hidden = true; describeSaved(); }
+  catch { message.textContent = 'The browser could not save this view.'; }
+ });
+ document.getElementById('readiness-clear').addEventListener('click', () => {
+  try { sessionStorage.removeItem(storageKey); table.hidden = true; describeSaved(); }
+  catch { message.textContent = 'The browser could not clear the saved view.'; }
+ });
+ const text = (parent, value) => { const p = document.createElement('p'); p.textContent = value; parent.append(p); };
+ const operationLink = (parent, id, label) => {
+  if (!id) return;
+  const link = document.createElement('a'); link.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); link.textContent = label; parent.append(link, document.createElement('br'));
+ };
+ const names = {newly_ready:'Newly ready', newly_blocked:'Newly blocked', changed:'Evidence changed', unchanged:'Unchanged', state_unknown:'State unavailable', terminal:'Workflow completed', transition_unavailable:'Transition unavailable', contract_changed:'Declared requirements changed', baseline_ahead:'Retained revision is older'};
+ const categories = {blockers:'Blockers changed', prerequisites:'Prerequisite evidence changed', verification:'Pending verification obligations changed', reporting:'Reporting or timing advisories changed'};
+ compare.addEventListener('click', async () => {
+  compare.disabled = true; message.textContent = 'Comparing saved transitions with current evidence…'; table.hidden = true;
+  try {
+   const raw = sessionStorage.getItem(storageKey); if (!raw) throw new Error('Save a view before comparing.');
+   const baseline = JSON.parse(raw);
+   if (baseline.query !== snapshot.query) throw new Error('The saved view has a different account or scope. Save this view to replace it.');
+   const body = {scope:panel.dataset.scope, baseline, limit:100};
+   if (panel.dataset.tenant) body.tenant_id = panel.dataset.tenant;
+   const filter = document.getElementById('readiness-change').value; if (filter) body.change = filter;
+   const response = await fetch(panel.dataset.compareUrl, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), redirect:'error'});
+   const result = await response.json();
+   if (!response.ok) throw new Error(result.detail || 'The comparison could not be completed.');
+   const tbody = table.querySelector('tbody'); tbody.replaceChildren();
+   for (const item of result.items) {
+    const tr = document.createElement('tr'); const workflow = document.createElement('td'); const change = document.createElement('td'); const evidence = document.createElement('td');
+    text(workflow, item.baseline.workflow + ' / ' + item.baseline.instance_id);
+    text(workflow, item.baseline.subject.type + ': ' + item.baseline.subject.id);
+    text(workflow, item.baseline.operation + ': ' + item.baseline.from_state + ' → ' + item.baseline.to_state);
+    if (item.current_state) text(workflow, 'Current state: ' + item.current_state);
+    text(change, names[item.status] || item.status); text(change, item.explanation);
+    for (const reason of item.added_reasons) text(change, 'Now unmet: ' + reason);
+    for (const reason of item.resolved_reasons) text(change, 'No longer unmet: ' + reason);
+    for (const category of item.changed_categories) text(evidence, categories[category] || category);
+    if (!item.evidence_comparison_complete) text(evidence, 'Evidence inventory is incomplete or unavailable. Absence does not establish resolution.');
+    for (const delta of item.evidence_changes || []) {
+     const fact = delta.after || delta.before;
+     text(evidence, fact.category + ' · ' + fact.name + ': ' + delta.kind + (delta.before && delta.after ? ' (' + delta.before.status + ' → ' + delta.after.status + ')' : ' (' + fact.status + ')'));
+     if (delta.before && delta.after && delta.before.owner !== delta.after.owner) text(evidence, 'Owner: ' + (delta.before?.owner || 'unassigned') + ' → ' + (delta.after?.owner || 'unassigned'));
+     operationLink(evidence, delta.before?.operation_id, 'Saved evidence Operation');
+     operationLink(evidence, delta.after?.operation_id, 'Current evidence Operation');
+     operationLink(evidence, delta.after?.invalidation_operation_id, 'Invalidation Operation');
+    }
+    if (item.current && !['contract_changed', 'terminal', 'transition_unavailable', 'baseline_ahead', 'state_unknown'].includes(item.status)) {
+     for (const blocker of item.current.blockers) text(evidence, 'Current blocker: ' + blocker.code + ' · ' + (blocker.owner || 'unassigned') + (blocker.next_action ? ' · ' + blocker.next_action : ''));
+     text(evidence, 'Pending verification: ' + item.baseline.pending_verification_count + ' → ' + item.current.pending_verification_count);
+     for (const code of item.current.blockers.map(b => b.code).filter(code => !item.baseline.blocker_codes.includes(code))) text(evidence, 'Added blocker: ' + code);
+     for (const code of item.baseline.blocker_codes.filter(code => !item.current.blockers.some(b => b.code === code))) text(evidence, 'Removed blocker: ' + code);
+     for (const name of item.current.missing_milestones.filter(name => !item.baseline.missing_milestones.includes(name))) text(evidence, 'Now required milestone: ' + name);
+     for (const name of item.baseline.missing_milestones.filter(name => !item.current.missing_milestones.includes(name))) text(evidence, 'Milestone no longer missing: ' + name);
+     for (const name of item.current.missing_dependency_workflows.filter(name => !item.baseline.missing_dependency_workflows.includes(name))) text(evidence, 'Now missing prerequisite reference: ' + name);
+     for (const name of item.baseline.missing_dependency_workflows.filter(name => !item.current.missing_dependency_workflows.includes(name))) text(evidence, 'Prerequisite reference no longer missing: ' + name);
+     for (const proof of item.current.pending_verifications || []) {
+      text(evidence, 'Awaiting verification: ' + proof.resolution.code + ' · ' + (proof.resolution.verification_owner || 'unassigned'));
+      operationLink(evidence, proof.resolution.verification_operation_id || proof.resolution_operation_id, 'Verification Operation');
+     }
+    }
+    const q = new URLSearchParams({scope:panel.dataset.scope, subject_type:item.baseline.subject.type, subject_id:item.baseline.subject.id, workflow:item.baseline.workflow, workflow_instance_id:item.baseline.instance_id});
+    if (item.baseline.platform_tenant_id) q.set('tenant_id', item.baseline.platform_tenant_id);
+    const detail = document.createElement('a'); detail.href = panel.dataset.listUrl + '?' + q + '#workflows'; detail.textContent = 'Detailed readiness and evidence'; evidence.append(detail, document.createElement('br'));
+    operationLink(evidence, item.baseline.operation_id, 'Saved reporting Operation'); operationLink(evidence, item.current_operation_id, 'Current reporting Operation');
+    tr.append(workflow, change, evidence); tbody.append(tr);
+   }
+   if (!result.items.length) { const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 3; td.textContent = 'No saved transitions match this change filter.'; tr.append(td); tbody.append(tr); }
+   table.hidden = false;
+   snapshot = result.snapshot;
+   document.getElementById('readiness-save').textContent = 'Save comparison as baseline';
+   message.textContent = result.newly_ready_count + ' newly ready; ' + result.newly_blocked_count + ' newly blocked; ' + result.changed_count + ' evidence changed; ' + result.unchanged_count + ' unchanged; ' + result.unavailable_count + ' not comparable. Baseline: ' + result.baseline_at + '. Evaluated: ' + result.evaluated_at + '.' + (result.has_more ? ' More matching changes exist than are displayed.' : '') + ' Saving this comparison will include all ' + snapshot.items.length + ' available saved transitions, before change filtering.';
+  } catch (error) { message.textContent = error instanceof Error ? error.message : 'Comparison failed. Refresh to retry.'; }
+  finally { compare.disabled = false; }
+ });
+ describeSaved();
+})();
+</script>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel = document.getElementById('readiness-subscriptions');
+ const select = document.getElementById('readiness-subscription-select');
+ const message = document.getElementById('readiness-subscription-message');
+ const inbox = document.getElementById('readiness-inbox');
+ const more = document.getElementById('readiness-inbox-more');
+ const form = document.getElementById('readiness-subscription-form');
+ const create = form.querySelector('button');
+ const remove = document.getElementById('readiness-subscription-delete');
+ let after = 0, reading = false, generation = 0;
+ const ids = new Set();
+ const query = () => { const q = new URLSearchParams({scope:panel.dataset.scope}); if (panel.dataset.tenant) q.set('tenant_id',panel.dataset.tenant); return q; };
+ const text = (parent, value) => { const p = document.createElement('p'); p.textContent = value; parent.append(p); };
+ const operationLink = (parent, id, label) => {
+  if (!id) return;
+  const a = document.createElement('a'); a.href = panel.dataset.listUrl + '/' + encodeURIComponent(id) + '?scope=' + encodeURIComponent(panel.dataset.scope); a.textContent = label; parent.append(a,document.createElement('br'));
+ };
+ window.renderReadinessVerification = (parent, notification, scope) => {
+  const link=(id,label)=>{if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
+  const item=(proof)=>{
+   text(parent,proof.proof.resolution.operation+'/'+proof.proof.resolution.code+': '+proof.status+' · '+proof.explanation);
+   text(parent,'Verification owner: '+(proof.proof.resolution.verification_owner || 'unassigned'));
+   link(proof.proof.resolution.verification_operation_id || proof.proof.resolution_operation_id,'Saved verification proof Operation');
+   link(proof.reporting_operation_id,'Current or invalidating reporting Operation');if(proof.reporting_revision)text(parent,'Observed reporting revision: '+proof.reporting_revision);
+  };
+  const watch=notification.verification_watch;
+  if(watch){text(parent,'Verification watch started '+new Date(watch.started_at).toLocaleString()+' · last checked '+new Date(watch.evaluated_at).toLocaleString());text(parent,'Watching '+watch.items.length+' saved resolutions from '+watch.pending_count_at_start+' pending at completion.'+(watch.coverage_incomplete ? ' Coverage is partial; other pending resolutions are not watched.' : ''));for(const proof of watch.items)item(proof);text(parent,'Watch ends when the source notification expires from this inbox. Refresh the inbox for its latest observations.');}
+  window.renderReadinessOutcomeWatch(parent,notification,scope);
+  const event=notification.verification;
+  if(event){text(parent,'Verification changed · checked '+new Date(event.checked_at).toLocaleString()+' · source notification '+event.source_sequence);text(parent,event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);for(const change of event.changes){text(parent,'Previous verification status: '+change.before_status);item(change.after);}text(parent,'These are retained application reports. Verification does not establish workflow readiness or authorize execution.');}
+ };
+ window.renderReadinessBusinessOutcome = (parent, outcome, scope, label) => {
+  if(!outcome)return;
+  text(parent,label+': '+outcome.status+' · expected '+outcome.expected_outcome_code+' · checked '+new Date(outcome.checked_at).toLocaleString());
+  text(parent,outcome.explanation);
+  if(outcome.state)text(parent,'Reported state: '+outcome.state+' · revision '+outcome.state_revision+' · contract '+outcome.contract_version);
+  if(outcome.reported_outcome_code)text(parent,'Application outcome: '+outcome.reported_outcome_code+(outcome.reported_outcome_description ? ' · '+outcome.reported_outcome_description : ''));
+  if(outcome.occurred_at)text(parent,'Application occurrence time: '+new Date(outcome.occurred_at).toLocaleString());
+  if(outcome.reporting_operation_id){const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(outcome.reporting_operation_id)+'?scope='+encodeURIComponent(scope);a.textContent='Business outcome reporting Operation';parent.append(a,document.createElement('br'));}
+  if(outcome.report_id)text(parent,'Outcome report: '+outcome.report_id);
+ };
+ window.renderReadinessEscalation = (parent, escalation, scope) => {
+  if(!escalation)return;
+  text(parent,'Assigned business outcome escalation · source notification '+escalation.source_sequence);
+  const response=escalation.response;
+  if(response){text(parent,'Acknowledgment target: '+response.status+' · deadline '+new Date(response.deadline_at).toLocaleString());if(response.first_acknowledged_at)text(parent,'First acknowledged '+new Date(response.first_acknowledged_at).toLocaleString());if(response.deadline_notified_at)text(parent,'Missed acknowledgment deadline notice delivered '+new Date(response.deadline_notified_at).toLocaleString());if(response.fallback_owner)text(parent,'Configured fallback owner: '+response.fallback_owner);for(const change of response.history || [])text(parent,'Assignment changed: '+(change.from_owner || 'unassigned')+' → '+(change.to_owner || 'unassigned')+' · '+new Date(change.at).toLocaleString()+' · '+change.actor+' · '+change.reason);if(response.history_truncated)text(parent,'Assignment history is partial; only the latest 16 changes are retained.');}
+
+  window.renderReadinessBusinessOutcome(parent,escalation.current,scope,'Latest escalation watch evidence');
+  if(escalation.success_observed_at)text(parent,'Application success first observed '+new Date(escalation.success_observed_at).toLocaleString()+'; acknowledgment and completion remain manual.');
+  text(parent,'Evidence updates stop when the source watch expires. The assigned follow-up uses the existing acknowledgment and completion controls.');
+ };
+ window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
+  window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
+  const missed=notification.escalation_response;
+  if(missed){text(parent,'Escalation awaiting acknowledgment passed its deadline '+new Date(missed.deadline_at).toLocaleString()+' · checked '+new Date(missed.checked_at).toLocaleString());text(parent,'Assigned escalation notification: '+missed.escalation_sequence+' · owner '+(missed.owner || 'unassigned')+(missed.reassigned ? ' · fallback assignment applied' : ' · existing assignment preserved'));text(parent,missed.source.workflow+' / '+missed.source.instance_id+' · '+missed.source.subject.type+': '+missed.source.subject.id);}
+  const watch=notification.business_outcome_watch;
+  if(watch){if(watch.escalation_policy)text(parent,'Deadline escalation owner: '+watch.escalation_policy.owner+' · follow-up '+watch.escalation_policy.follow_up_after_seconds+' seconds after delivery');if(watch.escalation)text(parent,'Escalation follow-up notification: '+watch.escalation.sequence);text(parent,'Business outcome watch started '+new Date(watch.started_at).toLocaleString());window.renderReadinessBusinessOutcome(parent,watch.current,scope,'Latest watched business result');if(watch.deadline_at)text(parent,'Outcome deadline: '+new Date(watch.deadline_at).toLocaleString()+(watch.deadline_notified ? ' · deadline notice delivered' : ''));text(parent,'Monitoring ends when the source notification expires or its subscription is deleted. Refresh the inbox for the latest observation.');}
+  const event=notification.business_outcome;
+  if(event){text(parent,'Business outcome notification · source '+event.source_sequence+' · '+event.source.workflow+' / '+event.source.instance_id+' · '+event.source.subject.type+': '+event.source.subject.id);text(parent,'Previous observed business result: '+event.previous_status);window.renderReadinessBusinessOutcome(parent,event.current,scope,'Observed application business result');if(notification.kind==='outcome_deadline_reached')text(parent,'Deadline passed without the expected result observed at this check; this does not establish business failure.');if(event.deadline_at)text(parent,'Outcome deadline: '+new Date(event.deadline_at).toLocaleString());text(parent,'Application-reported outcomes do not establish causation or authorize workflow execution.');}
+ };
+ window.renderReadinessCompletion = (parent, completion, scope) => {
+  if(!completion)return;
+  text(parent,'Follow-up completed: '+completion.outcome+' · '+new Date(completion.completed_at).toLocaleString()+' · '+completion.completed_by);
+  text(parent,'Completion note: '+completion.note);
+  if(completion.expected_outcome_code && !completion.business_outcome)text(parent,'Expected business outcome: '+completion.expected_outcome_code+' · observation unavailable.');
+  window.renderReadinessBusinessOutcome(parent,completion.business_outcome,scope,'Business result observed at completion');
+  const link=(id,label)=>{if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
+  for(const id of completion.evidence_operation_ids || [])link(id,'Completion evidence Operation');
+  const evidence=completion.evidence;
+  text(parent,'Evidence at completion: '+evidence.status+' · checked '+new Date(evidence.checked_at).toLocaleString());
+  text(parent,evidence.explanation);
+  link(evidence.reporting_operation_id,'Reporting Operation at completion');
+  text(parent,'Pending verification at completion: '+evidence.pending_verification_count);
+  for(const reason of evidence.remaining_reasons || [])text(parent,'Remaining requirement at completion: '+reason);
+  for(const warning of evidence.warnings || [])text(parent,warning);
+ };
+ window.mountReadinessCompletion = (parent, c, detail, scope, onSaved) => {
+  const container=document.createElement('div');parent.append(container);let watched;
+  const render=()=>{
+   container.replaceChildren();window.renderReadinessCompletion(container,c.completion,scope);if(watched)window.renderReadinessVerification(container,watched,scope);
+   if(!c.follow_up_at || c.completion)return;
+   const form=document.createElement('form');container.append(form);
+   text(form,'Complete this follow-up with a recorded outcome. This closes coordination; it does not resolve application blockers. Evidence is checked again when saving.');
+   const field=(label,input)=>{const l=document.createElement('label');l.textContent=label;l.append(input);form.append(l);return input;};
+   const outcome=field('Completion outcome ',document.createElement('select'));
+   for(const [value,label] of [['resolved','Resolved'],['no_longer_applicable','No longer applicable'],['handed_off','Handed off']]){const o=document.createElement('option');o.value=value;o.textContent=label;outcome.append(o);}
+   const note=field('Completion note ',document.createElement('textarea'));note.required=true;note.maxLength=1024;
+   const expected=field('Expected business outcome code (optional, application-defined terminal outcome slug) ',document.createElement('input'));expected.maxLength=64;expected.pattern='[a-z][a-z0-9-]{0,63}';
+   const outcomeWatch=field('Watch for the expected business outcome after completion ',document.createElement('input'));outcomeWatch.type='checkbox';
+   const deadline=field('Optional business outcome deadline (your local timezone) ',document.createElement('input'));deadline.type='datetime-local';deadline.disabled=true;
+   const escalate=field('Assign a follow-up if the outcome deadline is missed ',document.createElement('input'));escalate.type='checkbox';escalate.disabled=true;
+   const escalationOwner=field('Escalation owner or team ',document.createElement('input'));escalationOwner.maxLength=256;escalationOwner.disabled=true;
+   const escalationDelay=field('Escalation follow-up delay in minutes (1–10080) ',document.createElement('input'));escalationDelay.type='number';escalationDelay.min=1;escalationDelay.max=10080;escalationDelay.step=1;escalationDelay.value='60';escalationDelay.disabled=true;
+   const escalationNote=field('Optional escalation note ',document.createElement('textarea'));escalationNote.maxLength=1024;escalationNote.disabled=true;
+   const responseTarget=field('Set an acknowledgment deadline for the assigned escalation ',document.createElement('input'));responseTarget.type='checkbox';responseTarget.disabled=true;
+   const responseDelay=field('Acknowledgment deadline after escalation delivery in minutes (1–10080) ',document.createElement('input'));responseDelay.type='number';responseDelay.min=1;responseDelay.max=10080;responseDelay.step=1;responseDelay.value='15';responseDelay.disabled=true;
+   const fallbackOwner=field('Optional fallback owner or team after missed acknowledgment ',document.createElement('input'));fallbackOwner.maxLength=256;fallbackOwner.disabled=true;
+   const escalationFields=()=>{const active=outcomeWatch.checked && escalate.checked;deadline.required=active;escalationOwner.disabled=escalationDelay.disabled=escalationNote.disabled=!active;escalationOwner.required=escalationDelay.required=active;responseTarget.disabled=!active;responseDelay.disabled=fallbackOwner.disabled=!(active && responseTarget.checked);responseDelay.required=active && responseTarget.checked;};
+   responseTarget.addEventListener('change',escalationFields);
+   escalate.addEventListener('change',escalationFields);
+   outcomeWatch.addEventListener('change',()=>{expected.required=outcomeWatch.checked;deadline.disabled=!outcomeWatch.checked;escalate.disabled=!outcomeWatch.checked;escalationFields();});
+   const watch=field('Watch pending verification after completion (up to 16 saved resolutions) ',document.createElement('input'));watch.type='checkbox';
+   const ids=field('Evidence Operation UUIDs (up to 8, separated by spaces or commas; required for resolved) ',document.createElement('textarea'));ids.required=true;
+   outcome.addEventListener('change',()=>{ids.required=outcome.value==='resolved';});
+   const preview=document.createElement('button');preview.type='button';preview.textContent='Check evidence before completion';form.append(preview);
+   const handoff=document.createElement('div');form.append(handoff);
+   const save=document.createElement('button');save.type='submit';save.textContent='Complete follow-up';form.append(save);
+   const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
+   preview.addEventListener('click',async()=>{preview.disabled=true;try{const check=await request(detail);if(container.isConnected)window.renderReadinessHandoff(handoff,check,scope);}catch(error){result.textContent=error.message;}finally{preview.disabled=false;}});
+   form.addEventListener('submit',async event=>{event.preventDefault();const evidenceIDs=ids.value.trim() ? ids.value.trim().split(/[\s,]+/) : [];if(evidenceIDs.length>8){result.textContent='Use at most 8 evidence Operation UUIDs.';return;}save.disabled=true;preview.disabled=true;try{
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{escalation_policy:outcomeWatch.checked && escalate.checked ? {owner:escalationOwner.value,note:escalationNote.value,follow_up_after_seconds:Number(escalationDelay.value)*60,acknowledge_after_seconds:responseTarget.checked ? Number(responseDelay.value)*60 : undefined,fallback_owner:responseTarget.checked ? fallbackOwner.value || undefined : undefined} : undefined,watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
+    Object.assign(c,updated.coordination);delete c.follow_up_at;watched=updated;render();await onSaved(updated);
+   }catch(error){result.textContent=error.message+' Refresh before retrying a conflicting completion.';}finally{save.disabled=false;preview.disabled=false;}});
+  };
+  render();return render;
+ };
+ window.renderReadinessHandoff = (parent, check, scope = panel.dataset.scope) => {
+  const operationLink = (parent, id, label) => {if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
+  parent.replaceChildren();
+  const h=check.handoff;
+  text(parent,'Workflow handoff · '+check.status+' · checked '+new Date(check.checked_at).toLocaleString());
+  if(!h){text(parent,'Handoff evidence is unavailable.');return;}
+  text(parent,h.summary);
+  const coordination=check.notification.coordination;
+  window.renderReadinessVerification(parent,check.notification,scope);
+  window.renderReadinessBusinessOutcome(parent,check.business_outcome,scope,'Latest application business result');
+  if(coordination){window.renderReadinessCompletion(parent,coordination.completion,scope);text(parent,'Follow-up owner: '+(coordination.owner || 'unassigned'));if(coordination.note)text(parent,'Coordination note: '+coordination.note);if(coordination.follow_up_at)text(parent,'Follow-up deadline: '+new Date(coordination.follow_up_at).toLocaleString());}
+  if(h.baseline_evaluated_at)text(parent,'Changes since saved notification observation: '+new Date(h.baseline_evaluated_at).toLocaleString());
+  const change=check.change;
+  if(change){operationLink(parent,change.baseline.operation_id,'Saved reporting Operation');operationLink(parent,change.current_operation_id,'Current reporting Operation');if(change.current_state)text(parent,'Reported current state: '+change.current_state);}
+  const current=h.comparable && change?.current;
+  if(current){
+   text(parent,current.workflow+' / '+current.instance_id+' · revision '+current.state_revision+' · contract '+current.contract_version);
+   text(parent,current.transition.operation+': '+current.transition.from+' → '+current.transition.to);
+   for(const blocker of current.blockers || [])text(parent,'Blocker '+blocker.code+': '+blocker.description+' · reported owner: '+(blocker.owner || 'unassigned')+(blocker.next_action ? ' · reported next action: '+blocker.next_action : ''));
+   for(const reason of current.reasons || [])text(parent,'Requirement: '+reason);
+   for(const name of current.missing_milestones || [])text(parent,'Missing milestone: '+name);
+   for(const name of current.missing_dependency_workflows || [])text(parent,'Missing dependency workflow: '+name);
+   text(parent,'Reporting: '+(current.reporting_status || 'unknown')+' · missing reports '+current.missing_report_count+' · overdue reports '+current.overdue_report_count);
+   text(parent,'Pending verification: '+current.pending_verification_count);
+   for(const proof of current.pending_verifications || []){text(parent,'Verification: '+proof.status);operationLink(parent,proof.resolution.verification_operation_id || proof.resolution_operation_id,'Verification evidence Operation');}
+   for(const advisory of current.advisories || [])text(parent,'Advisory: '+advisory);
+   for(const delta of change.evidence_changes || []){const fact=delta.after || delta.before;text(parent,'Evidence '+fact.category+' · '+fact.name+': '+delta.kind+' · '+fact.status);operationLink(parent,delta.before?.operation_id,'Previous evidence Operation');operationLink(parent,delta.after?.operation_id,'Current evidence Operation');operationLink(parent,delta.after?.invalidation_operation_id,'Invalidation Operation');}
+  }
+  for(const limitation of h.limitations || [])text(parent,limitation);
+ };
+ const request = async (url, options = {}) => {
+  const response = await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});
+  if (!response.ok) { let problem; try { problem = await response.json(); } catch {} throw new Error(problem?.detail || problem?.title || 'Readiness subscription request failed (' + response.status + ').'); }
+  return response.status === 204 ? undefined : response.json();
+ };
+ const reset = () => { generation++; after = 0; ids.clear(); inbox.replaceChildren(); more.hidden = true; };
+ const applyFollowupFilters = () => {
+  const owner = document.getElementById('readiness-followup-owner-filter').value;
+  const pending = document.getElementById('readiness-followup-pending-filter').checked;
+  for (const li of inbox.children) li.hidden = (owner && li.dataset.owner !== owner) || (pending && li.dataset.pending !== 'true');
+ };
+ document.getElementById('readiness-followup-owner-filter').addEventListener('input',applyFollowupFilters);
+ document.getElementById('readiness-followup-pending-filter').addEventListener('change',applyFollowupFilters);
+ const showNotification = (notification) => {
+  if (ids.has(notification.id)) return;
+  ids.add(notification.id);
+  const li = document.createElement('li'); li.dataset.id = notification.id;
+  text(li,notification.kind + ' · ' + notification.created_at); text(li,notification.explanation);
+  window.renderReadinessVerification(li,notification,panel.dataset.scope);
+  const escalationRef=notification.business_outcome_watch?.escalation || notification.business_outcome?.escalation;
+  if(escalationRef){const link=document.createElement('a');link.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+escalationRef.sequence;link.textContent='Open assigned outcome escalation';li.append(link);}
+  if(notification.escalation_response){const link=document.createElement('a');link.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+notification.escalation_response.escalation_sequence;link.textContent='Open escalation awaiting acknowledgment';li.append(link);}
+  const sourceEvent=notification.verification || notification.business_outcome;
+  if(sourceEvent){const source=document.createElement('a');source.href=window.location.pathname+'?'+query()+'#readiness-subscriptions/'+encodeURIComponent(select.value)+'/'+sourceEvent.source_sequence;source.textContent='Open source follow-up completion';li.append(source);}
+  const change = notification.change;
+  if (change) {
+   text(li,change.baseline.workflow + ' / ' + change.baseline.instance_id + ' · ' + change.baseline.subject.type + ': ' + change.baseline.subject.id);
+   text(li,change.baseline.operation + ': ' + change.baseline.from_state + ' → ' + change.baseline.to_state);
+   for (const delta of change.evidence_changes || []) {
+    const fact = delta.after || delta.before;
+    text(li,fact.category + ' · ' + fact.name + ': ' + delta.kind + ' · ' + fact.status);
+    if (delta.before && delta.after && delta.before.owner !== delta.after.owner) text(li,'Owner: ' + (delta.before.owner || 'unassigned') + ' → ' + (delta.after.owner || 'unassigned'));
+    operationLink(li,delta.before?.operation_id,'Saved evidence Operation'); operationLink(li,delta.after?.operation_id,'Current evidence Operation'); operationLink(li,delta.after?.invalidation_operation_id,'Invalidation Operation');
+   }
+   if (!change.evidence_comparison_complete) text(li,'Detailed evidence is incomplete or unavailable. Missing evidence does not establish resolution.');
+   operationLink(li,change.baseline.operation_id,'Saved reporting Operation'); operationLink(li,change.current_operation_id,'Current reporting Operation');
+   const q = query();q.set('subject_type',change.baseline.subject.type);q.set('subject_id',change.baseline.subject.id);q.set('workflow',change.baseline.workflow);q.set('workflow_instance_id',change.baseline.instance_id);if (change.baseline.platform_tenant_id) q.set('tenant_id',change.baseline.platform_tenant_id);
+   const detail = document.createElement('a');detail.href = panel.dataset.listUrl + '?' + q + '#workflows';detail.textContent = 'Detailed readiness and evidence';li.append(detail);
+  }
+  const reminderNotice=document.createElement('p');li.append(reminderNotice);
+  const describeReminder=(reminder)=>{reminderNotice.textContent=reminder ? 'Due reminder · deadline '+new Date(reminder.due_at).toLocaleString()+' · published '+new Date(reminder.created_at).toLocaleString() : '';};describeReminder(notification.reminder);
+  const c = notification.coordination || {revision:0,status:'unread',owner:'',note:''};
+  li.dataset.owner = c.owner; li.dataset.pending = String(!!c.follow_up_at);
+  const coordinationStatus=document.createElement('p');li.append(coordinationStatus);
+  const updateCoordinationStatus=()=>{coordinationStatus.textContent='Inbox status: '+c.status+(c.acknowledged_by ? ' · acknowledged by '+c.acknowledged_by+' at '+new Date(c.acknowledged_at).toLocaleString() : '')+(c.follow_up_at ? ' · follow up '+new Date(c.follow_up_at).toLocaleString() : '');};updateCoordinationStatus();
+  const form = document.createElement('form');
+  const labelInput = (label, input) => { const l=document.createElement('label');l.textContent=label;l.append(input);form.append(l);return input; };
+  const status=labelInput('Status ',document.createElement('select'));
+  for (const value of ['unread','read','acknowledged']) {const o=document.createElement('option');o.value=value;o.textContent=value;status.append(o);} status.value=c.status;
+  const owner=labelInput('Follow-up owner ',document.createElement('input'));owner.maxLength=256;owner.value=c.owner;
+  const due=labelInput('Follow-up time (your browser timezone) ',document.createElement('input'));due.type='datetime-local';due.step='0.001';
+  if (c.follow_up_at) { const d=new Date(c.follow_up_at); const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);due.value=local.toISOString().slice(0,-1); }
+  due.disabled=!!c.completion;
+  let savedDueInput=due.value;
+  const note=labelInput('Note ',document.createElement('textarea'));note.maxLength=1024;note.value=c.note;
+  const save=document.createElement('button');save.type='submit';save.textContent='Save coordination';form.append(save);
+  const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
+  const subscriptionID=select.value;
+  const detailURL=panel.dataset.url+'/'+encodeURIComponent(subscriptionID)+'/notifications/'+notification.sequence+'?'+query();
+  form.addEventListener('submit',async event => {event.preventDefault();save.disabled=true;const submittedDueInput=due.value;try {
+   const updated=await request(detailURL,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:status.value,owner:owner.value,note:note.value,follow_up_at:due.value ? (due.value===savedDueInput && c.follow_up_at ? c.follow_up_at : new Date(due.value).toISOString()) : undefined})});
+   if(select.value!==subscriptionID || !li.isConnected)return;
+   savedDueInput=submittedDueInput;describeReminder(updated.reminder);Object.assign(c,updated.coordination);due.disabled=!!c.completion;if(!updated.coordination.acknowledged_by){delete c.acknowledged_by;delete c.acknowledged_at;}if(!updated.coordination.follow_up_at)delete c.follow_up_at;updateCoordinationStatus();renderCompletion();li.dataset.owner=updated.coordination.owner;li.dataset.pending=String(!!updated.coordination.follow_up_at);applyFollowupFilters();result.textContent='Saved '+updated.coordination.status+' by '+updated.coordination.updated_by+'.';
+  }catch(error){result.textContent=error.message+' Refresh the inbox before retrying a conflicting edit.';}finally{save.disabled=false;}});
+  li.append(form);
+  const renderCompletion=window.mountReadinessCompletion(li,c,detailURL,panel.dataset.scope,async updated=>{describeReminder(updated.reminder);due.value='';due.disabled=true;savedDueInput='';updateCoordinationStatus();li.dataset.pending='false';applyFollowupFilters();result.textContent='Follow-up completion recorded. See the evidence check and remaining requirements below.';});
+  const handoff=document.createElement('div');li.append(handoff);
+  const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){window.renderReadinessHandoff(handoff,current);}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
+  inbox.append(li);applyFollowupFilters();
+  while (inbox.children.length > 100) { ids.delete(inbox.firstElementChild.dataset.id); inbox.firstElementChild.remove(); }
+ };
+ const read = async () => {
+  if (!select.value || reading) return;
+  const id = select.value, epoch = generation; reading = true;
+  const q = query(); q.set('after_sequence',String(after)); q.set('limit','20');
+  try {
+   const result = await request(panel.dataset.url + '/' + encodeURIComponent(id) + '/notifications?' + q);
+   if (epoch !== generation || id !== select.value) return;
+   if (result.resync_required) { ids.clear(); inbox.replaceChildren(); }
+   for (const n of result.items) showNotification(n);
+   after = result.next_sequence; more.hidden = !result.has_more;
+   const sub = result.subscription;
+   message.textContent = sub.name + ': ' + sub.status + '; last successful evaluation ' + sub.evaluated_at + '; ' + sub.watched_transition_count + ' saved transitions.' + (sub.coverage_incomplete ? ' Coverage is incomplete; narrow the workflow or customer filters.' : '') + (result.resync_required ? ' Notification history has a gap; showing retained entries.' : '') + (result.has_more ? ' More notifications are available.' : '') + (!result.items.length && !inbox.children.length ? ' No retained notifications.' : '');
+  } catch (error) { if (epoch === generation) message.textContent = error.message; }
+  finally { reading = false; }
+ };
+ const load = async (preferred, sequence = 0) => {
+  const epoch = ++generation; const selected = preferred || select.value;
+  try {
+   const result = await request(panel.dataset.url + '?' + query());
+   if (epoch !== generation) return;
+   select.replaceChildren();
+   for (const sub of result.items) { const option = document.createElement('option');option.value = sub.id;option.textContent = sub.name + ' · ' + sub.status;select.append(option); }
+   if (!result.items.length) { const option = document.createElement('option');option.value = '';option.textContent = 'No subscriptions';select.append(option); }
+   if (preferred && !result.items.some(s => s.id === preferred)) {select.value='';reset();message.textContent='The requested subscription is unavailable in this scope.';return;}
+   if (result.items.some(s => s.id === selected)) select.value = selected;
+   reset(); if (sequence > 0 && select.value === preferred) after = sequence - 1; message.textContent = result.items.length + ' subscriptions in this customer and environment scope.';
+   await read();
+  } catch (error) { if (epoch === generation) message.textContent = error.message; }
+ };
+ form.addEventListener('submit',async event => {
+  event.preventDefault(); create.disabled = true;
+  const fields = new FormData(form);
+  const body = {name:fields.get('name'),scope:panel.dataset.scope,events:fields.getAll('event'),unassigned:panel.dataset.unassigned === 'true'};
+  for (const [field,value] of Object.entries({tenant_id:panel.dataset.tenant,workflow:panel.dataset.workflow,target_operation:panel.dataset.operation,owner:panel.dataset.owner})) if (value) body[field] = value;
+  try { const sub = await request(panel.dataset.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await load(sub.id); }
+  catch (error) { message.textContent = error.message; }
+  finally { create.disabled = false; }
+ });
+ remove.addEventListener('click',async () => {
+  if (!select.value) return;remove.disabled = true;
+  try { await request(panel.dataset.url + '/' + encodeURIComponent(select.value) + '?' + query(),{method:'DELETE'});reset();await load(); }
+  catch (error) { message.textContent = error.message; }
+  finally { remove.disabled = false; }
+ });
+ select.addEventListener('change',() => { reset(); void read(); });
+ document.getElementById('readiness-subscription-refresh').addEventListener('click',() => { void load(); });
+ document.getElementById('readiness-inbox-refresh').addEventListener('click',() => { if(reading)return; reset(); void read(); });
+ more.addEventListener('click',() => { void read(); });
+ window.setInterval(() => { if (!document.hidden) void read(); },30000);
+ const openInboxReference = () => {
+ const target = /^#readiness-subscriptions\/([0-9a-f-]{36})\/([0-9]+)$/.exec(window.location.hash);
+ if (target && Number.isSafeInteger(Number(target[2])) && Number(target[2]) > 0) {panel.scrollIntoView();void load(target[1],Number(target[2]));}
+ };
+ window.addEventListener('hashchange',openInboxReference);openInboxReference();
+})();
+
+</script>
+<script nonce="{{.Nonce}}">
+(() => {
+ const panel=document.getElementById('readiness-followups'), form=document.getElementById('readiness-work-form');
+ const list=document.getElementById('readiness-work-items'), message=document.getElementById('readiness-work-message'), more=document.getElementById('readiness-work-more');
+ const count=document.getElementById('readiness-due-reminder-count'), showReminders=document.getElementById('readiness-show-reminders');
+ const submit=form.querySelector('button');let generation=0, offset=0, loading=false, counting=false, refreshPending=false, applied;
+ const formValues=()=>{const q=new URLSearchParams();for(const [k,v] of new FormData(form)){if(String(v).trim())q.set(k,String(v).trim());}return q;};
+ const ids=new Set();
+ const text=(parent,value)=>{const p=document.createElement('p');p.textContent=value;parent.append(p);return p;};
+ const request=async(url,options={})=>{const response=await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});if(!response.ok){let p;try{p=await response.json();}catch{}throw new Error(p?.detail || p?.title || 'Follow-up request failed ('+response.status+').');}return response.json();};
+ const draw=(row)=>{
+  const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
+  const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
+  if(window.renderReadinessEscalation)window.renderReadinessEscalation(li,row.outcome_escalation,row.scope);
+  if(row.reminder)text(li,'Due reminder published '+new Date(row.reminder.created_at).toLocaleString());
+  text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
+  text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));
+  if(row.workflow)text(li,row.workflow+' / '+row.instance_id+' · '+row.subject.type+': '+row.subject.id+' · '+row.operation+': '+row.from_state+' → '+row.to_state);
+  if(c.note)text(li,c.note);
+  const scopeQuery=new URLSearchParams({scope:row.scope});if(row.subscription_tenant_id)scopeQuery.set('tenant_id',row.subscription_tenant_id);
+  const inbox=document.createElement('a');inbox.href=panel.dataset.queueUrl+'?'+scopeQuery+'#readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;inbox.textContent='Open original notification in its inbox';li.append(inbox);
+  const detail=panel.dataset.subscriptionsUrl+'/'+encodeURIComponent(row.subscription_id)+'/notifications/'+row.sequence+'?'+scopeQuery;
+  const status=text(li,'');status.setAttribute('role','status');
+  const edit=document.createElement('form'),label=document.createElement('label');label.textContent='Follow-up time (your browser timezone) ';
+  const due=document.createElement('input');due.type='datetime-local';due.required=true;due.step='0.001';const d=new Date(c.follow_up_at);due.value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);label.append(due);edit.append(label);let savedDueInput=due.value;
+  const save=document.createElement('button');save.type='submit';save.textContent='Reschedule';edit.append(save);
+  const clear=document.createElement('button');clear.type='button';clear.textContent='Clear follow-up';edit.append(clear);li.append(edit);
+  const mutate=async(followUp)=>{
+   const submittedDueInput=due.value;
+   save.disabled=true;clear.disabled=true;try{
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,follow_up_at:followUp})});
+    savedDueInput=submittedDueInput;Object.assign(c,updated.coordination);if(!updated.coordination.follow_up_at)delete c.follow_up_at;
+    if(applied?.toString()===viewQuery)await refresh();
+   }catch(error){status.textContent=error.message+' Reload the queue before retrying a conflicting edit.';}finally{save.disabled=false;clear.disabled=false;}
+  };
+  edit.addEventListener('submit',event=>{event.preventDefault();void mutate(due.value===savedDueInput && c.follow_up_at ? c.follow_up_at : new Date(due.value).toISOString());});clear.addEventListener('click',()=>{void mutate(undefined);});
+  window.mountReadinessCompletion(li,c,detail,row.scope,async()=>{if(applied?.toString()===viewQuery)await refresh();});
+  const handoff=document.createElement('div');li.append(handoff);
+  const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
+  check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detail);if(li.isConnected)window.renderReadinessHandoff(handoff,current,row.scope);}catch(error){status.textContent=error.message;}finally{check.disabled=false;}});
+  list.append(li);
+ };
+ const read=async()=>{
+  if(!applied || loading)return;loading=true;submit.disabled=true;more.disabled=true;const epoch=generation;
+  const q=new URLSearchParams(applied);q.set('offset',String(offset));
+  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;count.textContent=String(result.due_reminder_count);message.textContent=result.total_count+' matching retained follow-ups; '+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!result.items.length && !list.children.length ? ' No pending follow-ups match these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
+  catch(error){if(epoch===generation)message.textContent=error.message;}
+  finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
+ };
+ const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();more.hidden=true;await read();};
+ form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;applied=formValues();void refresh();});
+
+ more.addEventListener('click',()=>{void read();});
+ const refreshCount=async()=>{
+  if(counting || document.hidden)return;counting=true;const epoch=generation;
+  const selectors=applied || formValues(), identity=selectors.toString(), q=new URLSearchParams(selectors);q.set('limit','1');q.set('offset','0');
+  try{const result=await request(panel.dataset.url+'?'+q);if(epoch===generation && (applied || formValues()).toString()===identity){count.textContent=String(result.due_reminder_count);count.title='Checked '+new Date(result.evaluated_at).toLocaleString();}}
+  catch(error){if(epoch===generation){count.textContent='Unavailable';count.title=error.message;}}
+  finally{counting=false;}
+ };
+ showReminders.addEventListener('click',()=>{if(loading)return;form.elements.namedItem('reminder_only').checked=true;form.elements.namedItem('due').value='all';form.requestSubmit();});
+ window.setInterval(()=>{void refreshCount();},30000);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCount();});
+ void refreshCount();
+})();
+
+(() => {
+ 'use strict';
+ const root=document.getElementById('workflow-timeline');
+ if (!root || !root.dataset.url) return;
+ const form=document.getElementById('workflow-timeline-form'), message=document.getElementById('workflow-timeline-message');
+ const items=document.getElementById('workflow-timeline-items'), sources=document.getElementById('workflow-timeline-sources');
+ const limitations=document.getElementById('workflow-timeline-limitations'), more=document.getElementById('workflow-timeline-more');
+ let generation=0, active=null, next=0, pending=false, activeCase=false, seen=new Set();
+ const caseView=document.getElementById('workflow-case-overview'), caseButton=document.getElementById('workflow-case-load');
+ const node=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n;};
+ const clock=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?'Unavailable clock':d.toLocaleString();};
+ const safeURL=path=>{const u=new URL(path,window.location.origin);if(u.origin!==window.location.origin)throw new Error('Timeline must remain on this site');return u;};
+ function renderTimelineEvent(event,result) {
+  const row=node('li','');
+  row.append(node('p',clock(event.at)+' · '+event.kind+' · '+event.summary));
+  const details=[];
+  if(event.playbook_progress_id)details.push('Checklist: '+event.playbook_progress_id);
+  if(event.actor)details.push('Actor: '+event.actor);
+  if(event.owner)details.push('Owner: '+event.owner);
+  if(event.status)details.push('Status: '+event.status);
+  if(event.follow_up_at)details.push('Follow-up: '+clock(event.follow_up_at));
+  if(event.expected_outcome_code)details.push('Expected outcome: '+event.expected_outcome_code);
+  if(event.reported_outcome_code)details.push('Reported outcome: '+event.reported_outcome_code);
+  if(event.state_revision)details.push('Report revision: '+event.state_revision);
+  if(details.length)row.append(node('p',details.join(' · ')));
+  if(event.note)row.append(node('p',event.note));
+  if(event.subscription_id){const inbox=safeURL(root.dataset.queueUrl);inbox.searchParams.set('scope',result.scope);
+  if(event.subscription_tenant_id)inbox.searchParams.set('tenant_id',event.subscription_tenant_id);
+  inbox.hash='readiness-subscriptions/'+encodeURIComponent(event.subscription_id)+'/'+event.sequence;
+  const link=node('a','Inbox: '+event.subscription_name+' #'+event.sequence);link.href=inbox.href;row.append(link);}
+  for(const id of event.reporting_operation_ids||[]){
+   const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(id));url.searchParams.set('scope',result.scope);
+   row.append(node('span',' · '));const evidence=node('a','Operation evidence '+id);evidence.href=url.href;row.append(evidence);
+  }
+  return row;
+ }
+ function renderCoverage(result) {
+  sources.replaceChildren();limitations.replaceChildren();
+  for(const source of result.sources||[]) {
+   let text=source.name+': '+source.retained_count+' retained notifications; sequences '+source.earliest_sequence+'–'+source.latest_sequence;
+   if(source.gap_before)text+=' · Older history missing';
+   if(source.missing_during_read)text+=' · Inbox disappeared during read';
+   sources.append(node('li',text));
+  }
+  for(const text of result.limitations||[])limitations.append(node('li',text));
+  if(result.sources_truncated)limitations.append(node('li','Source coverage was truncated.'));
+  if(result.history_truncated)limitations.append(node('li','Older coordination review or assignment changes are missing.'));
+  if(!result.sources.length)sources.append(node('li','No retained readiness inboxes are available for this role, application and environment.'));
+ }
+ async function savePlaybookProgress(id,body,button,reviewDecision=false) {
+  const token=generation,query=new URLSearchParams(active);query.delete('offset');query.delete('limit');
+  button.disabled=true;message.textContent='Saving playbook progress…';
+  try {
+   const url=safeURL(root.dataset.caseUrl);if(!url.pathname.endsWith('/case'))throw new Error('Invalid progress destination.');
+   url.pathname=url.pathname.slice(0,-5)+'/playbook-progress'+(id?'/'+encodeURIComponent(id):'')+(reviewDecision?'/reviews':'');url.search=query.toString();
+   const response=await fetch(url.href,{method:reviewDecision?'POST':id?'PATCH':'POST',credentials:'same-origin',redirect:'error',cache:'no-store',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body)});
+   if(!response.ok)throw new Error(response.status===409?'This checklist or its guidance changed. Reload the case before saving again.':'Playbook progress could not be saved (HTTP '+response.status+').');
+   if(token!==generation)return;
+   next=0;seen=new Set();items.replaceChildren();await loadTimeline(false);
+  }catch(error){if(token===generation)message.textContent=error instanceof Error?error.message:'Playbook progress could not be saved.';}
+  finally{button.disabled=false;}
+ }
+ function renderPlaybookDecision(section,p,records) {
+  const disposition=p.disposition||'active';section.id='playbook-progress-'+p.id;
+  section.append(node('p','Coordination: '+disposition+' · Checklist '+p.id));
+  const linkTo=(id,label)=>{const link=node('a',label);link.href='#playbook-progress-'+encodeURIComponent(id);section.append(link,node('span',' '));};
+  if(p.latest_review){const r=p.latest_review;section.append(node('p','Latest decision: '+r.decision+' · '+r.actor+' · '+clock(r.at)),node('p',r.reason),node('p','Reviewed applicability: '+r.applicability.status.replace(/_/g,' ')+' · '+r.applicability.summary));if(r.replacement_progress_id)linkTo(r.replacement_progress_id,'Replacement checklist '+r.replacement_progress_id);}
+  for(const id of p.replaces_progress_ids||[])linkTo(id,'Replaces checklist '+id);
+  if(p.reviews_truncated)section.append(node('p','Older review decisions are no longer retained.'));
+  if(disposition!=='active'){section.append(node('p','This coordination is closed. Its evidence and reviews remain available; no business outcome is asserted.'));return;}
+  const form=node('form','');const choice=node('select','');choice.setAttribute('aria-label','Review decision for '+p.playbook.id);
+  for(const [value,text] of [['continue','Continue this checklist'],['retire','Retire this checklist'],['replace','Replace with another checklist']]){const option=node('option',text);option.value=value;choice.append(option);}choice.value='continue';
+  const targets=node('select','');targets.setAttribute('aria-label','Replacement checklist for '+p.playbook.id);const blank=node('option','Choose a replacement');blank.value='';targets.append(blank);
+  const eligible=records.filter(target=>target.id!==p.id&&(target.disposition||'active')==='active'&&target.applicability&&target.applicability.status==='applicable');
+  for(const target of eligible){const option=node('option',target.playbook.id+' v'+target.playbook.version+' · '+target.id);option.value=target.id;targets.append(option);}targets.value='';
+  const reason=node('textarea','');reason.required=true;reason.maxLength=1024;reason.setAttribute('aria-label','Decision reason for '+p.playbook.id);
+  const button=node('button','Record decision');button.type='submit';form.append(choice,targets,reason,node('p','Retire and replace permanently close this checklist. Start the replacement from current guidance first. Evidence and completion are not transferred.'),button);
+  form.addEventListener('submit',event=>{event.preventDefault();if(!form.reportValidity())return;const body={revision:p.revision,decision:choice.value,reason:reason.value};
+   if(choice.value==='replace'){const target=eligible.find(target=>target.id===targets.value);if(!target){message.textContent='Choose an active applicable replacement checklist in this case.';return;}body.replacement_progress_id=target.id;body.replacement_revision=target.revision;}
+   void savePlaybookProgress(p.id,body,button,true);
+  });section.append(form);
+ }
+ function renderPlaybookProgress(records) {
+  caseView.append(node('h4','Playbook checklist progress'),node('p','Reviews follow pinned guidance. Completing a checklist does not establish readiness or business success. Evidence references were checked when saved.'));
+  if(!records.length)caseView.append(node('p','No playbook checklists have been started for this case.'));
+  for(const p of records){
+   const section=node('section','');section.append(node('p',p.playbook.summary+' · '+p.playbook.id+' v'+p.playbook.version+' · Workflow contract v'+p.contract_version+' · '+p.completed_count+'/'+p.items.length+' reviewed complete · Revision '+p.revision));
+   section.append(node('p','Started by '+p.created_by+' · '+clock(p.created_at)+' · Definition '+p.definition_id));
+   const reportingURL=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(p.reporting_operation_id));reportingURL.searchParams.set('scope',active.get('scope'));const reportingLink=node('a','Original reporting operation');reportingLink.href=reportingURL.href;section.append(reportingLink);
+   if(!p.items.length)section.append(node('p','No evidence items were declared; checklist completion is not asserted.'));
+   const applicability=p.applicability;
+   if(applicability){
+    section.append(node('p','Applicability: '+applicability.status.replace(/_/g,' ')+' · '+applicability.summary),node('p',applicability.suggested_action));
+    section.append(node('p',applicability.remaining_item_count+' checklist items remain pending · Checked '+clock(applicability.checked_at)));
+    if(applicability.current_contract_version)section.append(node('p','Observed workflow contract v'+applicability.current_contract_version+(applicability.state_revision?' · Report revision '+applicability.state_revision:'')));
+    if(applicability.definition_changed)section.append(node('p','The reporting definition changed; this checklist keeps its original guidance and reviews.'));
+    if(applicability.status==='applicable'&&!applicability.evidence_complete)section.append(node('p','The trigger was observed, but evaluated evidence coverage is incomplete.'));
+    if(applicability.reporting_operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(applicability.reporting_operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Applicability reporting operation');link.href=url.href;section.append(link);}
+   }else section.append(node('p','Applicability has not been checked in this response. Reload the case overview for current evidence.'));
+   renderPlaybookDecision(section,p,records);
+   if(p.checklist_complete)section.append(node('p','Checklist complete (human review).'));
+   if(p.history_truncated)section.append(node('p','Older checklist reviews are no longer retained.'));
+   p.items.forEach((item,index)=>{
+    const editable=(p.disposition||'active')==='active';const edit=node(editable?'form':'div','');edit.append(node('p',item.label+(item.reviewed_by?' · Reviewed by '+item.reviewed_by+' · '+clock(item.reviewed_at):'')));
+    for(const ref of item.evidence||[]){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(ref.operation_id));url.searchParams.set('scope',active.get('scope'));const link=node('a','Saved evidence '+ref.operation_id+(ref.milestone_id?' / milestone '+ref.milestone_id:''));link.href=url.href;edit.append(link,node('span',' '));}
+    if(!editable){edit.append(node('p',item.status+' · '+item.note));section.append(edit);return;}
+    const status=node('select','');status.setAttribute('aria-label','Review status for '+item.label);
+    for(const value of ['pending','completed']){const option=node('option',value==='completed'?'Reviewed complete':'Pending');option.value=value;status.append(option);}status.value=item.status;
+    const note=node('textarea','');note.required=true;note.maxLength=1024;note.value=item.note;note.setAttribute('aria-label','Review note for '+item.label);
+    const evidence=node('textarea','');evidence.value=(item.evidence||[]).map(e=>e.operation_id+(e.milestone_id?'/'+e.milestone_id:'')).join('\n');evidence.setAttribute('aria-label','Evidence references for '+item.label);
+    edit.append(node('p','Evidence: one operation UUID per line, optionally followed by /milestone-ID. Completed items require evidence.'),status,note,evidence);
+    const button=node('button','Save review');button.type='submit';edit.append(button);
+    edit.addEventListener('submit',event=>{event.preventDefault();if(!edit.reportValidity())return;
+     const refs=evidence.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const separator=line.indexOf('/');return separator<0?{operation_id:line}:{operation_id:line.slice(0,separator),milestone_id:line.slice(separator+1)};});
+     if(status.value==='completed'&&!refs.length){message.textContent='Completed items require operation or milestone evidence.';return;}
+     void savePlaybookProgress(p.id,{revision:p.revision,item_index:index,status:status.value,note:note.value,evidence:refs},button);
+    });section.append(edit);
+   });caseView.append(section);
+  }
+ }
+ function renderWorkflowCase(result) {
+  caseView.replaceChildren();caseView.append(node('h3','Workflow case overview'),node('p',result.summary));
+  const instance=result.instance, state=instance&&instance.state;
+  if(state) {
+   caseView.append(node('p','Application-reported state: '+state.state+' · '+(state.stale?'Stale report':'Retained report')+' · Updated '+clock(state.updated_at)));
+   if(state.outcome_code)caseView.append(node('p','Application-reported outcome: '+state.outcome_code+(state.outcome_description?' · '+state.outcome_description:'')));
+   for(const blocker of state.blockers||[])caseView.append(node('p','Blocker '+blocker.code+': '+blocker.description+(blocker.owner?' · Application owner: '+blocker.owner:'')+(blocker.next_action?' · '+blocker.next_action:'')));
+   if(state.operation_id){const url=safeURL(root.dataset.listUrl+'/'+encodeURIComponent(state.operation_id));url.searchParams.set('scope',result.timeline.scope);const link=node('a','Current reporting operation');link.href=url.href;caseView.append(link);}
+   if(instance.readiness)for(const r of instance.readiness.items||[]){
+    const details=['Transition '+r.transition.operation+': '+r.transition.from+' → '+r.transition.to,state.stale?'Stale report; refresh evidence to assess requirements':(r.ready?'Evaluated requirements satisfied; application authorization required':'Unmet evaluated requirements')];
+    if(!r.ready&&(r.reasons||[]).length)details.push('Unmet requirements: '+r.reasons.map(value=>value.replace(/_/g,' ')).join(', '));
+    if((r.missing_milestones||[]).length)details.push('Missing milestones: '+r.missing_milestones.join(', '));
+    if((r.missing_dependency_workflows||[]).length)details.push('Missing workflows: '+r.missing_dependency_workflows.join(', '));
+    for(const dependency of r.unmet_dependencies||[])details.push('Unmet dependency: '+dependency.dependency.workflow+' / '+dependency.dependency.instance_id);
+    if(r.pending_verification_count)details.push('Pending verification: '+r.pending_verification_count);
+    caseView.append(node('p',details.join(' · ')));
+   }
+   if(instance.awaiting_verification_count)caseView.append(node('p','Awaiting application verification: '+instance.awaiting_verification_count));
+  }
+  caseView.append(node('h4','Application playbook guidance'));
+  const guidanceMessages={not_declared:'No playbooks are declared by the current reporting definition.',evidence_unavailable:'Fresh application evidence is required before matching playbooks.',definition_unavailable:'The exact reporting definition is unavailable; no substitute guidance is used.'};
+  if(result.guidance_status!=='available')caseView.append(node('p',guidanceMessages[result.guidance_status]||'Playbook guidance is unavailable.'));
+  else if(!(result.guidance||[]).length)caseView.append(node('p','No playbook rules match the current retained evidence.'));
+  for(const entry of result.guidance||[]) {
+   const rule=entry.playbook;caseView.append(node('p',rule.summary+' · Playbook '+rule.id+' v'+rule.version+' · Workflow contract v'+entry.contract_version+(rule.owner?' · Suggested team: '+rule.owner:'')));
+   const existing=(result.playbook_progress||[]).find(p=>p.playbook.id===rule.id&&p.playbook.version===rule.version&&p.contract_version===entry.contract_version);
+   if(existing)caseView.append(node('p','A previously started checklist for these versions is shown below.'));
+   {const button=node('button','Start or open checklist');button.type='button';button.addEventListener('click',()=>void savePlaybookProgress('',{playbook_id:rule.id,playbook_version:rule.version,contract_version:entry.contract_version,reporting_operation_id:entry.reporting_operation_id},button));caseView.append(button);}
+   if((rule.required_evidence||[]).length){caseView.append(node('p','Evidence checklist (advisory):'));const checklist=node('ul','');for(const text of rule.required_evidence)checklist.append(node('li',text));caseView.append(checklist);}
+   for(const [value,label] of [[rule.runbook_url,'Open runbook'],[rule.action_url,'Open application action']]) {
+    if(!value)continue;try{const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password)continue;const link=node('a',label);link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';caseView.append(link,node('span',' '));}catch{continue;}
+   }
+  }
+  if(result.guidance_truncated)caseView.append(node('p','Playbook guidance is incomplete because its output or evaluated evidence was truncated.'));
+  renderPlaybookProgress(result.playbook_progress||[]);
+  caseView.append(node('h4','Retained open follow-ups'),node('p',result.follow_up_count+' open · '+result.overdue_follow_up_count+' overdue'));
+  for(const row of result.follow_ups||[]) {
+   const details=[row.overdue?'Overdue':'Scheduled',row.coordination.owner||'Unassigned',clock(row.coordination.follow_up_at),row.coordination.status];
+   if(row.outcome_escalation){details.push('Assigned outcome escalation');if(row.outcome_escalation.response)details.push('Acknowledgment target: '+row.outcome_escalation.response.status);}
+   const p=node('p',details.join(' · '));const url=safeURL(root.dataset.queueUrl);url.searchParams.set('scope',result.timeline.scope);if(row.subscription_tenant_id)url.searchParams.set('tenant_id',row.subscription_tenant_id);url.hash='readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;
+   const link=node('a',' Open source inbox');link.href=url.href;p.append(link);caseView.append(p);if(row.coordination.note)caseView.append(node('p',row.coordination.note));
+  }
+  if(result.follow_ups_truncated)caseView.append(node('p','Follow-up overview truncated; counts include retained matching work beyond this page.'));
+  caseView.append(node('h4','Suggested next steps'));
+  const actions=node('ul','');for(const action of result.actions||[])actions.append(node('li',action.summary+(action.owner?' · Owner: '+action.owner:'')));caseView.append(actions);
+  if(result.actions_truncated)caseView.append(node('p','Additional suggestions were omitted from this bounded view.'));
+  for(const text of result.limitations||[])caseView.append(node('p',text));
+  caseView.append(node('p','Application evidence checked '+clock(result.evidence_checked_at)+' · Coordination checked '+clock(result.coordination_checked_at)+'. These are independent live reads.'));
+ }
+ async function loadTimeline(append) {
+  const token=generation, query=new URLSearchParams(active);query.set('offset',String(append?next:0));
+  pending=true;more.disabled=true;message.textContent=activeCase?'Reading workflow case…':'Reading retained timeline…';
+  try {
+   const url=safeURL(activeCase?root.dataset.caseUrl:root.dataset.url);url.search=query.toString();
+   const response=await fetch(url.href,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'application/json'}});
+   if(!response.ok)throw new Error((activeCase?'Case overview':'Timeline')+' could not be read (HTTP '+response.status+').');
+   const payload=await response.json();if(token!==generation)return;
+   if(activeCase){if(!payload.timeline||!Array.isArray(payload.follow_ups)||!Array.isArray(payload.actions))throw new Error('Invalid case response.');renderWorkflowCase(payload);}
+   const result=activeCase?payload.timeline:payload;
+   if(!Array.isArray(result.items)||!Array.isArray(result.sources)||!Number.isSafeInteger(result.next_offset))throw new Error('Invalid timeline response.');
+   renderCoverage(result);
+   for(const event of result.items){if(seen.has(event.id))continue;seen.add(event.id);items.append(renderTimelineEvent(event,result));}
+   next=result.next_offset;more.hidden=!result.has_more;
+   message.textContent=seen.size+' displayed of '+result.total_count+' retained events · Observed '+clock(result.evaluated_at)+'. Pages are live; reload after changes.';
+  } catch(error) {if(token===generation)message.textContent=error instanceof Error?error.message:'Timeline could not be read.';}
+  finally {if(token===generation){pending=false;more.disabled=false;}}
+ }
+ function startView(caseMode) {
+  if(!form.reportValidity())return;
+  if(caseMode&&!String(new FormData(form).get('tenant_id')||'')){message.textContent='Choose an exact customer to read its business workflow case.';return;}
+  generation++;activeCase=caseMode;active=new URLSearchParams();
+  const data=new FormData(form);
+  for(const key of ['scope','tenant_id','subject_type','subject_id','workflow','instance_id','limit']){const value=String(data.get(key)||'');if(value)active.set(key,value);}
+  next=0;seen=new Set();items.replaceChildren();sources.replaceChildren();limitations.replaceChildren();caseView.replaceChildren();more.hidden=true;
+  void loadTimeline(false);
+ }
+ form.addEventListener('submit',event=>{event.preventDefault();startView(false);});
+ caseButton.addEventListener('click',()=>startView(true));
+ more.addEventListener('click',()=>{if(active&&!pending)void loadTimeline(true);});
+})();
+</script>
+</body></html>

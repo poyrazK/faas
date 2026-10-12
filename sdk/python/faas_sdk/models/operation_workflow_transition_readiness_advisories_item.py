@@ -1,12 +1,23 @@
 from typing import Literal
 
-OperationWorkflowTransitionReadinessAdvisoriesItem = Literal["deadline_overdue", "state_stale"]
+OperationWorkflowTransitionReadinessAdvisoriesItem = Literal[
+    "condition_reporting_unknown",
+    "condition_reports_missing",
+    "condition_reports_overdue",
+    "deadline_overdue",
+    "state_stale",
+    "verification_pending",
+]
 
 OPERATION_WORKFLOW_TRANSITION_READINESS_ADVISORIES_ITEM_VALUES: set[
     OperationWorkflowTransitionReadinessAdvisoriesItem
 ] = {
+    "condition_reporting_unknown",
+    "condition_reports_missing",
+    "condition_reports_overdue",
     "deadline_overdue",
     "state_stale",
+    "verification_pending",
 }
 
 

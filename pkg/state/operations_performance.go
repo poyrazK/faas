@@ -15,6 +15,7 @@ type OperationWorkflowPerformanceStore interface {
 }
 
 type workflowPerformanceInstance struct {
+	CurrentConditionSteps    []api.OperationWorkflowSpec                   `json:"current_condition_steps,omitempty"`
 	SLAConfigured            bool                                          `json:"sla_configured"`
 	CurrentSLAWarningPercent int64                                         `json:"current_sla_warning_percent"`
 	CurrentSLABudgetSeconds  int64                                         `json:"current_sla_budget_seconds"`
@@ -195,13 +196,14 @@ func workflowPerformanceCohort(instances []workflowPerformanceInstance, at time.
 func workflowPerformanceSummary(instances []workflowPerformanceInstance, opts api.OperationWorkflowPerformanceOptions, at time.Time) api.OperationWorkflowPerformanceSummary {
 	completed, ongoing := []workflowPerformanceInstance{}, []workflowPerformanceInstance{}
 	for _, instance := range instances {
+		instance.Bottlenecks = calculateWorkflowBottlenecks(instance.Observations, &instance.Current, instance.Verifications, at, false)
 		if instance.Current.Terminal {
 			completed = append(completed, instance)
 		} else {
 			ongoing = append(ongoing, instance)
 		}
 	}
-	return api.OperationWorkflowPerformanceSummary{EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
+	return api.OperationWorkflowPerformanceSummary{ConditionCoverage: workflowConditionCoverage(ongoing, at), ActiveConditions: workflowActiveConditions(ongoing, at), ConditionOutcomes: workflowConditionOutcomes(completed), DecisionOutcomes: workflowDecisionOutcomes(completed), EvaluatedAt: at, Workflow: opts.Workflow, CohortLimit: api.OperationWorkflowPerformanceCohortMax, Completed: workflowPerformanceCohort(completed, at), Ongoing: workflowPerformanceCohort(ongoing, at)}
 }
 
 func (m *MemStore) SummarizeAccountWorkflowPerformance(ctx context.Context, account string, opts api.OperationWorkflowPerformanceOptions) (api.OperationWorkflowPerformanceSummary, error) {
@@ -215,11 +217,31 @@ func (m *MemStore) summarizeWorkflowPerformance(ctx context.Context, account, te
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
+	baseline, err := workflowRefreshProgressBaseline(account, tenant, opts, operator, at)
+	if err != nil {
+		return api.OperationWorkflowPerformanceSummary{}, err
+	}
 	instances, err := m.readWorkflowPerformance(ctx, account, tenant, opts, operator, at)
 	if err != nil {
 		return api.OperationWorkflowPerformanceSummary{}, err
 	}
 	out := workflowPerformanceSummary(instances, opts, at)
+	if baseline != nil {
+		out.RefreshProgress = workflowRefreshProgress(instances, *baseline, at)
+		definitions, err := m.workflowProgressDefinitions(ctx, account, tenant, opts, operator, workflowMissingProgressOperations(instances, *baseline))
+		if err != nil {
+			return api.OperationWorkflowPerformanceSummary{}, err
+		}
+		out.MissingProgress = workflowMissingConditionProgress(instances, definitions, *baseline, at)
+		out.NewMissingProgress = workflowNewMissingConditionProgress(instances, definitions, *baseline, at)
+	}
+	if !operator {
+		hideRuleOverlapTenants(&out)
+		hideRefreshProgressTenants(out.RefreshProgress)
+		hideMissingProgressTenants(out.MissingProgress)
+		hideNewMissingProgressTenants(out.NewMissingProgress)
+		hideConditionCoverageTenants(out.ConditionCoverage)
+	}
 	out.CohortToken = workflowPerformanceToken(account, tenant, opts, operator, instances, at)
 	return out, nil
 }
@@ -270,6 +292,7 @@ func (m *MemStore) readWorkflowPerformance(ctx context.Context, account, tenant 
 			continue
 		}
 		selected[i.Current.Terminal]++
+		i.CurrentConditionSteps = workflowConditionSteps(data.definitions[data.operations[i.Current.OperationID].DefinitionID].Spec.WorkflowSteps, i.Current.Workflow, i.Current.ContractVersion)
 		i.SLAConfigured = workflowSLAConfigured(data.definitions[data.operations[i.Current.OperationID].DefinitionID].Spec, i.Current)
 		i.CurrentSLAWarningPercent = workflowStateSLAWarning(data.definitions[data.operations[i.Current.OperationID].DefinitionID].Spec, i.Current)
 		i.CurrentSLABudgetSeconds = workflowStateSLABudget(data.definitions[data.operations[i.Current.OperationID].DefinitionID].Spec, i.Current)

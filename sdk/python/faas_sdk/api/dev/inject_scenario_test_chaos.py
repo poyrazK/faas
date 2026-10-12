@@ -87,8 +87,8 @@ def sync_detailed(
 
     Args:
         run_id (str):
-        body (InjectScenarioTestChaosRequest): Bounded fault plan applied only to service calls
-            within one scenario test namespace.
+        body (InjectScenarioTestChaosRequest): Bounded HTTP, private-service DNS, and TCP fault
+            plan applied only within one scenario test namespace.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,8 +123,8 @@ def sync(
 
     Args:
         run_id (str):
-        body (InjectScenarioTestChaosRequest): Bounded fault plan applied only to service calls
-            within one scenario test namespace.
+        body (InjectScenarioTestChaosRequest): Bounded HTTP, private-service DNS, and TCP fault
+            plan applied only within one scenario test namespace.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,8 +154,8 @@ async def asyncio_detailed(
 
     Args:
         run_id (str):
-        body (InjectScenarioTestChaosRequest): Bounded fault plan applied only to service calls
-            within one scenario test namespace.
+        body (InjectScenarioTestChaosRequest): Bounded HTTP, private-service DNS, and TCP fault
+            plan applied only within one scenario test namespace.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,8 +188,8 @@ async def asyncio(
 
     Args:
         run_id (str):
-        body (InjectScenarioTestChaosRequest): Bounded fault plan applied only to service calls
-            within one scenario test namespace.
+        body (InjectScenarioTestChaosRequest): Bounded HTTP, private-service DNS, and TCP fault
+            plan applied only within one scenario test namespace.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

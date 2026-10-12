@@ -2224,3 +2224,603 @@ Managed-operation retries therefore retain the run/step receipt identity from
 ADR-587; ordinary HTTP delivery remains at least once. See
 `docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
 the API and CLI contract.
+
+### Active workflow condition visibility
+
+Performance summaries expose optional `active_conditions` for the same latest
+100 ongoing workflows and evaluation time. Complete retained histories supply
+the latest explicit reason decision and latest nonempty selected-path snapshot.
+Each explicit decision replaces its condition array, so an omitted condition is
+unreported rather than carried forward as unknown. Metadata-only reports retain
+prior evidence. A new contract version resets contexts; paths without a decision
+fact remove their context. Different rule versions in independent contexts stay
+separate; conflicting results for the same exact identity exclude the whole run.
+
+Coverage separates incomplete, conflicting, bounded-evidence and unclassified
+runs. Limits are 256 contexts and 256 final identities per workflow; the first 64
+lexical groups retain exact memberships. Counts overlap across conditions. Each
+group shows full workflow elapsed/blocked duration, evidence age and stale-state
+counts. State staleness uses the declared workflow threshold, not predicate
+expiry. These snapshots are application reports, never current business truth.
+
+`active_condition_elapsed` and `active_condition_blocked` contributors require
+`cohort=ongoing`, the summary token, and the exact returned contract/decision/rule/
+version/condition ID/description/result identity. Outcome, path and other group
+selectors are rejected. Shared selection logic gives matching counts, ranked
+workflow links, decision fact/report timestamps and evidence age frozen at the
+summary evaluation time. Changed retained evidence requires a refreshed summary.
+Completed condition outcome behavior remains unchanged. No migration or business
+execution is introduced; applications own evaluation and actions.
+
+### Pinned condition report freshness budgets
+
+A condition definition may declare `evidence_max_age_seconds`, a nonnegative
+integer bounded to ten years. Omission or zero leaves the budget unconfigured.
+For example, a milestone step can declare:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+```
+
+The active condition view resolves the selected fact's milestone against the
+reporting Operation's immutable definition and exact workflow contract version.
+It never reads the current deployment to reinterpret historical evidence. The
+source definitions participate in the cohort fingerprint. Read queries project
+this metadata from existing definition JSON and milestone rows; no migration is
+required. Memory and PostgreSQL stores use the same fact ownership and milestone
+mapping. Budgets belong to definitions, not application-reported result payloads.
+
+Each returned active group partitions its workflow count into
+`within_budget_workflow_count`, `overdue_workflow_count`, and
+`no_budget_workflow_count`. Contributor evidence includes `condition_freshness`
+with status, configured budget, refresh deadline, and optional overdue seconds.
+A report at 12:00 with a 900-second budget is within budget before 12:15 and
+becomes overdue at 12:15. All calculations use the token-bound `evaluated_at`.
+The optional `condition_evidence_status` selector filters active contributor
+queries by `within_budget`, `overdue`, or `no_budget`; a status must have matching
+contributors in the returned group. Other dimensions reject this selector.
+Dashboard overdue links rank workflows by their full observed blocked duration.
+
+Metadata-only reports preserve evidence and its original clock. An explicitly
+republished decision snapshot refreshes reporting age; it does not prove the
+application performed a new verification. Unknown remains an explicit business
+result and is independent of reporting freshness. Unreported conditions and
+incomplete histories retain their existing coverage handling. Workflow state
+staleness is separate. No facts expire and no application actions are triggered.
+
+### Condition evidence refresh ownership and guidance
+
+Pinned condition definitions may include independent optional `refresh_owner`
+(up to 128 UTF-8 bytes) and `refresh_instructions` (up to 1024 UTF-8 bytes).
+Both are public text without controls or surrounding whitespace. Omission leaves
+the owner unassigned or instructions unavailable; neither field configures a
+freshness budget or triggers an action. For example:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+    refresh_owner: payments-team
+    refresh_instructions: Recheck the payment provider and publish an updated decision snapshot.
+```
+
+Contributor `condition_freshness` carries the selected fact's pinned owner and
+instructions, including overdue evidence. The source definition belongs to the
+reporting Operation and milestone; current deployment changes do not reinterpret
+retained reports. Existing definition JSON, metadata projections and cohort
+fingerprints carry these fields, so no SQL schema migration is needed.
+
+Active summaries also expose `refresh_owners`, grouping eligible ongoing
+workflows with overdue selected condition reports. A workflow contributes once
+per owner; multiple overdue conditions for that owner increase
+`overdue_condition_count` without multiplying full-workflow durations. Workflow
+memberships overlap across owners. Missing owners use the explicit unassigned
+group. `overdue_workflow_count` and `overdue_condition_count` remain exact across
+the eligible sample before display limits. The first 64 lexical owner strings
+are displayed (unassigned first), with `refresh_owners_truncated` when limited.
+These counts are independent of condition-group display truncation and inherit
+incomplete-history, conflicting-snapshot and evidence-limit exclusions.
+
+`dimension=condition_refresh_owner` requires `cohort=ongoing`, the summary token,
+and exactly one of `owner` or `unassigned=true` matching a returned owner group.
+Contract, state, blocker, decision, path, outcome and condition/status selectors
+are rejected. Contributors rank by full observed blocked duration with stable
+workflow ties, rather than inferred time under an owner. Each carries the first
+16 overdue condition facts in canonical identity order as `refresh_evidence`,
+with exact `refresh_evidence_count` and `refresh_evidence_truncated`. Fact links,
+report timestamps, refresh deadlines and per-condition guidance remain visible;
+a workflow with many conditions is still counted once. Dashboard owner links
+open this same bound contributor view.
+
+Refresh instructions are displayed as text and never executed. Applications own
+verification, authorization and actions. Reporting freshness, condition results,
+and workflow state staleness remain separate observations.
+
+### Workflow refresh prioritization
+
+The ongoing performance contributor view adds overall
+`condition_refresh_age` and `condition_refresh_blocked` dimensions. Both require
+`cohort=ongoing` and the summary token, reject all condition/decision/state/
+blocker/owner selectors, and include eligible workflows with at least one
+selected overdue condition report. Each workflow appears once across all teams.
+These views use the same bounded latest-100 sample, complete-history requirement,
+pinned definitions, conflict exclusions and evaluation time as active coverage.
+Condition and owner display caps do not hide qualifying workflows. A fresh
+summary with zero overdue workflows produces an empty ranked list.
+
+Age priority ranks by the age in whole seconds of the oldest selected overdue
+report, not seconds past its refresh deadline. Blocked priority ranks by full
+observed workflow blocked duration, not duration attributed to a condition or
+team. Stable workflow identity breaks equal-score ties. Response `duration`
+statistics and contributor `observed_seconds` use the selected ranking measure.
+A change in retained evidence requires refreshing the bound summary.
+
+Each contributor includes `refresh_priority`, with the oldest overdue report's
+full qualifying evidence and pinned deadline/guidance, its age, the full blocked
+duration, all distinct assigned refresh owners in lexical order, an exact
+unassigned condition count, and a plain explanation of the ranking. Timestamp
+ties for the oldest evidence use canonical condition identity. Assigned owner
+lists are bounded by the existing 256-condition identity eligibility limit;
+they remain complete even when the 16-fact canonical evidence preview is
+truncated. The oldest ranking fact is included independently of that preview.
+`refresh_evidence_count` counts all overdue conditions in these workflow views;
+`refresh_evidence_truncated` explicitly flags omitted preview facts. Existing
+owner contributor views continue to count and preview only their selected owner.
+
+Dashboard summary links open either priority view. Each ranked workflow shows
+all teams, report timestamps, refresh deadlines, full blocked duration,
+application-declared guidance and links to the reporting Operations and workflow
+history. These observations do not assign business severity, infer causation,
+expire facts, or trigger verification or actions. Applications keep execution
+and authorization. Existing definition/history metadata is sufficient; no
+migration or new persistence is introduced.
+
+
+### Condition refresh progress
+
+Performance summaries optionally accept `baseline_token` from a previously saved
+summary. The token binds the query and evaluation time; comparison deliberately
+accepts changed evidence fingerprints. It does not store historical cohort
+membership. Progress reconstructs evidence visible at the baseline from retained
+report publication timestamps for today's bounded latest-100 completed and
+latest-100 ongoing workflow samples. Workflows absent from today's sample are
+not treated as cleared backlog.
+
+Coverage explicitly counts compared workflows, workflows without a baseline or
+baseline overdue conditions, and exclusions for incomplete history, ambiguous
+condition results or evidence limits. Missing publication timestamps and gaps
+exclude comparison. Contract boundaries are permitted for progress classification
+without relaxing existing duration or active-condition eligibility.
+
+Exact condition and decision/rule identities compare baseline overdue facts with
+current explicit contexts. Results may change. Statuses are `refreshed` (newer
+report within its pinned budget), `still_overdue` (including newer reports already
+overdue), `unreported`, `contract_changed`, and `budget_removed`. Cross-contract
+facts are not compared. Newer-report counts and all status totals precede the
+16-change preview cap. Workflow completion, missing conditions and removed
+budgets do not establish successful business verification.
+
+Dashboard bookmark links preserve the baseline and show coverage, before/after
+results, reporting timestamps, pinned deadlines and guidance, reporting Operation
+links and workflow history. Customer projections omit tenant identifiers. Go,
+Node and Python SDKs expose the optional summary comparison. No new persistence,
+migration, automatic verification or application action is introduced.
+
+
+### Expected condition reporting coverage
+
+A pinned workflow step condition may declare `expected_states`, a canonical
+unique list of up to 32 declared workflow state names. Omission makes no
+expectation. YAML/TOML manifests and API definitions use the same field. This
+annotation is observational: it never gates transitions, invokes checks or
+changes application-reported pass/fail/unknown results.
+
+Performance summaries include `condition_coverage` for the bounded latest-100
+ongoing sample. Expectations for the current state come from the latest reporting
+Operation's immutable definition and current contract, not a global workflow
+registry or the union of every Operation's definitions. Workflows with no declared
+expectations are counted as unconfigured, not complete. Continuous retained
+history is required; incomplete histories, conflicting latest results and
+condition/context evidence limits are explicitly excluded.
+
+Evidence matches the declaring workflow step and exact condition ID and
+description in the latest explicit contexts of the current contract. Two steps
+with the same condition vocabulary remain separate expectations. Explicit
+omission cannot resurrect an older condition, metadata-only reports preserve
+evidence, and contract changes reset contexts. Conflicting results for a step
+and condition exclude that workflow. At most 256 expected or source step-condition
+identities qualify, using the existing condition identity bound.
+
+Coverage counts expected, reported, missing and overdue conditions. Reported
+includes overdue, so expected equals reported plus missing; overdue is a subset
+of reported. A reported fail or unknown is still evidence. Missing means absent
+from current contexts, not a failed check or proof no historical report exists.
+Report freshness retains the source Operation's pinned age budget rather than
+substituting a newer definition's budget. Counts precede the canonical first-16
+condition preview per workflow and an explicit truncation flag. Workflows appear
+in stable identity order. Customer projections omit tenant identifiers.
+
+The dashboard shows coverage/exclusions, expected step and milestone vocabulary,
+application-declared guidance, matching result and report timestamp, pinned
+freshness status, reporting Operation links and workflow history. API schemas
+and Go, Node and Python SDKs expose the projection. SQLC reads existing pinned
+metadata; no migration, new persistence, authorization or execution is introduced.
+
+Example condition declaration on a workflow step:
+
+```yaml
+decision_conditions:
+  - id: payment-confirmed
+    description: Payment provider confirmation is available
+    expected_states: [ready-to-ship]
+    evidence_max_age_seconds: 3600
+    refresh_owner: payments
+```
+
+`ready-to-ship` must also be in that step's workflow `states` list. The application
+still evaluates and reports the result through its business decision facts.
+
+
+### Missing condition report groups and contributors
+
+Condition coverage adds `missing_groups`, ordered by effective contract version,
+current state and declared refresh owner (empty owner is `unassigned`). Groups
+count all matching missing conditions before condition previews. Each workflow
+contributes once per owner to `blocked_time`; a workflow with missing conditions
+for several owners appears in several groups. The measure is full observed
+workflow blocked duration, not delay caused by a condition or team. Only the
+first 64 groups are displayed using the existing active-condition group bound;
+`missing_groups_truncated` flags omissions without changing coverage totals.
+
+The `condition_missing_owner` contributor dimension requires `cohort=ongoing`
+and `cohort_token`, an exact returned missing group selected by `contract_version`,
+current `state` and exactly one of `owner` or `unassigned=true`. It rejects all
+condition/result/status, decision/path/outcome and blocker selectors. Invalid or
+undisplayed groups are rejected. The existing query-bound token checks both
+cohorts' retained evidence before deriving contributors; changed or expired
+evidence requires a new summary. Evaluation time remains the summary's time.
+
+Missing contributors share the full coverage eligibility and explicit-context
+selection helper: pinned expectations from the latest reporting Operation,
+complete histories, conflict and evidence-limit exclusions, exact declaring
+step and condition vocabulary, and no inference of failed verification. Display
+caps cannot hide matching workflows or owners from contributor counting. Each
+workflow appears once in its selected group and ranks by full observed blocked
+duration descending, with stable workflow identity ties. `observed_seconds` and
+response `duration` statistics use that same measure; no evidence age is invented
+for an absent report.
+
+Contributor `missing_condition_count` is exact for the selected state and owner;
+`missing_conditions` previews the first 16 matching expected declarations in
+step/condition ID order, independent of the overall coverage preview.
+`missing_conditions_truncated` flags omissions. Entries have no evidence report
+and include pinned vocabulary, step, milestone, budget and public refresh
+guidance. Customer responses omit tenant identifiers from contributors and
+nested condition coverage. API schemas and Go, Node and Python SDKs expose the
+same group and contributor fields.
+
+The dashboard coverage card shows missing-group counts and snapshot-bound links.
+Drilldowns show coverage exclusions, exact missing counts, expected declarations
+and guidance, the latest reporting Operation and pinned definition revision, and
+workflow history. The previously misplaced schema text in the summary template
+is replaced by the actual expected-condition coverage card. These observations
+neither assign severity nor execute refreshes, business checks or application
+actions. No new SQL, migration or persistence is required.
+
+
+### Missing-report progress from a saved baseline
+
+The existing optional summary `baseline_token` now also returns
+`missing_progress`. Its query and evaluation time anchor reconstruction; the
+changed evidence fingerprint is intentionally accepted for comparisons. Current
+retained latest-100 completed and latest-100 ongoing samples are compared, not
+original saved cohort membership or every historical backlog item. Workflows
+outside today's sample never count as resolved.
+
+The last report published by baseline time supplies baseline state, contract and
+reporting Operation. One bounded, ownership-scoped SQLC batch reads those
+Operations' immutable workflow definitions; the memory store uses the same
+retained pins. The baseline declaration is never substituted with today's
+Operation definition. Missing historical definitions have an explicit exclusion
+count. Definition lookup is comparison-only and does not enter the contributor
+fingerprint, so snapshot-bound drilldowns still work from comparison summaries.
+No schema migration or new persistence is needed.
+
+Continuous baseline report history within one contract is required; today's
+history may have contract boundaries solely to classify `contract_changed`.
+Unknown publication timestamps, gaps and other report-history failures exclude
+comparison. Historical terminal reports produce no baseline missing gaps.
+Reporting conflicts and existing expectation/context/identity limits exclude
+comparison. Coverage explicitly partitions today's samples into compared,
+no-baseline, no-baseline-missing, incomplete, conflicting, over-limit and
+unavailable-definition workflows. This reconstructs report history and pinned
+expectations, not historical verification obligations or the original queue.
+
+Baseline missing entries retain declaring step, milestone and full condition
+definition. Current state expectations are found by step and condition ID:
+`received_report` requires identical declaration and milestone plus a current
+matching fact; `still_missing` retains the same expectation without evidence;
+`expectation_changed` includes changed vocabulary, expected states, budget,
+owner or guidance; `not_expected` means the condition left the current state's
+expectation set; `contract_changed` never compares facts across contracts.
+State changes are explicitly flagged and current terminal reports remain visible
+without implying resolution. Current evidence in changed declarations is shown
+separately and does not count as filling the old expectation.
+
+Any application result (pass, fail or unknown) counts as received evidence; its
+source-pinned freshness may be within budget, overdue or unconfigured. Received
+reporting does not mean successful verification. Metadata-only reports preserve
+explicit contexts, omitted conditions stay missing, and changing expectations
+does not manufacture a report. All five status counts include every baseline
+missing condition before the first-16 canonical step/condition preview, with an
+explicit truncation flag. Workflow items are ordered by stable identity.
+
+The dashboard's saved comparison link opens overdue and missing-report progress
+cards together, showing coverage/exclusions, baseline report publication time and
+pinned reporting Operation, current state, changed definitions, results, report
+age deadlines, reporting Operation links and workflow history. Customer
+projections omit tenant identifiers. API schemas and Go, Node and Python SDKs
+expose the optional comparison; execution and verification remain application
+responsibilities.
+
+
+### New and existing missing-report gaps
+
+Saved-baseline performance summaries also expose `new_missing_progress`,
+explaining every current missing expectation in comparable ongoing workflows.
+The existing `missing_progress` continues to follow baseline missing gaps;
+these views overlap and their totals must not be added. They share one
+comparison eligibility helper, publication visibility, immutable baseline
+Operation definition lookup and full expectation/evidence limits before previews.
+No additional SQL, persistence or migration is introduced. Comparisons use
+today's retained latest-100 completed and latest-100 ongoing sample, not original
+saved cohort membership. Unknown baselines are explicitly counted and never
+invented as newly introduced gaps; workflows outside the sample are not resolved.
+
+Current terminal workflows produce no active missing gaps. A terminal baseline
+has no active expectations: a later ongoing run's missing declarations count as
+`new_expectation`, not lost evidence. Responses expose `baseline_terminal`,
+baseline report/state, current state and a state-change flag. Coverage partitions
+samples into compared workflows with current gaps, no current active gaps after
+comparison, no baseline and existing incomplete/conflicting/over-limit or
+unavailable-definition exclusions. No-current-gap counts apply only after valid
+comparison, not to excluded or unknown workflows.
+
+For each current missing condition, step and condition ID locate a baseline
+candidate. Classification precedence is: `contract_changed` (no cross-contract
+Before), `new_expectation` (absent or inactive baseline expectation),
+`expectation_changed` (different milestone or full pinned declaration including
+vocabulary, expected states, age budget, owner or guidance), `report_lost`
+(identical active expectation with prior evidence), and `still_missing`
+(identical expectation missing before and now). Changed current states alone do
+not create a new expectation if the same declaration was active at both times.
+Previous pass, fail, unknown and overdue reports all qualify as prior evidence;
+report-age expiry never removes a report and cannot alone create report loss.
+Classification describes reporting coverage, not business verification success,
+failure, causation or severity.
+
+Before optionally includes the pinned baseline expectation and prior result,
+report timestamp, reporting Operation and baseline-evaluated freshness. After
+always contains the current missing declaration with no evidence. Status counts
+cover all current gaps before the canonical first-16 current step/condition ID
+preview and an explicit truncation flag. Workflows appear in stable identity
+order; customer projections omit tenant identifiers. The dashboard adds a new
+and existing gaps card to the saved comparison view with coverage, before/after
+expectations, guidance, prior reporting Operation, baseline/current pin links and
+workflow history. API schemas and Go, Node and Python SDKs expose the projection.
+Execution and business decisions remain application-owned.
+
+### Reporting-gap category drilldowns
+
+`new_missing_progress.groups` groups comparable current gaps by current contract,
+state, refresh owner (including unassigned) and category. Canonical ordering is
+contract/state/owner/category, capped at the existing 64-group limit. Counts use
+full classified evidence before previews. Each workflow contributes once per
+group and can appear in several groups; workflow counts are not additive.
+
+The `condition_gap_owner` contributor dimension requires ongoing cohort, the
+current comparison summary's `cohort_token`, saved `baseline_token`, and an exact
+returned group selected by contract_version/state/gap_status plus exactly one
+of owner or unassigned=true. The baseline must match account/customer, app,
+environment and workflow and cannot be later than the current token evaluation.
+Changed current evidence returns 409 and requires refreshing the summary. Other
+dimensions reject baseline_token and gap_status. Comparison-only historical
+definitions use the existing scoped batch SQLC lookup once and do not enter the
+current cohort fingerprint.
+
+Contributors include `gap_progress` filtered to the selected category and owner
+before the first-16 preview, with exact counts, baseline report/state, prior
+evidence and pinned current guidance. Customer responses omit nested tenant
+identifiers. Dashboard links carry both tokens and link workflow history and
+baseline/current/prior reporting Operations. Lost reports, new expectations,
+existing gaps, changed declarations and contract changes remain separate.
+
+Ranks and distributions measure full observed report-only workflow blocked
+intervals with stable identity ties, not gap age, causation or business severity.
+Intervals spanning contract boundaries are omitted. Current report comparisons permit contract boundaries while baseline history
+must be continuous within its contract. Generic duration coverage retains its
+stricter eligibility; new_missing_progress reports comparison coverage separately
+so contract-change contributors remain accessible. No persistence, migrations,
+new limits, execution, notifications or VM lifecycle changes are introduced.
+
+### Workflow reporting-gap queue
+
+`condition_gap_queue` uses the existing contributor routes with ongoing cohort,
+current comparison cohort_token and saved baseline_token. Scope, baseline time,
+comparison eligibility, definition lookup and current fingerprint checks match
+condition_gap_owner. Optional gap_status and owner or unassigned=true filters
+select matching gaps; both may be absent. Other group selectors are rejected.
+Every eligible workflow appears once, independent of the 64-group display cap;
+empty filter results are valid. Membership and coverage use the current retained
+sample, not original saved cohort membership.
+
+Each contributor exposes gap_queue_priority with full current gap/category
+counts, sorted complete assigned owner list, unassigned count and all pinned
+missing expectation guidance before filtering or previews, bounded by the
+existing 256-condition comparison limit. Guidance includes category and current
+expectation without prior facts. gap_progress instead contains exact filtered
+counts and the canonical first-16 matching changes, including prior evidence.
+Customer responses omit tenant identifiers as before. Ranking uses observed
+report-only blocked duration with stable workflow identity ties and an explicit
+explanation; intervals spanning contract boundaries are omitted. Neither gap
+age, causation nor business severity is inferred. Comparison coverage remains
+separate from stricter generic duration coverage.
+
+The dashboard offers a snapshot-bound queue, category/owner filters, one row per
+workflow, full guidance and links to existing returned category/owner groups,
+reporting Operations and workflow history. Group links retain both tokens;
+undisplayed groups lack links but their guidance and counts remain available.
+SDKs and OpenAPI expose the queue dimension and priority payload. No new SQL,
+persistence, migration, limits, notifications or execution are introduced.
+
+### Reporting context in transition readiness
+
+Existing transition readiness, action previews and the workflow overview now
+include workflow-wide current-state condition reporting context and retained
+pending resolution proof advisories. Existing declared policy, milestone,
+effect, invariant, dependency and blocker guards alone determine Ready. Reporting
+expected_states are not transition guards, and missing, overdue, failed or
+unknown condition reports do not invent new guards. Planned decision evidence
+may satisfy existing requirements but does not replace retained reporting context.
+
+The optional reporting payload uses the latest reporting Operation's immutable
+pinned workflow condition declarations and the existing full condition coverage
+evaluator. It returns compared/unconfigured/terminal or explicit unavailable,
+incomplete, ambiguous and limit statuses. Counts precede the existing first-16
+preview and full 256-condition identity checks. Conditions refer to current
+state, not proposed destination state. Explicit decision replacement, metadata
+preservation, contract boundaries, step identity and source-pinned freshness
+match performance coverage. Incomplete histories cannot imply missing or
+satisfied reporting; unconfigured means no declared current-state expectations.
+
+Pending_verification_count counts retained awaiting resolution proofs targeting
+the transition Operation across retained workflow reports before canonical
+first-16 previews. Other targets and verified proofs are excluded. Declared
+verification owners, milestone references and resolution reporting Operations
+are exposed with explicit truncation. These historical retained obligations are
+advisory unless an existing declared prerequisite independently prevents readiness.
+
+MemStore and PgStore compute reporting context once per selected workflow at the
+shared projection clock, including readiness-only requests; all transition edges
+reuse it. The existing scoped SQLC bottleneck history projection now includes
+explicit decision/path contexts and pinned condition metadata matching memory.
+Current definition lookup reuses the scoped batch definition reader. There is
+no dependence on fact/history page cursors and no per-edge queries. Internal
+full verification/context slices are omitted from snapshot JSON; public evidence
+contains no tenant override. Dashboard guidance and evidence Operation links
+explain the findings without granting execution or authorization. No persistence,
+migrations, new limits, business evaluation or VM lifecycle changes are introduced.
+
+
+### Transition readiness queue across ongoing workflows
+
+`GET /v1/apps/{slug}/workflow-readiness/queue` (account read scope plus MFA)
+and `GET /v1/platform-tenant-self/workflow-readiness/queue` (customer Operations
+read scope) require an explicit environment and app. The customer endpoint derives
+ownership from authentication and rejects customer overrides. The dashboard at
+`/dashboard/apps/{slug}/customer-operations/readiness` links each transition to
+its workflow readiness detail and current reporting Operation.
+
+The queue samples up to `OperationWorkflowPerformanceCohortMax` (100) recently
+updated retained ongoing workflows, across workflow names unless filtered. The
+SQLC and memory readers sort by update time descending then the existing stable
+workflow identity digest descending. Within each unchanged sampled workflow,
+matching current-state edges sort by Operation/from/to and evaluate up to
+`OperationHistoryPageMax` (100), reusing one readiness-only milestone projection
+per workflow. Evaluation supplies no planned milestones, decisions, effects or
+invariants. Existing declared requirements alone determine Ready; current-state
+reporting and pending resolution verification remain advisories.
+
+`target_operation` filters before edge sampling. `owner`, `unassigned`, and
+`requirement` filter evaluated transitions before the row limit (default 20,
+maximum 100). Owners come from blockers or all retained pending verification
+obligations targeting that transition Operation, before proof previews. Reporting
+refresh owners are excluded. Unassigned requires an actual ownerless blocker or
+pending proof; a transition with no owner-bearing finding does not qualify.
+The bounded pending-proof preview exposes verification owners and expected milestone
+references with resolution and verification Operation links; preview truncation
+is explicit. Requirement accepts existing readiness reason codes and never advisory codes.
+Unmet rows precede ready rows while preserving source sample/edge order. Counts
+cover evaluated matching transitions before row truncation. Workflow sampling,
+edge sampling and row truncation are independent and explicit, including empty
+results and sampled workflows with no matching edge.
+
+This is a live bounded investigation view, not a cursor or cohort snapshot. The
+sample time and completion time are exposed, with per-row shared readiness
+clocks. Workflows whose current Operation/report/revision/contract changed between
+candidate selection and projection are excluded and counted. Refresh before
+acting; application authorization and execution remain application-owned. No
+new persistence, migrations, limits, business evaluator or VM lifecycle changes
+are introduced. Go, Node and Python SDKs expose the scoped queue contract.
+
+
+### Saved transition readiness comparisons
+
+The readiness queue now returns a versioned caller-held `snapshot` of its returned
+rows. `POST /v1/apps/{slug}/workflow-readiness/compare` and
+`POST /v1/platform-tenant-self/workflow-readiness/compare` compare that snapshot
+with fresh scoped readiness-only projections of the same workflow instances.
+Account routes require read scope and MFA; customer routes derive tenant ownership
+from authentication and reject overrides. The scope fingerprint binds account,
+app, environment, tenant selector and role. It is a query binding, not a signature
+or authenticated historical proof. Caller-provided baselines remain advisory and
+cannot authorize execution. Every current fact is read under current caller scope.
+
+At most `OperationHistoryPageMax` (100) saved edges are accepted. The new centralized
+`OperationWorkflowReadinessComparisonBodyMaxBytes` bounds the JSON body at 1 MiB;
+strict decoding rejects unknown fields and duplicate JSON keys. Baselines validate
+format, ownership selectors, identity names, unique edges, reason/advisory codes,
+ready/reason consistency, digest shapes, revisions and capture/evaluation times.
+Each distinct saved workflow is projected once, independent of the recent-workflow
+sample and original owner/requirement filters. This means a blocker clearing is
+still compared when the row disappears from an owner-filtered queue.
+
+Only an exact target Operation/from/to edge that remains applicable to the current
+state with unchanged pinned version and declared requirement fingerprint can be
+`newly_ready` or `newly_blocked`. Other comparable rows are `changed` or `unchanged`.
+Contract/requirement changes, terminal state, missing retained state, unavailable
+current-state edges, and older retained revisions (`baseline_ahead`) count as
+unavailable comparisons and never imply resolved requirements. Added/resolved
+reason codes explain guard changes; full canonical blocker, prerequisite, pending
+verification and reporting summaries identify evidence categories that changed.
+Retained freshness evaluation clocks and elapsed-age counters are excluded from
+fingerprints, while evidence identity, invalidation and expiry status are included.
+All pending verification obligations contribute before previews. Verification and
+reporting advisories cannot independently change Ready. Each row links to the
+saved/current reporting Operations and detailed evidence.
+
+`change` filters (`newly_ready`, `newly_blocked`, `changed`, `unchanged`, `unavailable`)
+and row limits apply after comparing all saved edges. Counts cover the full saved
+view. The response supplies the next available-edge snapshot before filtering;
+unavailable edges are omitted. New edges outside the saved view are not enumerated.
+Reads remain live rather than atomic, and per-workflow evaluation clocks remain
+visible. There is no historical reconstruction or durable snapshot store.
+
+The dashboard saves snapshots explicitly in browser-tab session storage, supports
+clearing or replacing them, and compares through the scoped read-only API. Account
+or scope changes clear incompatible saved views. Dynamic findings use DOM text
+nodes and encoded same-origin links under the existing CSP nonce. Go, Node and
+Python clients expose comparison requests and results. Application authorization,
+business decisions and execution remain unchanged; no migrations or VM lifecycle
+changes are introduced.
+
+Saved readiness comparisons now include a compact inventory of at most 16 evidence observations per edge (the existing milestone declaration preview cap). Stable identities preserve retained prerequisite group/path selectors, selected workflow dependency references and verification obligations. Dependency observations retain status and source Operation without moving age counters. The inventory covers blockers, retained milestones, selected dependency references and verification obligations; planned policy, invariant and effect evidence continues to use the existing reason/category summaries. Individual changes expose owners, retained status, evidence Operations and invalidation Operations. Both inventories must be complete before absence establishes blocker clearance; missing proof is always unavailable, and fulfillment requires a retained verified obligation. Older version-1 snapshots remain accepted with unavailable evidence detail. Contract/state boundaries suppress individual deltas. Full category fingerprints remain independent of previews. This advisory comparison does not authorize execution.
+
+Durable workflow readiness subscriptions and inboxes extend the saved comparison surface. Account subscriptions require deploy-write scope and MFA for creation/deletion; account reads require read scope and MFA. Customer subscriptions require Operations manage scope for creation/deletion and Operations read scope for inbox/list; their tenant identity derives from authentication. Subscription and inbox lookups fence account, app, environment and account/customer role, with optional account-only tenant narrowing. Applications and selected customers must belong to the account. The shared app budget is 20 subscriptions, enforced under the account lock. Configuration bodies are capped at 4096 bytes.
+
+The apid worker polls every 30 seconds, claims at most five due subscriptions using a five-minute lease and SKIP LOCKED, and evaluates each with a one-minute timeout. Creation initializes a fresh server-read baseline and emits no invented readiness change. Every evaluation compares previously saved edges independently of owner filtering, then discovers matching recent queue edges; discovery is capped at the existing 100-workflow cohort and 100 saved-transition budget. Fresh comparison observations take precedence over earlier discovery reads. Newly ready, newly blocked, retained owner reassignments and unavailable observations are selectable notification kinds. Newly unknown dependency evidence and removed retained proof also report unavailable evidence rather than fulfillment. Reassignment that also changes readiness is represented by the highest-priority selected kind, with both changes preserved in its evidence. Owner-filtered work is compared through its reassignment before leaving that watch. New edges initialize observations without claiming a previous blocked state. This is periodic bounded observation, not capture of every transient business change; narrowed selectors improve coverage.
+
+A single transaction commits the new baseline, inbox sequence, notifications and retention pruning under the current lease token. Worker retries or concurrent claimers cannot publish the same comparison twice; deletion cancels outstanding commits and cascades inbox removal. Unchanged evaluations create no entries. Repeated identical unavailable states and evaluation failures are suppressed until recovery or a meaningful observation change. Failed evaluations preserve the last successful baseline and show retrying status. Evidence previews remain capped at 16; full category fingerprints still detect changes. If changed blocker/verification evidence cannot support complete individual ownership explanations, an unavailable notification reports that limitation rather than claiming a reassignment. Coverage flags report discovery, preview and saved-edge limitations. Inboxes retain the latest 100 notifications per subscription, expose ascending sequences and explicit resync-required gaps, and provide bounded pages. Dashboard controls create/delete watches and incrementally read inboxes; the worker continues when browsers close. No external destination is contacted and no workflow or Operation is executed. The schema migration is shipped for review and is not applied by this implementation workflow.
+
+
+Readiness inbox coordination (ADR-519): shared unread/read/acknowledged status, authenticated actors and timestamps, owner, note and optional UTC follow-up time are retained with notifications. Updates require the current revision and never mutate application evidence. Owner/note budgets are 256/1024 UTF-8 bytes and bodies use the existing 4096-byte subscription cap. Coordination shares the latest-100 notification retention window. Individual notification checks return current advisory readiness or an explicit unavailable/comparison boundary while preserving historical evidence. Dashboard filters apply to loaded entries; API and Go/Node/Python SDKs support scoped coordination updates and evidence checks.
+
+
+Readiness follow-up queue (ADR-519): account and customer readers can aggregate retained pending follow-ups across an application's environment-scoped readiness subscriptions, filter coordination owner, workflow, customer (account only) and due classification, and sort overdue work before upcoming deadlines. Compact rows retain original inbox identities and revisions for existing reschedule/clear updates and current-evidence checks. Aggregation is bounded to the existing 20 × 100 = 2000 retained notifications, with default 20/max 100 rows per live offset page and offset max 2000; counts are filtered before pagination and retention limitations remain explicit. No new migration or execution authority is introduced.
+
+
+Readiness due reminders (ADR-519): one durable marker per original notification/normalized deadline is published by a separate apid worker, with a 100-reminder batch budget, 30-second polling interval and 10-second publication timeout. Retries and restarts preserve stable reminder identity. Coordination edits and publication serialize on the notification row; rescheduling or clearing retires the marker, while unchanged deadlines preserve it. Follow-up queue reads expose optional reminder metadata, filtered due-reminder counts and reminder-only selection under existing account/customer/environment authorization. Dashboard counts and the reminder view link to original notifications and current evidence. Reminders share source notification retention and do not advance inbox sequences, mutate application evidence or authorize execution. No new migration is required.

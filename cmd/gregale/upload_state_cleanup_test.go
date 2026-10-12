@@ -11,7 +11,7 @@ import (
 
 func TestUploadStateLockRemovesTerminalOrphan(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	path, err := uploadStatePath("demo", "/tmp/source.tar.gz")
+	path, err := uploadStatePath("demo", "0123abcd", "options")
 	if err != nil {
 		t.Fatal(err)
 	}
