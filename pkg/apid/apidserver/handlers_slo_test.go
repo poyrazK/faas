@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func accountSLOPromResponse(query, appID string) string {
@@ -124,7 +126,7 @@ func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) 
 
 func TestTelemetryDegradedReasonRedactsPrometheusURLAndQuery(t *testing.T) {
 	err := fmt.Errorf(`Get "http://127.0.0.1:9095/api/v1/query?query=app-secret": %w`, context.DeadlineExceeded)
-	_, source := degradedAccountSLO(err, nil, "error_rate", "account-id", "24h")
+	_, source := degradedAccountSLOPartial(api.AccountSLOResponse{}, err, nil, "error_rate", "account-id", "24h")
 	if source != appmetrics.SourceDegradedPrefix+"telemetry timeout" {
 		t.Fatalf("source = %q, want stable timeout reason", source)
 	}
@@ -164,5 +166,43 @@ func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
 	}
 	if got.RequestsTotal != 0 || got.ErrorRatePct != 0 || got.ColdBootRatePct != 0 {
 		t.Fatalf("idle app SLO = %+v, want zero requests and rates", got)
+	}
+}
+
+// fixedUsageStore reports a known usage_minutes rollup; MemStore's is always
+// zero.
+type fixedUsageStore struct {
+	state.Store
+	instanceHours, gbHours float64
+}
+
+func (f fixedUsageStore) UsageSLOForAccount(context.Context, string, time.Time, time.Time) (float64, float64, error) {
+	return f.instanceHours, f.gbHours, nil
+}
+
+// TestFetchAccountSLO_TelemetryTimeoutKeepsUsage pins H9-133: on
+// production-us the account panel's 24h Prometheus scans exceed their budget,
+// and the degraded response also zeroed instance-hours and GB-hours, which
+// come from Postgres, so a slow query made a busy account look idle.
+func TestFetchAccountSLO_TelemetryTimeoutKeepsUsage(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "slo-usage")
+	e.s.store = fixedUsageStore{Store: e.s.store, instanceHours: 12.5, gbHours: 6.25}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, "query timed out")
+	}))
+	t.Cleanup(srv.Close)
+	e.s.WithStatusCache(srv.URL, "")
+
+	got, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
+	if !strings.HasPrefix(source, appmetrics.SourceDegradedPrefix) {
+		t.Fatalf("source = %q, want degraded", source)
+	}
+	if got.InstanceHours != 12.5 || got.GBHours != 6.25 {
+		t.Fatalf("usage = %v instance-h / %v GB-h, want the Postgres rollup 12.5 / 6.25", got.InstanceHours, got.GBHours)
+	}
+	if got.RequestsTotal != 0 {
+		t.Fatalf("requests_total = %d, want 0 when its query failed", got.RequestsTotal)
 	}
 }
