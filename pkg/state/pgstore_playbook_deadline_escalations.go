@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -39,7 +40,7 @@ func syncPlaybookOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Que
 }
 
 func syncPlaybookStepAssignmentsTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, id pgtype.UUID, w api.OperationWorkflowPlaybookEvidenceWatch, p api.OperationWorkflowPlaybookProgress) error {
-	for _, ref := range w.StepAssignments {
+	for _, ref := range append(slices.Clone(w.StepAssignments), w.ReviewAssignments...) {
 		raw, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: id, Sequence: ref.Notification.Sequence})
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue

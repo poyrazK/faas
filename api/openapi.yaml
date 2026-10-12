@@ -81017,6 +81017,12 @@ components:
         - evaluated_at
         - items
       properties:
+        review_assignments:
+          type: array
+          maxItems: 272
+          items:
+            $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignmentReference'
+          description: OperationWorkflowPlaybookEvidenceWatch.review_assignments. Durable delivery references for dependency review episodes, bounded per watch and retained across disable and re-enable. Further episodes require a new watch after this limit.
         dependency_states:
           type: array
           maxItems: 272
@@ -81544,6 +81550,11 @@ components:
       description: OperationWorkflowPlaybookStepAssignmentReference. One retained queue delivery identity per outcome step and watch.
       required: [outcome_code, item_index, notification]
       properties:
+        dependency_review_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowPlaybookStepAssignmentReference.dependency_review_revision. Revision of the delivered dependency review obligation; absent for ordinary assignments.
         outcome_code:
           type: string
           description: OperationWorkflowPlaybookStepAssignmentReference.outcome_code. Pinned outcome selector.
@@ -81560,6 +81571,16 @@ components:
       description: OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
       required: [progress_id, outcome_code, item_index, label, status, due_at, last_step_owner, manual_owner, history, history_truncated]
       properties:
+        dependency_review_status:
+          type: string
+          enum: [awaiting, confirmed, redo_requested, superseded]
+          description: OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this review episode, observed by an active watch; independent of inbox acknowledgment or manual completion.
+        dependency_review_prerequisite:
+          type: string
+          description: OperationWorkflowPlaybookStepAssignment.dependency_review_prerequisite. Reopened ancestor label captured from retained progress history when available; the immutable review revision identifies the event if history has been truncated.
+        dependency_review:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookProgressItem'
+          description: OperationWorkflowPlaybookStepAssignment.dependency_review. Immutable prior completion evidence and prerequisite reopening revision for a human validity review task. Recovery does not close it; an explicit review or newer regression supersedes this episode.
         readiness:
           $ref: '#/components/schemas/OperationWorkflowPlaybookStepReadiness'
           description: OperationWorkflowPlaybookStepAssignment.readiness. Latest accepted prerequisite observation; existing human queue coordination remains unchanged when prerequisites reopen.

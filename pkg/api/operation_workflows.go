@@ -257,6 +257,7 @@ type OperationWorkflowPlaybookEvidenceWatchRequest struct {
 
 // Watch revisions fence configuration changes; polling does not advance them.
 type OperationWorkflowPlaybookEvidenceWatch struct {
+	ReviewAssignments    []OperationWorkflowPlaybookStepAssignmentReference    `json:"review_assignments,omitempty"`
 	DependencyStates     []OperationWorkflowPlaybookDependencyState            `json:"dependency_states,omitempty"`
 	StepAssignments      []OperationWorkflowPlaybookStepAssignmentReference    `json:"step_assignments,omitempty"`
 	OutcomeDeadline      *OperationWorkflowPlaybookOutcomeDeadlinePolicy       `json:"outcome_deadline,omitempty"`
@@ -405,24 +406,28 @@ type OperationWorkflowPlaybookStepAssignmentPolicy struct {
 	CompleteAfterSeconds    int64  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
 }
 type OperationWorkflowPlaybookStepAssignmentReference struct {
-	OutcomeCode  string                                               `json:"outcome_code"`
-	ItemIndex    int                                                  `json:"item_index"`
-	Notification OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
+	DependencyReviewRevision int64                                                `json:"dependency_review_revision,omitempty"`
+	OutcomeCode              string                                               `json:"outcome_code"`
+	ItemIndex                int                                                  `json:"item_index"`
+	Notification             OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
 }
 type OperationWorkflowPlaybookStepAssignment struct {
-	Readiness        *OperationWorkflowPlaybookStepReadiness       `json:"readiness,omitempty"`
-	SourceRevision   int64                                         `json:"source_revision,omitempty"`
-	Response         *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
-	ProgressID       string                                        `json:"progress_id"`
-	OutcomeCode      string                                        `json:"outcome_code"`
-	ItemIndex        int                                           `json:"item_index"`
-	Label            string                                        `json:"label"`
-	Status           string                                        `json:"status"`
-	DueAt            time.Time                                     `json:"due_at"`
-	LastStepOwner    string                                        `json:"last_step_owner"`
-	ManualOwner      bool                                          `json:"manual_owner"`
-	History          []OperationWorkflowReadinessAssignmentChange  `json:"history"`
-	HistoryTruncated bool                                          `json:"history_truncated"`
+	DependencyReviewStatus       string                                        `json:"dependency_review_status,omitempty"`
+	DependencyReviewPrerequisite string                                        `json:"dependency_review_prerequisite,omitempty"`
+	DependencyReview             *OperationWorkflowPlaybookProgressItem        `json:"dependency_review,omitempty"`
+	Readiness                    *OperationWorkflowPlaybookStepReadiness       `json:"readiness,omitempty"`
+	SourceRevision               int64                                         `json:"source_revision,omitempty"`
+	Response                     *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
+	ProgressID                   string                                        `json:"progress_id"`
+	OutcomeCode                  string                                        `json:"outcome_code"`
+	ItemIndex                    int                                           `json:"item_index"`
+	Label                        string                                        `json:"label"`
+	Status                       string                                        `json:"status"`
+	DueAt                        time.Time                                     `json:"due_at"`
+	LastStepOwner                string                                        `json:"last_step_owner"`
+	ManualOwner                  bool                                          `json:"manual_owner"`
+	History                      []OperationWorkflowReadinessAssignmentChange  `json:"history"`
+	HistoryTruncated             bool                                          `json:"history_truncated"`
 }
 
 type OperationWorkflowPlaybookStepDependency struct {

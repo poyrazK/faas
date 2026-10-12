@@ -79,6 +79,10 @@ class OperationWorkflowPlaybookEvidenceWatch:
     items: list[OperationWorkflowPlaybookEvidenceCheck]
     """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
     checklist reviews."""
+    review_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
+    """OperationWorkflowPlaybookEvidenceWatch.review_assignments. Durable delivery references for dependency review
+    episodes, bounded per watch and retained across disable and re-enable. Further episodes require a new watch
+    after this limit."""
     dependency_states: list[OperationWorkflowPlaybookDependencyState] | Unset = UNSET
     """OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency
     observations; enrollment and re-enrollment establish a silent baseline."""
@@ -151,6 +155,13 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
+        review_assignments: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.review_assignments, Unset):
+            review_assignments = []
+            for review_assignments_item_data in self.review_assignments:
+                review_assignments_item = review_assignments_item_data.to_dict()
+                review_assignments.append(review_assignments_item)
+
         dependency_states: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.dependency_states, Unset):
             dependency_states = []
@@ -216,6 +227,8 @@ class OperationWorkflowPlaybookEvidenceWatch:
                 "items": items,
             }
         )
+        if review_assignments is not UNSET:
+            field_dict["review_assignments"] = review_assignments
         if dependency_states is not UNSET:
             field_dict["dependency_states"] = dependency_states
         if step_assignments is not UNSET:
@@ -294,6 +307,17 @@ class OperationWorkflowPlaybookEvidenceWatch:
             items_item = OperationWorkflowPlaybookEvidenceCheck.from_dict(items_item_data)
 
             items.append(items_item)
+
+        _review_assignments = d.pop("review_assignments", UNSET)
+        review_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
+        if _review_assignments is not UNSET:
+            review_assignments = []
+            for review_assignments_item_data in _review_assignments:
+                review_assignments_item = OperationWorkflowPlaybookStepAssignmentReference.from_dict(
+                    review_assignments_item_data
+                )
+
+                review_assignments.append(review_assignments_item)
 
         _dependency_states = d.pop("dependency_states", UNSET)
         dependency_states: list[OperationWorkflowPlaybookDependencyState] | Unset = UNSET
@@ -379,6 +403,7 @@ class OperationWorkflowPlaybookEvidenceWatch:
             updated_by=updated_by,
             evaluated_at=evaluated_at,
             items=items,
+            review_assignments=review_assignments,
             dependency_states=dependency_states,
             step_assignments=step_assignments,
             outcome_deadline=outcome_deadline,

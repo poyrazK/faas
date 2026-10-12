@@ -14,6 +14,10 @@ import type { OperationWorkflowReadinessOutcomeEscalationReference } from './Ope
  */
 export type OperationWorkflowPlaybookEvidenceWatch = {
   /**
+   * OperationWorkflowPlaybookEvidenceWatch.review_assignments. Durable delivery references for dependency review episodes, bounded per watch and retained across disable and re-enable. Further episodes require a new watch after this limit.
+   */
+  review_assignments?: Array<OperationWorkflowPlaybookStepAssignmentReference>;
+  /**
    * OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency observations; enrollment and re-enrollment establish a silent baseline.
    */
   dependency_states?: Array<OperationWorkflowPlaybookDependencyState>;

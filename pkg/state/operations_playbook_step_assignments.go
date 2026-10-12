@@ -108,7 +108,31 @@ func syncPlaybookStepAssignment(n api.OperationWorkflowReadinessNotification, p 
 		step.LastStepOwner = item.Owner
 	}
 	step.Status = item.Status
-	if item.Status == "completed" && c.FollowUpAt != nil && c.Completion == nil && c.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
+	if step.DependencyReview != nil && (step.DependencyReviewStatus == "" || step.DependencyReviewStatus == "awaiting") {
+		step.DependencyReviewStatus = "awaiting"
+		if item.DependencyReviewRevision != step.DependencyReview.DependencyReviewRevision {
+			// Read the first retained source decision, so a redo followed by
+			// completion between polls is not mislabeled as validity confirmation.
+			step.DependencyReviewStatus = "superseded"
+			for _, change := range p.History {
+				if p.HistoryTruncated && (len(p.History) == 0 || p.History[0].Revision > step.DependencyReview.DependencyReviewRevision+1) {
+					break
+				}
+				if item.DependencyReviewRevision > step.DependencyReview.DependencyReviewRevision && change.Revision >= item.DependencyReviewRevision {
+					break
+				}
+				if change.Revision <= step.DependencyReview.DependencyReviewRevision || change.OutcomeCode != step.OutcomeCode || change.ItemIndex != step.ItemIndex {
+					continue
+				}
+				step.DependencyReviewStatus = "redo_requested"
+				if change.Item.Status == "completed" {
+					step.DependencyReviewStatus = "confirmed"
+				}
+				break
+			}
+		}
+	}
+	if ((step.DependencyReview == nil && item.Status == "completed" && item.DependencyReviewRevision == 0) || (step.DependencyReview != nil && item.DependencyReviewRevision != step.DependencyReview.DependencyReviewRevision)) && c.FollowUpAt != nil && c.Completion == nil && c.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
 		c.FollowUpAt = nil
 		n.Reminder = nil
 		changed = true
@@ -140,4 +164,43 @@ func refreshPlaybookStepResponse(n api.OperationWorkflowReadinessNotification, r
 		}
 	}
 	return n, false
+}
+
+// Review episodes use the existing durable inbox and follow-up queue. Publication
+// and its delivery reference share the watch's progress revision and lease fence.
+func publishPlaybookReviewAssignments(r *readinessSubscriptionRecord, index int, p api.OperationWorkflowPlaybookProgress) []api.OperationWorkflowReadinessNotification {
+	w := &r.Subscription.PlaybookEvidenceWatches[index]
+	notices := []api.OperationWorkflowReadinessNotification{}
+	for _, follow := range p.OutcomeFollowUps {
+		for itemIndex, item := range follow.Items {
+			if item.DependencyReviewRevision == 0 || len(w.ReviewAssignments) >= 272 {
+				continue
+			}
+			if slices.ContainsFunc(w.ReviewAssignments, func(ref api.OperationWorkflowPlaybookStepAssignmentReference) bool {
+				return ref.OutcomeCode == follow.OutcomeCode && ref.ItemIndex == itemIndex && ref.DependencyReviewRevision == item.DependencyReviewRevision
+			}) {
+				continue
+			}
+			n := readinessSubscriptionNotify(r, "playbook_outcome_step_assigned", "A completed outcome step requires a validity review after prerequisite regression. Confirm validity with explanation and evidence, or mark pending for redo in the workflow case.", nil)
+			n.PlaybookEvidence = &api.OperationWorkflowPlaybookEvidenceEvent{WatchID: w.ID, ProgressID: w.ProgressID, PlatformTenantID: w.PlatformTenantID, Subject: w.Subject, Workflow: w.Workflow, InstanceID: w.InstanceID, ContractVersion: w.ContractVersion, PlaybookID: w.PlaybookID, PlaybookVersion: w.PlaybookVersion, CheckedAt: w.EvaluatedAt, Changes: []api.OperationWorkflowPlaybookEvidenceChange{}}
+			prior := item
+			prior.Readiness = nil
+			ready := playbookStepReadiness(p, follow.OutcomeCode, follow.Items, itemIndex)
+			owner := item.Owner
+			if owner == "" {
+				owner = w.Owner
+			}
+			n.PlaybookStep = &api.OperationWorkflowPlaybookStepAssignment{DependencyReviewStatus: "awaiting", DependencyReview: &prior, Readiness: &ready, SourceRevision: p.Revision, ProgressID: p.ID, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Label: item.Label, Status: item.Status, DueAt: n.CreatedAt, LastStepOwner: item.Owner, History: []api.OperationWorkflowReadinessAssignmentChange{}}
+			for _, change := range p.History {
+				if change.Revision == item.DependencyReviewRevision && change.OutcomeCode == follow.OutcomeCode {
+					n.PlaybookStep.DependencyReviewPrerequisite = change.Item.Label
+					break
+				}
+			}
+			n.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: owner, FollowUpAt: &n.CreatedAt, UpdatedAt: n.CreatedAt, UpdatedBy: "system:playbook-dependency-review"}
+			w.ReviewAssignments = append(w.ReviewAssignments, api.OperationWorkflowPlaybookStepAssignmentReference{DependencyReviewRevision: item.DependencyReviewRevision, OutcomeCode: follow.OutcomeCode, ItemIndex: itemIndex, Notification: api.OperationWorkflowReadinessOutcomeEscalationReference{NotificationID: n.ID, Sequence: n.Sequence, CreatedAt: n.CreatedAt}})
+			notices = append(notices, n)
+		}
+	}
+	return notices
 }

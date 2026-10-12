@@ -106,6 +106,7 @@ func configurePlaybookEvidenceWatchRecord(r *readinessSubscriptionRecord, identi
 		w.CreatedAt = old.CreatedAt
 		w.Escalation = old.Escalation
 		w.StepAssignments = old.StepAssignments
+		w.ReviewAssignments = old.ReviewAssignments
 		if old.DeadlineCheckedAt != nil {
 			w.DeadlineCheckedAt = old.DeadlineCheckedAt
 		}
@@ -272,6 +273,7 @@ func applyPlaybookEvidenceWatchUpdate(r *readinessSubscriptionRecord, u playbook
 	regressions := publishPlaybookDependencyRegressions(r, before, current, *p)
 	recoveries := publishPlaybookDependencyRecoveries(r, before, current)
 	assigned := publishPlaybookStepAssignments(r, index, *p)
+	assigned = append(assigned, publishPlaybookReviewAssignments(r, index, *p)...)
 	assigned = append(append(regressions, recoveries...), assigned...)
 	if len(u.Changes) == 0 && u.OutcomeChange == nil && !u.DeadlineUnmet {
 		return assigned, true

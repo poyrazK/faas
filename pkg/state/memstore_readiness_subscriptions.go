@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 
@@ -153,7 +154,7 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 					if watch.ID != u.Playbook.Watch.ID {
 						continue
 					}
-					for _, ref := range watch.StepAssignments {
+					for _, ref := range append(slices.Clone(watch.StepAssignments), watch.ReviewAssignments...) {
 						for j, n := range data.readinessInbox[r.Subscription.ID] {
 							if updated, ok := syncPlaybookStepAssignment(n, *progress, ref); ok {
 								data.readinessInbox[r.Subscription.ID][j] = updated

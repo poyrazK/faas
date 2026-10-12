@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_outcome_escalation_reference import (
         OperationWorkflowReadinessOutcomeEscalationReference,
@@ -25,6 +27,9 @@ class OperationWorkflowPlaybookStepAssignmentReference:
     notification: OperationWorkflowReadinessOutcomeEscalationReference
     """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
     escalations; links may expire."""
+    dependency_review_revision: int | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignmentReference.dependency_review_revision. Revision of the delivered
+    dependency review obligation; absent for ordinary assignments."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code
@@ -32,6 +37,8 @@ class OperationWorkflowPlaybookStepAssignmentReference:
         item_index = self.item_index
 
         notification = self.notification.to_dict()
+
+        dependency_review_revision = self.dependency_review_revision
 
         field_dict: dict[str, Any] = {}
 
@@ -42,6 +49,8 @@ class OperationWorkflowPlaybookStepAssignmentReference:
                 "notification": notification,
             }
         )
+        if dependency_review_revision is not UNSET:
+            field_dict["dependency_review_revision"] = dependency_review_revision
 
         return field_dict
 
@@ -58,10 +67,13 @@ class OperationWorkflowPlaybookStepAssignmentReference:
 
         notification = OperationWorkflowReadinessOutcomeEscalationReference.from_dict(d.pop("notification"))
 
+        dependency_review_revision = d.pop("dependency_review_revision", UNSET)
+
         operation_workflow_playbook_step_assignment_reference = cls(
             outcome_code=outcome_code,
             item_index=item_index,
             notification=notification,
+            dependency_review_revision=dependency_review_revision,
         )
 
         return operation_workflow_playbook_step_assignment_reference

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 import type { OperationWorkflowPlaybookStepReadiness } from './OperationWorkflowPlaybookStepReadiness.js';
 import type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';
 import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
@@ -9,6 +10,18 @@ import type { OperationWorkflowReadinessEscalationResponse } from './OperationWo
  * OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
  */
 export type OperationWorkflowPlaybookStepAssignment = {
+  /**
+   * OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this review episode, observed by an active watch; independent of inbox acknowledgment or manual completion.
+   */
+  dependency_review_status?: 'awaiting' | 'confirmed' | 'redo_requested' | 'superseded';
+  /**
+   * OperationWorkflowPlaybookStepAssignment.dependency_review_prerequisite. Reopened ancestor label captured from retained progress history when available; the immutable review revision identifies the event if history has been truncated.
+   */
+  dependency_review_prerequisite?: string;
+  /**
+   * OperationWorkflowPlaybookStepAssignment.dependency_review. Immutable prior completion evidence and prerequisite reopening revision for a human validity review task. Recovery does not close it; an explicit review or newer regression supersedes this episode.
+   */
+  dependency_review?: OperationWorkflowPlaybookProgressItem;
   /**
    * OperationWorkflowPlaybookStepAssignment.readiness. Latest accepted prerequisite observation; existing human queue coordination remains unchanged when prerequisites reopen.
    */

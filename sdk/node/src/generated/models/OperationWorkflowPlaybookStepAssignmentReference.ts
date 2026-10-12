@@ -8,6 +8,10 @@ import type { OperationWorkflowReadinessOutcomeEscalationReference } from './Ope
  */
 export type OperationWorkflowPlaybookStepAssignmentReference = {
   /**
+   * OperationWorkflowPlaybookStepAssignmentReference.dependency_review_revision. Revision of the delivered dependency review obligation; absent for ordinary assignments.
+   */
+  dependency_review_revision?: number;
+  /**
    * OperationWorkflowPlaybookStepAssignmentReference.outcome_code. Pinned outcome selector.
    */
   outcome_code: string;
