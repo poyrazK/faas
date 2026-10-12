@@ -344,7 +344,8 @@ jobs:
     # Cover cold API compilation, sequential ordinary/API/state race runs,
     # and container setup. State batches keep their own 12m timeouts and
     # default runtime settings, on the separate PostgreSQL service.
-    timeout-minutes: 70
+    # API jobs retain the full fixture inventory with a 45m runtime budget.
+    timeout-minutes: ${{ matrix.shard >= 4 && 90 || 70 }}
     strategy:
       fail-fast: false
       matrix:
@@ -507,7 +508,8 @@ jobs:
                 shards=6
                 batches=("$SHARD" "$((SHARD + 3))")
               else
-                export GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2
+                # Aggressive compiler GC must not carry into fixture execution.
+                export GOMEMLIMIT=2GiB GOGC=100 GOMAXPROCS=2
                 shards=3
                 batches=("$SPLIT_SHARD")
               fi
@@ -522,7 +524,7 @@ jobs:
                 # Full API batches include stage checkpoint PostgreSQL fixtures.
                 # Keep state batches at their original budget.
                 budget=12m
-                [[ "$pkg" == ./pkg/apid/apidserver ]] && budget=25m
+                [[ "$pkg" == ./pkg/apid/apidserver ]] && budget=45m
                 go test -race -count=1 -timeout="$budget" -run "$run" "$pkg" || split_status=1
               done
               exit "$split_status"
