@@ -367,3 +367,7 @@ type OperationWorkflowPlaybookReviewImpact = api.OperationWorkflowPlaybookReview
 
 type OperationWorkflowReadinessImpactSummary = api.OperationWorkflowReadinessImpactSummary
 type OperationWorkflowReadinessImpactOwner = api.OperationWorkflowReadinessImpactOwner
+
+type OperationWorkflowReadinessImpactWatchRequest = api.OperationWorkflowReadinessImpactWatchRequest
+type OperationWorkflowReadinessImpactWatch = api.OperationWorkflowReadinessImpactWatch
+type OperationWorkflowReadinessImpactEvent = api.OperationWorkflowReadinessImpactEvent

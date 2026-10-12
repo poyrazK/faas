@@ -128,6 +128,13 @@
 <label><input type="checkbox" name="event" value="newly_blocked" checked>Newly blocked</label>
 <label><input type="checkbox" name="event" value="reassigned" checked>Reassigned</label>
 <label><input type="checkbox" name="event" value="unavailable" checked>Evidence unavailable</label>
+<fieldset><legend>Optional business-impact watch</legend>
+<label>Workflow <input name="impact_workflow" maxlength="63" value="{{.Data.Options.Workflow}}"></label>
+<label>Protected result <select name="impact_kind"><option value="">No impact watch</option><option value="milestone">Milestone</option><option value="outcome">Outcome</option></select></label>
+<label>Result code <input name="impact_code" maxlength="64"></label>
+<label>Notification owner <input name="impact_owner" maxlength="256"></label>
+<p>The initial observation is silent. Later first-critical, first-overdue and source-confirmed tracked-review clearance changes enter this inbox. This watch uses the subscription customer and environment scope.</p>
+</fieldset>
 <button type="submit">Create subscription</button>
 </form>
 <p>Requirement and row-limit filters apply to the queue only. Subscriptions watch all requirements on matching transitions.</p>
@@ -261,6 +268,7 @@
  const create = form.querySelector('button');
  const remove = document.getElementById('readiness-subscription-delete');
  let after = 0, reading = false, generation = 0;
+ let impactSubscriptions = [];
  const ids = new Set();
  const query = () => { const q = new URLSearchParams({scope:panel.dataset.scope}); if (panel.dataset.tenant) q.set('tenant_id',panel.dataset.tenant); return q; };
  const text = (parent, value) => { const p = document.createElement('p'); p.textContent = value; parent.append(p); };
@@ -349,6 +357,7 @@
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   window.renderPlaybookStepAssignment(parent,notification.playbook_step);
+  if(notification.business_impact){const event=notification.business_impact;const impactTenant=impactSubscriptions.find(sub=>sub.id===select.value)?.tenant_id||panel.dataset.tenant||'';text(parent,'Protected '+event.kind+' '+event.code+' · '+event.workflow+' · '+event.reasons.map(reason=>reason.replace(/_/g,' ')).join(', ')+' · '+new Date(event.checked_at).toLocaleString());text(parent,'Retained unique reviews: '+(event.previous?.review_count||0)+' → '+(event.current?.review_count||0)+' · Critical: '+(event.previous?.critical_count||0)+' → '+(event.current?.critical_count||0)+' · Overdue: '+(event.previous?.overdue_count||0)+' → '+(event.current?.overdue_count||0));const button=document.createElement('button');button.type='button';button.textContent='Show matching review queue';button.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('gregale-business-impact-queue',{detail:{scope:panel.dataset.scope,tenant_id:impactTenant,workflow:event.workflow,impact_kind:event.kind,impact_code:event.code}})));parent.append(button);text(parent,'Advisory review confidence, independent of reported application outcome. Clearance confirms tracked retained source reviews; coverage limits still apply.');}
   if(notification.dependency_regression){const event=notification.dependency_regression;text(parent,'Dependency regression observed '+new Date(event.checked_at).toLocaleString());for(const step of event.reopened_prerequisites)text(parent,'Reopened prerequisite · '+step.outcome_code+' · '+step.label);for(const step of event.affected_steps){text(parent,'Affected step · '+step.outcome_code+' · '+step.label+' · waiting for '+step.readiness.waiting_for.join(', '));if(step.readiness.review_suggested)text(parent,'Completed step needs review; its original review is preserved.');}text(parent,'Reviews, deadlines and existing queue assignments are unchanged.');}
 
   const missed=notification.escalation_response;
@@ -545,7 +554,8 @@
    const result = await request(panel.dataset.url + '?' + query());
    if (epoch !== generation) return;
    select.replaceChildren();
-   for (const sub of result.items) { const option = document.createElement('option');option.value = sub.id;option.textContent = sub.name + ' · ' + sub.status;select.append(option); }
+   impactSubscriptions = result.items;
+   for (const sub of result.items) { const option = document.createElement('option');option.value = sub.id;option.textContent = sub.name + ' · ' + sub.status+(sub.business_impact_watches?.length?' · '+sub.business_impact_watches.length+' impact watch(es)'+(sub.business_impact_watches.some(w=>w.coverage_incomplete)?' · Impact coverage incomplete':''):'');select.append(option); }
    if (!result.items.length) { const option = document.createElement('option');option.value = '';option.textContent = 'No subscriptions';select.append(option); }
    if (preferred && !result.items.some(s => s.id === preferred)) {select.value='';reset();message.textContent='The requested subscription is unavailable in this scope.';return;}
    if (result.items.some(s => s.id === selected)) select.value = selected;
@@ -558,6 +568,7 @@
   const fields = new FormData(form);
   const body = {name:fields.get('name'),scope:panel.dataset.scope,events:fields.getAll('event'),unassigned:panel.dataset.unassigned === 'true'};
   for (const [field,value] of Object.entries({tenant_id:panel.dataset.tenant,workflow:panel.dataset.workflow,target_operation:panel.dataset.operation,owner:panel.dataset.owner})) if (value) body[field] = value;
+  if(fields.get('impact_kind') || fields.get('impact_code'))body.business_impact_watches=[{workflow:fields.get('impact_workflow'),kind:fields.get('impact_kind'),code:fields.get('impact_code'),owner:fields.get('impact_owner')||undefined}];
   try { const sub = await request(panel.dataset.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await load(sub.id); }
   catch (error) { message.textContent = error.message; }
   finally { create.disabled = false; }
@@ -656,6 +667,7 @@
   finally{counting=false;}
  };
  showReminders.addEventListener('click',()=>{if(loading)return;form.elements.namedItem('reminder_only').checked=true;form.elements.namedItem('due').value='all';form.requestSubmit();});
+ window.addEventListener('gregale-business-impact-queue',event=>{if(loading)return;for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=false;else field.value=event.detail[field.name]||(field.name==='due'?'all':field.name==='sort'?'business_impact':field.name==='limit'?'20':'');}panel.scrollIntoView();form.requestSubmit();});
  window.setInterval(()=>{void refreshCount();},30000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCount();});
  void refreshCount();

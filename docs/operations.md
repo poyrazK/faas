@@ -3463,3 +3463,17 @@ Each group reports unique unresolved reviews, retained inbox tasks, affected wor
 Owner breakdowns count actual queue tasks using effective inbox ownership, including manual changes and fallback teams. They can therefore total more than the unique review count. Groups put critical overdue reviews first, then critical reviews and review volume, with stable workflow/result ties. Owners sort by overdue tasks, task volume and label. The dashboard shows these counts and offers group/owner drill-down controls that load the matching filtered queue while retaining the other active selectors.
 
 These summaries reflect retained unresolved human confidence work, not application business failure. Notification retention, disabled watchers, live source synchronization and the 2000-candidate queue limit still apply. Changing pages does not narrow the summary to visible rows. Queue attention dates retain their current coordination meaning, independently of pinned review escalation deadlines.
+
+### Live watches for protected business results
+
+Subscription creation accepts up to 16 unique `business_impact_watches`, each declaring a workflow, result `kind` and `code`, and optional notification `owner`. Watches share the subscription's application, customer and environment scope; transition operation/owner discovery filters do not narrow impact sampling. Configuration is fixed until the subscription is deleted and recreated. The dashboard offers one optional watch during subscription creation; SDKs support the full list.
+
+```json
+{"name":"delivery-impact","scope":"prod","business_impact_watches":[{"workflow":"fulfillment","kind":"milestone","code":"delivery_confirmed","owner":"operations"}]}
+```
+
+The initial successful observation is silent. Later zero-to-positive critical or overdue review transitions emit one durable `business_impact_changed` inbox notification, with before/after summaries and reasons `critical_review_added` or `review_became_overdue`. Stable counts, owner changes, priority changes that keep critical counts positive, and repeated polling do not duplicate those notices. Once a condition returns to zero, a later first occurrence can notify again. Notices include a control to open the matching review queue and preserve advisory sample times rather than asserting application business success.
+
+A `reviews_cleared` reason requires both an empty matching retained review queue and source confirmation that every tracked obligation is resolved. Clearing inbox attention, manual inbox completion or pruning notifications cannot manufacture this transition. The worker reads exact scoped progress for tracked cases and also checks for ongoing matching review obligations in those retained case rows. Missing progress or unresolved source work preserves the prior baseline and marks `coverage_incomplete`. Infrastructure read errors retry without advancing the affected watch baseline.
+
+Monitoring is sampled and retained: changes between polls can be missed; newly queued playbook work is observed on a subsequent poll. Each watch tracks up to 64 distinct source obligations per active review episode. Exceeding this bound or the 2000-candidate queue window prevents a clearance assertion for that episode. Group baselines and notifications publish together behind the subscription lease, and deleting the subscription invalidates pending publication. Clearance covers tracked retained reviews, not unseen cases or application execution.

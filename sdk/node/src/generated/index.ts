@@ -1268,8 +1268,11 @@ export type { OperationWorkflowReadinessFollowUp } from './models/OperationWorkf
 export type { OperationWorkflowReadinessFollowUpOptions } from './models/OperationWorkflowReadinessFollowUpOptions.js';
 export type { OperationWorkflowReadinessFollowUpsResponse } from './models/OperationWorkflowReadinessFollowUpsResponse.js';
 export type { OperationWorkflowReadinessHandoff } from './models/OperationWorkflowReadinessHandoff.js';
+export type { OperationWorkflowReadinessImpactEvent } from './models/OperationWorkflowReadinessImpactEvent.js';
 export type { OperationWorkflowReadinessImpactOwner } from './models/OperationWorkflowReadinessImpactOwner.js';
 export type { OperationWorkflowReadinessImpactSummary } from './models/OperationWorkflowReadinessImpactSummary.js';
+export type { OperationWorkflowReadinessImpactWatch } from './models/OperationWorkflowReadinessImpactWatch.js';
+export type { OperationWorkflowReadinessImpactWatchRequest } from './models/OperationWorkflowReadinessImpactWatchRequest.js';
 export type { OperationWorkflowReadinessInboxResponse } from './models/OperationWorkflowReadinessInboxResponse.js';
 export type { OperationWorkflowReadinessNotification } from './models/OperationWorkflowReadinessNotification.js';
 export type { OperationWorkflowReadinessNotificationCheck } from './models/OperationWorkflowReadinessNotificationCheck.js';

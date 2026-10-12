@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -11,6 +11,10 @@ from ..models.operation_workflow_readiness_subscription_request_events_item impo
     check_operation_workflow_readiness_subscription_request_events_item,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_impact_watch_request import OperationWorkflowReadinessImpactWatchRequest
+
 
 T = TypeVar("T", bound="OperationWorkflowReadinessSubscriptionRequest")
 
@@ -26,6 +30,11 @@ class OperationWorkflowReadinessSubscriptionRequest:
     """OperationWorkflowReadinessSubscriptionRequest.scope. Application environment scope."""
     name: str
     """OperationWorkflowReadinessSubscriptionRequest.name. Subscription name."""
+    business_impact_watches: list[OperationWorkflowReadinessImpactWatchRequest] | Unset = UNSET
+    """OperationWorkflowReadinessSubscriptionRequest.business_impact_watches. Optional unique workflow/result
+    watches in the subscription application, customer and environment scope. Initial successful observation is
+    silent; configuration remains fixed until deletion. These targets are independent of transition discovery
+    owner/operation filters."""
     app_id: UUID | Unset = UNSET
     """OperationWorkflowReadinessSubscriptionRequest.app_id. Application UUID; required in customer requests and
     omitted in account requests."""
@@ -50,6 +59,13 @@ class OperationWorkflowReadinessSubscriptionRequest:
         scope = self.scope
 
         name = self.name
+
+        business_impact_watches: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.business_impact_watches, Unset):
+            business_impact_watches = []
+            for business_impact_watches_item_data in self.business_impact_watches:
+                business_impact_watches_item = business_impact_watches_item_data.to_dict()
+                business_impact_watches.append(business_impact_watches_item)
 
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
@@ -82,6 +98,8 @@ class OperationWorkflowReadinessSubscriptionRequest:
                 "name": name,
             }
         )
+        if business_impact_watches is not UNSET:
+            field_dict["business_impact_watches"] = business_impact_watches
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
         if tenant_id is not UNSET:
@@ -101,10 +119,25 @@ class OperationWorkflowReadinessSubscriptionRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_impact_watch_request import (
+            OperationWorkflowReadinessImpactWatchRequest,
+        )
+
         d = dict(src_dict)
         scope = d.pop("scope")
 
         name = d.pop("name")
+
+        _business_impact_watches = d.pop("business_impact_watches", UNSET)
+        business_impact_watches: list[OperationWorkflowReadinessImpactWatchRequest] | Unset = UNSET
+        if _business_impact_watches is not UNSET:
+            business_impact_watches = []
+            for business_impact_watches_item_data in _business_impact_watches:
+                business_impact_watches_item = OperationWorkflowReadinessImpactWatchRequest.from_dict(
+                    business_impact_watches_item_data
+                )
+
+                business_impact_watches.append(business_impact_watches_item)
 
         _app_id = d.pop("app_id", UNSET)
         app_id: UUID | Unset
@@ -140,6 +173,7 @@ class OperationWorkflowReadinessSubscriptionRequest:
         operation_workflow_readiness_subscription_request = cls(
             scope=scope,
             name=name,
+            business_impact_watches=business_impact_watches,
             app_id=app_id,
             tenant_id=tenant_id,
             workflow=workflow,

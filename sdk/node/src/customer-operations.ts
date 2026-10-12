@@ -764,15 +764,16 @@ export interface OperationWorkflowReadinessComparisonResponse {
 }
 
 export interface OperationWorkflowReadinessSubscriptionOptions { appID: string; scope: string }
-export interface OperationWorkflowReadinessSubscriptionRequest {
+export interface OperationWorkflowReadinessSubscriptionRequest { business_impact_watches?: OperationWorkflowReadinessImpactWatchRequest[];
  app_id?: string; tenant_id?: string; scope: string; name: string; workflow?: string; target_operation?: string; owner?: string; unassigned?: boolean;
  events?: ('newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable')[];
 }
-export interface OperationWorkflowReadinessSubscription extends Omit<OperationWorkflowReadinessSubscriptionRequest, 'app_id' | 'events'> {
+export interface OperationWorkflowReadinessSubscription extends Omit<OperationWorkflowReadinessSubscriptionRequest, 'app_id' | 'events' | 'business_impact_watches'> {
+ business_impact_watches?: OperationWorkflowReadinessImpactWatch[];
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { dependency_recovery?: OperationWorkflowPlaybookDependencyRecovery; dependency_regression?: OperationWorkflowPlaybookDependencyRegression; playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_review?: OperationWorkflowPlaybookCompletionReview; playbook_review_event?: OperationWorkflowPlaybookCompletionReviewEvent; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; playbook_evidence?: OperationWorkflowPlaybookEvidenceEvent; escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { business_impact?: OperationWorkflowReadinessImpactEvent; dependency_recovery?: OperationWorkflowPlaybookDependencyRecovery; dependency_regression?: OperationWorkflowPlaybookDependencyRegression; playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_review?: OperationWorkflowPlaybookCompletionReview; playbook_review_event?: OperationWorkflowPlaybookCompletionReviewEvent; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; playbook_evidence?: OperationWorkflowPlaybookEvidenceEvent; escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
@@ -873,3 +874,7 @@ export interface OperationWorkflowPlaybookDependencyRecovery { checked_at: strin
 
 export type OperationWorkflowReadinessImpactSummary = import('./generated/models/OperationWorkflowReadinessImpactSummary.js').OperationWorkflowReadinessImpactSummary;
 export type OperationWorkflowReadinessImpactOwner = import('./generated/models/OperationWorkflowReadinessImpactOwner.js').OperationWorkflowReadinessImpactOwner;
+
+export type OperationWorkflowReadinessImpactWatchRequest = import('./generated/models/OperationWorkflowReadinessImpactWatchRequest.js').OperationWorkflowReadinessImpactWatchRequest;
+export type OperationWorkflowReadinessImpactWatch = import('./generated/models/OperationWorkflowReadinessImpactWatch.js').OperationWorkflowReadinessImpactWatch;
+export type OperationWorkflowReadinessImpactEvent = import('./generated/models/OperationWorkflowReadinessImpactEvent.js').OperationWorkflowReadinessImpactEvent;

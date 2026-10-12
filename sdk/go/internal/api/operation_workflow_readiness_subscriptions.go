@@ -5,17 +5,19 @@ import "time"
 // Readiness subscriptions discover bounded current edges and compare saved observations.
 // They produce advisory inbox notifications, never execution authority.
 type OperationWorkflowReadinessSubscriptionRequest struct {
-	AppID           string   `json:"app_id,omitempty"`
-	TenantID        string   `json:"tenant_id,omitempty"`
-	Scope           string   `json:"scope"`
-	Name            string   `json:"name"`
-	Workflow        string   `json:"workflow,omitempty"`
-	TargetOperation string   `json:"target_operation,omitempty"`
-	Owner           string   `json:"owner,omitempty"`
-	Unassigned      bool     `json:"unassigned,omitempty"`
-	Events          []string `json:"events,omitempty"`
+	BusinessImpactWatches []OperationWorkflowReadinessImpactWatchRequest `json:"business_impact_watches,omitempty"`
+	AppID                 string                                         `json:"app_id,omitempty"`
+	TenantID              string                                         `json:"tenant_id,omitempty"`
+	Scope                 string                                         `json:"scope"`
+	Name                  string                                         `json:"name"`
+	Workflow              string                                         `json:"workflow,omitempty"`
+	TargetOperation       string                                         `json:"target_operation,omitempty"`
+	Owner                 string                                         `json:"owner,omitempty"`
+	Unassigned            bool                                           `json:"unassigned,omitempty"`
+	Events                []string                                       `json:"events,omitempty"`
 }
 type OperationWorkflowReadinessSubscription struct {
+	BusinessImpactWatches   []OperationWorkflowReadinessImpactWatch  `json:"business_impact_watches,omitempty"`
 	PlaybookEvidenceWatches []OperationWorkflowPlaybookEvidenceWatch `json:"playbook_evidence_watches,omitempty"`
 	ID                      string                                   `json:"id"`
 	AppID                   string                                   `json:"app_id"`
@@ -38,6 +40,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	BusinessImpact       *OperationWorkflowReadinessImpactEvent             `json:"business_impact,omitempty"`
 	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery       `json:"dependency_recovery,omitempty"`
 	DependencyRegression *OperationWorkflowPlaybookDependencyRegression     `json:"dependency_regression,omitempty"`
 	PlaybookStep         *OperationWorkflowPlaybookStepAssignment           `json:"playbook_step,omitempty"`
@@ -436,4 +439,30 @@ type OperationWorkflowReadinessImpactOwner struct {
 	Owner        string `json:"owner"`
 	TaskCount    int    `json:"task_count"`
 	OverdueCount int    `json:"overdue_count"`
+}
+
+// Impact watches observe retained review queues; configuration is fixed until subscription deletion.
+type OperationWorkflowReadinessImpactWatchRequest struct {
+	Workflow string `json:"workflow"`
+	Kind     string `json:"kind"`
+	Code     string `json:"code"`
+	Owner    string `json:"owner,omitempty"`
+}
+type OperationWorkflowReadinessImpactWatch struct {
+	Workflow           string                                   `json:"workflow"`
+	Kind               string                                   `json:"kind"`
+	Code               string                                   `json:"code"`
+	Owner              string                                   `json:"owner,omitempty"`
+	Current            *OperationWorkflowReadinessImpactSummary `json:"current,omitempty"`
+	EvaluatedAt        time.Time                                `json:"evaluated_at"`
+	CoverageIncomplete bool                                     `json:"coverage_incomplete"`
+}
+type OperationWorkflowReadinessImpactEvent struct {
+	Workflow  string                                   `json:"workflow"`
+	Kind      string                                   `json:"kind"`
+	Code      string                                   `json:"code"`
+	CheckedAt time.Time                                `json:"checked_at"`
+	Reasons   []string                                 `json:"reasons"`
+	Previous  *OperationWorkflowReadinessImpactSummary `json:"previous,omitempty"`
+	Current   *OperationWorkflowReadinessImpactSummary `json:"current,omitempty"`
 }

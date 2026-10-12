@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPlaybookEvidenceWatch } from './OperationWorkflowPlaybookEvidenceWatch.js';
+import type { OperationWorkflowReadinessImpactWatch } from './OperationWorkflowReadinessImpactWatch.js';
 /**
  * Durable subscription configuration and most recent successful bounded evaluation; deletion cancels future evaluations and removes its inbox.
  */
 export type OperationWorkflowReadinessSubscription = {
+  /**
+   * OperationWorkflowReadinessSubscription.business_impact_watches. Retained impact observations and coverage status for configured protected results.
+   */
+  business_impact_watches?: Array<OperationWorkflowReadinessImpactWatch>;
   /**
    * OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence monitoring, independent of readiness discovery filters.
    */

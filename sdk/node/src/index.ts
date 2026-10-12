@@ -348,3 +348,5 @@ export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type Dura
 export type { OperationWorkflowPlaybookReviewImpact } from './generated/models/OperationWorkflowPlaybookReviewImpact.js';
 
 export type { OperationWorkflowReadinessImpactSummary, OperationWorkflowReadinessImpactOwner } from './customer-operations.js';
+
+export type { OperationWorkflowReadinessImpactWatchRequest, OperationWorkflowReadinessImpactWatch, OperationWorkflowReadinessImpactEvent } from './customer-operations.js';

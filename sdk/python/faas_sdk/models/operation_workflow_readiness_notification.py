@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_readiness_escalation_response_event import (
         OperationWorkflowReadinessEscalationResponseEvent,
     )
+    from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
     from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
     from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
@@ -58,6 +59,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
+    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only."""
     dependency_recovery: OperationWorkflowPlaybookDependencyRecovery | Unset = UNSET
     """OperationWorkflowPlaybookDependencyRecovery. Durable sampled waiting-to-ready observation for previously
     regressed steps, linked to the latest regression notice. Original reviews, queue assignments and clocks remain
@@ -121,6 +125,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        business_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_impact, Unset):
+            business_impact = self.business_impact.to_dict()
 
         dependency_recovery: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dependency_recovery, Unset):
@@ -197,6 +205,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if business_impact is not UNSET:
+            field_dict["business_impact"] = business_impact
         if dependency_recovery is not UNSET:
             field_dict["dependency_recovery"] = dependency_recovery
         if dependency_regression is not UNSET:
@@ -257,6 +267,7 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_readiness_escalation_response_event import (
             OperationWorkflowReadinessEscalationResponseEvent,
         )
+        from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
         from ..models.operation_workflow_readiness_verification_event import OperationWorkflowReadinessVerificationEvent
         from ..models.operation_workflow_readiness_verification_watch import OperationWorkflowReadinessVerificationWatch
@@ -271,6 +282,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _business_impact = d.pop("business_impact", UNSET)
+        business_impact: OperationWorkflowReadinessImpactEvent | Unset
+        if isinstance(_business_impact, Unset):
+            business_impact = UNSET
+        else:
+            business_impact = OperationWorkflowReadinessImpactEvent.from_dict(_business_impact)
 
         _dependency_recovery = d.pop("dependency_recovery", UNSET)
         dependency_recovery: OperationWorkflowPlaybookDependencyRecovery | Unset
@@ -390,6 +408,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            business_impact=business_impact,
             dependency_recovery=dependency_recovery,
             dependency_regression=dependency_regression,
             playbook_step=playbook_step,
