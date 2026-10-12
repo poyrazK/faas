@@ -93,6 +93,9 @@ class SourceRefDeployRequest:
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
     boost."""
+    mcp_task_migration_override: bool | Unset = UNSET
+    """Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
+    handler versions."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +155,8 @@ class SourceRefDeployRequest:
         else:
             disable_startup_cpu_boost = self.disable_startup_cpu_boost
 
+        mcp_task_migration_override = self.mcp_task_migration_override
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -186,6 +191,8 @@ class SourceRefDeployRequest:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
         if disable_startup_cpu_boost is not UNSET:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
+        if mcp_task_migration_override is not UNSET:
+            field_dict["mcp_task_migration_override"] = mcp_task_migration_override
 
         return field_dict
 
@@ -276,6 +283,8 @@ class SourceRefDeployRequest:
 
         disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
 
+        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
+
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
@@ -292,6 +301,7 @@ class SourceRefDeployRequest:
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
+            mcp_task_migration_override=mcp_task_migration_override,
         )
 
         source_ref_deploy_request.additional_properties = d

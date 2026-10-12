@@ -104,7 +104,7 @@ def sync_detailed(
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRequest):
+        body (RealtimeConsumerGroupClaimRequest): Realtime Consumer Group Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +151,7 @@ def sync(
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRequest):
+        body (RealtimeConsumerGroupClaimRequest): Realtime Consumer Group Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,7 +193,7 @@ async def asyncio_detailed(
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRequest):
+        body (RealtimeConsumerGroupClaimRequest): Realtime Consumer Group Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,7 +238,7 @@ async def asyncio(
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRequest):
+        body (RealtimeConsumerGroupClaimRequest): Realtime Consumer Group Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

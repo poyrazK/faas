@@ -1457,6 +1457,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	srv.configureAIGateway(*cfg, deps.getenv)
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
@@ -1643,7 +1644,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait;
 				// give that handler the full platform ceiling so the
 				// outer apid budget does not truncate paid plans.

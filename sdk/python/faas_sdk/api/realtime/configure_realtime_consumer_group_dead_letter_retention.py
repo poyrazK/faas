@@ -93,17 +93,18 @@ def sync_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupRetentionPolicy]:
     """Configure dead-letter retention
 
-     Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely.
-    Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a
-    persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay
-    protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
+     Configure dead-letter retention. Requires app ownership and MFA; writes require admin scope. Zero
+    keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require
+    skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery
+    does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies
+    rearm warnings.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetentionRequest):
+        body (RealtimeConsumerGroupRetentionRequest): Realtime Consumer Group Retention Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,17 +140,18 @@ def sync(
 ) -> Any | Problem | RealtimeConsumerGroupRetentionPolicy | None:
     """Configure dead-letter retention
 
-     Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely.
-    Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a
-    persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay
-    protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
+     Configure dead-letter retention. Requires app ownership and MFA; writes require admin scope. Zero
+    keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require
+    skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery
+    does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies
+    rearm warnings.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetentionRequest):
+        body (RealtimeConsumerGroupRetentionRequest): Realtime Consumer Group Retention Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,17 +182,18 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupRetentionPolicy]:
     """Configure dead-letter retention
 
-     Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely.
-    Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a
-    persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay
-    protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
+     Configure dead-letter retention. Requires app ownership and MFA; writes require admin scope. Zero
+    keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require
+    skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery
+    does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies
+    rearm warnings.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetentionRequest):
+        body (RealtimeConsumerGroupRetentionRequest): Realtime Consumer Group Retention Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,17 +227,18 @@ async def asyncio(
 ) -> Any | Problem | RealtimeConsumerGroupRetentionPolicy | None:
     """Configure dead-letter retention
 
-     Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely.
-    Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a
-    persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay
-    protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
+     Configure dead-letter retention. Requires app ownership and MFA; writes require admin scope. Zero
+    keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require
+    skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery
+    does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies
+    rearm warnings.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetentionRequest):
+        body (RealtimeConsumerGroupRetentionRequest): Realtime Consumer Group Retention Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

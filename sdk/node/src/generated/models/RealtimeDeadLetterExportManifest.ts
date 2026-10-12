@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Dead Letter Export Manifest.
+ */
 export type RealtimeDeadLetterExportManifest = {
   type: 'manifest';
   format_version: 1;

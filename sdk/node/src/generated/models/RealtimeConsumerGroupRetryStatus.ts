@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Retry Status.
+ */
 export type RealtimeConsumerGroupRetryStatus = {
   enabled: boolean;
   base_delay_seconds: number;

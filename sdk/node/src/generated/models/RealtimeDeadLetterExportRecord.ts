@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupMessage } from './RealtimeConsumerGroupMessage.js';
+/**
+ * Realtime Dead Letter Export Record.
+ */
 export type RealtimeDeadLetterExportRecord = {
   type: 'dead_letter';
   group_id: string;

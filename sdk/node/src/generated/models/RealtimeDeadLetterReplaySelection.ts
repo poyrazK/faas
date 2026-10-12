@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Dead Letter Replay Selection.
+ */
 export type RealtimeDeadLetterReplaySelection = {
   sequence: string;
   /**

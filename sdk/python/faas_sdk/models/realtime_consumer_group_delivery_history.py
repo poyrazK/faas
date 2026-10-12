@@ -20,6 +20,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupDeliveryHistory")
 
 @_attrs_define
 class RealtimeConsumerGroupDeliveryHistory:
+    """Realtime Consumer Group Delivery History."""
+
     events: list[RealtimeConsumerGroupDeliveryHistoryEvent]
     has_more: bool
     next_after_id: str

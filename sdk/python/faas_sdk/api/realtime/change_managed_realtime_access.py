@@ -113,7 +113,7 @@ def sync_detailed(
         slug (str):
         id (str):
         principal (str):
-        body (ManagedRealtimeAccessRequest):
+        body (ManagedRealtimeAccessRequest): Managed Realtime Access Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +157,7 @@ def sync(
         slug (str):
         id (str):
         principal (str):
-        body (ManagedRealtimeAccessRequest):
+        body (ManagedRealtimeAccessRequest): Managed Realtime Access Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,7 +196,7 @@ async def asyncio_detailed(
         slug (str):
         id (str):
         principal (str):
-        body (ManagedRealtimeAccessRequest):
+        body (ManagedRealtimeAccessRequest): Managed Realtime Access Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,7 +238,7 @@ async def asyncio(
         slug (str):
         id (str):
         principal (str):
-        body (ManagedRealtimeAccessRequest):
+        body (ManagedRealtimeAccessRequest): Managed Realtime Access Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

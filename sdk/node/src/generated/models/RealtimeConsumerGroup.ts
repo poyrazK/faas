@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupFilter } from './RealtimeConsumerGroupFilter.js';
+/**
+ * Realtime Consumer Group.
+ */
 export type RealtimeConsumerGroup = {
   /**
    * Immutable event ID metadata field; empty disables deduplication.
@@ -49,11 +52,11 @@ export type RealtimeConsumerGroup = {
    */
   drained: boolean;
   /**
-   * Immutable exact valid metadata field. Empty disables ordering. Missing/empty values share one ordered bucket.
+   * this realtime operation. Immutable exact valid metadata field. Empty disables ordering. Missing/empty values share one ordered bucket.
    */
   ordering_metadata_key: string;
   /**
-   * Immutable ordered-group policy. Block holds later events until replay/repair; skip lets later events proceed. Explicit replay can occur after later work completed.
+   * this realtime operation. Immutable ordered-group policy. Block holds later events until replay/repair; skip lets later events proceed. Explicit replay can occur after later work completed.
    */
   dead_letter_policy: 'block' | 'skip';
   /**
@@ -65,7 +68,7 @@ export type RealtimeConsumerGroup = {
    */
   last_fencing_token: string;
   /**
-   * Zero keeps indefinitely; otherwise 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup includes a 300-second warning grace.
+   * Realtime consumer group properties dead letter retention seconds. Zero keeps indefinitely; otherwise 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup includes a 300-second warning grace.
    */
   dead_letter_retention_seconds: number;
   /**
@@ -73,7 +76,7 @@ export type RealtimeConsumerGroup = {
    */
   expired_dead_letters: string;
   /**
-   * Immutable opt-in metadata field containing an RFC3339 delivery deadline. Ordered groups require skip policy. Missing or empty values have no deadline. Malformed values become terminal invalid_delivery_deadline failures. Frozen on assignment; existing snapshots are unchanged. Deadlines prevent expired claims and cap leases.
+   * this realtime operation. Immutable opt-in metadata field containing an RFC3339 delivery deadline. Ordered groups require skip policy. Missing or empty values have no deadline. Malformed values become terminal invalid_delivery_deadline failures. Frozen on assignment; existing snapshots are unchanged. Deadlines prevent expired claims and cap leases.
    */
   deadline_metadata_key: string;
   /**

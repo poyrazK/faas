@@ -42,5 +42,5 @@ func (s *server) requestPinnedServiceAbort(w http.ResponseWriter, r *http.Reques
 			s.log.Warn("notify exact service abort", "deployment_id", updated.ID, "err", err)
 		}
 	}
-	writeJSON(w, http.StatusAccepted, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), ServiceRecovery: &api.ServiceRolloutRecoveryReceipt{DeploymentID: updated.ID, PredecessorDeploymentID: predecessor.ID, RequestID: gate.RequestID, Status: "accepted"}})
+	writeJSON(w, http.StatusAccepted, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), ServiceRecovery: &api.ServiceRolloutRecoveryReceipt{DeploymentID: updated.ID, PredecessorDeploymentID: predecessor.ID, RequestID: gate.RequestID, Status: "accepted"}})
 }

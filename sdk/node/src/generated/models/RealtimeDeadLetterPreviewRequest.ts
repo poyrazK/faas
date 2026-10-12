@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Dead Letter Preview Request.
+ */
 export type RealtimeDeadLetterPreviewRequest = {
   /**
    * Empty selects all codes; otherwise exact case-sensitive matches.

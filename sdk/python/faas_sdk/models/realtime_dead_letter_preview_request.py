@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterPreviewRequest")
 
 @_attrs_define
 class RealtimeDeadLetterPreviewRequest:
+    """Realtime Dead Letter Preview Request."""
+
     failure_codes: list[str] | Unset = UNSET
     """Empty selects all codes; otherwise exact case-sensitive matches."""
     after_sequence: str | Unset = "0"

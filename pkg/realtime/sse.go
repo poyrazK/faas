@@ -32,7 +32,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if origin := r.Header.Get("Origin"); origin != "" {
 		if len(endpoint.AllowedOrigins) == 0 || !checkAllowedOrigins(endpoint.AllowedOrigins)(r) {
-			http.Error(w, "origin forbidden", 403)
+			http.Error(w, "origin forbidden", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -45,22 +45,22 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	token, _ := bearerToken(r)
 	usesTicket := isTicket(token)
 	if usesTicket && (!m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
-		http.Error(w, "ticket unavailable", 401)
+		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
 	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
 	if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil || (!ok && !usesTicket) {
-		http.Error(w, "realtime history unavailable", 503)
+		http.Error(w, "realtime history unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if !usesTicket && (endpoint.ClientAuth.Mode != AuthModeOIDCJWT || m.cfg.JWTAuthorizer == nil) {
-		http.Error(w, "OIDC required", 403)
+		http.Error(w, "OIDC required", http.StatusForbidden)
 		return
 	}
 	channel := r.URL.Query().Get("channel")
@@ -87,7 +87,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	token, ok = bearerToken(r)
 	if !ok {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), min(endpoint.MaxConnectionAge, 5*time.Minute))
@@ -108,13 +108,13 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		principal, err = m.cfg.JWTAuthorizer.Authorize(ctx, token, endpoint.ClientAuth)
 	}
 	if err != nil || strings.TrimSpace(principal) == "" {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if !usesTicket && endpoint.Authorize != nil {
 		principal, err = endpoint.Authorize(ctx, r)
 		if err != nil || strings.TrimSpace(principal) == "" {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -122,7 +122,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	if !usesTicket && m.cfg.AccessPreview {
 		issued, err = verifiedTokenIssuedAt(token)
 		if err != nil || m.cfg.AccessReader == nil {
-			http.Error(w, "access unavailable", 401)
+			http.Error(w, "access unavailable", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -183,16 +183,16 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return e == nil && allow
 	}
 	if !allowed() {
-		http.Error(w, "not authorized", 403)
+		http.Error(w, "not authorized", http.StatusForbidden)
 		return
 	}
 	if !m.tryReserve(node) {
-		http.Error(w, "connection limit reached", 429)
+		http.Error(w, "connection limit reached", http.StatusTooManyRequests)
 		return
 	}
 	defer m.release(node)
 	if !m.reserveResume() {
-		http.Error(w, "subscription limit reached", 429)
+		http.Error(w, "subscription limit reached", http.StatusTooManyRequests)
 		return
 	}
 	defer m.resumeCount.Add(-1)
@@ -203,11 +203,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := read()
 	if err != nil {
-		http.Error(w, "history unavailable", 503)
+		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if _, ok := w.(http.Flusher); !ok {
-		http.Error(w, "streaming unavailable", 503)
+		http.Error(w, "streaming unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")

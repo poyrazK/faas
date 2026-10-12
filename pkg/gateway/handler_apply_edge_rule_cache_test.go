@@ -148,6 +148,38 @@ func TestApplyEdgeRuleCache_HitReplaysBody(t *testing.T) {
 	}
 }
 
+// Production-us hunt #9 (H9-90): a 30 s cache rule replayed the origin's
+// `Cache-Control: public, max-age=30` with no Age header, so a browser or CDN
+// receiving a 25 s-old copy treated it as fresh for another 30 s. RFC 9111 §4
+// requires Age on every response served from a cache; a stored origin Age is
+// replaced, not appended.
+func TestApplyEdgeRuleCache_HitSendsAge(t *testing.T) {
+	stored := time.Now()
+	now := stored
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	h, _, _ := newTestHandler(t)
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "rule-age", PathGlob: "/catalog", MaxAgeSeconds: 30}
+	seedCacheRule(t, h, "jane-api.apps.dom", rule)
+	app := App{ID: "app-1", Plan: api.PlanPro}
+	key := CacheKey{AppID: app.ID, RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hostVaryHash("jane-api.apps.dom")}
+	cache.Put(key, 200,
+		http.Header{"Cache-Control": []string{"public, max-age=30"}, "Age": []string{"3"}},
+		[]byte(`{}`), stored.Add(30*time.Second), stored.Add(30*time.Second), rule.toStateEdgeRuleCacheAction())
+
+	now = stored.Add(25 * time.Second)
+	w := httptest.NewRecorder()
+	if got, _ := h.applyEdgeRuleCache(w, httptest.NewRequest("GET", "http://jane-api.apps.dom/catalog", nil), app, newTestStatusRecorder(w)); !got {
+		t.Fatal("fresh entry was not served")
+	}
+	if ages := w.Header().Values("Age"); len(ages) != 1 || ages[0] != "25" {
+		t.Fatalf("Age = %q, want exactly [25]", ages)
+	}
+	if got := w.Header().Get("x-faas-cache"); got != "hit" {
+		t.Fatalf("x-faas-cache = %q, want hit", got)
+	}
+}
+
 // TestApplyEdgeRuleCache_StaleNotServedOnMiss verifies that an
 // entry past its fresh window but within the stale window is NOT
 // served on a regular hit path. Stale-on-error is a wake-failure

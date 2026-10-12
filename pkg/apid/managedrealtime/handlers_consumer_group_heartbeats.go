@@ -15,10 +15,11 @@ func (s *Service) RealtimeConsumerGroupHeartbeats(w http.ResponseWriter, r *http
 	s.writeRealtimeWorkerHeartbeat(w, r, ep.ID, r.PathValue("channel"), r.PathValue("group"))
 }
 func (s *Service) RealtimeWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
-	r, g, _, ok := s.loadRealtimeWorker(w, r, "heartbeat")
+	g, _, ok := s.loadRealtimeWorker(w, r, "heartbeat")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "heartbeat"))
 	s.writeRealtimeWorkerHeartbeat(w, r, g.EndpointID, g.Channel, g.Group)
 }
 func (s *Service) writeRealtimeWorkerHeartbeat(w http.ResponseWriter, r *http.Request, ep, ch, group string) {

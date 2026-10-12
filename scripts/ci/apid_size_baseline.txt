@@ -1,3 +1,5 @@
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-153552
+155629
+# Realtime release: dashboard forms/inspectors and route/startup wiring add 2072 lines.
+# Realtime HTTP handlers, workers and owner logic remain in pkg/apid/managedrealtime.

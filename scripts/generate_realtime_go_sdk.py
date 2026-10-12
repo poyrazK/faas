@@ -289,6 +289,13 @@ for path, item in spec["paths"].items():
             client += f' return c.doRealtimeRelease(ctx,"{method.upper()}",path,{body},nil,headers)\n'
         client += "}\n\n"
         newmethods += 1
+# JSONL records and webhook envelopes are public wire contracts outside JSON responses.
+for schema_name in (
+    "RealtimeDeadLetterExportManifest",
+    "RealtimeDeadLetterExportRecord",
+    "RealtimeReplayJobWebhookPayload",
+):
+    needed[schema_name] = spec["components"]["schemas"][schema_name]
 while needed:
     n, s = needed.popitem()
     if n in modeldefs or n in existingtypes:
@@ -305,7 +312,6 @@ while needed:
         )
 models = (
     '// Code generated from the managed realtime OpenAPI schemas. DO NOT EDIT.\npackage api\n\nimport ("encoding/json"; "time")\n\n'
-    + options
     + "\n".join(modeldefs.values())
 )
 # imports only when used by emitted types
@@ -313,6 +319,7 @@ if "json." not in models:
     models = models.replace('"encoding/json"; ', "")
 if "time." not in models:
     models = models.replace('; "time"', "").replace('"time"', "")
+client = client.replace(' "strings"\n', ' "strings"\n "time"\n') + options
 (r / "pkg/api/client_realtime_release.go").write_text(client)
 (r / "pkg/api/realtime_release_sdk_models.go").write_text(models)
 entries = "\n".join(f' "{k}": "{v}",' for k, v in routes)

@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupClaimRateStatus")
 
 @_attrs_define
 class RealtimeConsumerGroupClaimRateStatus:
+    """Realtime Consumer Group Claim Rate Status."""
+
     rate_per_second: int
     burst: int
     throttled_claim_requests: str

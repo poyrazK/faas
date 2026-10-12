@@ -80,12 +80,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[Problem | RealtimeConsumerGroupDrainState]:
-    """Drain active consumer-group leases
+    """Drain active consumer-group leases using scoped worker credentials
 
-     Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA,
-    or the explicit drain worker permission. Existing leases may renew or settle. Drained means no
-    unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned
-    work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
+     Drain active consumer-group leases. Idempotently stop new claims and enter persistent drain mode.
+    Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may
+    renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects
+    have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause
+    switches to ordinary paused mode.
 
     Args:
         group_id (str):
@@ -114,12 +115,13 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> Problem | RealtimeConsumerGroupDrainState | None:
-    """Drain active consumer-group leases
+    """Drain active consumer-group leases using scoped worker credentials
 
-     Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA,
-    or the explicit drain worker permission. Existing leases may renew or settle. Drained means no
-    unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned
-    work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
+     Drain active consumer-group leases. Idempotently stop new claims and enter persistent drain mode.
+    Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may
+    renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects
+    have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause
+    switches to ordinary paused mode.
 
     Args:
         group_id (str):
@@ -143,12 +145,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[Problem | RealtimeConsumerGroupDrainState]:
-    """Drain active consumer-group leases
+    """Drain active consumer-group leases using scoped worker credentials
 
-     Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA,
-    or the explicit drain worker permission. Existing leases may renew or settle. Drained means no
-    unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned
-    work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
+     Drain active consumer-group leases. Idempotently stop new claims and enter persistent drain mode.
+    Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may
+    renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects
+    have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause
+    switches to ordinary paused mode.
 
     Args:
         group_id (str):
@@ -175,12 +178,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> Problem | RealtimeConsumerGroupDrainState | None:
-    """Drain active consumer-group leases
+    """Drain active consumer-group leases using scoped worker credentials
 
-     Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA,
-    or the explicit drain worker permission. Existing leases may renew or settle. Drained means no
-    unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned
-    work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
+     Drain active consumer-group leases. Idempotently stop new claims and enter persistent drain mode.
+    Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may
+    renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects
+    have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause
+    switches to ordinary paused mode.
 
     Args:
         group_id (str):

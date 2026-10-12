@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Circuit Status.
+ */
 export type RealtimeConsumerGroupCircuitStatus = {
   enabled: boolean;
   failure_threshold: number;

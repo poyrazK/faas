@@ -20,6 +20,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupPriorityStatus")
 
 @_attrs_define
 class RealtimeConsumerGroupPriorityStatus:
+    """Realtime Consumer Group Priority Status."""
+
     metadata_key: str
     fair_turns: RealtimeConsumerGroupPriorityStatusFairTurns
     next_claim_oldest: bool

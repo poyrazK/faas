@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Managed Realtime Access Request.
+ */
 export type ManagedRealtimeAccessRequest = {
   action: 'revoke_channel' | 'restore_channel' | 'revoke_sessions';
   /**

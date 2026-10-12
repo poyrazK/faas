@@ -82,8 +82,9 @@ def sync_detailed(
 ) -> Response[Any | list[RealtimeConsumerGroupDeadLetter]]:
     """List bounded failed message snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     List bounded failed message snapshots. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -123,8 +124,9 @@ def sync(
 ) -> Any | list[RealtimeConsumerGroupDeadLetter] | None:
     """List bounded failed message snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     List bounded failed message snapshots. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -159,8 +161,9 @@ async def asyncio_detailed(
 ) -> Response[Any | list[RealtimeConsumerGroupDeadLetter]]:
     """List bounded failed message snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     List bounded failed message snapshots. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -198,8 +201,9 @@ async def asyncio(
 ) -> Any | list[RealtimeConsumerGroupDeadLetter] | None:
     """List bounded failed message snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     List bounded failed message snapshots. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):

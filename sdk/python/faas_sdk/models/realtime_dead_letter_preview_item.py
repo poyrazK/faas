@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterPreviewItem")
 
 @_attrs_define
 class RealtimeDeadLetterPreviewItem:
+    """Realtime Dead Letter Preview Item."""
+
     sequence: str
     dead_since: datetime.datetime
     attempts: int

@@ -16,7 +16,7 @@ func goFunctionExecutable(config oci.Config) (string, error) {
 	program := ""
 	if len(config.Entrypoint) == 2 && (config.Entrypoint[0] == "/bin/bash" || config.Entrypoint[0] == "/bin/sh") && config.Entrypoint[1] == "-c" {
 		if len(config.Cmd) != 1 {
-			return "", fmt.Errorf("go function build command must name one executable")
+			return "", fmt.Errorf("compiled function build command must name one executable")
 		}
 		program = config.Cmd[0]
 	} else if len(config.Entrypoint) > 0 {
@@ -34,7 +34,7 @@ func goFunctionExecutable(config oci.Config) (string, error) {
 			return !strings.ContainsRune("/._-", r)
 		}
 	}) >= 0 {
-		return "", fmt.Errorf("go function build command must be a literal executable path")
+		return "", fmt.Errorf("compiled function build command must be a literal executable path")
 	}
 	workingDir := config.WorkingDir
 	if workingDir == "" {
@@ -45,7 +45,7 @@ func goFunctionExecutable(config oci.Config) (string, error) {
 	}
 	program = path.Clean(program)
 	if !strings.HasPrefix(program, "/app/") {
-		return "", fmt.Errorf("go function executable must be inside /app: %q", program)
+		return "", fmt.Errorf("compiled function executable must be inside /app: %q", program)
 	}
 	return program, nil
 }

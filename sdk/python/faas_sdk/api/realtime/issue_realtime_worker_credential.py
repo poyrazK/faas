@@ -101,15 +101,16 @@ def sync_detailed(
 ) -> Response[Problem | RealtimeWorkerCredentialIssued]:
     """Issue a credential bound to one consumer group
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Issue a credential bound to one consumer group. Account/app-scoped credential administration.
+    Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from
+    generic idempotency response caching.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerCredentialRequest):
+        body (RealtimeWorkerCredentialRequest): Realtime Worker Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,15 +146,16 @@ def sync(
 ) -> Problem | RealtimeWorkerCredentialIssued | None:
     """Issue a credential bound to one consumer group
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Issue a credential bound to one consumer group. Account/app-scoped credential administration.
+    Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from
+    generic idempotency response caching.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerCredentialRequest):
+        body (RealtimeWorkerCredentialRequest): Realtime Worker Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,15 +186,16 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimeWorkerCredentialIssued]:
     """Issue a credential bound to one consumer group
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Issue a credential bound to one consumer group. Account/app-scoped credential administration.
+    Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from
+    generic idempotency response caching.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerCredentialRequest):
+        body (RealtimeWorkerCredentialRequest): Realtime Worker Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -226,15 +229,16 @@ async def asyncio(
 ) -> Problem | RealtimeWorkerCredentialIssued | None:
     """Issue a credential bound to one consumer group
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Issue a credential bound to one consumer group. Account/app-scoped credential administration.
+    Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from
+    generic idempotency response caching.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerCredentialRequest):
+        body (RealtimeWorkerCredentialRequest): Realtime Worker Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -21,6 +21,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupCreateRequest")
 
 @_attrs_define
 class RealtimeConsumerGroupCreateRequest:
+    """Realtime Consumer Group Create Request."""
+
     name: str
     after_sequence: str
     deduplication_metadata_key: str | Unset = ""

@@ -22,6 +22,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupBatchSettlementItem")
 
 @_attrs_define
 class RealtimeConsumerGroupBatchSettlementItem:
+    """Realtime Consumer Group Batch Settlement Item."""
+
     sequence: str
     action: RealtimeConsumerGroupBatchSettlementItemAction
     status: RealtimeConsumerGroupBatchSettlementItemStatus

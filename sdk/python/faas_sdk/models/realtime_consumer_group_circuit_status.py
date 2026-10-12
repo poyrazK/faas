@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupCircuitStatus")
 
 @_attrs_define
 class RealtimeConsumerGroupCircuitStatus:
+    """Realtime Consumer Group Circuit Status."""
+
     enabled: bool
     failure_threshold: int
     cooldown_seconds: int

@@ -18,6 +18,13 @@ const (
 	// memoryShareRun caps one FIDEDUPERANGE call; consecutive memory pages
 	// that are consecutive blocks of one image are shared together.
 	memoryShareRun = 1 << 20
+	// memoryShareMinRun is the shortest range worth sharing. Every shared
+	// range becomes its own extent of the memory file, and a restore reads
+	// the file in that order: sharing single pages left 5,150 extents in a
+	// 409 MB Node snapshot and made cold restores 3-5x slower on the n2
+	// node's persistent disk, for 72 MB saved. Runs of at least 16 pages
+	// kept 48 MB of it in 605 extents (ADR-956 follow-up).
+	memoryShareMinRun = 64 << 10
 	// memorySharedXattr marks a memory file whose pages were shared. A cache
 	// refresh writes a new file, which starts without it.
 	memorySharedXattr = "user.faas.memory-shared"
@@ -224,7 +231,7 @@ func (s *pageSharer) source(idx *blockIndex, file int32) *os.File {
 }
 
 func (s *pageSharer) flush(run shareRun) error {
-	if run.length == 0 {
+	if run.length < memoryShareMinRun {
 		return nil
 	}
 	src := s.source(run.idx, run.file)
@@ -232,13 +239,14 @@ func (s *pageSharer) flush(run shareRun) error {
 		return nil
 	}
 	same, err := s.dedupe(src, run.srcOff, run.dstOff, run.length)
-	if err != nil || same || run.length == pageSize {
+	if err != nil || same || run.length == memoryShareMinRun {
 		return err
 	}
-	// Some page differs (a hash collision or a block that changed): share
-	// the run page by page so every other page still shares.
-	for off := int64(0); off < run.length; off += pageSize {
-		if _, err := s.dedupe(src, run.srcOff+off, run.dstOff+off, pageSize); err != nil {
+	// Some page differs (a hash collision or a block that changed): retry
+	// in minimum-length chunks, so the rest still shares without breaking
+	// the file into single pages.
+	for off := int64(0); off+memoryShareMinRun <= run.length; off += memoryShareMinRun {
+		if _, err := s.dedupe(src, run.srcOff+off, run.dstOff+off, memoryShareMinRun); err != nil {
 			return err
 		}
 	}

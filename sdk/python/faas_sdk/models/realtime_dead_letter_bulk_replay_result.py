@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterBulkReplayResult")
 
 @_attrs_define
 class RealtimeDeadLetterBulkReplayResult:
+    """Realtime Dead Letter Bulk Replay Result."""
+
     group_id: UUID
     replayed: int
     outcomes: list[RealtimeDeadLetterReplayOutcome]

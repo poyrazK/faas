@@ -68,8 +68,12 @@ type preparedNetworkPool struct {
 	removed func(netns.Config) bool
 }
 
-// EnablePreparedNetworks is an opt-in daemon wiring operation. It must run
-// before serving Wake RPCs. Call ClosePreparedNetworks after draining RPCs.
+// ErrPreparedNetworkHost reports that the host lacks what the cache needs
+// (the tenant bridge, or Linux). Enabling failed before any state changed.
+var ErrPreparedNetworkHost = errors.New("prepared networks: host network unavailable")
+
+// EnablePreparedNetworks is a daemon wiring operation. It must run before
+// serving Wake RPCs. Call ClosePreparedNetworks after draining RPCs.
 func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) error {
 	if err := m.RecoverNativeProcesses(ctx); err != nil {
 		return fmt.Errorf("prepared networks: native ownership recovery: %w", err)
@@ -90,7 +94,7 @@ func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) erro
 	pinErr := pinPreparedNetworkBridge(pinCtx, m.run)
 	pinCancel()
 	if pinErr != nil {
-		return pinErr
+		return fmt.Errorf("%w: %w", ErrPreparedNetworkHost, pinErr)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	p := &preparedNetworkPool{m: m, capacity: capacity, ctx: ctx, cancel: cancel, refillDelay: preparedNetworkRefill,

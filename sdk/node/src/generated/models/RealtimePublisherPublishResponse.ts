@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Publisher Publish Response.
+ */
 export type RealtimePublisherPublishResponse = {
   sequence: string;
   durable: boolean;

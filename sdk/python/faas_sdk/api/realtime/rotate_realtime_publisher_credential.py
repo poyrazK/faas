@@ -103,15 +103,17 @@ def sync_detailed(
 ) -> Response[Problem | RealtimePublisherCredentialIssued]:
     """Rotate publisher secret while preserving scopes, quota and receipts
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Rotate publisher secret while preserving scopes, quota and receipts. Account/app-scoped publisher
+    credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext
+    returned once; generic response caching is excluded. Revocation remains available when the endpoint
+    or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,15 +147,17 @@ def sync(
 ) -> Problem | RealtimePublisherCredentialIssued | None:
     """Rotate publisher secret while preserving scopes, quota and receipts
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Rotate publisher secret while preserving scopes, quota and receipts. Account/app-scoped publisher
+    credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext
+    returned once; generic response caching is excluded. Revocation remains available when the endpoint
+    or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,15 +186,17 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimePublisherCredentialIssued]:
     """Rotate publisher secret while preserving scopes, quota and receipts
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Rotate publisher secret while preserving scopes, quota and receipts. Account/app-scoped publisher
+    credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext
+    returned once; generic response caching is excluded. Revocation remains available when the endpoint
+    or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -222,15 +228,17 @@ async def asyncio(
 ) -> Problem | RealtimePublisherCredentialIssued | None:
     """Rotate publisher secret while preserving scopes, quota and receipts
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Rotate publisher secret while preserving scopes, quota and receipts. Account/app-scoped publisher
+    credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext
+    returned once; generic response caching is excluded. Revocation remains available when the endpoint
+    or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

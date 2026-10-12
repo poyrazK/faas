@@ -85,7 +85,7 @@ func (s *PgStore) RecordRealtimeInspectorOutbox(ctx context.Context, src CommitR
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var current bool
 	if err = tx.QueryRow(ctx, `select enabled and credential_revision=$3 from commit_sources where id=$1 and account_id=$2 for update`, src.ID, src.AccountID, src.CredentialRevision).Scan(&current); err != nil {
 		return err

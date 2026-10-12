@@ -15,6 +15,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupBatchSettlementResult")
 
 @_attrs_define
 class RealtimeConsumerGroupBatchSettlementResult:
+    """Realtime Consumer Group Batch Settlement Result."""
+
     results: list[RealtimeConsumerGroupBatchSettlementItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

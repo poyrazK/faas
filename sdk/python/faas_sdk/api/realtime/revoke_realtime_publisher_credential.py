@@ -87,9 +87,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Revoke a publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Revoke a publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
@@ -126,9 +126,9 @@ def sync(
 ) -> Any | Problem | None:
     """Revoke a publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Revoke a publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
@@ -160,9 +160,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Revoke a publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Revoke a publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
@@ -197,9 +197,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Revoke a publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Revoke a publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):

@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupCircuitPolicy")
 
 @_attrs_define
 class RealtimeConsumerGroupCircuitPolicy:
+    """Realtime Consumer Group Circuit Policy."""
+
     enabled: bool
     failure_threshold: int
     cooldown_seconds: int

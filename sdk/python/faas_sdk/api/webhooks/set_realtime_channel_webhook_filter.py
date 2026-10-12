@@ -69,13 +69,14 @@ def sync_detailed(
 ) -> Response[RealtimeChannelWebhookFilter]:
     """Put an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):
         id (UUID):
-        body (RealtimeChannelWebhookFilter):
+        body (RealtimeChannelWebhookFilter): Realtime Channel Webhook Filter.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,13 +108,14 @@ def sync(
 ) -> RealtimeChannelWebhookFilter | None:
     """Put an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):
         id (UUID):
-        body (RealtimeChannelWebhookFilter):
+        body (RealtimeChannelWebhookFilter): Realtime Channel Webhook Filter.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,13 +142,14 @@ async def asyncio_detailed(
 ) -> Response[RealtimeChannelWebhookFilter]:
     """Put an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):
         id (UUID):
-        body (RealtimeChannelWebhookFilter):
+        body (RealtimeChannelWebhookFilter): Realtime Channel Webhook Filter.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,13 +179,14 @@ async def asyncio(
 ) -> RealtimeChannelWebhookFilter | None:
     """Put an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):
         id (UUID):
-        body (RealtimeChannelWebhookFilter):
+        body (RealtimeChannelWebhookFilter): Realtime Channel Webhook Filter.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

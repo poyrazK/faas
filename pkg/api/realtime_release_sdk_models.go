@@ -5,31 +5,70 @@ import (
 	"time"
 )
 
-// PublishWithRealtimePublisherCredentialOptions carries optional query and header parameters.
-type PublishWithRealtimePublisherCredentialOptions struct {
-	IdempotencyKey *string
+type RealtimeReplayJobWebhookPayload struct {
+	EventID        string    `json:"event_id"`
+	AppID          string    `json:"app_id"`
+	EndpointID     string    `json:"endpoint_id"`
+	GroupID        string    `json:"group_id"`
+	JobID          string    `json:"job_id"`
+	Channel        string    `json:"channel"`
+	Group          string    `json:"group"`
+	State          string    `json:"state"`
+	Rate           int       `json:"rate"`
+	Selected       int       `json:"selected"`
+	Processed      int       `json:"processed"`
+	Replayed       int       `json:"replayed"`
+	Skipped        int       `json:"skipped"`
+	Remaining      int       `json:"remaining"`
+	ErrorCount     int64     `json:"error_count"`
+	ErrorCode      string    `json:"error_code"`
+	ErrorThreshold int       `json:"error_threshold"`
+	InspectorPath  string    `json:"inspector_path"`
+	OccurredAt     time.Time `json:"occurred_at"`
 }
 
-// GetRealtimeConsumerGroupDeliveryHistoryOptions carries optional query and header parameters.
-type GetRealtimeConsumerGroupDeliveryHistoryOptions struct {
-	AfterID *string
-	Limit   *int
+type RealtimeDeadLetterExportRecord struct {
+	Type             string                       `json:"type"`
+	GroupID          string                       `json:"group_id"`
+	Sequence         string                       `json:"sequence"`
+	DeadSince        time.Time                    `json:"dead_since"`
+	Attempts         int                          `json:"attempts"`
+	FailureCode      string                       `json:"failure_code"`
+	FencingToken     *string                      `json:"fencing_token"`
+	DeliveryDeadline *time.Time                   `json:"delivery_deadline"`
+	DeadlineInvalid  bool                         `json:"deadline_invalid"`
+	OrderingKey      string                       `json:"ordering_key"`
+	Priority         int                          `json:"priority"`
+	ExpiresAt        *time.Time                   `json:"expires_at"`
+	Message          RealtimeConsumerGroupMessage `json:"message"`
 }
 
-// ExportRealtimeConsumerGroupDeadLettersOptions carries optional query and header parameters.
-type ExportRealtimeConsumerGroupDeadLettersOptions struct {
-	AfterSequence   *string
-	GroupID         *string
-	ThroughSequence *string
-	SnapshotAt      *time.Time
-	FailureCode     *[]string
-	Limit           *int
+type RealtimeConsumerGroupMessage struct {
+	Sequence        string            `json:"sequence"`
+	DataBase64      string            `json:"data_base64"`
+	Binary          bool              `json:"binary"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	TargetMessageID *string           `json:"target_message_id,omitempty"`
+	Version         int64             `json:"version"`
+	Event           string            `json:"event"`
+	Deleted         bool              `json:"deleted"`
+	CreatedAt       time.Time         `json:"created_at"`
 }
 
-// GetRealtimeChannelAcknowledgementOptions carries optional query and header parameters.
-type GetRealtimeChannelAcknowledgementOptions struct {
-	Principal    *string
-	Subscription *string
+type RealtimeDeadLetterExportManifest struct {
+	Type              string    `json:"type"`
+	FormatVersion     int       `json:"format_version"`
+	GroupID           string    `json:"group_id"`
+	Group             string    `json:"group"`
+	Channel           string    `json:"channel"`
+	ExportedAt        time.Time `json:"exported_at"`
+	SnapshotAt        time.Time `json:"snapshot_at"`
+	AfterSequence     string    `json:"after_sequence"`
+	ThroughSequence   string    `json:"through_sequence"`
+	FailureCodes      []string  `json:"failure_codes"`
+	Count             int       `json:"count"`
+	HasMore           bool      `json:"has_more"`
+	NextAfterSequence string    `json:"next_after_sequence"`
 }
 
 type RealtimeChannelWebhookFilter struct {
@@ -89,8 +128,8 @@ type RealtimeReplayJob struct {
 	LastError     string                     `json:"last_error"`
 	DryRun        bool                       `json:"dry_run"`
 	Eligible      int                        `json:"eligible"`
-	ReviewedJobID string                     `json:"reviewed_job_id"`
-	StartedJobID  string                     `json:"started_job_id"`
+	ReviewedJobID *string                    `json:"reviewed_job_id"`
+	StartedJobID  *string                    `json:"started_job_id"`
 }
 
 type RealtimeReplayJobOutcome struct {
@@ -106,12 +145,12 @@ type RealtimeDeadLetterPreview struct {
 }
 
 type RealtimeDeadLetterPreviewItem struct {
-	Sequence        string    `json:"sequence"`
-	DeadSince       time.Time `json:"dead_since"`
-	Attempts        int       `json:"attempts"`
-	FailureCode     string    `json:"failure_code"`
-	OrderingBlocked bool      `json:"ordering_blocked"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	Sequence        string     `json:"sequence"`
+	DeadSince       time.Time  `json:"dead_since"`
+	Attempts        int        `json:"attempts"`
+	FailureCode     string     `json:"failure_code"`
+	OrderingBlocked bool       `json:"ordering_blocked"`
+	ExpiresAt       *time.Time `json:"expires_at"`
 }
 
 type RealtimeDeadLetterPreviewRequest struct {
@@ -155,22 +194,10 @@ type RealtimeConsumerGroupDeadLetter struct {
 	Message            RealtimeConsumerGroupMessage `json:"message"`
 	Attempts           int                          `json:"attempts"`
 	FailureCode        string                       `json:"failure_code"`
-	RetentionStartedAt time.Time                    `json:"retention_started_at"`
-	ExpiresAt          time.Time                    `json:"expires_at"`
-	WarningAt          time.Time                    `json:"warning_at"`
-	CleanupAfter       time.Time                    `json:"cleanup_after"`
-}
-
-type RealtimeConsumerGroupMessage struct {
-	Sequence        string            `json:"sequence"`
-	DataBase64      string            `json:"data_base64"`
-	Binary          bool              `json:"binary"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
-	TargetMessageID *string           `json:"target_message_id,omitempty"`
-	Version         int64             `json:"version"`
-	Event           string            `json:"event"`
-	Deleted         bool              `json:"deleted"`
-	CreatedAt       time.Time         `json:"created_at"`
+	RetentionStartedAt *time.Time                   `json:"retention_started_at"`
+	ExpiresAt          *time.Time                   `json:"expires_at"`
+	WarningAt          *time.Time                   `json:"warning_at"`
+	CleanupAfter       *time.Time                   `json:"cleanup_after"`
 }
 
 type RealtimeConsumerGroupSettlementResult struct {
@@ -196,7 +223,7 @@ type RealtimeConsumerGroupClaim struct {
 	LeaseUntil       time.Time                    `json:"lease_until"`
 	GroupID          string                       `json:"group_id"`
 	FencingToken     string                       `json:"fencing_token"`
-	DeliveryDeadline time.Time                    `json:"delivery_deadline"`
+	DeliveryDeadline *time.Time                   `json:"delivery_deadline"`
 }
 
 type RealtimeWorkerClaimRequest struct {
@@ -213,17 +240,17 @@ type RealtimeConsumerGroupLagAlertConfig struct {
 }
 
 type RealtimeConsumerGroupLagAlert struct {
-	Enabled                 bool      `json:"enabled"`
-	UnassignedThreshold     string    `json:"unassigned_threshold"`
-	OldestPendingSeconds    int       `json:"oldest_pending_seconds"`
-	DeadLetterThreshold     int       `json:"dead_letter_threshold"`
-	CooldownSeconds         int       `json:"cooldown_seconds"`
-	Breached                bool      `json:"breached"`
-	Unassigned              string    `json:"unassigned"`
-	OldestPendingAgeSeconds int       `json:"oldest_pending_age_seconds"`
-	DeadLetters             int       `json:"dead_letters"`
-	ObservedAt              time.Time `json:"observed_at"`
-	LastEventAt             time.Time `json:"last_event_at"`
+	Enabled                 bool       `json:"enabled"`
+	UnassignedThreshold     string     `json:"unassigned_threshold"`
+	OldestPendingSeconds    int        `json:"oldest_pending_seconds"`
+	DeadLetterThreshold     int        `json:"dead_letter_threshold"`
+	CooldownSeconds         int        `json:"cooldown_seconds"`
+	Breached                bool       `json:"breached"`
+	Unassigned              *string    `json:"unassigned"`
+	OldestPendingAgeSeconds *int       `json:"oldest_pending_age_seconds"`
+	DeadLetters             *int       `json:"dead_letters"`
+	ObservedAt              *time.Time `json:"observed_at"`
+	LastEventAt             *time.Time `json:"last_event_at"`
 }
 
 type RealtimeConsumerGroupRetentionRequest struct {
@@ -245,12 +272,12 @@ type RealtimeConsumerGroupRetryPolicyRequest struct {
 }
 
 type RealtimeConsumerGroupRetryStatus struct {
-	Enabled               bool      `json:"enabled"`
-	BaseDelaySeconds      int       `json:"base_delay_seconds"`
-	MaxDelaySeconds       int       `json:"max_delay_seconds"`
-	Jitter                bool      `json:"jitter"`
-	PermanentFailureCodes []string  `json:"permanent_failure_codes"`
-	NextRetryAt           time.Time `json:"next_retry_at"`
+	Enabled               bool       `json:"enabled"`
+	BaseDelaySeconds      int        `json:"base_delay_seconds"`
+	MaxDelaySeconds       int        `json:"max_delay_seconds"`
+	Jitter                bool       `json:"jitter"`
+	PermanentFailureCodes []string   `json:"permanent_failure_codes"`
+	NextRetryAt           *time.Time `json:"next_retry_at"`
 }
 
 type RealtimeConsumerGroupClaimRatePolicy struct {
@@ -324,16 +351,16 @@ type RealtimeConsumerGroupCircuitPolicy struct {
 }
 
 type RealtimeConsumerGroupCircuitStatus struct {
-	Enabled                bool      `json:"enabled"`
-	FailureThreshold       int       `json:"failure_threshold"`
-	CooldownSeconds        int       `json:"cooldown_seconds"`
-	State                  string    `json:"state"`
-	Reason                 string    `json:"reason"`
-	ConsecutiveFailures    int       `json:"consecutive_failures"`
-	NextProbeAt            time.Time `json:"next_probe_at"`
-	ProbeSequence          string    `json:"probe_sequence"`
-	Blocked                bool      `json:"blocked"`
-	RetryAfterMilliseconds int64     `json:"retry_after_milliseconds"`
+	Enabled                bool       `json:"enabled"`
+	FailureThreshold       int        `json:"failure_threshold"`
+	CooldownSeconds        int        `json:"cooldown_seconds"`
+	State                  string     `json:"state"`
+	Reason                 string     `json:"reason"`
+	ConsecutiveFailures    int        `json:"consecutive_failures"`
+	NextProbeAt            *time.Time `json:"next_probe_at"`
+	ProbeSequence          *string    `json:"probe_sequence"`
+	Blocked                bool       `json:"blocked"`
+	RetryAfterMilliseconds int64      `json:"retry_after_milliseconds"`
 }
 
 type RealtimeConsumerGroupDeliveryHistory struct {
@@ -349,7 +376,7 @@ type RealtimeConsumerGroupDeliveryHistoryEvent struct {
 	Sequence     string    `json:"sequence"`
 	Event        string    `json:"event"`
 	Attempt      int       `json:"attempt"`
-	FencingToken string    `json:"fencing_token"`
+	FencingToken *string   `json:"fencing_token"`
 	FailureCode  string    `json:"failure_code"`
 	RecordedAt   time.Time `json:"recorded_at"`
 }
@@ -372,15 +399,15 @@ type RealtimeConsumerGroupBatchSettlementRequest struct {
 }
 
 type RealtimeConsumerGroupDrainState struct {
-	Draining     bool      `json:"draining"`
-	Drained      bool      `json:"drained"`
-	ActiveLeases int       `json:"active_leases"`
-	PausedAt     time.Time `json:"paused_at"`
+	Draining     bool       `json:"draining"`
+	Drained      bool       `json:"drained"`
+	ActiveLeases int        `json:"active_leases"`
+	PausedAt     *time.Time `json:"paused_at"`
 }
 
 type RealtimeConsumerGroupPauseState struct {
-	Paused   bool      `json:"paused"`
-	PausedAt time.Time `json:"paused_at"`
+	Paused   bool       `json:"paused"`
+	PausedAt *time.Time `json:"paused_at"`
 }
 
 type RealtimeWorkerBatchClaimRequest struct {
@@ -432,7 +459,7 @@ type RealtimeConsumerGroup struct {
 	MaxAttempts                int                         `json:"max_attempts"`
 	CreatedAt                  time.Time                   `json:"created_at"`
 	Paused                     bool                        `json:"paused"`
-	PausedAt                   time.Time                   `json:"paused_at"`
+	PausedAt                   *time.Time                  `json:"paused_at"`
 	Draining                   bool                        `json:"draining"`
 	Drained                    bool                        `json:"drained"`
 	OrderingMetadataKey        string                      `json:"ordering_metadata_key"`

@@ -93,19 +93,19 @@ def sync_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupClaimRateStatus]:
     """Configure shared consumer-group claim rate
 
-     Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise
-    configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every
-    worker and replica through persisted group-locked state. Renewals, settlements and replay do not
-    consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing
-    debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can
-    consume the next allowance.
+     Configure shared consumer-group claim rate. Requires app ownership and MFA; writes require admin
+    scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of
+    1 to 32. Admission is shared across every worker and replica through persisted group-locked state.
+    Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and
+    counters; changed policies clamp existing debt to the new burst window. The observed retry hint is
+    not a reservation; concurrent workers can consume the next allowance.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRatePolicy):
+        body (RealtimeConsumerGroupClaimRatePolicy): Realtime Consumer Group Claim Rate Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,19 +141,19 @@ def sync(
 ) -> Any | Problem | RealtimeConsumerGroupClaimRateStatus | None:
     """Configure shared consumer-group claim rate
 
-     Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise
-    configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every
-    worker and replica through persisted group-locked state. Renewals, settlements and replay do not
-    consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing
-    debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can
-    consume the next allowance.
+     Configure shared consumer-group claim rate. Requires app ownership and MFA; writes require admin
+    scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of
+    1 to 32. Admission is shared across every worker and replica through persisted group-locked state.
+    Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and
+    counters; changed policies clamp existing debt to the new burst window. The observed retry hint is
+    not a reservation; concurrent workers can consume the next allowance.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRatePolicy):
+        body (RealtimeConsumerGroupClaimRatePolicy): Realtime Consumer Group Claim Rate Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,19 +184,19 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupClaimRateStatus]:
     """Configure shared consumer-group claim rate
 
-     Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise
-    configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every
-    worker and replica through persisted group-locked state. Renewals, settlements and replay do not
-    consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing
-    debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can
-    consume the next allowance.
+     Configure shared consumer-group claim rate. Requires app ownership and MFA; writes require admin
+    scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of
+    1 to 32. Admission is shared across every worker and replica through persisted group-locked state.
+    Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and
+    counters; changed policies clamp existing debt to the new burst window. The observed retry hint is
+    not a reservation; concurrent workers can consume the next allowance.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRatePolicy):
+        body (RealtimeConsumerGroupClaimRatePolicy): Realtime Consumer Group Claim Rate Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,19 +230,19 @@ async def asyncio(
 ) -> Any | Problem | RealtimeConsumerGroupClaimRateStatus | None:
     """Configure shared consumer-group claim rate
 
-     Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise
-    configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every
-    worker and replica through persisted group-locked state. Renewals, settlements and replay do not
-    consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing
-    debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can
-    consume the next allowance.
+     Configure shared consumer-group claim rate. Requires app ownership and MFA; writes require admin
+    scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of
+    1 to 32. Admission is shared across every worker and replica through persisted group-locked state.
+    Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and
+    counters; changed policies clamp existing debt to the new burst window. The observed retry hint is
+    not a reservation; concurrent workers can consume the next allowance.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupClaimRatePolicy):
+        body (RealtimeConsumerGroupClaimRatePolicy): Realtime Consumer Group Claim Rate Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

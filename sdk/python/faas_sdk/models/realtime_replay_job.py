@@ -19,6 +19,8 @@ T = TypeVar("T", bound="RealtimeReplayJob")
 
 @_attrs_define
 class RealtimeReplayJob:
+    """Realtime Replay Job."""
+
     id: UUID
     group_id: UUID
     state: RealtimeReplayJobState

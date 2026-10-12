@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Batch Settlement Item.
+ */
 export type RealtimeConsumerGroupBatchSettlementItem = {
   sequence: string;
   action: 'complete' | 'retry' | 'renew' | 'release';

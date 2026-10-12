@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupMetricBucket")
 
 @_attrs_define
 class RealtimeConsumerGroupMetricBucket:
+    """Realtime Consumer Group Metric Bucket."""
+
     bucket_at: datetime.datetime
     first_claims: str
     completed: str

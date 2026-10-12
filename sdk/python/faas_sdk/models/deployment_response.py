@@ -51,10 +51,12 @@ if TYPE_CHECKING:
     from ..models.build_plan import BuildPlan
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
     from ..models.dev_patch_preview import DevPatchPreview
     from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
     from ..models.log_excerpt import LogExcerpt
@@ -273,6 +275,11 @@ class DeploymentResponse:
     evidence or move traffic for another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
+    worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
+    """Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application
+    tasks. Overdue spans passed their deadline without a recorded outcome."""
+    promotion_hold: DeploymentPromotionHold | Unset = UNSET
+    """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -597,6 +604,14 @@ class DeploymentResponse:
         if not isinstance(self.service_rollout_handoff, Unset):
             service_rollout_handoff = self.service_rollout_handoff.to_dict()
 
+        worker_drain: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_drain, Unset):
+            worker_drain = self.worker_drain.to_dict()
+
+        promotion_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.promotion_hold, Unset):
+            promotion_hold = self.promotion_hold.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -725,6 +740,10 @@ class DeploymentResponse:
             field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
             field_dict["service_rollout_handoff"] = service_rollout_handoff
+        if worker_drain is not UNSET:
+            field_dict["worker_drain"] = worker_drain
+        if promotion_hold is not UNSET:
+            field_dict["promotion_hold"] = promotion_hold
 
         return field_dict
 
@@ -733,10 +752,12 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_promotion_hold import DeploymentPromotionHold
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
         from ..models.dev_patch_preview import DevPatchPreview
         from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
         from ..models.log_excerpt import LogExcerpt
@@ -1311,6 +1332,20 @@ class DeploymentResponse:
         else:
             service_rollout_handoff = ServiceRolloutHandoffResponse.from_dict(_service_rollout_handoff)
 
+        _worker_drain = d.pop("worker_drain", UNSET)
+        worker_drain: DeploymentWorkerDrainStatus | Unset
+        if isinstance(_worker_drain, Unset):
+            worker_drain = UNSET
+        else:
+            worker_drain = DeploymentWorkerDrainStatus.from_dict(_worker_drain)
+
+        _promotion_hold = d.pop("promotion_hold", UNSET)
+        promotion_hold: DeploymentPromotionHold | Unset
+        if isinstance(_promotion_hold, Unset):
+            promotion_hold = UNSET
+        else:
+            promotion_hold = DeploymentPromotionHold.from_dict(_promotion_hold)
+
         deployment_response = cls(
             id=id,
             app_id=app_id,
@@ -1376,6 +1411,8 @@ class DeploymentResponse:
             rollout_aborted_reason=rollout_aborted_reason,
             rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
+            worker_drain=worker_drain,
+            promotion_hold=promotion_hold,
         )
 
         deployment_response.additional_properties = d

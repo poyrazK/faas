@@ -20,6 +20,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupMetrics")
 
 @_attrs_define
 class RealtimeConsumerGroupMetrics:
+    """Realtime Consumer Group Metrics."""
+
     bucket_seconds: RealtimeConsumerGroupMetricsBucketSeconds
     buckets: list[RealtimeConsumerGroupMetricBucket]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

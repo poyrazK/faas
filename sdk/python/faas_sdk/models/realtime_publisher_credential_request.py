@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimePublisherCredentialRequest")
 
 @_attrs_define
 class RealtimePublisherCredentialRequest:
+    """Realtime Publisher Credential Request."""
+
     name: str
     channels: list[str]
     event_types: list[str]

@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupClaimRatePolicy")
 
 @_attrs_define
 class RealtimeConsumerGroupClaimRatePolicy:
+    """Realtime Consumer Group Claim Rate Policy."""
+
     rate_per_second: int
     """Zero disables claim throttling."""
     burst: int

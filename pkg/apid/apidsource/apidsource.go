@@ -224,18 +224,20 @@ type EnqueueParams struct {
 	// Sidecars is the envelope-sealed sidecar set produced by apid's
 	// deployment validator. Source builds use the same immutable deployment
 	// shape as image deploys.
-	Sidecars               json.RawMessage
-	OverrideHealthcheck    json.RawMessage
-	OverrideMainDependsOn  json.RawMessage
-	TrafficPercent         int
-	TrafficPercentExplicit bool
-	RollbackOn5xx          bool
-	DisableStartupCPUBoost bool
-	CanaryPreset           string
-	CanaryStep             int
-	CanaryTotalSteps       int
-	CanaryStepStartedAt    *time.Time
-	CanaryStages           json.RawMessage
+	Sidecars                 json.RawMessage
+	OverrideEnv              json.RawMessage
+	MCPTaskMigrationOverride bool
+	OverrideHealthcheck      json.RawMessage
+	OverrideMainDependsOn    json.RawMessage
+	TrafficPercent           int
+	TrafficPercentExplicit   bool
+	RollbackOn5xx            bool
+	DisableStartupCPUBoost   bool
+	CanaryPreset             string
+	CanaryStep               int
+	CanaryTotalSteps         int
+	CanaryStepStartedAt      *time.Time
+	CanaryStages             json.RawMessage
 	// ReleaseCommand is immutable source intent. The deployment orchestrator
 	// consumes it after the build has produced an artifact; Enqueue only pins
 	// the validated declaration to this exact deployment row.
@@ -519,26 +521,28 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// the upstream caller (CLI multipart, JSON body, githubd
 		// bridge). pgstore.CreateDeployment collapses "" to NULL
 		// via nullString and PRNumber=0 to NULL via nullif(0).
-		Reason:                 p.Reason,
-		Tag:                    p.Tag,
-		DeployedBy:             p.DeployedBy,
-		PRNumber:               p.PRNumber,
-		Workflows:              append(json.RawMessage(nil), p.Workflows...),
-		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), p.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
-		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
-		TrafficPercent:         p.TrafficPercent,
-		TrafficPercentExplicit: p.TrafficPercentExplicit,
-		RollbackOn5xx:          p.RollbackOn5xx,
-		DisableStartupCPUBoost: p.DisableStartupCPUBoost,
-		CanaryPreset:           p.CanaryPreset,
-		CanaryStep:             p.CanaryStep,
-		CanaryTotalSteps:       p.CanaryTotalSteps,
-		CanaryStepStartedAt:    p.CanaryStepStartedAt,
-		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
-		ReleaseCommand:         append([]string(nil), p.ReleaseCommand...),
-		ReleaseCommandShell:    p.ReleaseCommandShell,
+		Reason:                   p.Reason,
+		Tag:                      p.Tag,
+		DeployedBy:               p.DeployedBy,
+		PRNumber:                 p.PRNumber,
+		Workflows:                append(json.RawMessage(nil), p.Workflows...),
+		Sidecars:                 append(json.RawMessage(nil), p.Sidecars...),
+		OverrideEnv:              append(json.RawMessage(nil), p.OverrideEnv...),
+		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
+		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
+		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
+		TrafficPercent:           p.TrafficPercent,
+		TrafficPercentExplicit:   p.TrafficPercentExplicit,
+		RollbackOn5xx:            p.RollbackOn5xx,
+		DisableStartupCPUBoost:   p.DisableStartupCPUBoost,
+		CanaryPreset:             p.CanaryPreset,
+		CanaryStep:               p.CanaryStep,
+		CanaryTotalSteps:         p.CanaryTotalSteps,
+		CanaryStepStartedAt:      p.CanaryStepStartedAt,
+		CanaryStages:             append(json.RawMessage(nil), p.CanaryStages...),
+		ReleaseCommand:           append([]string(nil), p.ReleaseCommand...),
+		ReleaseCommandShell:      p.ReleaseCommandShell,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service

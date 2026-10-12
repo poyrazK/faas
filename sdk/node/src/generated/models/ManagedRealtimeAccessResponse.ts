@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Managed Realtime Access Response.
+ */
 export type ManagedRealtimeAccessResponse = {
   denied_channels: Array<string>;
   sessions_revoked_before?: string;

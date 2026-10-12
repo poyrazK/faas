@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Publisher Credential.
+ */
 export type RealtimePublisherCredential = {
   /**
    * Immutable message TTL cap; zero is uncapped. Rotation preserves this policy.

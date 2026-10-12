@@ -77,8 +77,9 @@ def sync_detailed(
 ) -> Response[Any | RealtimeConsumerGroup]:
     """Read consumer group lag and worker status
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Read consumer group lag and worker status. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -118,8 +119,9 @@ def sync(
 ) -> Any | RealtimeConsumerGroup | None:
     """Read consumer group lag and worker status
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Read consumer group lag and worker status. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -154,8 +156,9 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeConsumerGroup]:
     """Read consumer group lag and worker status
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Read consumer group lag and worker status. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -193,8 +196,9 @@ async def asyncio(
 ) -> Any | RealtimeConsumerGroup | None:
     """Read consumer group lag and worker status
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Read consumer group lag and worker status. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeChannelWebhookFilter")
 
 @_attrs_define
 class RealtimeChannelWebhookFilter:
+    """Realtime Channel Webhook Filter."""
+
     endpoint_id: str
     channel: str
     metadata: RealtimeChannelWebhookFilterMetadata | Unset = UNSET

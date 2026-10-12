@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupPriorityBacklog")
 
 @_attrs_define
 class RealtimeConsumerGroupPriorityBacklog:
+    """Realtime Consumer Group Priority Backlog."""
+
     priority: int
     ready: int
     leased: int

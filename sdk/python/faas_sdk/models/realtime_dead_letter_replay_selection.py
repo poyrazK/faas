@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterReplaySelection")
 
 @_attrs_define
 class RealtimeDeadLetterReplaySelection:
+    """Realtime Dead Letter Replay Selection."""
+
     sequence: str
     dead_since: datetime.datetime
     """Exact preview timestamp; preserve precision, do not round it."""

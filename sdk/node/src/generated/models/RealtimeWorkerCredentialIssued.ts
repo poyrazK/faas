@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeWorkerCredential } from './RealtimeWorkerCredential.js';
+/**
+ * Realtime Worker Credential Issued.
+ */
 export type RealtimeWorkerCredentialIssued = {
   /**
    * Plaintext grw_ credential, returned once; never log or cache.

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Drain State.
+ */
 export type RealtimeConsumerGroupDrainState = {
   draining: boolean;
   drained: boolean;

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupRetentionPolicy")
 
 @_attrs_define
 class RealtimeConsumerGroupRetentionPolicy:
+    """Realtime Consumer Group Retention Policy."""
+
     retention_seconds: int
     warning_seconds: RealtimeConsumerGroupRetentionPolicyWarningSeconds
     expired_dead_letters: str

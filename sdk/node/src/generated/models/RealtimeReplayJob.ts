@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeReplayJobOutcome } from './RealtimeReplayJobOutcome.js';
+/**
+ * Realtime Replay Job.
+ */
 export type RealtimeReplayJob = {
   id: string;
   group_id: string;

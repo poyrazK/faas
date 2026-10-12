@@ -67,8 +67,9 @@ def sync_detailed(
 ) -> Response[Any]:
     """Delete a consumer group and its outstanding payload snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Delete a consumer group and its outstanding payload snapshots. Backend-only. Requires history
+    preview, account API credentials, app permissions and MFA. Write operations require write scope.
+    Delivery is at least once.
 
     Args:
         slug (str):
@@ -108,8 +109,9 @@ async def asyncio_detailed(
 ) -> Response[Any]:
     """Delete a consumer group and its outstanding payload snapshots
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Delete a consumer group and its outstanding payload snapshots. Backend-only. Requires history
+    preview, account API credentials, app permissions and MFA. Write operations require write scope.
+    Delivery is at least once.
 
     Args:
         slug (str):

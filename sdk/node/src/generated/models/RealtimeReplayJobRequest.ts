@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Replay Job Request.
+ */
 export type RealtimeReplayJobRequest = {
   rate: number;
   failure_codes?: Array<string>;

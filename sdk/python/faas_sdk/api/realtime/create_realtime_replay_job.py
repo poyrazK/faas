@@ -87,19 +87,20 @@ def sync_detailed(
 ) -> Response[Any | RealtimeReplayJob]:
     """Create a background dead-letter replay job
 
-     Account ownership and MFA required. Read scope for listing; deploy-write scope for creation.
-    Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit
-    with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in
-    bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per
-    item. Database failures roll back progress and retry on subsequent passes. Creation is not
-    idempotent: inspect the job list after an uncertain response before retrying.
+     Create a background dead-letter replay job. Account ownership and MFA required. Read scope for
+    listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities
+    matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per
+    group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners
+    suspend processing. Skips are terminal per item. Database failures roll back progress and retry on
+    subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response
+    before retrying.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeReplayJobRequest):
+        body (RealtimeReplayJobRequest): Realtime Replay Job Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,19 +136,20 @@ def sync(
 ) -> Any | RealtimeReplayJob | None:
     """Create a background dead-letter replay job
 
-     Account ownership and MFA required. Read scope for listing; deploy-write scope for creation.
-    Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit
-    with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in
-    bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per
-    item. Database failures roll back progress and retry on subsequent passes. Creation is not
-    idempotent: inspect the job list after an uncertain response before retrying.
+     Create a background dead-letter replay job. Account ownership and MFA required. Read scope for
+    listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities
+    matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per
+    group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners
+    suspend processing. Skips are terminal per item. Database failures roll back progress and retry on
+    subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response
+    before retrying.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeReplayJobRequest):
+        body (RealtimeReplayJobRequest): Realtime Replay Job Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,19 +180,20 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeReplayJob]:
     """Create a background dead-letter replay job
 
-     Account ownership and MFA required. Read scope for listing; deploy-write scope for creation.
-    Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit
-    with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in
-    bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per
-    item. Database failures roll back progress and retry on subsequent passes. Creation is not
-    idempotent: inspect the job list after an uncertain response before retrying.
+     Create a background dead-letter replay job. Account ownership and MFA required. Read scope for
+    listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities
+    matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per
+    group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners
+    suspend processing. Skips are terminal per item. Database failures roll back progress and retry on
+    subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response
+    before retrying.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeReplayJobRequest):
+        body (RealtimeReplayJobRequest): Realtime Replay Job Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,19 +227,20 @@ async def asyncio(
 ) -> Any | RealtimeReplayJob | None:
     """Create a background dead-letter replay job
 
-     Account ownership and MFA required. Read scope for listing; deploy-write scope for creation.
-    Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit
-    with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in
-    bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per
-    item. Database failures roll back progress and retry on subsequent passes. Creation is not
-    idempotent: inspect the job list after an uncertain response before retrying.
+     Create a background dead-letter replay job. Account ownership and MFA required. Read scope for
+    listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities
+    matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per
+    group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners
+    suspend processing. Skips are terminal per item. Database failures roll back progress and retry on
+    subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response
+    before retrying.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeReplayJobRequest):
+        body (RealtimeReplayJobRequest): Realtime Replay Job Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

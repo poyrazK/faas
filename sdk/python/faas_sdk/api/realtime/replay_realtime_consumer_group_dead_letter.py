@@ -70,8 +70,9 @@ def sync_detailed(
 ) -> Response[Any]:
     """Replay one dead letter with a fresh retry budget
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Replay one dead letter with a fresh retry budget. Backend-only. Requires history preview, account
+    API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
@@ -114,8 +115,9 @@ async def asyncio_detailed(
 ) -> Response[Any]:
     """Replay one dead letter with a fresh retry budget
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Replay one dead letter with a fresh retry budget. Backend-only. Requires history preview, account
+    API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):

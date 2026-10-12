@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Publisher Credential Request.
+ */
 export type RealtimePublisherCredentialRequest = {
   /**
    * Message TTL cap; zero is uncapped. Positive caps require a positive message TTL at or below the cap.

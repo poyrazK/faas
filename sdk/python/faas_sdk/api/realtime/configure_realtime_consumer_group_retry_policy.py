@@ -93,20 +93,22 @@ def sync_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupRetryStatus]:
     """Configure consumer-group retries
 
-     Requires app ownership and MFA; writes require admin scope. Policies are disabled by default.
-    Enabled policies apply capped exponential backoff to reported failures with omitted
-    retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure
-    codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the
-    capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes
-    affect future settlements, not already scheduled retries or expired leases. next_retry_at is the
-    earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
+     Configure consumer-group retries. Requires app ownership and MFA; writes require admin scope.
+    Policies are disabled by default. Enabled policies apply capped exponential backoff to reported
+    failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact
+    permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples
+    uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets
+    still apply. Changes affect future settlements, not already scheduled retries or expired leases.
+    next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its
+    claim further.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetryPolicyRequest):
+        body (RealtimeConsumerGroupRetryPolicyRequest): Realtime Consumer Group Retry Policy
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,20 +144,22 @@ def sync(
 ) -> Any | Problem | RealtimeConsumerGroupRetryStatus | None:
     """Configure consumer-group retries
 
-     Requires app ownership and MFA; writes require admin scope. Policies are disabled by default.
-    Enabled policies apply capped exponential backoff to reported failures with omitted
-    retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure
-    codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the
-    capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes
-    affect future settlements, not already scheduled retries or expired leases. next_retry_at is the
-    earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
+     Configure consumer-group retries. Requires app ownership and MFA; writes require admin scope.
+    Policies are disabled by default. Enabled policies apply capped exponential backoff to reported
+    failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact
+    permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples
+    uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets
+    still apply. Changes affect future settlements, not already scheduled retries or expired leases.
+    next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its
+    claim further.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetryPolicyRequest):
+        body (RealtimeConsumerGroupRetryPolicyRequest): Realtime Consumer Group Retry Policy
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,20 +190,22 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupRetryStatus]:
     """Configure consumer-group retries
 
-     Requires app ownership and MFA; writes require admin scope. Policies are disabled by default.
-    Enabled policies apply capped exponential backoff to reported failures with omitted
-    retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure
-    codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the
-    capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes
-    affect future settlements, not already scheduled retries or expired leases. next_retry_at is the
-    earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
+     Configure consumer-group retries. Requires app ownership and MFA; writes require admin scope.
+    Policies are disabled by default. Enabled policies apply capped exponential backoff to reported
+    failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact
+    permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples
+    uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets
+    still apply. Changes affect future settlements, not already scheduled retries or expired leases.
+    next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its
+    claim further.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetryPolicyRequest):
+        body (RealtimeConsumerGroupRetryPolicyRequest): Realtime Consumer Group Retry Policy
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,20 +239,22 @@ async def asyncio(
 ) -> Any | Problem | RealtimeConsumerGroupRetryStatus | None:
     """Configure consumer-group retries
 
-     Requires app ownership and MFA; writes require admin scope. Policies are disabled by default.
-    Enabled policies apply capped exponential backoff to reported failures with omitted
-    retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure
-    codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the
-    capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes
-    affect future settlements, not already scheduled retries or expired leases. next_retry_at is the
-    earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
+     Configure consumer-group retries. Requires app ownership and MFA; writes require admin scope.
+    Policies are disabled by default. Enabled policies apply capped exponential backoff to reported
+    failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact
+    permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples
+    uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets
+    still apply. Changes affect future settlements, not already scheduled retries or expired leases.
+    next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its
+    claim further.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupRetryPolicyRequest):
+        body (RealtimeConsumerGroupRetryPolicyRequest): Realtime Consumer Group Retry Policy
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

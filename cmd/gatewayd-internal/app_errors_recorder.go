@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/redact"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -191,6 +192,7 @@ func (r *appErrorsRecorder) Middleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		dropInboundIdentityClaims(req.Header)
+		req, _ = gateway.WithObservedRouteCarrier(req)
 		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sr, req)
 		// After the handler returns, fire the recorder on the
@@ -236,9 +238,6 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// context under a well-known key (see the auth +
 	// routing middleware chain).
 	route := routeTemplate(req)
-	if route == "" {
-		route = req.URL.Path
-	}
 
 	// Derive the error_class. This is the closed vocabulary
 	// the schema CHECK enforces; an unknown value falls
@@ -556,10 +555,9 @@ func firstNonEmpty(values ...string) string {
 // constants rather than re-importing pkg/middleware to keep
 // the recorder self-contained.
 const (
-	ctxKeyAccountID     = "gregale.account_id"
-	ctxKeyAppID         = "gregale.app_id"
-	ctxKeyDeploymentID  = "gregale.deployment_id"
-	ctxKeyRouteTemplate = "gregale.route_template"
+	ctxKeyAccountID    = "gregale.account_id"
+	ctxKeyAppID        = "gregale.app_id"
+	ctxKeyDeploymentID = "gregale.deployment_id"
 )
 
 // ctxKey is the typed key the recorder uses to read values
@@ -567,13 +565,12 @@ const (
 // value lookup is type-safe.
 type ctxKey string
 
-// accountIDKey, appIDKey, deploymentIDKey, routeTemplateKey
-// are the typed keys for context.Value.
+// accountIDKey, appIDKey and deploymentIDKey are the typed keys for
+// context.Value.
 var (
-	accountIDKey     = ctxKey(ctxKeyAccountID)
-	appIDKey         = ctxKey(ctxKeyAppID)
-	deploymentIDKey  = ctxKey(ctxKeyDeploymentID)
-	routeTemplateKey = ctxKey(ctxKeyRouteTemplate)
+	accountIDKey    = ctxKey(ctxKeyAccountID)
+	appIDKey        = ctxKey(ctxKeyAppID)
+	deploymentIDKey = ctxKey(ctxKeyDeploymentID)
 )
 
 // reqContextString is a tiny ctx helper.
@@ -587,11 +584,15 @@ func reqContextString(req *http.Request, key ctxKey) string {
 	return ""
 }
 
-// routeTemplate reads the matched Go-mux pattern off the
-// request context. The gateway's routing middleware sets
-// this key before the recorder's middleware sees the request.
+// routeTemplate is the bounded route the gateway handler recorded on the
+// request's carrier (declared template or identifier-inferred path), or the
+// same inference for a request it never labelled. Never the raw URL: that
+// made every distinct path its own issue (production-us hunt #9).
 func routeTemplate(req *http.Request) string {
-	return reqContextString(req, routeTemplateKey)
+	if route := gateway.ObservedRouteCarrierFrom(req.Context()).Route(); route != "" {
+		return route
+	}
+	return gateway.ObservedRouteLabel(req.Method, req.URL.Path)
 }
 
 // mapToJSON marshals h into a compact JSON string. Returns

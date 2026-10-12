@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupPauseState")
 
 @_attrs_define
 class RealtimeConsumerGroupPauseState:
+    """Realtime Consumer Group Pause State."""
+
     paused: bool
     paused_at: datetime.datetime | None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

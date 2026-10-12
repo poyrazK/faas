@@ -88,21 +88,22 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: RealtimeConsumerGroupBatchSettlementRequest,
 ) -> Response[Any | RealtimeConsumerGroupBatchSettlementResult]:
-    """Settle a batch of consumer group claims
+    """Settle a batch of consumer group claims using scoped worker credentials
 
-     Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results
-    preserve request order. Each valid current lease is completed, retried, released or renewed;
-    expired, missing or differently owned leases return lease_lost without blocking other items. Scoped
-    credentials require every action in the request, rechecked under the group lock; no additional
-    grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit
-    alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the
-    entire result for 24 hours; repeat the same request with the same key to recover a lost response.
-    Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may
-    have committed.
+     Settle a batch of consumer group claims. Validate all 1 to 32 items before mutation; duplicate
+    numeric sequences are invalid. Results preserve request order. Each valid current lease is
+    completed, retried, released or renewed; expired, missing or differently owned leases return
+    lease_lost without blocking other items. Scoped credentials require every action in the request,
+    rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write
+    scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back
+    the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request
+    with the same key to recover a lost response. Different contents return 409
+    realtime_settlement_key_conflict. Without a key, a lost response may have committed.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupBatchSettlementRequest):
+        body (RealtimeConsumerGroupBatchSettlementRequest): Realtime Consumer Group Batch
+            Settlement Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,21 +131,22 @@ def sync(
     client: AuthenticatedClient,
     body: RealtimeConsumerGroupBatchSettlementRequest,
 ) -> Any | RealtimeConsumerGroupBatchSettlementResult | None:
-    """Settle a batch of consumer group claims
+    """Settle a batch of consumer group claims using scoped worker credentials
 
-     Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results
-    preserve request order. Each valid current lease is completed, retried, released or renewed;
-    expired, missing or differently owned leases return lease_lost without blocking other items. Scoped
-    credentials require every action in the request, rechecked under the group lock; no additional
-    grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit
-    alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the
-    entire result for 24 hours; repeat the same request with the same key to recover a lost response.
-    Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may
-    have committed.
+     Settle a batch of consumer group claims. Validate all 1 to 32 items before mutation; duplicate
+    numeric sequences are invalid. Results preserve request order. Each valid current lease is
+    completed, retried, released or renewed; expired, missing or differently owned leases return
+    lease_lost without blocking other items. Scoped credentials require every action in the request,
+    rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write
+    scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back
+    the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request
+    with the same key to recover a lost response. Different contents return 409
+    realtime_settlement_key_conflict. Without a key, a lost response may have committed.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupBatchSettlementRequest):
+        body (RealtimeConsumerGroupBatchSettlementRequest): Realtime Consumer Group Batch
+            Settlement Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,21 +169,22 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: RealtimeConsumerGroupBatchSettlementRequest,
 ) -> Response[Any | RealtimeConsumerGroupBatchSettlementResult]:
-    """Settle a batch of consumer group claims
+    """Settle a batch of consumer group claims using scoped worker credentials
 
-     Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results
-    preserve request order. Each valid current lease is completed, retried, released or renewed;
-    expired, missing or differently owned leases return lease_lost without blocking other items. Scoped
-    credentials require every action in the request, rechecked under the group lock; no additional
-    grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit
-    alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the
-    entire result for 24 hours; repeat the same request with the same key to recover a lost response.
-    Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may
-    have committed.
+     Settle a batch of consumer group claims. Validate all 1 to 32 items before mutation; duplicate
+    numeric sequences are invalid. Results preserve request order. Each valid current lease is
+    completed, retried, released or renewed; expired, missing or differently owned leases return
+    lease_lost without blocking other items. Scoped credentials require every action in the request,
+    rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write
+    scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back
+    the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request
+    with the same key to recover a lost response. Different contents return 409
+    realtime_settlement_key_conflict. Without a key, a lost response may have committed.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupBatchSettlementRequest):
+        body (RealtimeConsumerGroupBatchSettlementRequest): Realtime Consumer Group Batch
+            Settlement Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -207,21 +210,22 @@ async def asyncio(
     client: AuthenticatedClient,
     body: RealtimeConsumerGroupBatchSettlementRequest,
 ) -> Any | RealtimeConsumerGroupBatchSettlementResult | None:
-    """Settle a batch of consumer group claims
+    """Settle a batch of consumer group claims using scoped worker credentials
 
-     Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results
-    preserve request order. Each valid current lease is completed, retried, released or renewed;
-    expired, missing or differently owned leases return lease_lost without blocking other items. Scoped
-    credentials require every action in the request, rechecked under the group lock; no additional
-    grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit
-    alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the
-    entire result for 24 hours; repeat the same request with the same key to recover a lost response.
-    Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may
-    have committed.
+     Settle a batch of consumer group claims. Validate all 1 to 32 items before mutation; duplicate
+    numeric sequences are invalid. Results preserve request order. Each valid current lease is
+    completed, retried, released or renewed; expired, missing or differently owned leases return
+    lease_lost without blocking other items. Scoped credentials require every action in the request,
+    rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write
+    scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back
+    the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request
+    with the same key to recover a lost response. Different contents return 409
+    realtime_settlement_key_conflict. Without a key, a lost response may have committed.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupBatchSettlementRequest):
+        body (RealtimeConsumerGroupBatchSettlementRequest): Realtime Consumer Group Batch
+            Settlement Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

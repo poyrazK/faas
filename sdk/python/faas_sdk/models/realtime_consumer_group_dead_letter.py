@@ -16,7 +16,10 @@ T = TypeVar("T", bound="RealtimeConsumerGroupDeadLetter")
 
 @_attrs_define
 class RealtimeConsumerGroupDeadLetter:
+    """Realtime Consumer Group Dead Letter."""
+
     message: RealtimeConsumerGroupMessage
+    """Realtime Consumer Group Message."""
     attempts: int
     failure_code: str
     retention_started_at: datetime.datetime | None

@@ -20,10 +20,11 @@ func (s *Service) ClaimRealtimeConsumerGroupBatch(w http.ResponseWriter, r *http
 	s.writeRealtimeGroupBatch(w, r, ep.ID, r.PathValue("channel"), r.PathValue("group"), req)
 }
 func (s *Service) RealtimeWorkerClaimBatch(w http.ResponseWriter, r *http.Request) {
-	r, g, _, ok := s.loadRealtimeWorker(w, r, "claim")
+	g, _, ok := s.loadRealtimeWorker(w, r, "claim")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "claim"))
 	var req state.RealtimeConsumerGroupBatchRequest
 	if httpkit.DecodeJSONSized(r, &req, api.RealtimeConsumerGroupBodyMaxBytes) != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid worker batch claim request"))

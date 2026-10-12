@@ -95,17 +95,17 @@ def sync_detailed(
 ) -> Response[Any | RealtimeWorkerHeartbeat]:
     """Report worker readiness and liveness
 
-     Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes
-    require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and
-    fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No
-    lease is renewed.
+     Report worker readiness and liveness. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds;
+    report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped
+    POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-
+    reported, separate from liveness. No lease is renewed.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerHeartbeatRequest):
+        body (RealtimeWorkerHeartbeatRequest): Realtime Worker Heartbeat Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,17 +141,17 @@ def sync(
 ) -> Any | RealtimeWorkerHeartbeat | None:
     """Report worker readiness and liveness
 
-     Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes
-    require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and
-    fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No
-    lease is renewed.
+     Report worker readiness and liveness. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds;
+    report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped
+    POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-
+    reported, separate from liveness. No lease is renewed.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerHeartbeatRequest):
+        body (RealtimeWorkerHeartbeatRequest): Realtime Worker Heartbeat Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,17 +182,17 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeWorkerHeartbeat]:
     """Report worker readiness and liveness
 
-     Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes
-    require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and
-    fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No
-    lease is renewed.
+     Report worker readiness and liveness. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds;
+    report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped
+    POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-
+    reported, separate from liveness. No lease is renewed.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerHeartbeatRequest):
+        body (RealtimeWorkerHeartbeatRequest): Realtime Worker Heartbeat Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -226,17 +226,17 @@ async def asyncio(
 ) -> Any | RealtimeWorkerHeartbeat | None:
     """Report worker readiness and liveness
 
-     Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes
-    require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and
-    fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No
-    lease is renewed.
+     Report worker readiness and liveness. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds;
+    report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped
+    POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-
+    reported, separate from liveness. No lease is renewed.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeWorkerHeartbeatRequest):
+        body (RealtimeWorkerHeartbeatRequest): Realtime Worker Heartbeat Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

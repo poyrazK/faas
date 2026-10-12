@@ -2,10 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Lag Alert.
+ */
 export type RealtimeConsumerGroupLagAlert = {
   enabled: boolean;
   /**
-   * 0 disables backlog threshold; maximum 1000000000.
+   * this realtime operation. 0 disables backlog threshold; maximum 1000000000.
    */
   unassigned_threshold: string;
   oldest_pending_seconds: number;

@@ -20,10 +20,11 @@ func (s *Service) DrainRealtimeConsumerGroup(w http.ResponseWriter, r *http.Requ
 	httpkit.WriteJSON(w, http.StatusOK, result)
 }
 func (s *Service) RealtimeWorkerDrain(w http.ResponseWriter, r *http.Request) {
-	r, g, _, ok := s.loadRealtimeWorker(w, r, "drain")
+	g, _, ok := s.loadRealtimeWorker(w, r, "drain")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "drain"))
 	result, ok := s.startRealtimeGroupDrain(w, r, g.EndpointID, g.Channel, g.Group)
 	if !ok {
 		return

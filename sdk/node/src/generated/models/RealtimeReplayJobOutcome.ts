@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Replay Job Outcome.
+ */
 export type RealtimeReplayJobOutcome = {
   sequence: string;
   status: 'eligible' | 'replayed' | 'ordering_blocked' | 'stale' | 'not_dead' | 'missing' | 'deadline_expired' | 'invalid_deadline';

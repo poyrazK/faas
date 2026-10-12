@@ -104,8 +104,9 @@ def sync_detailed(
 ) -> Response[Problem | RealtimeWorkerCredentialIssued]:
     """Rotate a worker credential and immediately invalidate the old secret
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Rotate a worker credential and immediately invalidate the old secret. Account/app-scoped credential
+    administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are
+    excluded from generic idempotency response caching.
 
     Args:
         slug (str):
@@ -113,7 +114,8 @@ def sync_detailed(
         channel (str):
         group (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,8 +153,9 @@ def sync(
 ) -> Problem | RealtimeWorkerCredentialIssued | None:
     """Rotate a worker credential and immediately invalidate the old secret
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Rotate a worker credential and immediately invalidate the old secret. Account/app-scoped credential
+    administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are
+    excluded from generic idempotency response caching.
 
     Args:
         slug (str):
@@ -160,7 +163,8 @@ def sync(
         channel (str):
         group (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,8 +197,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimeWorkerCredentialIssued]:
     """Rotate a worker credential and immediately invalidate the old secret
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Rotate a worker credential and immediately invalidate the old secret. Account/app-scoped credential
+    administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are
+    excluded from generic idempotency response caching.
 
     Args:
         slug (str):
@@ -202,7 +207,8 @@ async def asyncio_detailed(
         channel (str):
         group (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,8 +244,9 @@ async def asyncio(
 ) -> Problem | RealtimeWorkerCredentialIssued | None:
     """Rotate a worker credential and immediately invalidate the old secret
 
-     Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope
-    and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+     Rotate a worker credential and immediately invalidate the old secret. Account/app-scoped credential
+    administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are
+    excluded from generic idempotency response caching.
 
     Args:
         slug (str):
@@ -247,7 +254,8 @@ async def asyncio(
         channel (str):
         group (str):
         credential_id (str):
-        body (RealtimeWorkerCredentialRotationRequest):
+        body (RealtimeWorkerCredentialRotationRequest): Realtime Worker Credential Rotation
+            Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

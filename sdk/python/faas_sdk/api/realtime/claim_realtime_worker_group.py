@@ -96,12 +96,12 @@ def sync_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupClaim]:
     """Claim work using the claim permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Claim work using the claim permission. Accepts only a group-bound grw_ worker credential. Exact
+    permission is checked in the group transaction; group recreation does not restore access.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerClaimRequest):
+        body (RealtimeWorkerClaimRequest): Realtime Worker Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,12 +131,12 @@ def sync(
 ) -> Any | Problem | RealtimeConsumerGroupClaim | None:
     """Claim work using the claim permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Claim work using the claim permission. Accepts only a group-bound grw_ worker credential. Exact
+    permission is checked in the group transaction; group recreation does not restore access.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerClaimRequest):
+        body (RealtimeWorkerClaimRequest): Realtime Worker Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,12 +161,12 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupClaim]:
     """Claim work using the claim permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Claim work using the claim permission. Accepts only a group-bound grw_ worker credential. Exact
+    permission is checked in the group transaction; group recreation does not restore access.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerClaimRequest):
+        body (RealtimeWorkerClaimRequest): Realtime Worker Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,12 +194,12 @@ async def asyncio(
 ) -> Any | Problem | RealtimeConsumerGroupClaim | None:
     """Claim work using the claim permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Claim work using the claim permission. Accepts only a group-bound grw_ worker credential. Exact
+    permission is checked in the group transaction; group recreation does not restore access.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerClaimRequest):
+        body (RealtimeWorkerClaimRequest): Realtime Worker Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

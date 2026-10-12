@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupDrainState")
 
 @_attrs_define
 class RealtimeConsumerGroupDrainState:
+    """Realtime Consumer Group Drain State."""
+
     draining: bool
     drained: bool
     active_leases: int

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Settlement Result.
+ */
 export type RealtimeConsumerGroupSettlementResult = {
   status: 'completed' | 'ready' | 'dead' | 'leased';
   lease_until?: string;

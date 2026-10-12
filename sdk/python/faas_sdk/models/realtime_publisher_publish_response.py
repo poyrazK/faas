@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimePublisherPublishResponse")
 
 @_attrs_define
 class RealtimePublisherPublishResponse:
+    """Realtime Publisher Publish Response."""
+
     sequence: str
     durable: bool
     replayed: bool

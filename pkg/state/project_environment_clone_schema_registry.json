@@ -730,6 +730,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_mcp_task_compatibility",
+    "columns": [
+      "app_id",
+      "handlers",
+      "observed_at",
+      "truncated"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_openapi_docs",
     "columns": [
       "account_id",
@@ -1777,12 +1787,12 @@
   },
   {
     "table": "customer_operation_code_pins",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
       "expires_at"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_definitions",
@@ -1937,7 +1947,6 @@
   },
   {
     "table": "customer_operation_workflow_claims",
-    "kind": "operational",
     "columns": [
       "attempt",
       "capability_digest",
@@ -1946,7 +1955,8 @@
       "lease_until",
       "operation_id",
       "workflow_run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_workflow_executions",
@@ -2210,6 +2220,36 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_mcp_task_holds",
+    "columns": [
+      "attempts",
+      "claim_generation",
+      "deployment_id",
+      "detail",
+      "first_held_at",
+      "last_recovery_at",
+      "last_recovery_error_code",
+      "last_recovery_outcome",
+      "lease_until",
+      "next_attempt_at",
+      "observed_at",
+      "owner_node",
+      "recovery_channel",
+      "recovery_payload",
+      "wake_requested"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_mcp_task_migration_overrides",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "used_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_openapi_docs",
     "columns": [
       "account_id",
@@ -2272,7 +2312,6 @@
   },
   {
     "table": "deployment_route_policy_snapshots",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "captured_at",
@@ -2281,7 +2320,8 @@
       "scope",
       "sha256",
       "snapshot"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -5027,6 +5067,29 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_channel_webhook_filters",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "metadata",
+      "webhook_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_commit_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "endpoint_id",
+      "event_id",
+      "published_at",
+      "sequence",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -5037,6 +5100,101 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_consumer_group_alerts",
+    "columns": [
+      "breached",
+      "cooldown_seconds",
+      "dead_letter_threshold",
+      "enabled",
+      "group_id",
+      "last_event_at",
+      "next_check_at",
+      "observed_age",
+      "observed_at",
+      "observed_backlog",
+      "observed_dead",
+      "oldest_pending_seconds",
+      "unassigned_threshold"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_consumer_group_messages",
+    "columns": [
+      "attempts",
+      "available_at",
+      "credential_id",
+      "dead_since",
+      "deadline_invalid",
+      "delivery_deadline",
+      "expiry_warned_at",
+      "failure_code",
+      "fencing_token",
+      "first_claim_observed",
+      "group_id",
+      "lease_until",
+      "message",
+      "ordered",
+      "ordering_key",
+      "priority",
+      "processing_started_at",
+      "release_count",
+      "sequence",
+      "status",
+      "token_hash",
+      "worker"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_consumer_groups",
+    "columns": [
+      "assigned_sequence",
+      "channel",
+      "circuit_cooldown_seconds",
+      "circuit_enabled",
+      "circuit_failures",
+      "circuit_open_until",
+      "circuit_probe_fencing_token",
+      "circuit_probe_sequence",
+      "circuit_reason",
+      "circuit_state",
+      "circuit_threshold",
+      "claim_rate_burst",
+      "claim_rate_per_second",
+      "claim_rate_tat",
+      "completed",
+      "created_at",
+      "dead_letter_policy",
+      "dead_letter_retention_seconds",
+      "deadline_metadata_key",
+      "deduplication_metadata_key",
+      "deduplication_window_seconds",
+      "draining",
+      "duplicate_messages",
+      "endpoint_id",
+      "expired_dead_letters",
+      "expired_deliveries",
+      "filtered_messages",
+      "history_pruned_events",
+      "id",
+      "last_fencing_token",
+      "lease_seconds",
+      "max_attempts",
+      "message_filter",
+      "name",
+      "next_retention_check_at",
+      "next_worker_health_check_at",
+      "ordering_metadata_key",
+      "paused_at",
+      "priority_metadata_key",
+      "priority_turn",
+      "retry_policy",
+      "throttled_claim_requests"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -5102,6 +5260,8 @@
   {
     "table": "managed_realtime_durable_cursors",
     "columns": [
+      "acknowledged_at",
+      "acknowledged_sequence",
       "channel",
       "endpoint_id",
       "principal",
@@ -5154,6 +5314,56 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_group_delivery_history",
+    "columns": [
+      "attempt",
+      "event",
+      "failure_code",
+      "fencing_token",
+      "group_id",
+      "id",
+      "recorded_at",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_event_ids",
+    "columns": [
+      "event_hash",
+      "expires_at",
+      "group_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_metrics",
+    "columns": [
+      "bucket_at",
+      "completed",
+      "dead_letters",
+      "first_claims",
+      "group_id",
+      "processing_milliseconds",
+      "queue_milliseconds",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_settlement_receipts",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "group_id",
+      "idempotency_key",
+      "principal",
+      "request_hash",
+      "result"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_inbox_cursors",
     "columns": [
       "channel",
@@ -5195,6 +5405,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_inbox_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_inbox_messages",
     "columns": [
       "channel",
@@ -5221,6 +5442,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_notification_timeline",
     "columns": [
       "attempts",
@@ -5240,6 +5472,20 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_outbox_observations",
+    "columns": [
+      "attempts",
+      "blocked_code",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_id",
+      "observed_at",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_presence_leases",
     "columns": [
       "channel",
@@ -5252,6 +5498,57 @@
       "state",
       "state_updated_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_principal_access",
+    "columns": [
+      "denied_channels",
+      "endpoint_id",
+      "principal",
+      "revision",
+      "sessions_revoked_before",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_credentials",
+    "columns": [
+      "accepted_count",
+      "channels",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "generation",
+      "id",
+      "issued_at",
+      "last_channel",
+      "last_sequence",
+      "last_used_at",
+      "max_message_ttl_seconds",
+      "max_payload_bytes",
+      "name",
+      "publishes_per_minute",
+      "rate_count",
+      "rate_window",
+      "replay_count",
+      "revoked_at",
+      "token_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "credential_id",
+      "expires_at",
+      "idempotency_key",
+      "published_at",
+      "sequence"
     ],
     "kind": "operational"
   },
@@ -5348,6 +5645,27 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_replay_jobs",
+    "columns": [
+      "created_at",
+      "dry_run",
+      "error_count",
+      "group_id",
+      "id",
+      "last_error",
+      "next_at",
+      "outcomes",
+      "position",
+      "rate",
+      "reviewed_job_id",
+      "selection",
+      "started_job_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_schedule_history",
     "columns": [
       "attempts",
@@ -5401,10 +5719,56 @@
       "skip_reason",
       "skipped_occurrences",
       "status",
+      "ttl_seconds",
       "updated_at",
       "version"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_subscription_tickets",
+    "columns": [
+      "channels",
+      "endpoint_id",
+      "expires_at",
+      "issued_at",
+      "principal",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_worker_credentials",
+    "columns": [
+      "expires_at",
+      "generation",
+      "group_id",
+      "id",
+      "issued_at",
+      "last_operation",
+      "last_used_at",
+      "name",
+      "permissions",
+      "revoked_at",
+      "token_hash",
+      "use_count"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_worker_heartbeats",
+    "columns": [
+      "credential_id",
+      "group_id",
+      "id",
+      "last_seen_at",
+      "lost",
+      "principal",
+      "ready",
+      "status_code",
+      "worker"
+    ],
+    "kind": "operational"
   },
   {
     "table": "meter_gateway_usage_events",
@@ -6403,6 +6767,9 @@
   {
     "table": "outbound_admission_leases",
     "columns": [
+      "ai_reserved_cost_millicents",
+      "ai_reserved_tokens",
+      "binding_app_id",
       "created_at",
       "expires_at",
       "integration_id",
@@ -6418,10 +6785,14 @@
       "circuit_policy_failure_threshold",
       "circuit_policy_open_seconds",
       "circuit_probe_lease_id",
+      "daily_ai_cost_millicents",
+      "daily_ai_token_count",
       "daily_request_count",
       "daily_usage_date",
       "integration_id",
       "last_refill",
+      "monthly_ai_cost_millicents",
+      "monthly_usage_month",
       "provider_cooldown_policy_revision",
       "provider_cooldown_until",
       "retry_budget_policy_per_minute",
@@ -6432,12 +6803,117 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_budget_alerts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "budget",
+      "crossed_at",
+      "id",
+      "integration_id",
+      "limit_value",
+      "period_start",
+      "threshold_percent",
+      "used_value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_price_entries",
+    "columns": [
+      "cache_write_millicents_per_mtok",
+      "cached_input_millicents_per_mtok",
+      "input_millicents_per_mtok",
+      "model_prefix",
+      "output_millicents_per_mtok",
+      "price_list_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_price_lists",
+    "columns": [
+      "created_at",
+      "effective_from",
+      "id",
+      "integration_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_request_log",
+    "columns": [
+      "attempts",
+      "cache_write_tokens",
+      "cached_input_tokens",
+      "caller",
+      "cost_millicents",
+      "created_at",
+      "duration_ms",
+      "id",
+      "input_tokens",
+      "integration_id",
+      "model",
+      "outcome",
+      "output_tokens",
+      "route_id",
+      "status",
+      "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_targets",
+    "columns": [
+      "integration_id",
+      "model",
+      "position",
+      "route_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_routes",
+    "columns": [
+      "account_id",
+      "created_at",
+      "format",
+      "id",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_usage_daily",
+    "columns": [
+      "cache_write_tokens",
+      "cached_input_tokens",
+      "caller",
+      "cost_millicents",
+      "error_requests",
+      "input_tokens",
+      "integration_id",
+      "model",
+      "output_tokens",
+      "requests",
+      "updated_at",
+      "usage_date",
+      "usage_unknown_requests"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_app_binding_usage",
     "columns": [
       "app_id",
+      "daily_ai_token_count",
       "daily_request_count",
       "daily_usage_date",
-      "integration_id"
+      "integration_id",
+      "minute_ai_token_count",
+      "minute_request_count",
+      "minute_window_start"
     ],
     "kind": "operational"
   },
@@ -6445,6 +6921,11 @@
     "table": "outbound_app_bindings",
     "columns": [
       "account_id",
+      "ai_allowed_models",
+      "ai_daily_token_limit",
+      "ai_max_output_tokens",
+      "ai_requests_per_minute",
+      "ai_tokens_per_minute",
       "allowed_methods",
       "allowed_path_prefixes",
       "app_id",
@@ -6460,6 +6941,18 @@
       "app_id",
       "created_at",
       "integration_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_integration_credential_keys",
+    "columns": [
+      "account_id",
+      "authorization_sealed",
+      "created_at",
+      "id",
+      "integration_id",
+      "label"
     ],
     "kind": "configuration"
   },
@@ -6488,6 +6981,11 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_daily_cost_limit_millicents",
+      "ai_daily_token_limit",
+      "ai_monthly_cost_limit_millicents",
+      "ai_provider",
+      "ai_request_log_enabled",
       "allowed_methods",
       "allowed_path_prefixes",
       "burst",
@@ -6736,7 +7234,6 @@
   },
   {
     "table": "platform_tenant_workflow_schedule_cursors",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
@@ -6749,7 +7246,8 @@
       "trigger_snapshot",
       "updated_at",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "platform_tenants",
@@ -9142,7 +9640,6 @@
   },
   {
     "table": "workflow_automation_definitions",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "draft",
@@ -9152,7 +9649,8 @@
       "published_version",
       "updated_at",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_automation_failure_guards",
@@ -9197,16 +9695,15 @@
   },
   {
     "table": "workflow_automation_publish_policies",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "mode",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_automation_publish_receipts",
-    "kind": "operational",
     "columns": [
       "account_id",
       "api_key_id",
@@ -9216,11 +9713,11 @@
       "name",
       "policy_version",
       "token_hash"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_automation_revisions",
-    "kind": "configuration",
     "columns": [
       "app_id",
       "check_evidence",
@@ -9231,7 +9728,8 @@
       "published_by_api_key_id",
       "recorded_at",
       "version"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -9276,13 +9774,13 @@
   },
   {
     "table": "workflow_event_receipts",
-    "kind": "operational",
     "columns": [
       "admitted_at",
       "outbox_id",
       "recipient_id",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_events",
@@ -9315,7 +9813,6 @@
   },
   {
     "table": "workflow_run_resumes",
-    "kind": "operational",
     "columns": [
       "account_id",
       "created_at",
@@ -9324,7 +9821,8 @@
       "resume_number",
       "resumed_steps",
       "run_id"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_runs",
@@ -9356,7 +9854,6 @@
   },
   {
     "table": "workflow_schedule_cursors",
-    "kind": "operational",
     "columns": [
       "app_id",
       "deployment_id",
@@ -9368,7 +9865,8 @@
       "trigger_snapshot",
       "updated_at",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_schedule_occurrences",
@@ -9431,7 +9929,6 @@
   },
   {
     "table": "workflow_webhook_bindings",
-    "kind": "configuration",
     "columns": [
       "endpoint_id",
       "event_type",
@@ -9439,11 +9936,11 @@
       "updated_at",
       "version",
       "workflow_name"
-    ]
+    ],
+    "kind": "configuration"
   },
   {
     "table": "workflow_webhook_receipts",
-    "kind": "operational",
     "columns": [
       "accepted_at",
       "body_hash",
@@ -9455,6 +9952,7 @@
       "recipient_id",
       "status",
       "workflow_name"
-    ]
+    ],
+    "kind": "operational"
   }
 ]

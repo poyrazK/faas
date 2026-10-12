@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // realtimeReleasePath escapes every path value before expanding the contract template.
@@ -709,4 +710,31 @@ func (c *Client) ChangeManagedRealtimeAccess(ctx context.Context, slug string, i
 	var out ManagedRealtimeAccessResponse
 	err := c.doRealtimeRelease(ctx, "POST", path, request, &out, headers)
 	return out, err
+}
+
+// PublishWithRealtimePublisherCredentialOptions carries optional query and header parameters.
+type PublishWithRealtimePublisherCredentialOptions struct {
+	IdempotencyKey *string
+}
+
+// GetRealtimeConsumerGroupDeliveryHistoryOptions carries optional query and header parameters.
+type GetRealtimeConsumerGroupDeliveryHistoryOptions struct {
+	AfterID *string
+	Limit   *int
+}
+
+// ExportRealtimeConsumerGroupDeadLettersOptions carries optional query and header parameters.
+type ExportRealtimeConsumerGroupDeadLettersOptions struct {
+	AfterSequence   *string
+	GroupID         *string
+	ThroughSequence *string
+	SnapshotAt      *time.Time
+	FailureCode     *[]string
+	Limit           *int
+}
+
+// GetRealtimeChannelAcknowledgementOptions carries optional query and header parameters.
+type GetRealtimeChannelAcknowledgementOptions struct {
+	Principal    *string
+	Subscription *string
 }

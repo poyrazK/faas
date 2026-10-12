@@ -79,8 +79,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replay failed work using the separate replay permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Replay failed work using the separate replay permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -114,8 +115,9 @@ def sync(
 ) -> Any | Problem | None:
     """Replay failed work using the separate replay permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Replay failed work using the separate replay permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -144,8 +146,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replay failed work using the separate replay permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Replay failed work using the separate replay permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -177,8 +180,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replay failed work using the separate replay permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Replay failed work using the separate replay permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):

@@ -18,15 +18,17 @@ T = TypeVar("T", bound="RealtimeConsumerGroupSettlement")
 
 @_attrs_define
 class RealtimeConsumerGroupSettlement:
+    """Realtime Consumer Group Settlement."""
+
     sequence: str
     claim_token: str
     action: RealtimeConsumerGroupSettlementAction
     idempotency_key: UUID | Unset = UNSET
-    """Optional UUID. Retains the original successful result for 24 hours for this group and principal. Reuse
-    requires identical normalized contents, including claim tokens and ordered batch items. At most 1024 receipts
-    per group; full capacity returns 429 before settlement. Omit item-level keys in batches. Replays require current
-    authorization and do not settle again. Renew receipts report the original lease expiry rather than extending it
-    again."""
+    """this realtime operation. Optional UUID. Retains the original successful result for 24 hours for this group
+    and principal. Reuse requires identical normalized contents, including claim tokens and ordered batch items. At
+    most 1024 receipts per group; full capacity returns 429 before settlement. Omit item-level keys in batches.
+    Replays require current authorization and do not settle again. Renew receipts report the original lease expiry
+    rather than extending it again."""
     retry_after_seconds: int | Unset = UNSET
     """Omitted uses enabled group backoff; explicit zero retries immediately."""
     failure_code: str | Unset = UNSET

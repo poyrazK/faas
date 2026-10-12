@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupMessage } from './RealtimeConsumerGroupMessage.js';
+/**
+ * Realtime Consumer Group Claim.
+ */
 export type RealtimeConsumerGroupClaim = {
   message: RealtimeConsumerGroupMessage;
   worker: string;

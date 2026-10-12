@@ -520,6 +520,22 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/usage":                               "GetOutboundIntegrationUsage",
 	"PUT /v1/outbound/integrations/{integration}/budget":                              "SetOutboundIntegrationDailyBudget",
 	"PUT /v1/outbound/integrations/{integration}/request-policy":                      "SetOutboundIntegrationRequestPolicy",
+	"PUT /v1/outbound/integrations/{integration}/ai":                                  "SetOutboundIntegrationAIPolicy",
+	"GET /v1/outbound/integrations/{integration}/ai-usage":                            "GetOutboundIntegrationAIUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-prices":                           "GetOutboundIntegrationAIPrices",
+	"PUT /v1/outbound/integrations/{integration}/ai-prices":                           "SetOutboundIntegrationAIPrices",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget":                   "SetOutboundBindingAIBudget",
+	"GET /v1/outbound/ai-routes":                                                      "ListOutboundAIRoutes",
+	"POST /v1/outbound/ai-routes":                                                     "CreateOutboundAIRoute",
+	"GET /v1/outbound/ai-routes/{route}":                                              "GetOutboundAIRoute",
+	"PUT /v1/outbound/ai-routes/{route}/targets":                                      "SetOutboundAIRouteTargets",
+	"DELETE /v1/outbound/ai-routes/{route}":                                           "DeleteOutboundAIRoute",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails":               "SetOutboundBindingAIGuardrails",
+	"GET /v1/outbound/integrations/{integration}/credential-keys":                     "ListOutboundCredentialKeys",
+	"POST /v1/outbound/integrations/{integration}/credential-keys":                    "CreateOutboundCredentialKey",
+	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":            "DeleteOutboundCredentialKey",
+	"GET /v1/outbound/integrations/{integration}/ai-alerts":                           "ListOutboundAIBudgetAlerts",
+	"GET /v1/outbound/integrations/{integration}/ai-requests":                         "ListOutboundAIRequestLog",
 	"GET /v1/apps/{slug}/outbound-bindings":                                           "ListOutboundAppBindings",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":                             "BindOutboundIntegration",
 	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":                           "UpdateOutboundBindingPolicy",
@@ -750,31 +766,37 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
-	"GET /v1/apps/{slug}/edge-protection":                                             "GetAppEdgeProtection",                 // literal hyphen, like env-diff; follows the spec operationId `getAppEdgeProtection`.
-	"GET /v1/apps/{slug}/env-diff":                                                    "GetAppEnvDiff",                        // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
-	"GET /v1/apps/{slug}/openapi":                                                     "GetAppOpenAPI",                        // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
-	"POST /v1/apps/{slug}/openapi":                                                    "ImportAppOpenAPI",                     // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
-	"DELETE /v1/apps/{slug}/openapi":                                                  "DeleteAppOpenAPI",                     // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
-	"POST /v1/apps/{slug}/openapi/dry-run":                                            "DryRunAppOpenAPI",                     // read-only edge-rule suggestions (item #2 D3)
-	"GET /v1/apps/{slug}/openapi/preview":                                             "PreviewAppOpenAPIPolicy",              // read-only declared-vs-observed route-policy preview (roadmap item 11)
-	"POST /v1/apps/{slug}/openapi/apply":                                              "ApplyAppOpenAPIPolicy",                // explicit plan/confirm policy apply
-	"GET /v1/apps/{slug}/openapi/diff":                                                "DiffAppOpenAPIContract",               // ADR-121 production contract gate preview
-	"GET /v1/apps/{slug}/github":                                                      "GetGitHubConnection",
-	"GET /v1/preview/{slug}/environment":                                              "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
-	"GET /v1/apps/{slug}/github/deployment-policy":                                    "GetGitHubDeploymentPolicy",
-	"PATCH /v1/apps/{slug}/github/deployment-policy":                                  "PatchGitHubDeploymentPolicy",
-	"POST /v1/apps/{slug}/github/bind":                                                "BindGitHubConnection",
-	"POST /v1/apps/{slug}/github/sync":                                                "SyncGitHubConnection",
-	"DELETE /v1/apps/{slug}/github":                                                   "DisconnectGitHubConnection",
-	"GET /v1/deployments/{id}":                                                        "GetDeployment",
-	"PATCH /v1/deployments/{id}":                                                      "PatchDeployment",                     // ADR-072 / issue #557 closure; min_instances override
-	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":                            "UpdateAppDataUpstreamCircuitBreaker", // ADR-201 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
-	"DELETE /v1/deployments/{id}":                                                     "ClearDeployment",                     // ADR-124 PR-A; soft-delete (status untouched)
-	"GET /v1/deployments":                                                             "ListDeployments",
-	"GET /v1/deployments/latest-by-app":                                               "ListLatestDeploymentsByApp",
-	"POST /v1/deployments/{id}/reorder":                                               "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
-	"POST /v1/apps/{slug}/deployments/{id}/cancel":                                    "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
-	"POST /v1/apps/{slug}/deployments/clear-obsolete":                                 "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
+	// ADR-426: typed MCP hosting probes and task rollout operations.
+	"GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health": "ProbeMCPInstanceHealth",
+	"POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe": "ProbeMCPInstanceProtocol",
+	"GET /v1/apps/{slug}/mcp-task-compatibility":                                   "GetAppMCPTaskCompatibilityReport",
+	"PUT /v1/apps/{slug}/mcp-task-compatibility":                                   "PutAppMCPTaskCompatibilityReport",
+	"POST /v1/deployments/{id}/mcp-task-hold/retry":                                "RetryDeploymentMCPTaskHold",
+	"GET /v1/apps/{slug}/edge-protection":                                          "GetAppEdgeProtection",    // literal hyphen, like env-diff; follows the spec operationId `getAppEdgeProtection`.
+	"GET /v1/apps/{slug}/env-diff":                                                 "GetAppEnvDiff",           // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
+	"GET /v1/apps/{slug}/openapi":                                                  "GetAppOpenAPI",           // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
+	"POST /v1/apps/{slug}/openapi":                                                 "ImportAppOpenAPI",        // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
+	"DELETE /v1/apps/{slug}/openapi":                                               "DeleteAppOpenAPI",        // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
+	"POST /v1/apps/{slug}/openapi/dry-run":                                         "DryRunAppOpenAPI",        // read-only edge-rule suggestions (item #2 D3)
+	"GET /v1/apps/{slug}/openapi/preview":                                          "PreviewAppOpenAPIPolicy", // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"POST /v1/apps/{slug}/openapi/apply":                                           "ApplyAppOpenAPIPolicy",   // explicit plan/confirm policy apply
+	"GET /v1/apps/{slug}/openapi/diff":                                             "DiffAppOpenAPIContract",  // ADR-121 production contract gate preview
+	"GET /v1/apps/{slug}/github":                                                   "GetGitHubConnection",
+	"GET /v1/preview/{slug}/environment":                                           "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
+	"GET /v1/apps/{slug}/github/deployment-policy":                                 "GetGitHubDeploymentPolicy",
+	"PATCH /v1/apps/{slug}/github/deployment-policy":                               "PatchGitHubDeploymentPolicy",
+	"POST /v1/apps/{slug}/github/bind":                                             "BindGitHubConnection",
+	"POST /v1/apps/{slug}/github/sync":                                             "SyncGitHubConnection",
+	"DELETE /v1/apps/{slug}/github":                                                "DisconnectGitHubConnection",
+	"GET /v1/deployments/{id}":                                                     "GetDeployment",
+	"PATCH /v1/deployments/{id}":                                                   "PatchDeployment",                     // ADR-072 / issue #557 closure; min_instances override
+	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":                         "UpdateAppDataUpstreamCircuitBreaker", // ADR-201 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
+	"DELETE /v1/deployments/{id}":                                                  "ClearDeployment",                     // ADR-124 PR-A; soft-delete (status untouched)
+	"GET /v1/deployments":                                                          "ListDeployments",
+	"GET /v1/deployments/latest-by-app":                                            "ListLatestDeploymentsByApp",
+	"POST /v1/deployments/{id}/reorder":                                            "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
+	"POST /v1/apps/{slug}/deployments/{id}/cancel":                                 "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
+	"POST /v1/apps/{slug}/deployments/clear-obsolete":                              "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
 	// ADR-202 custom application metrics. Auto-derivation would produce
 	// `GetAppsSlugCustom-metrics` because of the literal hyphen in the
 	// path segment, which is not a Go identifier. Same treatment as

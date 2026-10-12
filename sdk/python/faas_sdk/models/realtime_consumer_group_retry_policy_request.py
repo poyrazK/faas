@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupRetryPolicyRequest")
 
 @_attrs_define
 class RealtimeConsumerGroupRetryPolicyRequest:
+    """Realtime Consumer Group Retry Policy Request."""
+
     enabled: bool
     base_delay_seconds: int
     max_delay_seconds: int

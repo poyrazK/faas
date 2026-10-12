@@ -146,6 +146,14 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  fi")
 
 	_, _ = fmt.Fprintln(w)
+
+	_, _ = io.WriteString(w, `  if [ "${words[1]}" = secrets ]; then
+    local secret_names
+    if secret_names=$(gregale "${__gregale_profile_args[@]}" completion secret-keys -- "${words[@]:1:cword}" 2>/dev/null); then
+      COMPREPLY=( $(compgen -W "$secret_names" -- "$cur") ); return 0
+    fi
+  fi
+`)
 	fileFlags := completionUnambiguousFlagSpellings(cliFlagUsesFilePathValues)
 	if len(fileFlags) > 0 {
 		_, _ = fmt.Fprintf(w, "  case \"$prev\" in %s)\n", strings.Join(fileFlags, "|"))

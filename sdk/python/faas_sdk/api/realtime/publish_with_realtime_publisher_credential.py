@@ -113,7 +113,7 @@ def sync_detailed(
         endpoint_id (str):
         channel (str):
         idempotency_key (str):
-        body (RealtimePublisherMessageRequest):
+        body (RealtimePublisherMessageRequest): Realtime Publisher Message Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +157,7 @@ def sync(
         endpoint_id (str):
         channel (str):
         idempotency_key (str):
-        body (RealtimePublisherMessageRequest):
+        body (RealtimePublisherMessageRequest): Realtime Publisher Message Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,7 +196,7 @@ async def asyncio_detailed(
         endpoint_id (str):
         channel (str):
         idempotency_key (str):
-        body (RealtimePublisherMessageRequest):
+        body (RealtimePublisherMessageRequest): Realtime Publisher Message Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,7 +238,7 @@ async def asyncio(
         endpoint_id (str):
         channel (str):
         idempotency_key (str):
-        body (RealtimePublisherMessageRequest):
+        body (RealtimePublisherMessageRequest): Realtime Publisher Message Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

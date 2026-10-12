@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Acknowledgement.
+ */
 export type RealtimeAcknowledgement = {
   checkpoint_sequence: string;
   /**

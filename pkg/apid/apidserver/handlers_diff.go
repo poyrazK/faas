@@ -213,7 +213,7 @@ func (s *server) buildDiffBaseline(ctx context.Context, app state.App, acct stat
 		// pin it on the baseline. Conversion helper exists at
 		// s.deploymentResponse; reused so we don't drift from
 		// the wire shape the CLI sees.
-		dresp := s.deploymentResponse(dep, app)
+		dresp := s.deploymentResponse(ctx, dep, app)
 		out.LatestDeployment = &dresp
 		// SAFE-RELEASES production-leveling Stream E: pin the
 		// scope of the latest deployment so the engine can emit

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupDeliveryHistoryEvent")
 
 @_attrs_define
 class RealtimeConsumerGroupDeliveryHistoryEvent:
+    """Realtime Consumer Group Delivery History Event."""
+
     id: str
     sequence: str
     event: RealtimeConsumerGroupDeliveryHistoryEventEvent

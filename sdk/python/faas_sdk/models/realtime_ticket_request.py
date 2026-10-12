@@ -10,6 +10,8 @@ T = TypeVar("T", bound="RealtimeTicketRequest")
 
 @_attrs_define
 class RealtimeTicketRequest:
+    """Realtime Ticket Request."""
+
     principal: str
     channels: list[str]
     ttl_seconds: int

@@ -96,6 +96,9 @@ class CreateDeploymentRequest:
     full_rootfs_override: bool | None | Unset = UNSET
     """Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the
     shared-base path."""
+    mcp_task_migration_override: bool | Unset = UNSET
+    """One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need
+    handler versions it does not provide."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -215,6 +218,8 @@ class CreateDeploymentRequest:
         else:
             full_rootfs_override = self.full_rootfs_override
 
+        mcp_task_migration_override = self.mcp_task_migration_override
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -254,6 +259,8 @@ class CreateDeploymentRequest:
             field_dict["full_rootfs_allow_auto"] = full_rootfs_allow_auto
         if full_rootfs_override is not UNSET:
             field_dict["full_rootfs_override"] = full_rootfs_override
+        if mcp_task_migration_override is not UNSET:
+            field_dict["mcp_task_migration_override"] = mcp_task_migration_override
 
         return field_dict
 
@@ -468,6 +475,8 @@ class CreateDeploymentRequest:
 
         full_rootfs_override = _parse_full_rootfs_override(d.pop("full_rootfs_override", UNSET))
 
+        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
+
         create_deployment_request = cls(
             image=image,
             overrides=overrides,
@@ -487,6 +496,7 @@ class CreateDeploymentRequest:
             disable_startup_cpu_boost=disable_startup_cpu_boost,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,
+            mcp_task_migration_override=mcp_task_migration_override,
         )
 
         create_deployment_request.additional_properties = d

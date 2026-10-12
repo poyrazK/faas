@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ManagedRealtimeAccessRequest")
 
 @_attrs_define
 class ManagedRealtimeAccessRequest:
+    """Managed Realtime Access Request."""
+
     action: ManagedRealtimeAccessRequestAction
     channel: str | Unset = UNSET
     """Required for channel actions; omitted for revoke_sessions."""

@@ -21,6 +21,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroup")
 
 @_attrs_define
 class RealtimeConsumerGroup:
+    """Realtime Consumer Group."""
+
     deduplication_metadata_key: str
     """Immutable event ID metadata field; empty disables deduplication."""
     deduplication_window_seconds: int
@@ -72,18 +74,19 @@ class RealtimeConsumerGroup:
     """Cumulative nonmatching retained events skipped during assignment; does not count completions or explicit
     retention-gap resynchronization."""
     ordering_metadata_key: str = ""
-    """Immutable exact valid metadata field. Empty disables ordering. Missing/empty values share one ordered
-    bucket."""
+    """this realtime operation. Immutable exact valid metadata field. Empty disables ordering. Missing/empty values
+    share one ordered bucket."""
     dead_letter_policy: RealtimeConsumerGroupDeadLetterPolicy = "block"
-    """Immutable ordered-group policy. Block holds later events until replay/repair; skip lets later events
-    proceed. Explicit replay can occur after later work completed."""
+    """this realtime operation. Immutable ordered-group policy. Block holds later events until replay/repair; skip
+    lets later events proceed. Explicit replay can occur after later work completed."""
     dead_letter_retention_seconds: int = 0
-    """Zero keeps indefinitely; otherwise 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup
-    includes a 300-second warning grace."""
+    """Realtime consumer group properties dead letter retention seconds. Zero keeps indefinitely; otherwise 3600 to
+    2592000 seconds. Ordered groups require skip policy. Cleanup includes a 300-second warning grace."""
     deadline_metadata_key: str = ""
-    """Immutable opt-in metadata field containing an RFC3339 delivery deadline. Ordered groups require skip policy.
-    Missing or empty values have no deadline. Malformed values become terminal invalid_delivery_deadline failures.
-    Frozen on assignment; existing snapshots are unchanged. Deadlines prevent expired claims and cap leases."""
+    """this realtime operation. Immutable opt-in metadata field containing an RFC3339 delivery deadline. Ordered
+    groups require skip policy. Missing or empty values have no deadline. Malformed values become terminal
+    invalid_delivery_deadline failures. Frozen on assignment; existing snapshots are unchanged. Deadlines prevent
+    expired claims and cap leases."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

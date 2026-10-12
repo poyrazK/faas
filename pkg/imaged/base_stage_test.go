@@ -942,6 +942,28 @@ func TestEnsureBases_AllRowsStage(t *testing.T) {
 	}
 }
 
+// ADR-987: binary has no DefaultRuntimeBaseRefs row of its own. Staging it
+// must stage go124's base under go124's key rather than fail the deploy as
+// an unsupported runtime.
+func TestEnsureRuntimeBase_BinaryStagesGo124Base(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	hs := newBaseHarness(t, mp, &callCountingBuilder{})
+
+	got, err := hs.h.EnsureRuntimeBase(context.Background(), RuntimeBinary, "amd64", nil)
+	if err != nil {
+		t.Fatalf("EnsureRuntimeBase(binary): %v", err)
+	}
+	if want := sched.BaseKeyForArch(RuntimeGo124, "amd64"); got.StorageKey != want {
+		t.Fatalf("StorageKey = %q, want go124's %q", got.StorageKey, want)
+	}
+	if _, err := hs.be.Get(context.Background(), got.StorageKey); err != nil {
+		t.Fatalf("go124 base not staged at %s: %v", got.StorageKey, err)
+	}
+	if _, err := hs.be.Get(context.Background(), sched.BaseDigestKeyForArch(RuntimeBinary, "amd64")); err != nil {
+		t.Fatalf("binary digest sidecar lookup misses go124's: %v", err)
+	}
+}
+
 // TestEnsureBases_OperatorOverride_DigestPinnedWins — when an operator
 // sets FAAS_DEPLOY_BASE_REF_<RUNTIME> to a digest-pinned ref, that
 // ref is used (not the default). The test exercises the env-lookup

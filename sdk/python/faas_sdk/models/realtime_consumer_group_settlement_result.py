@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupSettlementResult")
 
 @_attrs_define
 class RealtimeConsumerGroupSettlementResult:
+    """Realtime Consumer Group Settlement Result."""
+
     status: RealtimeConsumerGroupSettlementResultStatus
     lease_until: datetime.datetime | Unset = UNSET
     available_at: datetime.datetime | Unset = UNSET

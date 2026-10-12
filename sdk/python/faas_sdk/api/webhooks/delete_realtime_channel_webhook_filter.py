@@ -53,8 +53,9 @@ def sync_detailed(
 ) -> Response[Any]:
     """Delete an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Delete an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):
@@ -88,8 +89,9 @@ async def asyncio_detailed(
 ) -> Response[Any]:
     """Delete an exact realtime channel webhook binding
 
-     Requires app ownership and MFA. Explicit realtime.channel.published subscription required for
-    writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+     Delete an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit
+    realtime.channel.published subscription required for writes. Metadata filters match all supplied
+    key/value pairs; no backfill occurs.
 
     Args:
         slug (str):

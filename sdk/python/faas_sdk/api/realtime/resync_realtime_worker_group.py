@@ -86,12 +86,13 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Recover a gap using the separate resync permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Recover a gap using the separate resync permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupResyncRequest):
+        body (RealtimeConsumerGroupResyncRequest): Realtime Consumer Group Resync Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,12 +122,13 @@ def sync(
 ) -> Any | Problem | None:
     """Recover a gap using the separate resync permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Recover a gap using the separate resync permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupResyncRequest):
+        body (RealtimeConsumerGroupResyncRequest): Realtime Consumer Group Resync Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,12 +153,13 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Recover a gap using the separate resync permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Recover a gap using the separate resync permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupResyncRequest):
+        body (RealtimeConsumerGroupResyncRequest): Realtime Consumer Group Resync Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,12 +187,13 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Recover a gap using the separate resync permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Recover a gap using the separate resync permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
-        body (RealtimeConsumerGroupResyncRequest):
+        body (RealtimeConsumerGroupResyncRequest): Realtime Consumer Group Resync Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

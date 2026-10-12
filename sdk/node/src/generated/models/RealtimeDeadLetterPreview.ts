@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeDeadLetterPreviewItem } from './RealtimeDeadLetterPreviewItem.js';
+/**
+ * Realtime Dead Letter Preview.
+ */
 export type RealtimeDeadLetterPreview = {
   group_id: string;
   items: Array<RealtimeDeadLetterPreviewItem>;

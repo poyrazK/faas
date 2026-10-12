@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeWorkerHeartbeat")
 
 @_attrs_define
 class RealtimeWorkerHeartbeat:
+    """Realtime Worker Heartbeat."""
+
     id: UUID
     worker: str
     ready: bool

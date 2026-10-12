@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Metric Bucket.
+ */
 export type RealtimeConsumerGroupMetricBucket = {
   bucket_at: string;
   first_claims: string;

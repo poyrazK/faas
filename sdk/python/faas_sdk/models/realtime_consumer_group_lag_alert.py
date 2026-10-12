@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupLagAlert")
 
 @_attrs_define
 class RealtimeConsumerGroupLagAlert:
+    """Realtime Consumer Group Lag Alert."""
+
     enabled: bool
     breached: bool
     unassigned: None | str
@@ -21,7 +23,7 @@ class RealtimeConsumerGroupLagAlert:
     last_event_at: datetime.datetime | None
     """Last event decision, including when no recipient opted in."""
     unassigned_threshold: str = "0"
-    """0 disables backlog threshold; maximum 1000000000."""
+    """this realtime operation. 0 disables backlog threshold; maximum 1000000000."""
     oldest_pending_seconds: int = 0
     dead_letter_threshold: int = 0
     cooldown_seconds: int = 300

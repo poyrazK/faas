@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Worker Credential.
+ */
 export type RealtimeWorkerCredential = {
   id: string;
   group_id: string;

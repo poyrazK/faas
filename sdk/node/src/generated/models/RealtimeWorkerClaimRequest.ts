@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Worker Claim Request.
+ */
 export type RealtimeWorkerClaimRequest = {
   /**
    * Optional; if provided, must match the name fixed by the credential.

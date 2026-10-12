@@ -76,8 +76,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Delete group using the separate delete permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Delete group using the separate delete permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -108,8 +109,9 @@ def sync(
 ) -> Any | Problem | None:
     """Delete group using the separate delete permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Delete group using the separate delete permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -135,8 +137,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Delete group using the separate delete permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Delete group using the separate delete permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):
@@ -165,8 +168,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Delete group using the separate delete permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Delete group using the separate delete permission. Accepts only a group-bound grw_ worker
+    credential. Exact permission is checked in the group transaction; group recreation does not restore
+    access.
 
     Args:
         group_id (str):

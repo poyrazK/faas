@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupMessage } from './RealtimeConsumerGroupMessage.js';
+/**
+ * Realtime Consumer Group Dead Letter.
+ */
 export type RealtimeConsumerGroupDeadLetter = {
   message: RealtimeConsumerGroupMessage;
   attempts: number;

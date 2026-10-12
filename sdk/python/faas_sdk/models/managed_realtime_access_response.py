@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ManagedRealtimeAccessResponse")
 
 @_attrs_define
 class ManagedRealtimeAccessResponse:
+    """Managed Realtime Access Response."""
+
     denied_channels: list[str]
     revision: int
     updated_at: datetime.datetime

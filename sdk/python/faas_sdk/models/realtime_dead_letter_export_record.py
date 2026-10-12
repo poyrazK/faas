@@ -22,6 +22,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterExportRecord")
 
 @_attrs_define
 class RealtimeDeadLetterExportRecord:
+    """Realtime Dead Letter Export Record."""
+
     type_: RealtimeDeadLetterExportRecordType
     group_id: UUID
     sequence: str
@@ -36,6 +38,7 @@ class RealtimeDeadLetterExportRecord:
     expires_at: datetime.datetime | None
     """Nominal dead-letter expiry; retained rows can survive until cleanup runs"""
     message: RealtimeConsumerGroupMessage
+    """Realtime Consumer Group Message."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

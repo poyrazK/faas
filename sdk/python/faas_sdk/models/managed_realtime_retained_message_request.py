@@ -24,8 +24,8 @@ class ManagedRealtimeRetainedMessageRequest:
     data_base64: str
     """Standard base64 for at most 4096 decoded bytes."""
     ttl_seconds: int | Unset = 0
-    """Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the
-    original deadline."""
+    """Managed realtime retained message request properties ttl seconds. Optional retained channel delivery
+    lifetime from first commit. Zero disables expiry; retries preserve the original deadline."""
     expected_sequence: int | None | Unset = UNSET
     """Optional channel head sequence required before this retained publish; zero requires an empty channel."""
     metadata: ManagedRealtimeRetainedMessageRequestMetadata | Unset = UNSET

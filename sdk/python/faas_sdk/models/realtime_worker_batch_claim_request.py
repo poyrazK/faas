@@ -13,13 +13,15 @@ T = TypeVar("T", bound="RealtimeWorkerBatchClaimRequest")
 
 @_attrs_define
 class RealtimeWorkerBatchClaimRequest:
+    """Realtime Worker Batch Claim Request."""
+
     limit: int
     worker: str | Unset = UNSET
     """Optional; must match the credential identity if supplied."""
     wait_seconds: int | Unset = 0
-    """Wait for available work, checking every 500 ms without holding a transaction. Returns promptly on
-    pause/drain or blockers. At most 64 waiting requests per apid. Cancellation stops waiting; uncertain claims must
-    not be retried automatically."""
+    """Realtime worker batch claim request properties wait seconds. Wait for available work, checking every 500 ms
+    without holding a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting requests per
+    apid. Cancellation stops waiting; uncertain claims must not be retried automatically."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

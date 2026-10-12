@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeWorkerCredentialRotationRequest")
 
 @_attrs_define
 class RealtimeWorkerCredentialRotationRequest:
+    """Realtime Worker Credential Rotation Request."""
+
     ttl_seconds: int | Unset = 86400
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -508,6 +508,26 @@ func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
 	}
 }
 
+// production-us hunt #9: a Dockerfile RUN exiting 3 surfaced only buildkitd's
+// --debug stack traces; the failing step and its output were cut off.
+func TestBoundedGuestBuildLogTailKeepsTheCustomerBuildOutput(t *testing.T) {
+	customer := "#6 [3/3] RUN echo \"h9 compiling\" && node -e \"process.exit(3)\"\n#6 0.212 h9 compiling\n#6 ERROR: process \"/bin/sh -c echo h9\" did not complete successfully: exit code: 3\n"
+	daemon := strings.Repeat("github.com/moby/buildkit/solver.(*sharedOp).Exec.func2\n\tjobs.go:1248\n", 400)
+	raw := "[build]\n" + strings.Repeat("#5 sha256:layer done\n", 300) + customer + "\n[buildkitd]\n" + daemon
+	got := boundedGuestBuildLogTail(raw)
+	if len(got) > 3*1024 {
+		t.Fatalf("bounded tail = %d bytes, want <= 3072", len(got))
+	}
+	for _, want := range []string{"h9 compiling", "exit code: 3", "[build]", "[buildkitd]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bounded tail lost %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "sharedOp") > 10 {
+		t.Errorf("daemon log still dominates the tail:\n%s", got)
+	}
+}
+
 // TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error
 // path in markFailed — every failure class has to propagate to the owning
 // deployment so the dashboard reflects reality, not just the build row.

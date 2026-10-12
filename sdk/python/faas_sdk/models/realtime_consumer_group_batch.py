@@ -15,6 +15,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupBatch")
 
 @_attrs_define
 class RealtimeConsumerGroupBatch:
+    """Realtime Consumer Group Batch."""
+
     deduplication_blocked: bool
     """A new event ID encountered the 4096-key bound; its source cursor is unchanged. Partial claims may be
     present. Existing snapshots bypass deduplication and remain claimable. Wait using retry_after_milliseconds
@@ -25,7 +27,7 @@ class RealtimeConsumerGroupBatch:
     history_unavailable: bool
     capacity_blocked: bool
     paused: bool
-    """New claims are paused; existing leases remain valid."""
+    """this realtime operation. New claims are paused; existing leases remain valid."""
     ordering_blocked: bool
     """Ready snapshots are blocked by same-key predecessors or leases. This is normal backpressure, not a fatal
     error."""

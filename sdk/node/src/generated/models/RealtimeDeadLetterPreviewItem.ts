@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Dead Letter Preview Item.
+ */
 export type RealtimeDeadLetterPreviewItem = {
   sequence: string;
   dead_since: string;

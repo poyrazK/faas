@@ -85,5 +85,9 @@ export type SourceRefDeployRequest = {
    * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;
+  /**
+   * Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions.
+   */
+  mcp_task_migration_override?: boolean;
 };
 

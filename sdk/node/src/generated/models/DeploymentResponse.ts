@@ -5,7 +5,9 @@
 import type { BuildPlan } from './BuildPlan.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
+import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
 import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
@@ -250,5 +252,10 @@ export type DeploymentResponse = {
   rollout_aborted_reason?: string;
   rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
+  worker_drain?: DeploymentWorkerDrainStatus;
+  /**
+   * Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
+   */
+  promotion_hold?: DeploymentPromotionHold;
 };
 

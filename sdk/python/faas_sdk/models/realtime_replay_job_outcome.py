@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RealtimeReplayJobOutcome")
 
 @_attrs_define
 class RealtimeReplayJobOutcome:
+    """Realtime Replay Job Outcome."""
+
     sequence: str
     status: RealtimeReplayJobOutcomeStatus
     checked_at: datetime.datetime | Unset = UNSET

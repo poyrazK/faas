@@ -15,9 +15,12 @@ T = TypeVar("T", bound="RealtimePublisherCredentialIssued")
 
 @_attrs_define
 class RealtimePublisherCredentialIssued:
+    """Realtime Publisher Credential Issued."""
+
     credential: str
     """One-time plaintext grp_ credential; never log or cache."""
     info: RealtimePublisherCredential
+    """Realtime Publisher Credential."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

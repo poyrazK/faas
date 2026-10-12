@@ -84,14 +84,15 @@ def sync_detailed(
 ) -> Response[Any | RealtimeConsumerGroup]:
     """Create a shared backend-worker subscription
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Create a shared backend-worker subscription. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
         id (str):
         channel (str):
-        body (RealtimeConsumerGroupCreateRequest):
+        body (RealtimeConsumerGroupCreateRequest): Realtime Consumer Group Create Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,14 +126,15 @@ def sync(
 ) -> Any | RealtimeConsumerGroup | None:
     """Create a shared backend-worker subscription
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Create a shared backend-worker subscription. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
         id (str):
         channel (str):
-        body (RealtimeConsumerGroupCreateRequest):
+        body (RealtimeConsumerGroupCreateRequest): Realtime Consumer Group Create Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,14 +163,15 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeConsumerGroup]:
     """Create a shared backend-worker subscription
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Create a shared backend-worker subscription. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
         id (str):
         channel (str):
-        body (RealtimeConsumerGroupCreateRequest):
+        body (RealtimeConsumerGroupCreateRequest): Realtime Consumer Group Create Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,14 +203,15 @@ async def asyncio(
 ) -> Any | RealtimeConsumerGroup | None:
     """Create a shared backend-worker subscription
 
-     Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write
-    operations require write scope. Delivery is at least once.
+     Create a shared backend-worker subscription. Backend-only. Requires history preview, account API
+    credentials, app permissions and MFA. Write operations require write scope. Delivery is at least
+    once.
 
     Args:
         slug (str):
         id (str):
         channel (str):
-        body (RealtimeConsumerGroupCreateRequest):
+        body (RealtimeConsumerGroupCreateRequest): Realtime Consumer Group Create Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

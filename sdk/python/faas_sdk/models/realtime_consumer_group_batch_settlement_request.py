@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupBatchSettlementRequest")
 
 @_attrs_define
 class RealtimeConsumerGroupBatchSettlementRequest:
+    """Realtime Consumer Group Batch Settlement Request."""
+
     settlements: list[RealtimeConsumerGroupSettlement]
     idempotency_key: UUID | Unset = UNSET
     """Optional UUID. Retains the original successful result for 24 hours for this group and principal. Reuse

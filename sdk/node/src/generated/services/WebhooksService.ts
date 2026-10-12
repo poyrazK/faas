@@ -84,7 +84,13 @@ export class WebhooksService {
     slug,
     id,
   }: {
+    /**
+     * Application slug for get an exact realtime channel webhook binding.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for get an exact realtime channel webhook binding.
+     */
     id: string,
   }): CancelablePromise<RealtimeChannelWebhookFilter> {
     return __request(OpenAPI, {
@@ -98,8 +104,8 @@ export class WebhooksService {
   }
   /**
    * Put an exact realtime channel webhook binding
-   * Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
-   * @returns RealtimeChannelWebhookFilter Current channel binding
+   * Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+   * @returns RealtimeChannelWebhookFilter Put an exact realtime channel webhook binding. Current channel binding
    * @throws ApiError
    */
   public static setRealtimeChannelWebhookFilter({
@@ -107,7 +113,13 @@ export class WebhooksService {
     id,
     requestBody,
   }: {
+    /**
+     * Application slug for put an exact realtime channel webhook binding.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for put an exact realtime channel webhook binding.
+     */
     id: string,
     requestBody: RealtimeChannelWebhookFilter,
   }): CancelablePromise<RealtimeChannelWebhookFilter> {
@@ -124,7 +136,7 @@ export class WebhooksService {
   }
   /**
    * Delete an exact realtime channel webhook binding
-   * Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+   * Delete an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
    * @returns void
    * @throws ApiError
    */
@@ -132,7 +144,13 @@ export class WebhooksService {
     slug,
     id,
   }: {
+    /**
+     * Application slug for delete an exact realtime channel webhook binding.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for delete an exact realtime channel webhook binding.
+     */
     id: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {

@@ -46,7 +46,7 @@ func (s *Service) RealtimeWorkerLimited(next http.HandlerFunc) http.HandlerFunc 
 	}
 	return middleware.AuthLimitWithLimiter(cfg, s.AuthLimiter)(next).ServeHTTP
 }
-func (s *Service) loadRealtimeWorker(w http.ResponseWriter, r *http.Request, operation string) (*http.Request, state.RealtimeWorkerGrant, state.RealtimeConsumerGroupStore, bool) {
+func (s *Service) loadRealtimeWorker(w http.ResponseWriter, r *http.Request, operation string) (state.RealtimeWorkerGrant, state.RealtimeConsumerGroupStore, bool) {
 	grant, err := s.authenticateRealtimeWorker(r)
 	if err != nil {
 		if errors.Is(err, state.ErrRealtimeWorkerCredentialDenied) {
@@ -54,7 +54,7 @@ func (s *Service) loadRealtimeWorker(w http.ResponseWriter, r *http.Request, ope
 		} else {
 			api.WriteProblem(w, api.ErrCapacity("worker authentication unavailable"))
 		}
-		return r, grant, nil, false
+		return grant, nil, false
 	}
 	allowed := false
 	for _, permission := range grant.Info.Permissions {
@@ -64,32 +64,34 @@ func (s *Service) loadRealtimeWorker(w http.ResponseWriter, r *http.Request, ope
 	}
 	if !allowed {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Worker permission denied", "this credential does not grant the requested operation"))
-		return r, grant, nil, false
+		return grant, nil, false
 	}
 	acct, err := s.Host.Store().AccountByID(r.Context(), grant.AccountID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("worker account unavailable"))
-		return r, grant, nil, false
+		return grant, nil, false
 	}
 	if _, ok := s.realtimePlanLimits(acct); !ok {
 		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
-		return r, grant, nil, false
+		return grant, nil, false
 	}
 	store, ok := s.Host.Store().(state.RealtimeConsumerGroupStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("worker groups unavailable"))
-		return r, grant, nil, false
+		return grant, nil, false
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	return r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), grant, operation)), grant, store, true
+	return grant, store, true
 }
 func (s *Service) RealtimeWorkerStatus(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "status")
+	g, store, ok := s.loadRealtimeWorker(w, r, "status")
 	if !ok {
 		return
 	}
-	groups, err := store.ListRealtimeConsumerGroups(r.Context(), g.EndpointID, g.Channel)
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, "status")
+	r = r.WithContext(workerCtx)
+	groups, err := store.ListRealtimeConsumerGroups(workerCtx, g.EndpointID, g.Channel)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
@@ -103,10 +105,11 @@ func (s *Service) RealtimeWorkerStatus(w http.ResponseWriter, r *http.Request) {
 	httpkit.NotFound(w, "group not found")
 }
 func (s *Service) RealtimeWorkerClaim(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "claim")
+	g, store, ok := s.loadRealtimeWorker(w, r, "claim")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "claim"))
 	var req struct {
 		Worker      string `json:"worker,omitempty"`
 		WaitSeconds int    `json:"wait_seconds,omitempty"`
@@ -146,11 +149,13 @@ func (s *Service) RealtimeWorkerSettle(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid settlement action"))
 		return
 	}
-	r, g, store, ok := s.loadRealtimeWorker(w, r, req.Action)
+	g, store, ok := s.loadRealtimeWorker(w, r, req.Action)
 	if !ok {
 		return
 	}
-	result, err := store.SettleRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group, req)
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, req.Action)
+	r = r.WithContext(workerCtx)
+	result, err := store.SettleRealtimeConsumerGroup(workerCtx, g.EndpointID, g.Channel, g.Group, req)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
@@ -158,11 +163,13 @@ func (s *Service) RealtimeWorkerSettle(w http.ResponseWriter, r *http.Request) {
 	httpkit.WriteJSON(w, http.StatusOK, result)
 }
 func (s *Service) RealtimeWorkerDeadLetters(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "dead_letters")
+	g, store, ok := s.loadRealtimeWorker(w, r, "dead_letters")
 	if !ok {
 		return
 	}
-	letters, err := store.ListRealtimeConsumerGroupDeadLetters(r.Context(), g.EndpointID, g.Channel, g.Group)
+	workerCtx := state.WithRealtimeWorkerGrant(r.Context(), g, "dead_letters")
+	r = r.WithContext(workerCtx)
+	letters, err := store.ListRealtimeConsumerGroupDeadLetters(workerCtx, g.EndpointID, g.Channel, g.Group)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return
@@ -170,10 +177,11 @@ func (s *Service) RealtimeWorkerDeadLetters(w http.ResponseWriter, r *http.Reque
 	httpkit.WriteJSON(w, http.StatusOK, letters)
 }
 func (s *Service) RealtimeWorkerReplay(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "replay")
+	g, store, ok := s.loadRealtimeWorker(w, r, "replay")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "replay"))
 	err := store.ReplayRealtimeConsumerGroupDeadLetter(r.Context(), g.EndpointID, g.Channel, g.Group, r.PathValue("sequence"))
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
@@ -183,10 +191,11 @@ func (s *Service) RealtimeWorkerReplay(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Service) RealtimeWorkerResync(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "resync")
+	g, store, ok := s.loadRealtimeWorker(w, r, "resync")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "resync"))
 	var req struct {
 		ExpectedSequence string `json:"expected_sequence"`
 		AfterSequence    string `json:"after_sequence"`
@@ -204,10 +213,11 @@ func (s *Service) RealtimeWorkerResync(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Service) RealtimeWorkerDelete(w http.ResponseWriter, r *http.Request) {
-	r, g, store, ok := s.loadRealtimeWorker(w, r, "delete")
+	g, store, ok := s.loadRealtimeWorker(w, r, "delete")
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, "delete"))
 	if err := store.DeleteRealtimeConsumerGroup(r.Context(), g.EndpointID, g.Channel, g.Group); err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return

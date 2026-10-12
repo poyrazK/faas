@@ -99,7 +99,13 @@ export class RealtimeService {
     slug,
     id,
   }: {
+    /**
+     * Application slug for read publisher grant and usage metadata.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read publisher grant and usage metadata.
+     */
     id: string,
   }): CancelablePromise<Array<RealtimePublisherCredential>> {
     return __request(OpenAPI, {
@@ -121,8 +127,8 @@ export class RealtimeService {
   }
   /**
    * Issue a channel-scoped publisher credential
-   * Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
-   * @returns RealtimePublisherCredentialIssued Operation result
+   * Issue a channel-scoped publisher credential. Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
+   * @returns RealtimePublisherCredentialIssued Issue a channel-scoped publisher credential. Operation result
    * @throws ApiError
    */
   public static issueRealtimePublisherCredential({
@@ -130,7 +136,13 @@ export class RealtimeService {
     id,
     requestBody,
   }: {
+    /**
+     * Application slug for issue a channel-scoped publisher credential.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for issue a channel-scoped publisher credential.
+     */
     id: string,
     requestBody: RealtimePublisherCredentialRequest,
   }): CancelablePromise<RealtimePublisherCredentialIssued> {
@@ -144,19 +156,19 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid payload or policy`,
-        401: `Invalid/expired/revoked/rotated credential`,
-        403: `Channel/event outside grant`,
-        404: `Endpoint or credential unavailable`,
-        409: `Idempotency content conflict`,
-        429: `Publish rate or bounded receipt/credential capacity reached`,
+        400: `Issue a channel-scoped publisher credential. Invalid payload or policy`,
+        401: `Issue a channel-scoped publisher credential. Invalid/expired/revoked/rotated credential`,
+        403: `Issue a channel-scoped publisher credential. Channel/event outside grant`,
+        404: `Issue a channel-scoped publisher credential. Endpoint or credential unavailable`,
+        409: `Issue a channel-scoped publisher credential. Idempotency content conflict`,
+        429: `Issue a channel-scoped publisher credential. Publish rate or bounded receipt/credential capacity reached`,
       },
     });
   }
   /**
    * Rotate publisher secret while preserving scopes, quota and receipts
-   * Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
-   * @returns RealtimePublisherCredentialIssued Operation result
+   * Rotate publisher secret while preserving scopes, quota and receipts. Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
+   * @returns RealtimePublisherCredentialIssued Rotate publisher secret while preserving scopes, quota and receipts. Operation result
    * @throws ApiError
    */
   public static rotateRealtimePublisherCredential({
@@ -165,8 +177,17 @@ export class RealtimeService {
     credentialId,
     requestBody,
   }: {
+    /**
+     * Application slug for rotate publisher secret while preserving scopes, quota and receipts.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for rotate publisher secret while preserving scopes, quota and receipts.
+     */
     id: string,
+    /**
+     * Credential ID for rotate publisher secret while preserving scopes, quota and receipts.
+     */
     credentialId: string,
     requestBody: RealtimeWorkerCredentialRotationRequest,
   }): CancelablePromise<RealtimePublisherCredentialIssued> {
@@ -181,18 +202,18 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid payload or policy`,
-        401: `Invalid/expired/revoked/rotated credential`,
-        403: `Channel/event outside grant`,
-        404: `Endpoint or credential unavailable`,
-        409: `Idempotency content conflict`,
-        429: `Publish rate or bounded receipt/credential capacity reached`,
+        400: `Rotate publisher secret while preserving scopes, quota and receipts. Invalid payload or policy`,
+        401: `Rotate publisher secret while preserving scopes, quota and receipts. Invalid/expired/revoked/rotated credential`,
+        403: `Rotate publisher secret while preserving scopes, quota and receipts. Channel/event outside grant`,
+        404: `Rotate publisher secret while preserving scopes, quota and receipts. Endpoint or credential unavailable`,
+        409: `Rotate publisher secret while preserving scopes, quota and receipts. Idempotency content conflict`,
+        429: `Rotate publisher secret while preserving scopes, quota and receipts. Publish rate or bounded receipt/credential capacity reached`,
       },
     });
   }
   /**
    * Revoke a publisher credential
-   * Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
+   * Revoke a publisher credential. Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
    * @returns void
    * @throws ApiError
    */
@@ -201,8 +222,17 @@ export class RealtimeService {
     id,
     credentialId,
   }: {
+    /**
+     * Application slug for revoke a publisher credential.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for revoke a publisher credential.
+     */
     id: string,
+    /**
+     * Credential ID for revoke a publisher credential.
+     */
     credentialId: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -214,19 +244,19 @@ export class RealtimeService {
         'credential_id': credentialId,
       },
       errors: {
-        400: `Invalid payload or policy`,
-        401: `Invalid/expired/revoked/rotated credential`,
-        403: `Channel/event outside grant`,
-        404: `Endpoint or credential unavailable`,
-        409: `Idempotency content conflict`,
-        429: `Publish rate or bounded receipt/credential capacity reached`,
+        400: `Revoke a publisher credential. Invalid payload or policy`,
+        401: `Revoke a publisher credential. Invalid/expired/revoked/rotated credential`,
+        403: `Revoke a publisher credential. Channel/event outside grant`,
+        404: `Revoke a publisher credential. Endpoint or credential unavailable`,
+        409: `Revoke a publisher credential. Idempotency content conflict`,
+        429: `Revoke a publisher credential. Publish rate or bounded receipt/credential capacity reached`,
       },
     });
   }
   /**
    * Publish a retained channel event with a scoped credential
    * Accepts only an endpoint-bound grp_ credential. Retained publication only; exact channel/event grants, decoded payload size, fixed-minute accepted-publish quota and idempotency receipt commit atomically. Matching retries within 24 hours return the original sequence without re-emitting or consuming quota; rotated credentials retain their receipt namespace. Requires history preview and live realtime plan access.
-   * @returns RealtimePublisherPublishResponse Operation result
+   * @returns RealtimePublisherPublishResponse Publish a retained channel event with a scoped credential. Operation result
    * @throws ApiError
    */
   public static publishWithRealtimePublisherCredential({
@@ -235,8 +265,17 @@ export class RealtimeService {
     idempotencyKey,
     requestBody,
   }: {
+    /**
+     * Endpoint id for publish a retained channel event with a scoped credential.
+     */
     endpointId: string,
+    /**
+     * Channel name for publish a retained channel event with a scoped credential.
+     */
     channel: string,
+    /**
+     * Stable key reused for retries of this operation for publish a retained channel event with a scoped credential.
+     */
     idempotencyKey: string,
     requestBody: RealtimePublisherMessageRequest,
   }): CancelablePromise<RealtimePublisherPublishResponse> {
@@ -253,19 +292,19 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid payload or policy`,
-        401: `Invalid/expired/revoked/rotated credential`,
-        403: `Channel/event outside grant`,
-        404: `Endpoint or credential unavailable`,
-        409: `Idempotency content conflict`,
-        429: `Publish rate or bounded receipt/credential capacity reached`,
+        400: `Publish a retained channel event with a scoped credential. Invalid payload or policy`,
+        401: `Publish a retained channel event with a scoped credential. Invalid/expired/revoked/rotated credential`,
+        403: `Publish a retained channel event with a scoped credential. Channel/event outside grant`,
+        404: `Publish a retained channel event with a scoped credential. Endpoint or credential unavailable`,
+        409: `Publish a retained channel event with a scoped credential. Idempotency content conflict`,
+        429: `Publish a retained channel event with a scoped credential. Publish rate or bounded receipt/credential capacity reached`,
       },
     });
   }
   /**
    * List worker credential metadata
    * Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
-   * @returns RealtimeWorkerCredential Operation result
+   * @returns RealtimeWorkerCredential List worker credential metadata. Operation result
    * @throws ApiError
    */
   public static listRealtimeWorkerCredentials({
@@ -274,9 +313,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for list worker credential metadata.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for list worker credential metadata.
+     */
     id: string,
+    /**
+     * Channel name for list worker credential metadata.
+     */
     channel: string,
+    /**
+     * Consumer group name for list worker credential metadata.
+     */
     group: string,
   }): CancelablePromise<Array<RealtimeWorkerCredential>> {
     return __request(OpenAPI, {
@@ -299,8 +350,8 @@ export class RealtimeService {
   }
   /**
    * Issue a credential bound to one consumer group
-   * Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
-   * @returns RealtimeWorkerCredentialIssued Operation result
+   * Issue a credential bound to one consumer group. Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+   * @returns RealtimeWorkerCredentialIssued Issue a credential bound to one consumer group. Operation result
    * @throws ApiError
    */
   public static issueRealtimeWorkerCredential({
@@ -310,9 +361,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for issue a credential bound to one consumer group.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for issue a credential bound to one consumer group.
+     */
     id: string,
+    /**
+     * Channel name for issue a credential bound to one consumer group.
+     */
     channel: string,
+    /**
+     * Consumer group name for issue a credential bound to one consumer group.
+     */
     group: string,
     requestBody: RealtimeWorkerCredentialRequest,
   }): CancelablePromise<RealtimeWorkerCredentialIssued> {
@@ -328,18 +391,18 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Issue a credential bound to one consumer group. Credential invalid, expired, rotated or revoked`,
+        403: `Issue a credential bound to one consumer group. Credential lacks permission`,
+        404: `Issue a credential bound to one consumer group. Group or credential not found`,
+        409: `Issue a credential bound to one consumer group. Lease lost or group conflict`,
+        429: `Issue a credential bound to one consumer group. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Rotate a worker credential and immediately invalidate the old secret
-   * Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
-   * @returns RealtimeWorkerCredentialIssued Operation result
+   * Rotate a worker credential and immediately invalidate the old secret. Account/app-scoped credential administration. Issuance, rotation and revocation require admin scope and MFA. Plaintext secrets are excluded from generic idempotency response caching.
+   * @returns RealtimeWorkerCredentialIssued Rotate a worker credential and immediately invalidate the old secret. Operation result
    * @throws ApiError
    */
   public static rotateRealtimeWorkerCredential({
@@ -350,10 +413,25 @@ export class RealtimeService {
     credentialId,
     requestBody,
   }: {
+    /**
+     * Application slug for rotate a worker credential and immediately invalidate the old secret.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for rotate a worker credential and immediately invalidate the old secret.
+     */
     id: string,
+    /**
+     * Channel name for rotate a worker credential and immediately invalidate the old secret.
+     */
     channel: string,
+    /**
+     * Consumer group name for rotate a worker credential and immediately invalidate the old secret.
+     */
     group: string,
+    /**
+     * Credential ID for rotate a worker credential and immediately invalidate the old secret.
+     */
     credentialId: string,
     requestBody: RealtimeWorkerCredentialRotationRequest,
   }): CancelablePromise<RealtimeWorkerCredentialIssued> {
@@ -370,11 +448,11 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Rotate a worker credential and immediately invalidate the old secret. Credential invalid, expired, rotated or revoked`,
+        403: `Rotate a worker credential and immediately invalidate the old secret. Credential lacks permission`,
+        404: `Rotate a worker credential and immediately invalidate the old secret. Group or credential not found`,
+        409: `Rotate a worker credential and immediately invalidate the old secret. Lease lost or group conflict`,
+        429: `Rotate a worker credential and immediately invalidate the old secret. Admission or authentication limit reached`,
       },
     });
   }
@@ -391,10 +469,25 @@ export class RealtimeService {
     group,
     credentialId,
   }: {
+    /**
+     * Application slug for revoke a worker credential.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for revoke a worker credential.
+     */
     id: string,
+    /**
+     * Channel name for revoke a worker credential.
+     */
     channel: string,
+    /**
+     * Consumer group name for revoke a worker credential.
+     */
     group: string,
+    /**
+     * Credential ID for revoke a worker credential.
+     */
     credentialId: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -408,23 +501,26 @@ export class RealtimeService {
         'credential_id': credentialId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Revoke a worker credential. Credential invalid, expired, rotated or revoked`,
+        403: `Revoke a worker credential. Credential lacks permission`,
+        404: `Revoke a worker credential. Group or credential not found`,
+        409: `Revoke a worker credential. Lease lost or group conflict`,
+        429: `Revoke a worker credential. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Read status using the status permission
    * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
-   * @returns RealtimeConsumerGroup Operation result
+   * @returns RealtimeConsumerGroup Read status using the status permission. Operation result
    * @throws ApiError
    */
   public static getRealtimeWorkerGroup({
     groupId,
   }: {
+    /**
+     * Consumer group ID for read status using the status permission.
+     */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroup> {
     return __request(OpenAPI, {
@@ -434,23 +530,26 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Read status using the status permission. Credential invalid, expired, rotated or revoked`,
+        403: `Read status using the status permission. Credential lacks permission`,
+        404: `Read status using the status permission. Group or credential not found`,
+        409: `Read status using the status permission. Lease lost or group conflict`,
+        429: `Read status using the status permission. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Delete group using the separate delete permission
-   * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
+   * Delete group using the separate delete permission. Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
    * @returns void
    * @throws ApiError
    */
   public static deleteRealtimeWorkerGroup({
     groupId,
   }: {
+    /**
+     * Consumer group ID for delete group using the separate delete permission.
+     */
     groupId: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -460,11 +559,11 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Delete group using the separate delete permission. Credential invalid, expired, rotated or revoked`,
+        403: `Delete group using the separate delete permission. Credential lacks permission`,
+        404: `Delete group using the separate delete permission. Group or credential not found`,
+        409: `Delete group using the separate delete permission. Lease lost or group conflict`,
+        429: `Delete group using the separate delete permission. Admission or authentication limit reached`,
       },
     });
   }
@@ -481,9 +580,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for claim a bounded batch with independent leases.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for claim a bounded batch with independent leases.
+     */
     id: string,
+    /**
+     * Channel name for claim a bounded batch with independent leases.
+     */
     channel: string,
+    /**
+     * Consumer group name for claim a bounded batch with independent leases.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupBatchRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatch> {
@@ -507,15 +618,18 @@ export class RealtimeService {
     });
   }
   /**
-   * Claim a bounded batch with independent leases
-   * Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty claims can mean caught up, delayed retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no response caching or automatic claim retries.
-   * @returns RealtimeConsumerGroupBatch Committed batch and optional blockers
+   * Claim a bounded batch with independent leases using scoped worker credentials
+   * Claim a bounded batch with independent leases. Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty claims can mean caught up, delayed retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no response caching or automatic claim retries.
+   * @returns RealtimeConsumerGroupBatch Claim a bounded batch with independent leases. Committed batch and optional blockers
    * @throws ApiError
    */
   public static claimRealtimeWorkerGroupBatch({
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for claim a bounded batch with independent leases. Claim a bounded batch with independent leases. Claim a bounded batch with independent leases. Claim a bounded batch with independent leases.
+     */
     groupId: string,
     requestBody: RealtimeWorkerBatchClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatch> {
@@ -528,12 +642,12 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid worker or limit`,
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
+        400: `Claim a bounded batch with independent leases. Invalid worker or limit`,
+        401: `Claim a bounded batch with independent leases. Credential invalid, expired, rotated or revoked`,
+        403: `Claim a bounded batch with independent leases. Credential lacks permission`,
+        404: `Claim a bounded batch with independent leases. Group or credential not found`,
+        409: `Claim a bounded batch with independent leases. Lease lost or group conflict`,
+        429: `Claim a bounded batch with independent leases. Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
       },
     });
   }
@@ -549,9 +663,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for pause new consumer-group claims.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for pause new consumer-group claims.
+     */
     id: string,
+    /**
+     * Channel name for pause new consumer-group claims.
+     */
     channel: string,
+    /**
+     * Consumer group name for pause new consumer-group claims.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
     return __request(OpenAPI, {
@@ -564,16 +690,16 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
+        404: `Pause new consumer-group claims. Endpoint or group not found`,
+        409: `Pause new consumer-group claims. Group conflict, lost claim lease, or retention gap`,
         429: `Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Resume new consumer-group claims
-   * Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and nullable pause timestamp.
-   * @returns RealtimeConsumerGroupPauseState Current pause state
+   * Resume new consumer-group claims. Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and nullable pause timestamp.
+   * @returns RealtimeConsumerGroupPauseState Resume new consumer-group claims. Current pause state
    * @throws ApiError
    */
   public static resumeRealtimeConsumerGroup({
@@ -582,9 +708,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for resume new consumer-group claims.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for resume new consumer-group claims.
+     */
     id: string,
+    /**
+     * Channel name for resume new consumer-group claims.
+     */
     channel: string,
+    /**
+     * Consumer group name for resume new consumer-group claims.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
     return __request(OpenAPI, {
@@ -597,21 +735,24 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Resume new consumer-group claims. Endpoint or group not found`,
+        409: `Resume new consumer-group claims. Group conflict, lost claim lease, or retention gap`,
+        429: `Resume new consumer-group claims. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
-   * Pause new consumer-group claims
+   * Pause new consumer-group claims using scoped worker credentials
    * Requires the explicit pause worker permission, rechecked in the group transaction. Idempotent group control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and nullable pause timestamp.
-   * @returns RealtimeConsumerGroupPauseState Current pause state
+   * @returns RealtimeConsumerGroupPauseState Pause new consumer-group claims. Current pause state
    * @throws ApiError
    */
   public static pauseRealtimeWorkerGroup({
     groupId,
   }: {
+    /**
+     * Consumer group ID for pause new consumer-group claims. Pause new consumer-group claims. Pause new consumer-group claims. Pause new consumer-group claims.
+     */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
     return __request(OpenAPI, {
@@ -621,23 +762,26 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Pause new consumer-group claims. Credential invalid, expired, rotated or revoked`,
+        403: `Pause new consumer-group claims. Credential lacks permission`,
+        404: `Pause new consumer-group claims. Group or credential not found`,
+        409: `Pause new consumer-group claims. Lease lost or group conflict`,
+        429: `Pause new consumer-group claims. Admission or authentication limit reached`,
       },
     });
   }
   /**
-   * Resume new consumer-group claims
+   * Resume new consumer-group claims using scoped worker credentials
    * Requires the explicit resume worker permission, rechecked in the group transaction. Idempotent group control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and nullable pause timestamp.
-   * @returns RealtimeConsumerGroupPauseState Current pause state
+   * @returns RealtimeConsumerGroupPauseState The group pause state after resuming claims with the scoped worker credential.
    * @throws ApiError
    */
   public static resumeRealtimeWorkerGroup({
     groupId,
   }: {
+    /**
+     * Consumer group ID for resume new consumer-group claims. Resume new consumer-group claims. Resume new consumer-group claims. Resume new consumer-group claims.
+     */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
     return __request(OpenAPI, {
@@ -647,18 +791,18 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Resume new consumer-group claims. Credential invalid, expired, rotated or revoked`,
+        403: `Resume new consumer-group claims. Credential lacks permission`,
+        404: `Resume new consumer-group claims. Group or credential not found`,
+        409: `Resume new consumer-group claims. Lease lost or group conflict`,
+        429: `Resume new consumer-group claims. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Drain active consumer-group leases
    * Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
-   * @returns RealtimeConsumerGroupDrainState Current pause state
+   * @returns RealtimeConsumerGroupDrainState Drain active consumer-group leases. Current pause state
    * @throws ApiError
    */
   public static drainRealtimeConsumerGroup({
@@ -667,9 +811,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for drain active consumer-group leases.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for drain active consumer-group leases.
+     */
     id: string,
+    /**
+     * Channel name for drain active consumer-group leases.
+     */
     channel: string,
+    /**
+     * Consumer group name for drain active consumer-group leases.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupDrainState> {
     return __request(OpenAPI, {
@@ -682,21 +838,24 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Drain active consumer-group leases. Endpoint or group not found`,
+        409: `Drain active consumer-group leases. Group conflict, lost claim lease, or retention gap`,
+        429: `Drain active consumer-group leases. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
-   * Drain active consumer-group leases
-   * Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
-   * @returns RealtimeConsumerGroupDrainState Current pause state
+   * Drain active consumer-group leases using scoped worker credentials
+   * Drain active consumer-group leases. Idempotently stop new claims and enter persistent drain mode. Requires account admin scope and MFA, or the explicit drain worker permission. Existing leases may renew or settle. Drained means no unexpired leases remain; it does not prove handler side effects have stopped. Retry/dead/unassigned work is preserved. Resume explicitly after deployment; pause switches to ordinary paused mode.
+   * @returns RealtimeConsumerGroupDrainState The drain state after the scoped worker stops new claims and waits for active leases.
    * @throws ApiError
    */
   public static drainRealtimeWorkerGroup({
     groupId,
   }: {
+    /**
+     * Consumer group ID for drain active consumer-group leases. Drain active consumer-group leases. Drain active consumer-group leases. Drain active consumer-group leases.
+     */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupDrainState> {
     return __request(OpenAPI, {
@@ -706,11 +865,11 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Drain active consumer-group leases. Credential invalid, expired, rotated or revoked`,
+        403: `Drain active consumer-group leases. Credential lacks permission`,
+        404: `Drain active consumer-group leases. Group or credential not found`,
+        409: `Drain active consumer-group leases. Lease lost or group conflict`,
+        429: `Drain active consumer-group leases. Admission or authentication limit reached`,
       },
     });
   }
@@ -727,9 +886,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for settle a batch of consumer group claims.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for settle a batch of consumer group claims.
+     */
     id: string,
+    /**
+     * Channel name for settle a batch of consumer group claims.
+     */
     channel: string,
+    /**
+     * Consumer group name for settle a batch of consumer group claims.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupBatchSettlementRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatchSettlementResult> {
@@ -755,15 +926,18 @@ export class RealtimeService {
     });
   }
   /**
-   * Settle a batch of consumer group claims
-   * Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results preserve request order. Each valid current lease is completed, retried, released or renewed; expired, missing or differently owned leases return lease_lost without blocking other items. Scoped credentials require every action in the request, rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request with the same key to recover a lost response. Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may have committed.
-   * @returns RealtimeConsumerGroupBatchSettlementResult Per-item settlement results
+   * Settle a batch of consumer group claims using scoped worker credentials
+   * Settle a batch of consumer group claims. Validate all 1 to 32 items before mutation; duplicate numeric sequences are invalid. Results preserve request order. Each valid current lease is completed, retried, released or renewed; expired, missing or differently owned leases return lease_lost without blocking other items. Scoped credentials require every action in the request, rechecked under the group lock; no additional grant. Account writes require ownership, deploy-write scope and MFA. Known lease failures commit alongside valid settlements; database errors roll back the batch. Optional idempotency_key saves the entire result for 24 hours; repeat the same request with the same key to recover a lost response. Different contents return 409 realtime_settlement_key_conflict. Without a key, a lost response may have committed.
+   * @returns RealtimeConsumerGroupBatchSettlementResult Settle a batch of consumer group claims. Per-item settlement results
    * @throws ApiError
    */
   public static settleRealtimeWorkerGroupBatch({
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for settle a batch of consumer group claims. Settle a batch of consumer group claims. Settle a batch of consumer group claims. Settle a batch of consumer group claims.
+     */
     groupId: string,
     requestBody: RealtimeConsumerGroupBatchSettlementRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatchSettlementResult> {
@@ -776,12 +950,12 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid or duplicate settlement`,
-        401: `Invalid credentials`,
-        403: `Action permission denied`,
-        404: `Endpoint or group unavailable`,
-        409: `Idempotency key reused with different contents (realtime_settlement_key_conflict)`,
-        429: `Admission or authentication or settlement receipt capacity reached`,
+        400: `Settle a batch of consumer group claims. Invalid or duplicate settlement`,
+        401: `Settle a batch of consumer group claims. Invalid credentials`,
+        403: `Settle a batch of consumer group claims. Action permission denied`,
+        404: `Settle a batch of consumer group claims. Endpoint or group unavailable`,
+        409: `Settle a batch of consumer group claims. Idempotency key reused with different contents (realtime_settlement_key_conflict)`,
+        429: `Settle a batch of consumer group claims. Admission or authentication or settlement receipt capacity reached`,
       },
     });
   }
@@ -800,12 +974,33 @@ export class RealtimeService {
     afterId = '0',
     limit = 32,
   }: {
+    /**
+     * Application slug for read a message's observed consumer-group delivery timeline.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read a message's observed consumer-group delivery timeline.
+     */
     id: string,
+    /**
+     * Channel name for read a message's observed consumer-group delivery timeline.
+     */
     channel: string,
+    /**
+     * Consumer group name for read a message's observed consumer-group delivery timeline.
+     */
     group: string,
+    /**
+     * Message sequence for read a message's observed consumer-group delivery timeline.
+     */
     sequence: string,
+    /**
+     * After id for read a message's observed consumer-group delivery timeline.
+     */
     afterId?: string,
+    /**
+     * Maximum number of records for read a message's observed consumer-group delivery timeline.
+     */
     limit?: number,
   }): CancelablePromise<RealtimeConsumerGroupDeliveryHistory> {
     return __request(OpenAPI, {
@@ -823,10 +1018,10 @@ export class RealtimeService {
         'limit': limit,
       },
       errors: {
-        400: `Invalid group`,
-        401: `Invalid credentials`,
+        400: `Invalid group, sequence, cursor or limit`,
+        401: `Read a message's observed consumer-group delivery timeline. Invalid credentials`,
         403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        404: `Read a message's observed consumer-group delivery timeline. Endpoint or group unavailable`,
       },
     });
   }
@@ -842,9 +1037,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read consumer group circuit breaker.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read consumer group circuit breaker.
+     */
     id: string,
+    /**
+     * Channel name for read consumer group circuit breaker.
+     */
     channel: string,
+    /**
+     * Consumer group name for read consumer group circuit breaker.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupCircuitStatus> {
     return __request(OpenAPI, {
@@ -858,16 +1065,16 @@ export class RealtimeService {
       },
       errors: {
         400: `Invalid policy or group`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        401: `Read consumer group circuit breaker. Invalid credentials`,
+        403: `Read consumer group circuit breaker. Permission denied`,
+        404: `Read consumer group circuit breaker. Endpoint or group unavailable`,
       },
     });
   }
   /**
    * Configure consumer group circuit breaker
-   * Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe at a time; only its success restores admission. Existing leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is observational; reads do not advance cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
-   * @returns RealtimeConsumerGroupCircuitStatus Current policy and circuit state
+   * Configure consumer group circuit breaker. Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe at a time; only its success restores admission. Existing leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is observational; reads do not advance cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
+   * @returns RealtimeConsumerGroupCircuitStatus Configure consumer group circuit breaker. Current policy and circuit state
    * @throws ApiError
    */
   public static configureRealtimeConsumerGroupCircuit({
@@ -877,9 +1084,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for configure consumer group circuit breaker.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for configure consumer group circuit breaker.
+     */
     id: string,
+    /**
+     * Channel name for configure consumer group circuit breaker.
+     */
     channel: string,
+    /**
+     * Consumer group name for configure consumer group circuit breaker.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupCircuitPolicy,
   }): CancelablePromise<RealtimeConsumerGroupCircuitStatus> {
@@ -895,10 +1114,10 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid policy or group`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        400: `Configure consumer group circuit breaker. Invalid policy or group`,
+        401: `Configure consumer group circuit breaker. Invalid credentials`,
+        403: `Configure consumer group circuit breaker. Permission denied`,
+        404: `Configure consumer group circuit breaker. Endpoint or group unavailable`,
       },
     });
   }
@@ -914,9 +1133,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read priority policy and materialized backlog.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read priority policy and materialized backlog.
+     */
     id: string,
+    /**
+     * Channel name for read priority policy and materialized backlog.
+     */
     channel: string,
+    /**
+     * Consumer group name for read priority policy and materialized backlog.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPriorityStatus> {
     return __request(OpenAPI, {
@@ -929,10 +1160,10 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        400: `Invalid group`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        400: `Read priority policy and materialized backlog. Invalid group`,
+        401: `Read priority policy and materialized backlog. Invalid credentials`,
+        403: `Read priority policy and materialized backlog. Permission denied`,
+        404: `Read priority policy and materialized backlog. Endpoint or group unavailable`,
       },
     });
   }
@@ -948,9 +1179,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read consumer group processing trends.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read consumer group processing trends.
+     */
     id: string,
+    /**
+     * Channel name for read consumer group processing trends.
+     */
     channel: string,
+    /**
+     * Consumer group name for read consumer group processing trends.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupMetrics> {
     return __request(OpenAPI, {
@@ -963,10 +1206,10 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        400: `Invalid group`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        400: `Read consumer group processing trends. Invalid group`,
+        401: `Read consumer group processing trends. Invalid credentials`,
+        403: `Read consumer group processing trends. Permission denied`,
+        404: `Read consumer group processing trends. Endpoint or group unavailable`,
         429: `Admission capacity reached`,
       },
     });
@@ -983,9 +1226,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read observed worker liveness.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read observed worker liveness.
+     */
     id: string,
+    /**
+     * Channel name for read observed worker liveness.
+     */
     channel: string,
+    /**
+     * Consumer group name for read observed worker liveness.
+     */
     group: string,
   }): CancelablePromise<RealtimeWorkerHealth> {
     return __request(OpenAPI, {
@@ -998,18 +1253,18 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        400: `Invalid worker`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
+        400: `Invalid worker, readiness or diagnostic code`,
+        401: `Read observed worker liveness. Invalid credentials`,
+        403: `Read observed worker liveness. Permission denied`,
+        404: `Read observed worker liveness. Endpoint or group unavailable`,
         429: `Worker heartbeat tracking or credential admission capacity reached`,
       },
     });
   }
   /**
    * Report worker readiness and liveness
-   * Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No lease is renewed.
-   * @returns RealtimeWorkerHeartbeat Current worker health
+   * Report worker readiness and liveness. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No lease is renewed.
+   * @returns RealtimeWorkerHeartbeat Report worker readiness and liveness. Current worker health
    * @throws ApiError
    */
   public static heartbeatRealtimeConsumerGroup({
@@ -1019,9 +1274,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for report worker readiness and liveness.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for report worker readiness and liveness.
+     */
     id: string,
+    /**
+     * Channel name for report worker readiness and liveness.
+     */
     channel: string,
+    /**
+     * Consumer group name for report worker readiness and liveness.
+     */
     group: string,
     requestBody: RealtimeWorkerHeartbeatRequest,
   }): CancelablePromise<RealtimeWorkerHeartbeat> {
@@ -1037,24 +1304,27 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid worker`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
-        429: `Worker heartbeat tracking or credential admission capacity reached`,
+        400: `Report worker readiness and liveness. Invalid worker, readiness or diagnostic code`,
+        401: `Report worker readiness and liveness. Invalid credentials`,
+        403: `Report worker readiness and liveness. Permission denied`,
+        404: `Report worker readiness and liveness. Endpoint or group unavailable`,
+        429: `Report worker readiness and liveness. Worker heartbeat tracking or credential admission capacity reached`,
       },
     });
   }
   /**
    * Report liveness using a scoped worker credential
-   * Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No lease is renewed.
-   * @returns RealtimeWorkerHeartbeat Current worker health
+   * Report liveness using a scoped worker credential. Heartbeat monitoring is opt-in. Fixed timeout 60 seconds; report every 15 seconds. Account routes require ownership and MFA, writes deploy-write scope. Scoped POST requires heartbeat permission and fixes worker identity to credential name. Readiness is self-reported, separate from liveness. No lease is renewed.
+   * @returns RealtimeWorkerHeartbeat Report liveness using a scoped worker credential. Current worker health
    * @throws ApiError
    */
   public static heartbeatRealtimeWorkerGroup({
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for report liveness using a scoped worker credential.
+     */
     groupId: string,
     requestBody: RealtimeWorkerHeartbeatRequest,
   }): CancelablePromise<RealtimeWorkerHeartbeat> {
@@ -1067,11 +1337,11 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid worker`,
-        401: `Invalid credentials`,
-        403: `Permission denied`,
-        404: `Endpoint or group unavailable`,
-        429: `Worker heartbeat tracking or credential admission capacity reached`,
+        400: `Report liveness using a scoped worker credential. Invalid worker, readiness or diagnostic code`,
+        401: `Report liveness using a scoped worker credential. Invalid credentials`,
+        403: `Report liveness using a scoped worker credential. Permission denied`,
+        404: `Report liveness using a scoped worker credential. Endpoint or group unavailable`,
+        429: `Report liveness using a scoped worker credential. Worker heartbeat tracking or credential admission capacity reached`,
       },
     });
   }
@@ -1087,9 +1357,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read shared consumer-group claim rate.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read shared consumer-group claim rate.
+     */
     id: string,
+    /**
+     * Channel name for read shared consumer-group claim rate.
+     */
     channel: string,
+    /**
+     * Consumer group name for read shared consumer-group claim rate.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupClaimRateStatus> {
     return __request(OpenAPI, {
@@ -1103,16 +1385,16 @@ export class RealtimeService {
       },
       errors: {
         400: `Invalid rate or burst`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Read shared consumer-group claim rate. Endpoint or group not found`,
+        409: `Read shared consumer-group claim rate. Group conflict, lost claim lease, or retention gap`,
+        429: `Read shared consumer-group claim rate. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Configure shared consumer-group claim rate
-   * Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every worker and replica through persisted group-locked state. Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can consume the next allowance.
-   * @returns RealtimeConsumerGroupClaimRateStatus Policy and current throttle observation
+   * Configure shared consumer-group claim rate. Requires app ownership and MFA; writes require admin scope. Zero rate disables throttling. Otherwise configure 1 to 1000 claims per second and a burst of 1 to 32. Admission is shared across every worker and replica through persisted group-locked state. Renewals, settlements and replay do not consume rate credit. Identical writes preserve credit and counters; changed policies clamp existing debt to the new burst window. The observed retry hint is not a reservation; concurrent workers can consume the next allowance.
+   * @returns RealtimeConsumerGroupClaimRateStatus Configure shared consumer-group claim rate. Policy and current throttle observation
    * @throws ApiError
    */
   public static configureRealtimeConsumerGroupClaimRate({
@@ -1122,9 +1404,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for configure shared consumer-group claim rate.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for configure shared consumer-group claim rate.
+     */
     id: string,
+    /**
+     * Channel name for configure shared consumer-group claim rate.
+     */
     channel: string,
+    /**
+     * Consumer group name for configure shared consumer-group claim rate.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupClaimRatePolicy,
   }): CancelablePromise<RealtimeConsumerGroupClaimRateStatus> {
@@ -1140,10 +1434,10 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid rate or burst`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        400: `Configure shared consumer-group claim rate. Invalid rate or burst`,
+        404: `Configure shared consumer-group claim rate. Endpoint or group not found`,
+        409: `Configure shared consumer-group claim rate. Group conflict, lost claim lease, or retention gap`,
+        429: `Configure shared consumer-group claim rate. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -1159,9 +1453,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read consumer-group retry policy.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read consumer-group retry policy.
+     */
     id: string,
+    /**
+     * Channel name for read consumer-group retry policy.
+     */
     channel: string,
+    /**
+     * Consumer group name for read consumer-group retry policy.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupRetryStatus> {
     return __request(OpenAPI, {
@@ -1175,16 +1481,16 @@ export class RealtimeService {
       },
       errors: {
         400: `Invalid delay range or permanent failure codes`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Read consumer-group retry policy. Endpoint or group not found`,
+        409: `Read consumer-group retry policy. Group conflict, lost claim lease, or retention gap`,
+        429: `Read consumer-group retry policy. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Configure consumer-group retries
-   * Requires app ownership and MFA; writes require admin scope. Policies are disabled by default. Enabled policies apply capped exponential backoff to reported failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes affect future settlements, not already scheduled retries or expired leases. next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
-   * @returns RealtimeConsumerGroupRetryStatus Policy and earliest delayed retry observation
+   * Configure consumer-group retries. Requires app ownership and MFA; writes require admin scope. Policies are disabled by default. Enabled policies apply capped exponential backoff to reported failures with omitted retry_after_seconds. Explicit delays, including zero, override backoff. Exact permanent failure codes dead-letter immediately even with an explicit delay. Jitter samples uniformly from half the capped delay through the capped delay, in integer seconds. Attempt budgets still apply. Changes affect future settlements, not already scheduled retries or expired leases. next_retry_at is the earliest delayed ready snapshot; ordering, pause and capacity can delay its claim further.
+   * @returns RealtimeConsumerGroupRetryStatus Configure consumer-group retries. Policy and earliest delayed retry observation
    * @throws ApiError
    */
   public static configureRealtimeConsumerGroupRetryPolicy({
@@ -1194,9 +1500,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for configure consumer-group retries.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for configure consumer-group retries.
+     */
     id: string,
+    /**
+     * Channel name for configure consumer-group retries.
+     */
     channel: string,
+    /**
+     * Consumer group name for configure consumer-group retries.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupRetryPolicyRequest,
   }): CancelablePromise<RealtimeConsumerGroupRetryStatus> {
@@ -1212,10 +1530,10 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid delay range or permanent failure codes`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        400: `Configure consumer-group retries. Invalid delay range or permanent failure codes`,
+        404: `Configure consumer-group retries. Endpoint or group not found`,
+        409: `Configure consumer-group retries. Group conflict, lost claim lease, or retention gap`,
+        429: `Configure consumer-group retries. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -1231,9 +1549,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read dead-letter retention policy.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read dead-letter retention policy.
+     */
     id: string,
+    /**
+     * Channel name for read dead-letter retention policy.
+     */
     channel: string,
+    /**
+     * Consumer group name for read dead-letter retention policy.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupRetentionPolicy> {
     return __request(OpenAPI, {
@@ -1247,16 +1577,16 @@ export class RealtimeService {
       },
       errors: {
         400: `Invalid retention period or incompatible ordered block policy`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Read dead-letter retention policy. Endpoint or group not found`,
+        409: `Read dead-letter retention policy. Group conflict, lost claim lease, or retention gap`,
+        429: `Read dead-letter retention policy. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Configure dead-letter retention
-   * Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
-   * @returns RealtimeConsumerGroupRetentionPolicy Retention policy and cumulative expired count
+   * Configure dead-letter retention. Requires app ownership and MFA; writes require admin scope. Zero keeps dead letters indefinitely. Otherwise choose 3600 to 2592000 seconds. Ordered groups require skip policy. Cleanup follows a persisted warning decision by at least 300 seconds; webhook delivery does not gate cleanup. Replay protects the snapshot when it commits before cleanup. Changed policies rearm warnings.
+   * @returns RealtimeConsumerGroupRetentionPolicy Configure dead-letter retention. Retention policy and cumulative expired count
    * @throws ApiError
    */
   public static configureRealtimeConsumerGroupDeadLetterRetention({
@@ -1266,9 +1596,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for configure dead-letter retention.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for configure dead-letter retention.
+     */
     id: string,
+    /**
+     * Channel name for configure dead-letter retention.
+     */
     channel: string,
+    /**
+     * Consumer group name for configure dead-letter retention.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupRetentionRequest,
   }): CancelablePromise<RealtimeConsumerGroupRetentionPolicy> {
@@ -1284,10 +1626,10 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid retention period or incompatible ordered block policy`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        400: `Configure dead-letter retention. Invalid retention period or incompatible ordered block policy`,
+        404: `Configure dead-letter retention. Endpoint or group not found`,
+        409: `Configure dead-letter retention. Group conflict, lost claim lease, or retention gap`,
+        429: `Configure dead-letter retention. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -1303,9 +1645,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read lag alert status.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read lag alert status.
+     */
     id: string,
+    /**
+     * Channel name for read lag alert status.
+     */
     channel: string,
+    /**
+     * Consumer group name for read lag alert status.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupLagAlert> {
     return __request(OpenAPI, {
@@ -1319,16 +1673,16 @@ export class RealtimeService {
       },
       errors: {
         400: `Invalid thresholds or cooldown`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Read lag alert status. Endpoint or group not found`,
+        409: `Read lag alert status. Group conflict, lost claim lease, or retention gap`,
+        429: `Read lag alert status. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Configure consumer-group lag thresholds
-   * Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds disable that metric. Enabled policies require at least one nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
-   * @returns RealtimeConsumerGroupLagAlert Policy and latest nullable observation
+   * Configure consumer-group lag thresholds. Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds disable that metric. Enabled policies require at least one nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
+   * @returns RealtimeConsumerGroupLagAlert Configure consumer-group lag thresholds. Policy and latest nullable observation
    * @throws ApiError
    */
   public static configureRealtimeConsumerGroupLagAlert({
@@ -1338,9 +1692,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for configure consumer-group lag thresholds.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for configure consumer-group lag thresholds.
+     */
     id: string,
+    /**
+     * Channel name for configure consumer-group lag thresholds.
+     */
     channel: string,
+    /**
+     * Consumer group name for configure consumer-group lag thresholds.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupLagAlertConfig,
   }): CancelablePromise<RealtimeConsumerGroupLagAlert> {
@@ -1356,23 +1722,26 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid thresholds or cooldown`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        400: `Configure consumer-group lag thresholds. Invalid thresholds or cooldown`,
+        404: `Configure consumer-group lag thresholds. Endpoint or group not found`,
+        409: `Configure consumer-group lag thresholds. Group conflict, lost claim lease, or retention gap`,
+        429: `Configure consumer-group lag thresholds. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Claim work using the claim permission
-   * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
-   * @returns RealtimeConsumerGroupClaim Operation result
+   * Claim work using the claim permission. Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
+   * @returns RealtimeConsumerGroupClaim Claim work using the claim permission. Operation result
    * @throws ApiError
    */
   public static claimRealtimeWorkerGroup({
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for claim work using the claim permission.
+     */
     groupId: string,
     requestBody: RealtimeWorkerClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupClaim> {
@@ -1385,24 +1754,27 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
+        401: `Claim work using the claim permission. Credential invalid, expired, rotated or revoked`,
+        403: `Claim work using the claim permission. Credential lacks permission`,
+        404: `Claim work using the claim permission. Group or credential not found`,
+        409: `Claim work using the claim permission. Lease lost or group conflict`,
+        429: `Claim work using the claim permission. Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
       },
     });
   }
   /**
    * Settle or renew only this credential’s own lease
    * Requires the exact action permission: complete, retry, renew or release. The credential can settle only leases issued to its stable credential ID. Rotation preserves that ID and claim ownership. New settlements require unexpired claim tokens. Matching receipts return the original result after current authorization, even when the original lease has ended. Expired/revoked credentials cannot settle or replay work.
-   * @returns RealtimeConsumerGroupSettlementResult Operation result
+   * @returns RealtimeConsumerGroupSettlementResult Settle or renew only this credential’s own lease. Operation result
    * @throws ApiError
    */
   public static settleRealtimeWorkerGroupClaim({
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for settle or renew only this credential’s own lease.
+     */
     groupId: string,
     requestBody: RealtimeConsumerGroupSettlement,
   }): CancelablePromise<RealtimeConsumerGroupSettlementResult> {
@@ -1415,9 +1787,9 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
+        401: `Settle or renew only this credential’s own lease. Credential invalid, expired, rotated or revoked`,
+        403: `Settle or renew only this credential’s own lease. Credential lacks permission`,
+        404: `Settle or renew only this credential’s own lease. Group or credential not found`,
         409: `Claim lease lost, or idempotency key reused with different contents (realtime_settlement_key_conflict)`,
         429: `Admission, authentication or settlement receipt capacity reached`,
       },
@@ -1425,13 +1797,16 @@ export class RealtimeService {
   }
   /**
    * Read failed payloads using the separate dead_letters permission
-   * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
-   * @returns RealtimeConsumerGroupDeadLetter Operation result
+   * Read failed payloads using the separate dead_letters permission. Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
+   * @returns RealtimeConsumerGroupDeadLetter Read failed payloads using the separate dead_letters permission. Operation result
    * @throws ApiError
    */
   public static listRealtimeWorkerGroupDeadLetters({
     groupId,
   }: {
+    /**
+     * Consumer group ID for read failed payloads using the separate dead_letters permission.
+     */
     groupId: string,
   }): CancelablePromise<Array<RealtimeConsumerGroupDeadLetter>> {
     return __request(OpenAPI, {
@@ -1441,17 +1816,17 @@ export class RealtimeService {
         'group_id': groupId,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Read failed payloads using the separate dead_letters permission. Credential invalid, expired, rotated or revoked`,
+        403: `Read failed payloads using the separate dead_letters permission. Credential lacks permission`,
+        404: `Read failed payloads using the separate dead_letters permission. Group or credential not found`,
+        409: `Read failed payloads using the separate dead_letters permission. Lease lost or group conflict`,
+        429: `Read failed payloads using the separate dead_letters permission. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Replay failed work using the separate replay permission
-   * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
+   * Replay failed work using the separate replay permission. Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
    * @returns void
    * @throws ApiError
    */
@@ -1459,7 +1834,13 @@ export class RealtimeService {
     groupId,
     sequence,
   }: {
+    /**
+     * Consumer group ID for replay failed work using the separate replay permission.
+     */
     groupId: string,
+    /**
+     * Message sequence for replay failed work using the separate replay permission.
+     */
     sequence: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -1470,17 +1851,17 @@ export class RealtimeService {
         'sequence': sequence,
       },
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Replay failed work using the separate replay permission. Credential invalid, expired, rotated or revoked`,
+        403: `Replay failed work using the separate replay permission. Credential lacks permission`,
+        404: `Replay failed work using the separate replay permission. Group or credential not found`,
+        409: `Replay failed work using the separate replay permission. Lease lost or group conflict`,
+        429: `Replay failed work using the separate replay permission. Admission or authentication limit reached`,
       },
     });
   }
   /**
    * Recover a gap using the separate resync permission
-   * Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
+   * Recover a gap using the separate resync permission. Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group transaction; group recreation does not restore access.
    * @returns void
    * @throws ApiError
    */
@@ -1488,6 +1869,9 @@ export class RealtimeService {
     groupId,
     requestBody,
   }: {
+    /**
+     * Consumer group ID for recover a gap using the separate resync permission.
+     */
     groupId: string,
     requestBody: RealtimeConsumerGroupResyncRequest,
   }): CancelablePromise<void> {
@@ -1500,11 +1884,11 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        401: `Credential invalid, expired, rotated or revoked`,
-        403: `Credential lacks permission`,
-        404: `Group or credential not found`,
-        409: `Lease lost or group conflict`,
-        429: `Admission or authentication limit reached`,
+        401: `Recover a gap using the separate resync permission. Credential invalid, expired, rotated or revoked`,
+        403: `Recover a gap using the separate resync permission. Credential lacks permission`,
+        404: `Recover a gap using the separate resync permission. Group or credential not found`,
+        409: `Recover a gap using the separate resync permission. Lease lost or group conflict`,
+        429: `Recover a gap using the separate resync permission. Admission or authentication limit reached`,
       },
     });
   }
@@ -1519,8 +1903,17 @@ export class RealtimeService {
     id,
     channel,
   }: {
+    /**
+     * Application slug for list consumer group lag and worker status.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for list consumer group lag and worker status.
+     */
     id: string,
+    /**
+     * Channel name for list consumer group lag and worker status.
+     */
     channel: string,
   }): CancelablePromise<Array<RealtimeConsumerGroup>> {
     return __request(OpenAPI, {
@@ -1532,16 +1925,16 @@ export class RealtimeService {
         'channel': channel,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `List consumer group lag and worker status. Endpoint or group not found`,
+        409: `List consumer group lag and worker status. Group conflict, lost claim lease, or retention gap`,
+        429: `List consumer group lag and worker status. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Create a shared backend-worker subscription
-   * Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
-   * @returns RealtimeConsumerGroup Consumer group operation result
+   * Create a shared backend-worker subscription. Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
+   * @returns RealtimeConsumerGroup Create a shared backend-worker subscription. Consumer group operation result
    * @throws ApiError
    */
   public static createRealtimeConsumerGroup({
@@ -1550,8 +1943,17 @@ export class RealtimeService {
     channel,
     requestBody,
   }: {
+    /**
+     * Application slug for create a shared backend-worker subscription.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for create a shared backend-worker subscription.
+     */
     id: string,
+    /**
+     * Channel name for create a shared backend-worker subscription.
+     */
     channel: string,
     requestBody: RealtimeConsumerGroupCreateRequest,
   }): CancelablePromise<RealtimeConsumerGroup> {
@@ -1566,16 +1968,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Create a shared backend-worker subscription. Endpoint or group not found`,
+        409: `Create a shared backend-worker subscription. Group conflict, lost claim lease, or retention gap`,
+        429: `Create a shared backend-worker subscription. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Read consumer group lag and worker status
-   * Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
-   * @returns RealtimeConsumerGroup Consumer group operation result
+   * Read consumer group lag and worker status. Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
+   * @returns RealtimeConsumerGroup Read consumer group lag and worker status. Consumer group operation result
    * @throws ApiError
    */
   public static getRealtimeConsumerGroup({
@@ -1584,9 +1986,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for read consumer group lag and worker status.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read consumer group lag and worker status.
+     */
     id: string,
+    /**
+     * Channel name for read consumer group lag and worker status.
+     */
     channel: string,
+    /**
+     * Consumer group name for read consumer group lag and worker status.
+     */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroup> {
     return __request(OpenAPI, {
@@ -1599,15 +2013,15 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Read consumer group lag and worker status. Endpoint or group not found`,
+        409: `Read consumer group lag and worker status. Group conflict, lost claim lease, or retention gap`,
+        429: `Read consumer group lag and worker status. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Delete a consumer group and its outstanding payload snapshots
-   * Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
+   * Delete a consumer group and its outstanding payload snapshots. Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
    * @returns void
    * @throws ApiError
    */
@@ -1617,9 +2031,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for delete a consumer group and its outstanding payload snapshots.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for delete a consumer group and its outstanding payload snapshots.
+     */
     id: string,
+    /**
+     * Channel name for delete a consumer group and its outstanding payload snapshots.
+     */
     channel: string,
+    /**
+     * Consumer group name for delete a consumer group and its outstanding payload snapshots.
+     */
     group: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -1632,16 +2058,16 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Delete a consumer group and its outstanding payload snapshots. Endpoint or group not found`,
+        409: `Delete a consumer group and its outstanding payload snapshots. Group conflict, lost claim lease, or retention gap`,
+        429: `Delete a consumer group and its outstanding payload snapshots. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Claim one retained message with an exclusive short lease
    * Returns 204 when paused, caught up, retry-delayed, or all active lease slots are occupied. Returns 429 when the outstanding snapshot cap prevents assignment, and 409 on a retention gap. Claim tokens are returned once and hashed at rest; this operation is excluded from generic response caching. Lease expiry may permit duplicate processing; use idempotent handlers. Does not accept subscription tickets or WebSocket credentials.
-   * @returns RealtimeConsumerGroupClaim Consumer group operation result
+   * @returns RealtimeConsumerGroupClaim Claim one retained message with an exclusive short lease. Consumer group operation result
    * @throws ApiError
    */
   public static claimRealtimeConsumerGroup({
@@ -1651,9 +2077,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for claim one retained message with an exclusive short lease.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for claim one retained message with an exclusive short lease.
+     */
     id: string,
+    /**
+     * Channel name for claim one retained message with an exclusive short lease.
+     */
     channel: string,
+    /**
+     * Consumer group name for claim one retained message with an exclusive short lease.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupClaim> {
@@ -1669,16 +2107,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
+        404: `Claim one retained message with an exclusive short lease. Endpoint or group not found`,
+        409: `Claim one retained message with an exclusive short lease. Group conflict, lost claim lease, or retention gap`,
+        429: `Claim one retained message with an exclusive short lease. Admission capacity or event ID capacity reached; realtime_group_deduplication_full includes Retry-After and retry_after_seconds Group rate uses code realtime_group_rate_limited, Retry-After and retry_after_seconds.`,
       },
     });
   }
   /**
    * Complete, retry or renew an unexpired claim
    * The sequence and opaque token must identify the current unexpired lease. Completion deletes its payload snapshot and increments the group completion count. Retries reaching max_attempts become dead letters. Duplicate settlement or a replaced/expired token returns 409; no exactly-once execution guarantee.
-   * @returns RealtimeConsumerGroupSettlementResult Consumer group operation result
+   * @returns RealtimeConsumerGroupSettlementResult Complete, retry or renew an unexpired claim. Consumer group operation result
    * @throws ApiError
    */
   public static settleRealtimeConsumerGroupClaim({
@@ -1688,9 +2126,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for complete, retry or renew an unexpired claim.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for complete, retry or renew an unexpired claim.
+     */
     id: string,
+    /**
+     * Channel name for complete, retry or renew an unexpired claim.
+     */
     channel: string,
+    /**
+     * Consumer group name for complete, retry or renew an unexpired claim.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupSettlement,
   }): CancelablePromise<RealtimeConsumerGroupSettlementResult> {
@@ -1706,16 +2156,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Claim lease lost, or idempotency key reused with different contents (realtime_settlement_key_conflict)`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Complete, retry or renew an unexpired claim. Endpoint or group not found`,
+        409: `Complete, retry or renew an unexpired claim. Claim lease lost, or idempotency key reused with different contents (realtime_settlement_key_conflict)`,
+        429: `Complete, retry or renew an unexpired claim. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * List bounded failed message snapshots
-   * Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
-   * @returns RealtimeConsumerGroupDeadLetter Consumer group operation result
+   * List bounded failed message snapshots. Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
+   * @returns RealtimeConsumerGroupDeadLetter List bounded failed message snapshots. Consumer group operation result
    * @throws ApiError
    */
   public static listRealtimeConsumerGroupDeadLetters({
@@ -1724,9 +2174,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for list bounded failed message snapshots.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for list bounded failed message snapshots.
+     */
     id: string,
+    /**
+     * Channel name for list bounded failed message snapshots.
+     */
     channel: string,
+    /**
+     * Consumer group name for list bounded failed message snapshots.
+     */
     group: string,
   }): CancelablePromise<Array<RealtimeConsumerGroupDeadLetter>> {
     return __request(OpenAPI, {
@@ -1739,9 +2201,9 @@ export class RealtimeService {
         'group': group,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `List bounded failed message snapshots. Endpoint or group not found`,
+        409: `List bounded failed message snapshots. Group conflict, lost claim lease, or retention gap`,
+        429: `List bounded failed message snapshots. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -1763,9 +2225,21 @@ export class RealtimeService {
     failureCode,
     limit = 32,
   }: {
+    /**
+     * Application slug for download a read-only dead-letter JSONL page.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for download a read-only dead-letter JSONL page.
+     */
     id: string,
+    /**
+     * Channel name for download a read-only dead-letter JSONL page.
+     */
     channel: string,
+    /**
+     * Consumer group name for download a read-only dead-letter JSONL page.
+     */
     group: string,
     /**
      * Exclusive numeric cursor. Resume using next_after_sequence from the last complete page.
@@ -1833,9 +2307,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for preview filtered dead letters.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for preview filtered dead letters.
+     */
     id: string,
+    /**
+     * Channel name for preview filtered dead letters.
+     */
     channel: string,
+    /**
+     * Consumer group name for preview filtered dead letters.
+     */
     group: string,
     requestBody: RealtimeDeadLetterPreviewRequest,
   }): CancelablePromise<RealtimeDeadLetterPreview> {
@@ -1852,9 +2338,9 @@ export class RealtimeService {
       mediaType: 'application/json',
       errors: {
         400: `Invalid filters or selection`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Preview filtered dead letters. Endpoint or group not found`,
+        409: `Preview filtered dead letters. Group conflict, lost claim lease, or retention gap`,
+        429: `Preview filtered dead letters. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -1870,9 +2356,21 @@ export class RealtimeService {
     channel,
     group,
   }: {
+    /**
+     * Application slug for list replay jobs.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for list replay jobs.
+     */
     id: string,
+    /**
+     * Channel name for list replay jobs.
+     */
     channel: string,
+    /**
+     * Consumer group name for list replay jobs.
+     */
     group: string,
   }): CancelablePromise<Array<RealtimeReplayJob>> {
     return __request(OpenAPI, {
@@ -1893,8 +2391,8 @@ export class RealtimeService {
   }
   /**
    * Create a background dead-letter replay job
-   * Account ownership and MFA required. Read scope for listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per item. Database failures roll back progress and retry on subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response before retrying.
-   * @returns RealtimeReplayJob Replay job result
+   * Create a background dead-letter replay job. Account ownership and MFA required. Read scope for listing; deploy-write scope for creation. Creation freezes up to 128 current failure identities matching the filters. Rate is an upper limit with no catch-up burst. Four running or paused jobs per group; recent terminal jobs retained in bounded history. Disabled endpoints and inactive owners suspend processing. Skips are terminal per item. Database failures roll back progress and retry on subsequent passes. Creation is not idempotent: inspect the job list after an uncertain response before retrying.
+   * @returns RealtimeReplayJob Create a background dead-letter replay job. Replay job result
    * @throws ApiError
    */
   public static createRealtimeReplayJob({
@@ -1904,9 +2402,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for create a background dead-letter replay job.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for create a background dead-letter replay job.
+     */
     id: string,
+    /**
+     * Channel name for create a background dead-letter replay job.
+     */
     channel: string,
+    /**
+     * Consumer group name for create a background dead-letter replay job.
+     */
     group: string,
     requestBody: RealtimeReplayJobRequest,
   }): CancelablePromise<RealtimeReplayJob> {
@@ -1922,16 +2432,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid filters, empty selection or rate`,
-        404: `Group not found`,
-        409: `Active job quota reached`,
+        400: `Create a background dead-letter replay job. Invalid filters, empty selection or rate`,
+        404: `Create a background dead-letter replay job. Group not found`,
+        409: `Create a background dead-letter replay job. Active job quota reached`,
       },
     });
   }
   /**
    * Create a background replay eligibility report
    * Account ownership, MFA and deploy-write scope required. Captures current failure identities and checks each at the configured rate without expiring leases, replaying messages or changing the queue. Uses checking/check_paused states. Dry runs share the four-active-job quota and bounded history with real jobs. Results are observations at individual check times, not reservations. No replay lifecycle webhooks are emitted for dry runs. Start a real job from a completed report using the start control action; only reviewed eligible identities are copied and rechecked during actual replay. Empty selections are invalid. Creation is not idempotent; inspect recent jobs after an uncertain response before retrying.
-   * @returns RealtimeReplayJob Replay job result
+   * @returns RealtimeReplayJob Create a background replay eligibility report. Replay job result
    * @throws ApiError
    */
   public static createRealtimeReplayDryRun({
@@ -1941,9 +2451,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for create a background replay eligibility report.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for create a background replay eligibility report.
+     */
     id: string,
+    /**
+     * Channel name for create a background replay eligibility report.
+     */
     channel: string,
+    /**
+     * Consumer group name for create a background replay eligibility report.
+     */
     group: string,
     requestBody: RealtimeReplayJobRequest,
   }): CancelablePromise<RealtimeReplayJob> {
@@ -1959,16 +2481,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid filters, empty selection or rate`,
-        404: `Group not found`,
-        409: `Active job quota reached`,
+        400: `Create a background replay eligibility report. Invalid filters, empty selection or rate`,
+        404: `Create a background replay eligibility report. Group not found`,
+        409: `Create a background replay eligibility report. Active job quota reached`,
       },
     });
   }
   /**
    * Pause, resume, cancel or start a reviewed replay
    * Account deploy-write scope, ownership and MFA required. Pause/resume/cancel apply to active real or dry-run jobs. Start requires a completed dry run with eligible failures, and creates a real replay at the report rate from only those exact reviewed identities. Rechecks identity, deadlines and ordering before each real replay. Repeated start returns the same job while retained; if that job was pruned it returns 409 and never starts another. If the report itself was pruned it returns 404. Promotion and the report link commit together. Both modes share the four-active-job quota. Terminal jobs reject pause/resume/cancel. Cancellation preserves committed replays.
-   * @returns RealtimeReplayJob Replay job result
+   * @returns RealtimeReplayJob Pause, resume, cancel or start a reviewed replay. Replay job result
    * @throws ApiError
    */
   public static controlRealtimeReplayJob({
@@ -1979,11 +2501,29 @@ export class RealtimeService {
     job,
     action,
   }: {
+    /**
+     * Application slug for pause, resume, cancel or start a reviewed replay.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for pause, resume, cancel or start a reviewed replay.
+     */
     id: string,
+    /**
+     * Channel name for pause, resume, cancel or start a reviewed replay.
+     */
     channel: string,
+    /**
+     * Consumer group name for pause, resume, cancel or start a reviewed replay.
+     */
     group: string,
+    /**
+     * Job for pause, resume, cancel or start a reviewed replay.
+     */
     job: string,
+    /**
+     * Action for pause, resume, cancel or start a reviewed replay.
+     */
     action: 'pause' | 'resume' | 'cancel' | 'start',
   }): CancelablePromise<RealtimeReplayJob> {
     return __request(OpenAPI, {
@@ -2007,7 +2547,7 @@ export class RealtimeService {
   /**
    * Replay selected dead letters
    * Deploy-write scope, app ownership and MFA required. Select 1 to 32 unique sequences with exact dead_since timestamps from preview and the immutable group UUID. Preserves ordering checks and resets attempts for successful replays. Outcomes are replayed, ordering_blocked, stale, not_dead, missing, deadline_expired or invalid_deadline. Missing may mean retention cleanup; no cause is inferred. Recognized per-item conflicts do not prevent other selected replays. Unexpected failures roll back the whole transaction. Group UUID mismatch returns 409. A replayed item gets a fresh fencing token on its next claim. Do not automatically retry an uncertain response.
-   * @returns RealtimeDeadLetterBulkReplayResult Bounded recovery result
+   * @returns RealtimeDeadLetterBulkReplayResult Replay selected dead letters. Bounded recovery result
    * @throws ApiError
    */
   public static bulkReplayRealtimeConsumerGroupDeadLetters({
@@ -2017,9 +2557,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for replay selected dead letters.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for replay selected dead letters.
+     */
     id: string,
+    /**
+     * Channel name for replay selected dead letters.
+     */
     channel: string,
+    /**
+     * Consumer group name for replay selected dead letters.
+     */
     group: string,
     requestBody: RealtimeDeadLetterBulkReplayRequest,
   }): CancelablePromise<RealtimeDeadLetterBulkReplayResult> {
@@ -2035,16 +2587,16 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid filters or selection`,
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        400: `Replay selected dead letters. Invalid filters or selection`,
+        404: `Replay selected dead letters. Endpoint or group not found`,
+        409: `Replay selected dead letters. Group conflict, lost claim lease, or retention gap`,
+        429: `Replay selected dead letters. Endpoint or group admission capacity reached`,
       },
     });
   }
   /**
    * Replay one dead letter with a fresh retry budget
-   * Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
+   * Replay one dead letter with a fresh retry budget. Backend-only. Requires history preview, account API credentials, app permissions and MFA. Write operations require write scope. Delivery is at least once.
    * @returns void
    * @throws ApiError
    */
@@ -2055,10 +2607,25 @@ export class RealtimeService {
     group,
     sequence,
   }: {
+    /**
+     * Application slug for replay one dead letter with a fresh retry budget.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for replay one dead letter with a fresh retry budget.
+     */
     id: string,
+    /**
+     * Channel name for replay one dead letter with a fresh retry budget.
+     */
     channel: string,
+    /**
+     * Consumer group name for replay one dead letter with a fresh retry budget.
+     */
     group: string,
+    /**
+     * Message sequence for replay one dead letter with a fresh retry budget.
+     */
     sequence: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -2072,9 +2639,9 @@ export class RealtimeService {
         'sequence': sequence,
       },
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Replay one dead letter with a fresh retry budget. Endpoint or group not found`,
+        409: `Replay one dead letter with a fresh retry budget. Group conflict, lost claim lease, or retention gap`,
+        429: `Replay one dead letter with a fresh retry budget. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -2091,9 +2658,21 @@ export class RealtimeService {
     group,
     requestBody,
   }: {
+    /**
+     * Application slug for explicitly recover an unassigned retention gap.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for explicitly recover an unassigned retention gap.
+     */
     id: string,
+    /**
+     * Channel name for explicitly recover an unassigned retention gap.
+     */
     channel: string,
+    /**
+     * Consumer group name for explicitly recover an unassigned retention gap.
+     */
     group: string,
     requestBody: RealtimeConsumerGroupResyncRequest,
   }): CancelablePromise<void> {
@@ -2109,9 +2688,9 @@ export class RealtimeService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        404: `Endpoint or group not found`,
-        409: `Group conflict, lost claim lease, or retention gap`,
-        429: `Endpoint or group admission capacity reached`,
+        404: `Explicitly recover an unassigned retention gap. Endpoint or group not found`,
+        409: `Explicitly recover an unassigned retention gap. Group conflict, lost claim lease, or retention gap`,
+        429: `Explicitly recover an unassigned retention gap. Endpoint or group admission capacity reached`,
       },
     });
   }
@@ -2131,10 +2710,25 @@ export class RealtimeService {
     principal,
     subscription,
   }: {
+    /**
+     * Application slug for read the latest actual ACK for a named durable consumer.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for read the latest actual ACK for a named durable consumer.
+     */
     id: string,
+    /**
+     * Channel name for read the latest actual ACK for a named durable consumer.
+     */
     channel: string,
+    /**
+     * Principal for read the latest actual ACK for a named durable consumer.
+     */
     principal: string,
+    /**
+     * Subscription for read the latest actual ACK for a named durable consumer.
+     */
     subscription: string,
   }): CancelablePromise<RealtimeAcknowledgement> {
     return __request(OpenAPI, {
@@ -2604,7 +3198,13 @@ export class RealtimeService {
     id,
     requestBody,
   }: {
+    /**
+     * Application slug for issue a short-lived channel subscription ticket.
+     */
     slug: string,
+    /**
+     * Realtime endpoint or webhook ID for issue a short-lived channel subscription ticket.
+     */
     id: string,
     requestBody: RealtimeTicketRequest,
   }): CancelablePromise<RealtimeTicketResponse> {

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Delivery History Event.
+ */
 export type RealtimeConsumerGroupDeliveryHistoryEvent = {
   id: string;
   sequence: string;

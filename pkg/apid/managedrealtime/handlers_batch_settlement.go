@@ -34,10 +34,11 @@ func (s *Service) RealtimeWorkerBatchSettle(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid settlement action"))
 		return
 	}
-	r, g, _, ok := s.loadRealtimeWorker(w, r, action)
+	g, _, ok := s.loadRealtimeWorker(w, r, action)
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, action))
 	s.writeRealtimeBatchSettlement(w, r, g.EndpointID, g.Channel, g.Group, req)
 }
 func (s *Service) writeRealtimeBatchSettlement(w http.ResponseWriter, r *http.Request, ep, ch, group string, req state.RealtimeConsumerGroupBatchSettlementRequest) {

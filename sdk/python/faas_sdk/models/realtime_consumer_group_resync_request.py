@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupResyncRequest")
 
 @_attrs_define
 class RealtimeConsumerGroupResyncRequest:
+    """Realtime Consumer Group Resync Request."""
+
     expected_sequence: str
     after_sequence: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterPreview")
 
 @_attrs_define
 class RealtimeDeadLetterPreview:
+    """Realtime Dead Letter Preview."""
+
     group_id: UUID
     items: list[RealtimeDeadLetterPreviewItem]
     has_more: bool

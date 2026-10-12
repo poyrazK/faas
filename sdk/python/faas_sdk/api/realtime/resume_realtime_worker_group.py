@@ -80,7 +80,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[Problem | RealtimeConsumerGroupPauseState]:
-    """Resume new consumer-group claims
+    """Resume new consumer-group claims using scoped worker credentials
 
      Requires the explicit resume worker permission, rechecked in the group transaction. Idempotent group
     control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
@@ -114,7 +114,7 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> Problem | RealtimeConsumerGroupPauseState | None:
-    """Resume new consumer-group claims
+    """Resume new consumer-group claims using scoped worker credentials
 
      Requires the explicit resume worker permission, rechecked in the group transaction. Idempotent group
     control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
@@ -143,7 +143,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[Problem | RealtimeConsumerGroupPauseState]:
-    """Resume new consumer-group claims
+    """Resume new consumer-group claims using scoped worker credentials
 
      Requires the explicit resume worker permission, rechecked in the group transaction. Idempotent group
     control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
@@ -175,7 +175,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> Problem | RealtimeConsumerGroupPauseState | None:
-    """Resume new consumer-group claims
+    """Resume new consumer-group claims using scoped worker credentials
 
      Requires the explicit resume worker permission, rechecked in the group transaction. Idempotent group
     control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and

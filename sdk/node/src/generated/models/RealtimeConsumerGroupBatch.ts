@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupClaim } from './RealtimeConsumerGroupClaim.js';
+/**
+ * Realtime Consumer Group Batch.
+ */
 export type RealtimeConsumerGroupBatch = {
   /**
    * A new event ID encountered the 4096-key bound; its source cursor is unchanged. Partial claims may be present. Existing snapshots bypass deduplication and remain claimable. Wait using retry_after_milliseconds before assigning new IDs.
@@ -16,7 +19,7 @@ export type RealtimeConsumerGroupBatch = {
   history_unavailable: boolean;
   capacity_blocked: boolean;
   /**
-   * New claims are paused; existing leases remain valid.
+   * this realtime operation. New claims are paused; existing leases remain valid.
    */
   paused: boolean;
   /**

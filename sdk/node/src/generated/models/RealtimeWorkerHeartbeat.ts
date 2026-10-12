@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Worker Heartbeat.
+ */
 export type RealtimeWorkerHeartbeat = {
   id: string;
   worker: string;

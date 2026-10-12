@@ -16,22 +16,43 @@ type dataAPIRefreshVerification struct {
 	paused bool
 }
 type dataAPISyncCoordination struct {
-	Pause         dataAPISyncCommand `json:"pause"`
-	Resume        dataAPISyncCommand `json:"resume"`
-	Authorization dataAPISyncCommand `json:"authorization"`
-	Baseline      string             `json:"baseline"`
-	Approval      string             `json:"approval,omitempty"`
-	TokenEnv      string             `json:"token_env,omitempty"`
-	token         string
-	baseline      dataAPIContract
-	approval      *dataAPIApproval
-	recoveryOnly  bool
+	SetupCheck          *dataAPISyncCommand        `json:"setup_check,omitempty"`
+	Pause               dataAPISyncCommand         `json:"pause"`
+	Resume              dataAPISyncCommand         `json:"resume"`
+	Authorization       dataAPISyncCommand         `json:"authorization,omitempty"`
+	AuthorizationReplay *dataAPIHostedReplayConfig `json:"authorization_replay,omitempty"`
+	Baseline            string                     `json:"baseline"`
+	Approval            string                     `json:"approval,omitempty"`
+	TokenEnv            string                     `json:"token_env,omitempty"`
+	token               string
+	baseline            dataAPIContract
+	approval            *dataAPIApproval
+	recoveryOnly        bool
 }
 
 func prepareDataAPICoordination(base string, c *dataAPISyncCoordination) error {
-	for _, step := range []*dataAPISyncCommand{&c.Pause, &c.Resume, &c.Authorization} {
+	steps := []*dataAPISyncCommand{&c.Pause, &c.Resume}
+	if c.AuthorizationReplay != nil {
+		if c.AuthorizationReplay.RefreshTokenEnv != "" && c.AuthorizationReplay.RefreshTokenEnv != "GREGALE_DATA_API_REFRESH_TOKEN" {
+			return errors.New("authorization_replay uses the coordinator token_env; omit refresh_token_env")
+		}
+		if len(c.Authorization.Command) > 0 || c.Authorization.Directory != "" {
+			return errors.New("choose authorization or authorization_replay, not both")
+		}
+		if err := prepareDataAPIHostedReplay(base, c.AuthorizationReplay, c.TokenEnv); err != nil {
+			return err
+		}
+	} else {
+		steps = append(steps, &c.Authorization)
+	}
+	for _, step := range steps {
 		if err := prepareDataAPISyncCommand(base, step); err != nil {
 			return fmt.Errorf("coordination command: %w", err)
+		}
+	}
+	if c.SetupCheck != nil {
+		if err := prepareDataAPISyncCommand(base, c.SetupCheck); err != nil {
+			return fmt.Errorf("coordination setup_check: %w", err)
 		}
 	}
 	if c.Baseline == "" {
@@ -76,6 +97,32 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 	}
 	env := map[string]string{"GREGALE_DATA_API_REFRESH_TOKEN": c.token}
 	paused := &dataAPIRefreshVerification{token: c.token, paused: true}
+	if config.checkOnly && c.SetupCheck == nil {
+		return receipt, errors.New("--check requires coordination.setup_check; configure the read-only refresh.mjs check command")
+	}
+	// Validate runtime support and pause ownership before invoking any owner command.
+	expected := c.baseline.Fingerprint
+	if c.recoveryOnly {
+		expected = ""
+	}
+	if err := verifyDataAPIServingContract(ctx, healthURL, config.accessToken, expected, &dataAPIRefreshVerification{token: c.token, paused: c.recoveryOnly}); err != nil {
+		return receipt, err
+	}
+
+	if c.recoveryOnly {
+		receipt.RefreshPaused = true
+	}
+	if c.SetupCheck != nil {
+		dataAPISyncProgress("Checking owner privileges and refresh barrier installation")
+		if err := runDataAPISyncCommandEnv(ctx, *c.SetupCheck, env); err != nil {
+			return receipt, fmt.Errorf("refresh setup check: %w", err)
+		}
+	}
+	if c.AuthorizationReplay != nil {
+		if err := runDataAPIHostedReplay(ctx, c.AuthorizationReplay, healthURL, "", true, true, env); err != nil {
+			return receipt, fmt.Errorf("authorization replay preflight: %w", err)
+		}
+	}
 	if !c.recoveryOnly {
 		task, err := generateDataAPIContract(ctx, client, slug)
 		if err != nil {
@@ -85,8 +132,14 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 		if err != nil || before.Fingerprint != c.baseline.Fingerprint {
 			return receipt, errors.New("live schema differs from coordination baseline; refresh and review the baseline before migrating")
 		}
-		if err := verifyDataAPIServingContract(ctx, healthURL, config.accessToken, c.baseline.Fingerprint); err != nil {
+		if err := verifyDataAPIServingContract(ctx, healthURL, config.accessToken, c.baseline.Fingerprint, &dataAPIRefreshVerification{token: c.token, paused: false}); err != nil {
 			return receipt, err
+		}
+		if config.checkOnly {
+			receipt.Status = "checked"
+			receipt.Fingerprint = c.baseline.Fingerprint
+			receipt.ContractVerified = true
+			return receipt, nil
 		}
 		dataAPISyncProgress("Pausing and draining Data API transactions")
 		if err := runDataAPISyncCommandEnv(ctx, c.Pause, env); err != nil {
@@ -98,6 +151,10 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 		return receipt, err
 	}
 	receipt.RefreshPaused = true
+	if config.checkOnly {
+		receipt.Status = "checked"
+		return receipt, nil
+	}
 	if !c.recoveryOnly {
 		if err := runDataAPISyncCommandEnv(ctx, config.Migrate, env); err != nil {
 			return receipt, fmt.Errorf("migration command: %w", err)
@@ -146,9 +203,19 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 		return receipt, err
 	}
 	env["GREGALE_DATA_API_REFRESH_FINGERPRINT"] = receipt.Fingerprint
-	for _, step := range []dataAPISyncCommand{config.Check, c.Authorization} {
+	checks := []dataAPISyncCommand{config.Check}
+	if c.AuthorizationReplay == nil {
+		checks = append(checks, c.Authorization)
+	}
+	for _, step := range checks {
 		if err := runDataAPISyncCommandEnv(ctx, step, env); err != nil {
 			return receipt, fmt.Errorf("refresh verification command: %w", err)
+		}
+	}
+	if c.AuthorizationReplay != nil {
+		dataAPISyncProgress("Replaying required hosted authorization scenarios")
+		if err := runDataAPIHostedReplay(ctx, c.AuthorizationReplay, healthURL, receipt.Fingerprint, false, true, env); err != nil {
+			return receipt, fmt.Errorf("authorization replay: %w", err)
 		}
 	}
 	// Recheck the exact immutable serving catalog and ownership after application checks.

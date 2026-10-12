@@ -91,20 +91,20 @@ def sync_detailed(
 ) -> Response[Any | RealtimeConsumerGroupCircuitStatus]:
     """Configure consumer group circuit breaker
 
-     Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30
-    seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry
-    does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe
-    at a time; only its success restores admission. Existing leases may settle. Identical policy writes
-    preserve state; changed policy resets closed. Status is observational; reads do not advance
-    cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped
-    worker claims already obey the gate with no new grant.
+     Configure consumer group circuit breaker. Opt-in consecutive processing-failure breaker; default
+    disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries
+    count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown
+    transitions on claims to one fenced probe at a time; only its success restores admission. Existing
+    leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is
+    observational; reads do not advance cooldown. Account ownership and MFA required; reads need read
+    scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupCircuitPolicy):
+        body (RealtimeConsumerGroupCircuitPolicy): Realtime Consumer Group Circuit Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,20 +140,20 @@ def sync(
 ) -> Any | RealtimeConsumerGroupCircuitStatus | None:
     """Configure consumer group circuit breaker
 
-     Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30
-    seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry
-    does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe
-    at a time; only its success restores admission. Existing leases may settle. Identical policy writes
-    preserve state; changed policy resets closed. Status is observational; reads do not advance
-    cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped
-    worker claims already obey the gate with no new grant.
+     Configure consumer group circuit breaker. Opt-in consecutive processing-failure breaker; default
+    disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries
+    count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown
+    transitions on claims to one fenced probe at a time; only its success restores admission. Existing
+    leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is
+    observational; reads do not advance cooldown. Account ownership and MFA required; reads need read
+    scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupCircuitPolicy):
+        body (RealtimeConsumerGroupCircuitPolicy): Realtime Consumer Group Circuit Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,20 +184,20 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeConsumerGroupCircuitStatus]:
     """Configure consumer group circuit breaker
 
-     Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30
-    seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry
-    does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe
-    at a time; only its success restores admission. Existing leases may settle. Identical policy writes
-    preserve state; changed policy resets closed. Status is observational; reads do not advance
-    cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped
-    worker claims already obey the gate with no new grant.
+     Configure consumer group circuit breaker. Opt-in consecutive processing-failure breaker; default
+    disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries
+    count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown
+    transitions on claims to one fenced probe at a time; only its success restores admission. Existing
+    leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is
+    observational; reads do not advance cooldown. Account ownership and MFA required; reads need read
+    scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupCircuitPolicy):
+        body (RealtimeConsumerGroupCircuitPolicy): Realtime Consumer Group Circuit Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -231,20 +231,20 @@ async def asyncio(
 ) -> Any | RealtimeConsumerGroupCircuitStatus | None:
     """Configure consumer group circuit breaker
 
-     Opt-in consecutive processing-failure breaker; default disabled, threshold 5 and cooldown 30
-    seconds. Reported retries/dead failures and lease expiries count; normal delivery-deadline expiry
-    does not. Manual pause/drain retain precedence. Cooldown transitions on claims to one fenced probe
-    at a time; only its success restores admission. Existing leases may settle. Identical policy writes
-    preserve state; changed policy resets closed. Status is observational; reads do not advance
-    cooldown. Account ownership and MFA required; reads need read scope, writes admin scope. Scoped
-    worker claims already obey the gate with no new grant.
+     Configure consumer group circuit breaker. Opt-in consecutive processing-failure breaker; default
+    disabled, threshold 5 and cooldown 30 seconds. Reported retries/dead failures and lease expiries
+    count; normal delivery-deadline expiry does not. Manual pause/drain retain precedence. Cooldown
+    transitions on claims to one fenced probe at a time; only its success restores admission. Existing
+    leases may settle. Identical policy writes preserve state; changed policy resets closed. Status is
+    observational; reads do not advance cooldown. Account ownership and MFA required; reads need read
+    scope, writes admin scope. Scoped worker claims already obey the gate with no new grant.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupCircuitPolicy):
+        body (RealtimeConsumerGroupCircuitPolicy): Realtime Consumer Group Circuit Policy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Channel Webhook Filter.
+ */
 export type RealtimeChannelWebhookFilter = {
   endpoint_id: string;
   channel: string;

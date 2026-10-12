@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Publisher Message Request.
+ */
 export type RealtimePublisherMessageRequest = {
   /**
    * Message lifetime from retained publication; zero disables expiry. Positive credential caps forbid zero or omitted TTL.

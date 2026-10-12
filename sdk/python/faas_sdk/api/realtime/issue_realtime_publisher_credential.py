@@ -100,14 +100,14 @@ def sync_detailed(
 ) -> Response[Problem | RealtimePublisherCredentialIssued]:
     """Issue a channel-scoped publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Issue a channel-scoped publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
-        body (RealtimePublisherCredentialRequest):
+        body (RealtimePublisherCredentialRequest): Realtime Publisher Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,14 +139,14 @@ def sync(
 ) -> Problem | RealtimePublisherCredentialIssued | None:
     """Issue a channel-scoped publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Issue a channel-scoped publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
-        body (RealtimePublisherCredentialRequest):
+        body (RealtimePublisherCredentialRequest): Realtime Publisher Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,14 +173,14 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimePublisherCredentialIssued]:
     """Issue a channel-scoped publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Issue a channel-scoped publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
-        body (RealtimePublisherCredentialRequest):
+        body (RealtimePublisherCredentialRequest): Realtime Publisher Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,14 +210,14 @@ async def asyncio(
 ) -> Problem | RealtimePublisherCredentialIssued | None:
     """Issue a channel-scoped publisher credential
 
-     Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin
-    scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains
-    available when the endpoint or history preview is disabled.
+     Issue a channel-scoped publisher credential. Account/app-scoped publisher credential administration.
+    Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response
+    caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
 
     Args:
         slug (str):
         id (str):
-        body (RealtimePublisherCredentialRequest):
+        body (RealtimePublisherCredentialRequest): Realtime Publisher Credential Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

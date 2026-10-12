@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedRealtimeBatchMessageRequest } from './ManagedRealtimeBatchMessageRequest.js';
 /**
  * Atomic batch of retained channel messages with an optional sequence precondition.
  */
@@ -15,14 +16,6 @@ export type ManagedRealtimeChannelBatchRequest = {
    */
   expected_sequence?: number | null;
   batch_id: string;
-  messages: Array<{
-    /**
-     * Override the batch TTL; omitted or null inherits the default and zero disables expiry for this message.
-     */
-    ttl_seconds?: number | null;
-    data_base64: string;
-    metadata?: Record<string, string>;
-    binary?: boolean;
-  }>;
+  messages: Array<ManagedRealtimeBatchMessageRequest>;
 };
 

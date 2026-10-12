@@ -47,7 +47,7 @@ func (s *server) promoteDeploymentWithBindingPolicy(w http.ResponseWriter, r *ht
 	}
 	s.emitBindingPromotion(r, acct, app, result, report)
 	writeJSON(w, http.StatusOK, api.BindingPromotionResponse{
-		Deployment: s.deploymentResponse(result.Deployment, app), FromPercent: result.FromPercent,
+		Deployment: s.deploymentResponse(ctx, result.Deployment, app), FromPercent: result.FromPercent,
 		ToPercent: 100, AlreadyPromoted: result.FromPercent == 100, BindingsCheck: &report,
 	})
 }

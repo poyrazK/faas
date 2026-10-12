@@ -42,6 +42,9 @@ class CreateDeploymentFilesBody:
     """Optional lowercase hexadecimal Git commit identifier for deployment provenance."""
     workflows: str | Unset = UNSET
     """JSON array of workflow definitions (plan-gated)."""
+    override_env: str | Unset = UNSET
+    """JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
+    plan's deployment override limits."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +74,8 @@ class CreateDeploymentFilesBody:
 
         workflows = self.workflows
 
+        override_env = self.override_env
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -94,6 +99,8 @@ class CreateDeploymentFilesBody:
             field_dict["commit_sha"] = commit_sha
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if override_env is not UNSET:
+            field_dict["override_env"] = override_env
 
         return field_dict
 
@@ -129,6 +136,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.workflows, Unset):
             files.append(("workflows", (None, str(self.workflows).encode(), "text/plain")))
+
+        if not isinstance(self.override_env, Unset):
+            files.append(("override_env", (None, str(self.override_env).encode(), "text/plain")))
 
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
@@ -173,6 +183,8 @@ class CreateDeploymentFilesBody:
 
         workflows = d.pop("workflows", UNSET)
 
+        override_env = d.pop("override_env", UNSET)
+
         create_deployment_files_body = cls(
             source=source,
             dockerfile=dockerfile,
@@ -184,6 +196,7 @@ class CreateDeploymentFilesBody:
             source_url=source_url,
             commit_sha=commit_sha,
             workflows=workflows,
+            override_env=override_env,
         )
 
         create_deployment_files_body.additional_properties = d

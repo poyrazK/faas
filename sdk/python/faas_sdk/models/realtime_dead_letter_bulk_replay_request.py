@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterBulkReplayRequest")
 
 @_attrs_define
 class RealtimeDeadLetterBulkReplayRequest:
+    """Realtime Dead Letter Bulk Replay Request."""
+
     group_id: UUID
     items: list[RealtimeDeadLetterReplaySelection]
     """Unique sequences selected explicitly from a preview."""

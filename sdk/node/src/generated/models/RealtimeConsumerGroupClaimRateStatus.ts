@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Claim Rate Status.
+ */
 export type RealtimeConsumerGroupClaimRateStatus = {
   rate_per_second: number;
   burst: number;

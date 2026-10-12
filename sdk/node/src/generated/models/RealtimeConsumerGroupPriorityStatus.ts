@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupPriorityBacklog } from './RealtimeConsumerGroupPriorityBacklog.js';
+/**
+ * Realtime Consumer Group Priority Status.
+ */
 export type RealtimeConsumerGroupPriorityStatus = {
   metadata_key: string;
   fair_turns: 8;

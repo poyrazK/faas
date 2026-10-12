@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeAcknowledgement")
 
 @_attrs_define
 class RealtimeAcknowledgement:
+    """Realtime Acknowledgement."""
+
     checkpoint_sequence: str
     acknowledged_sequence: None | str
     """Latest advancing ACK; null after initialization or reset"""

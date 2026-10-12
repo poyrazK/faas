@@ -9,9 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.managed_realtime_channel_batch_request_messages_item import (
-        ManagedRealtimeChannelBatchRequestMessagesItem,
-    )
+    from ..models.managed_realtime_batch_message_request import ManagedRealtimeBatchMessageRequest
 
 
 T = TypeVar("T", bound="ManagedRealtimeChannelBatchRequest")
@@ -22,7 +20,7 @@ class ManagedRealtimeChannelBatchRequest:
     """Atomic batch of retained channel messages with an optional sequence precondition."""
 
     batch_id: str
-    messages: list[ManagedRealtimeChannelBatchRequestMessagesItem]
+    messages: list[ManagedRealtimeBatchMessageRequest]
     ttl_seconds: int | Unset = 0
     """Default delivery lifetime for all batch messages; zero disables expiry."""
     expected_sequence: int | None | Unset = UNSET
@@ -62,9 +60,7 @@ class ManagedRealtimeChannelBatchRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.managed_realtime_channel_batch_request_messages_item import (
-            ManagedRealtimeChannelBatchRequestMessagesItem,
-        )
+        from ..models.managed_realtime_batch_message_request import ManagedRealtimeBatchMessageRequest
 
         d = dict(src_dict)
         batch_id = d.pop("batch_id")
@@ -72,7 +68,7 @@ class ManagedRealtimeChannelBatchRequest:
         messages = []
         _messages = d.pop("messages")
         for messages_item_data in _messages:
-            messages_item = ManagedRealtimeChannelBatchRequestMessagesItem.from_dict(messages_item_data)
+            messages_item = ManagedRealtimeBatchMessageRequest.from_dict(messages_item_data)
 
             messages.append(messages_item)
 

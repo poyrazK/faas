@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeTicketResponse")
 
 @_attrs_define
 class RealtimeTicketResponse:
+    """Realtime Ticket Response."""
+
     ticket: str
     """Opaque bearer credential returned once; store only in client memory."""
     expires_at: datetime.datetime

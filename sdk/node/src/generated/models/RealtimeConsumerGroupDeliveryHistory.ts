@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupDeliveryHistoryEvent } from './RealtimeConsumerGroupDeliveryHistoryEvent.js';
+/**
+ * Realtime Consumer Group Delivery History.
+ */
 export type RealtimeConsumerGroupDeliveryHistory = {
   events: Array<RealtimeConsumerGroupDeliveryHistoryEvent>;
   has_more: boolean;

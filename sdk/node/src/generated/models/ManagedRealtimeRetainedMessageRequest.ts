@@ -7,7 +7,7 @@
  */
 export type ManagedRealtimeRetainedMessageRequest = {
   /**
-   * Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.
+   * Managed realtime retained message request properties ttl seconds. Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.
    */
   ttl_seconds?: number;
   /**

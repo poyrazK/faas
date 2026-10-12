@@ -17,7 +17,10 @@ T = TypeVar("T", bound="RealtimeConsumerGroupClaim")
 
 @_attrs_define
 class RealtimeConsumerGroupClaim:
+    """Realtime Consumer Group Claim."""
+
     message: RealtimeConsumerGroupMessage
+    """Realtime Consumer Group Message."""
     worker: str
     attempt: int
     claim_token: str

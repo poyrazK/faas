@@ -16,7 +16,7 @@ import (
 func (s *server) renderRealtimeReplayJobAction(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, api.RealtimeConsumerGroupBulkReplayBodyMaxBytes)

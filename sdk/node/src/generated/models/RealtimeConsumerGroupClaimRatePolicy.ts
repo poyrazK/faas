@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Claim Rate Policy.
+ */
 export type RealtimeConsumerGroupClaimRatePolicy = {
   /**
    * Zero disables claim throttling.

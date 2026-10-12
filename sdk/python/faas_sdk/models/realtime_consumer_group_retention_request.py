@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupRetentionRequest")
 
 @_attrs_define
 class RealtimeConsumerGroupRetentionRequest:
+    """Realtime Consumer Group Retention Request."""
+
     retention_seconds: int
     """Zero disables cleanup; otherwise 3600 to 2592000. Ordered groups require skip."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

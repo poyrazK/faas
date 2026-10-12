@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupRetryStatus")
 
 @_attrs_define
 class RealtimeConsumerGroupRetryStatus:
+    """Realtime Consumer Group Retry Status."""
+
     enabled: bool
     base_delay_seconds: int
     max_delay_seconds: int

@@ -1128,6 +1128,9 @@ const (
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
+	// from the final workers for an outstanding MCP task handler version.
+	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1588,6 +1591,12 @@ const (
 	CodeAppRuntimeOOM          = "app_runtime_oom"
 	CodeDepInstallFailed       = "dep_install_failed"
 	CodeAppStartupTimeout      = "app_startup_timeout"
+	// CodeAppStartupCrash means the customer's workload exited before it
+	// became ready: guest-init's supervisor reported its restarts or crash
+	// loop, or the characterization report carried a non-zero startup exit.
+	// Distinct from app_startup_timeout (still running, never ready) and
+	// app_not_listening (running, nothing bound).
+	CodeAppStartupCrash = "app_startup_crash"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -1992,7 +2001,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2080,6 +2089,7 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
+		CodeAppStartupCrash,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -5241,6 +5251,16 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		"Canary rollout controls traffic",
 		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
 		WithDocs(docsBase + "/deployments#canary")
+}
+
+// ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
+// operators can see which task handler version blocks promotion.
+func ErrMCPTaskCompatibilityGate(detail string) *Problem {
+	detail = strings.TrimPrefix(detail, "state: ")
+	return NewProblem(http.StatusConflict, CodeMCPTaskCompatibilityGate,
+		"MCP task handler compatibility blocks promotion",
+		detail+" Refresh the observer report or use --mcp-task-migration-override if dropping those tasks is intentional.").
+		WithDocs(docsBase + "/mcp#mcp-tasks")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring

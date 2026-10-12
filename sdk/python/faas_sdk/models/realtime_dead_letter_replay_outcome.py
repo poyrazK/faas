@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterReplayOutcome")
 
 @_attrs_define
 class RealtimeDeadLetterReplayOutcome:
+    """Realtime Dead Letter Replay Outcome."""
+
     sequence: str
     status: RealtimeDeadLetterReplayOutcomeStatus
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

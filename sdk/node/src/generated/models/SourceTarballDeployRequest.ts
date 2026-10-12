@@ -60,5 +60,9 @@ export type SourceTarballDeployRequest = {
    * Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;
+  /**
+   * One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler versions it does not provide.
+   */
+  mcp_task_migration_override?: boolean;
 };
 

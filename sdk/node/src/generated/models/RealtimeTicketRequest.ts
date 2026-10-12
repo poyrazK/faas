@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Ticket Request.
+ */
 export type RealtimeTicketRequest = {
   principal: string;
   channels: Array<string>;

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Ticket Response.
+ */
 export type RealtimeTicketResponse = {
   /**
    * Opaque bearer credential returned once; store only in client memory.

@@ -81,7 +81,7 @@ func (s *Service) waitRealtimeGroupBatch(r *http.Request, ep, ch, group, worker 
 
 // Match escaped path segments so encoded channel/group separators stay within
 // their route parameter and unrelated admin routes retain the default budget.
-func isRealtimeGroupClaimRequest(r *http.Request) bool {
+func IsRealtimeGroupClaimRequest(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
 	}

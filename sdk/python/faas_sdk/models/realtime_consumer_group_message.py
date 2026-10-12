@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupMessage")
 
 @_attrs_define
 class RealtimeConsumerGroupMessage:
+    """Realtime Consumer Group Message."""
+
     sequence: str
     data_base64: str
     binary: bool

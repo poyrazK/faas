@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RealtimeWorkerCredential")
 
 @_attrs_define
 class RealtimeWorkerCredential:
+    """Realtime Worker Credential."""
+
     id: str
     group_id: str
     name: str

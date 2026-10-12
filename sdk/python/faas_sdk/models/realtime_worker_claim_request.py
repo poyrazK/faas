@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeWorkerClaimRequest")
 
 @_attrs_define
 class RealtimeWorkerClaimRequest:
+    """Realtime Worker Claim Request."""
+
     worker: str | Unset = UNSET
     """Optional; if provided, must match the name fixed by the credential."""
     wait_seconds: int | Unset = 0

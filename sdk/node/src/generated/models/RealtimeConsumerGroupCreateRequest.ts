@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeConsumerGroupFilter } from './RealtimeConsumerGroupFilter.js';
+/**
+ * Realtime Consumer Group Create Request.
+ */
 export type RealtimeConsumerGroupCreateRequest = {
   /**
    * Immutable opt-in exact metadata field such as event_id. Empty disables assignment-time deduplication. Missing or empty values process normally. Within the window, the first filter-matching assigned event ID wins even if its snapshot later fails or expires. Retries and explicit dead-letter replay reuse the original snapshot. Store hashes only, at most 4096 live IDs per group; live IDs are never evicted. New IDs wait for capacity while existing snapshots remain claimable.

@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeReplayJobRequest")
 
 @_attrs_define
 class RealtimeReplayJobRequest:
+    """Realtime Replay Job Request."""
+
     rate: int
     failure_codes: list[str] | Unset = UNSET
     after_sequence: str | Unset = "0"

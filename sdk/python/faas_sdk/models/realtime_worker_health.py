@@ -20,6 +20,8 @@ T = TypeVar("T", bound="RealtimeWorkerHealth")
 
 @_attrs_define
 class RealtimeWorkerHealth:
+    """Realtime Worker Health."""
+
     workers: list[RealtimeWorkerHeartbeat]
     live_workers: int
     ready_workers: int

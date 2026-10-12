@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Lag Alert Config.
+ */
 export type RealtimeConsumerGroupLagAlertConfig = {
   enabled: boolean;
   /**

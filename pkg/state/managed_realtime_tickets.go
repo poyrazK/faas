@@ -88,7 +88,7 @@ func (s *PgStore) IssueRealtimeSubscriptionTicket(ctx context.Context, ep, princ
 	if err != nil {
 		return "", ticket, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var locked string
 	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 and enabled for update`, ep).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeDeadLetterReplaySelection } from './RealtimeDeadLetterReplaySelection.js';
+/**
+ * Realtime Dead Letter Bulk Replay Request.
+ */
 export type RealtimeDeadLetterBulkReplayRequest = {
   group_id: string;
   /**

@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeWorkerHeartbeatRequest")
 
 @_attrs_define
 class RealtimeWorkerHeartbeatRequest:
+    """Realtime Worker Heartbeat Request."""
+
     ready: bool
     worker: str | Unset = UNSET
     """Required on account route; optional for scoped workers and must match credential name if supplied. Sharing a

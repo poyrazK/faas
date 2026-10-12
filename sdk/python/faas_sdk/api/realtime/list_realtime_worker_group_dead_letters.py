@@ -87,8 +87,9 @@ def sync_detailed(
 ) -> Response[Problem | list[RealtimeConsumerGroupDeadLetter]]:
     """Read failed payloads using the separate dead_letters permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Read failed payloads using the separate dead_letters permission. Accepts only a group-bound grw_
+    worker credential. Exact permission is checked in the group transaction; group recreation does not
+    restore access.
 
     Args:
         group_id (str):
@@ -119,8 +120,9 @@ def sync(
 ) -> Problem | list[RealtimeConsumerGroupDeadLetter] | None:
     """Read failed payloads using the separate dead_letters permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Read failed payloads using the separate dead_letters permission. Accepts only a group-bound grw_
+    worker credential. Exact permission is checked in the group transaction; group recreation does not
+    restore access.
 
     Args:
         group_id (str):
@@ -146,8 +148,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | list[RealtimeConsumerGroupDeadLetter]]:
     """Read failed payloads using the separate dead_letters permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Read failed payloads using the separate dead_letters permission. Accepts only a group-bound grw_
+    worker credential. Exact permission is checked in the group transaction; group recreation does not
+    restore access.
 
     Args:
         group_id (str):
@@ -176,8 +179,9 @@ async def asyncio(
 ) -> Problem | list[RealtimeConsumerGroupDeadLetter] | None:
     """Read failed payloads using the separate dead_letters permission
 
-     Accepts only a group-bound grw_ worker credential. Exact permission is checked in the group
-    transaction; group recreation does not restore access.
+     Read failed payloads using the separate dead_letters permission. Accepts only a group-bound grw_
+    worker credential. Exact permission is checked in the group transaction; group recreation does not
+    restore access.
 
     Args:
         group_id (str):

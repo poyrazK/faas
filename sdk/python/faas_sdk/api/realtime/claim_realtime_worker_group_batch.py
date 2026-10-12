@@ -95,18 +95,18 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: RealtimeWorkerBatchClaimRequest,
 ) -> Response[Problem | RealtimeConsumerGroupBatch]:
-    """Claim a bounded batch with independent leases
+    """Claim a bounded batch with independent leases using scoped worker credentials
 
-     Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128
-    outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a
-    possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked;
-    process returned claims before resolving the blocker. Empty claims can mean caught up, delayed
-    retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no
-    response caching or automatic claim retries.
+     Claim a bounded batch with independent leases. Claim 1–16 messages in one transaction, bounded by
+    the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and
+    settlement. Always returns 200 with a possibly empty claims array. Partial batches may report
+    history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty
+    claims can mean caught up, delayed retries or full lease slots. Requires the existing claim
+    permission. Tokens are returned once; no response caching or automatic claim retries.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerBatchClaimRequest):
+        body (RealtimeWorkerBatchClaimRequest): Realtime Worker Batch Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,18 +134,18 @@ def sync(
     client: AuthenticatedClient,
     body: RealtimeWorkerBatchClaimRequest,
 ) -> Problem | RealtimeConsumerGroupBatch | None:
-    """Claim a bounded batch with independent leases
+    """Claim a bounded batch with independent leases using scoped worker credentials
 
-     Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128
-    outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a
-    possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked;
-    process returned claims before resolving the blocker. Empty claims can mean caught up, delayed
-    retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no
-    response caching or automatic claim retries.
+     Claim a bounded batch with independent leases. Claim 1–16 messages in one transaction, bounded by
+    the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and
+    settlement. Always returns 200 with a possibly empty claims array. Partial batches may report
+    history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty
+    claims can mean caught up, delayed retries or full lease slots. Requires the existing claim
+    permission. Tokens are returned once; no response caching or automatic claim retries.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerBatchClaimRequest):
+        body (RealtimeWorkerBatchClaimRequest): Realtime Worker Batch Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,18 +168,18 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: RealtimeWorkerBatchClaimRequest,
 ) -> Response[Problem | RealtimeConsumerGroupBatch]:
-    """Claim a bounded batch with independent leases
+    """Claim a bounded batch with independent leases using scoped worker credentials
 
-     Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128
-    outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a
-    possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked;
-    process returned claims before resolving the blocker. Empty claims can mean caught up, delayed
-    retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no
-    response caching or automatic claim retries.
+     Claim a bounded batch with independent leases. Claim 1–16 messages in one transaction, bounded by
+    the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and
+    settlement. Always returns 200 with a possibly empty claims array. Partial batches may report
+    history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty
+    claims can mean caught up, delayed retries or full lease slots. Requires the existing claim
+    permission. Tokens are returned once; no response caching or automatic claim retries.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerBatchClaimRequest):
+        body (RealtimeWorkerBatchClaimRequest): Realtime Worker Batch Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,18 +205,18 @@ async def asyncio(
     client: AuthenticatedClient,
     body: RealtimeWorkerBatchClaimRequest,
 ) -> Problem | RealtimeConsumerGroupBatch | None:
-    """Claim a bounded batch with independent leases
+    """Claim a bounded batch with independent leases using scoped worker credentials
 
-     Claim 1–16 messages in one transaction, bounded by the group-wide 32 active leases and 128
-    outstanding snapshots. Each message has its own token and settlement. Always returns 200 with a
-    possibly empty claims array. Partial batches may report history_unavailable or capacity_blocked;
-    process returned claims before resolving the blocker. Empty claims can mean caught up, delayed
-    retries or full lease slots. Requires the existing claim permission. Tokens are returned once; no
-    response caching or automatic claim retries.
+     Claim a bounded batch with independent leases. Claim 1–16 messages in one transaction, bounded by
+    the group-wide 32 active leases and 128 outstanding snapshots. Each message has its own token and
+    settlement. Always returns 200 with a possibly empty claims array. Partial batches may report
+    history_unavailable or capacity_blocked; process returned claims before resolving the blocker. Empty
+    claims can mean caught up, delayed retries or full lease slots. Requires the existing claim
+    permission. Tokens are returned once; no response caching or automatic claim retries.
 
     Args:
         group_id (str):
-        body (RealtimeWorkerBatchClaimRequest):
+        body (RealtimeWorkerBatchClaimRequest): Realtime Worker Batch Claim Request.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

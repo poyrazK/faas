@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RealtimeWorkerHeartbeat } from './RealtimeWorkerHeartbeat.js';
+/**
+ * Realtime Worker Health.
+ */
 export type RealtimeWorkerHealth = {
   workers: Array<RealtimeWorkerHeartbeat>;
   live_workers: number;

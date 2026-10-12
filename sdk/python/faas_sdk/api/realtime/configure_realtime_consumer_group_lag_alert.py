@@ -93,18 +93,18 @@ def sync_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupLagAlert]:
     """Configure consumer-group lag thresholds
 
-     Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds
-    disable that metric. Enabled policies require at least one nonzero threshold. Observations and
-    signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach
-    reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm
-    without a recovery backfill. Disabled policies do not evaluate.
+     Configure consumer-group lag thresholds. Requires app ownership and MFA; writes require admin scope.
+    One policy per group. Zero thresholds disable that metric. Enabled policies require at least one
+    nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups.
+    Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve
+    observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupLagAlertConfig):
+        body (RealtimeConsumerGroupLagAlertConfig): Realtime Consumer Group Lag Alert Config.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,18 +140,18 @@ def sync(
 ) -> Any | Problem | RealtimeConsumerGroupLagAlert | None:
     """Configure consumer-group lag thresholds
 
-     Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds
-    disable that metric. Enabled policies require at least one nonzero threshold. Observations and
-    signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach
-    reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm
-    without a recovery backfill. Disabled policies do not evaluate.
+     Configure consumer-group lag thresholds. Requires app ownership and MFA; writes require admin scope.
+    One policy per group. Zero thresholds disable that metric. Enabled policies require at least one
+    nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups.
+    Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve
+    observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupLagAlertConfig):
+        body (RealtimeConsumerGroupLagAlertConfig): Realtime Consumer Group Lag Alert Config.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,18 +182,18 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RealtimeConsumerGroupLagAlert]:
     """Configure consumer-group lag thresholds
 
-     Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds
-    disable that metric. Enabled policies require at least one nonzero threshold. Observations and
-    signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach
-    reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm
-    without a recovery backfill. Disabled policies do not evaluate.
+     Configure consumer-group lag thresholds. Requires app ownership and MFA; writes require admin scope.
+    One policy per group. Zero thresholds disable that metric. Enabled policies require at least one
+    nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups.
+    Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve
+    observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupLagAlertConfig):
+        body (RealtimeConsumerGroupLagAlertConfig): Realtime Consumer Group Lag Alert Config.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,18 +227,18 @@ async def asyncio(
 ) -> Any | Problem | RealtimeConsumerGroupLagAlert | None:
     """Configure consumer-group lag thresholds
 
-     Requires app ownership and MFA; writes require admin scope. One policy per group. Zero thresholds
-    disable that metric. Enabled policies require at least one nonzero threshold. Observations and
-    signed webhooks are sampled, including paused/draining groups. Cooldown limits ongoing breach
-    reminders; transitions alert promptly. Identical PUTs preserve observations; changed policies rearm
-    without a recovery backfill. Disabled policies do not evaluate.
+     Configure consumer-group lag thresholds. Requires app ownership and MFA; writes require admin scope.
+    One policy per group. Zero thresholds disable that metric. Enabled policies require at least one
+    nonzero threshold. Observations and signed webhooks are sampled, including paused/draining groups.
+    Cooldown limits ongoing breach reminders; transitions alert promptly. Identical PUTs preserve
+    observations; changed policies rearm without a recovery backfill. Disabled policies do not evaluate.
 
     Args:
         slug (str):
         id (str):
         channel (str):
         group (str):
-        body (RealtimeConsumerGroupLagAlertConfig):
+        body (RealtimeConsumerGroupLagAlertConfig): Realtime Consumer Group Lag Alert Config.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

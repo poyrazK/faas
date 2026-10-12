@@ -77,9 +77,10 @@ def sync_detailed(
 ) -> Response[Any | RealtimeConsumerGroupPauseState]:
     """Resume new consumer-group claims
 
-     Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew,
-    complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop
-    lease clocks or channel retention. Returns paused state and nullable pause timestamp.
+     Resume new consumer-group claims. Requires app ownership, admin scope and MFA. Idempotent group
+    control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
+    retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and
+    nullable pause timestamp.
 
     Args:
         slug (str):
@@ -119,9 +120,10 @@ def sync(
 ) -> Any | RealtimeConsumerGroupPauseState | None:
     """Resume new consumer-group claims
 
-     Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew,
-    complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop
-    lease clocks or channel retention. Returns paused state and nullable pause timestamp.
+     Resume new consumer-group claims. Requires app ownership, admin scope and MFA. Idempotent group
+    control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
+    retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and
+    nullable pause timestamp.
 
     Args:
         slug (str):
@@ -156,9 +158,10 @@ async def asyncio_detailed(
 ) -> Response[Any | RealtimeConsumerGroupPauseState]:
     """Resume new consumer-group claims
 
-     Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew,
-    complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop
-    lease clocks or channel retention. Returns paused state and nullable pause timestamp.
+     Resume new consumer-group claims. Requires app ownership, admin scope and MFA. Idempotent group
+    control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
+    retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and
+    nullable pause timestamp.
 
     Args:
         slug (str):
@@ -196,9 +199,10 @@ async def asyncio(
 ) -> Any | RealtimeConsumerGroupPauseState | None:
     """Resume new consumer-group claims
 
-     Requires app ownership, admin scope and MFA. Idempotent group control. Existing leases may renew,
-    complete or retry. Resume preserves cursor, attempt counts and retry delays. Pause does not stop
-    lease clocks or channel retention. Returns paused state and nullable pause timestamp.
+     Resume new consumer-group claims. Requires app ownership, admin scope and MFA. Idempotent group
+    control. Existing leases may renew, complete or retry. Resume preserves cursor, attempt counts and
+    retry delays. Pause does not stop lease clocks or channel retention. Returns paused state and
+    nullable pause timestamp.
 
     Args:
         slug (str):

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RealtimeWorkerCredentialRequest")
 
 @_attrs_define
 class RealtimeWorkerCredentialRequest:
+    """Realtime Worker Credential Request."""
+
     name: str
     permissions: list[RealtimeWorkerCredentialRequestPermissionsItem]
     ttl_seconds: int | Unset = 86400

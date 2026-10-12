@@ -22,6 +22,8 @@ T = TypeVar("T", bound="RealtimeDeadLetterExportManifest")
 
 @_attrs_define
 class RealtimeDeadLetterExportManifest:
+    """Realtime Dead Letter Export Manifest."""
+
     type_: RealtimeDeadLetterExportManifestType
     format_version: RealtimeDeadLetterExportManifestFormatVersion
     group_id: UUID

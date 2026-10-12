@@ -40,10 +40,11 @@ func (s *Service) setRealtimeWorkerGroupPaused(w http.ResponseWriter, r *http.Re
 	if paused {
 		action = "pause"
 	}
-	r, g, _, ok := s.loadRealtimeWorker(w, r, action)
+	g, _, ok := s.loadRealtimeWorker(w, r, action)
 	if !ok {
 		return
 	}
+	r = r.WithContext(state.WithRealtimeWorkerGrant(r.Context(), g, action))
 	result, ok := s.changeRealtimeGroupPause(w, r, g.EndpointID, g.Channel, g.Group, paused)
 	if !ok {
 		return

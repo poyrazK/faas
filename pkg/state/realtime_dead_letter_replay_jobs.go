@@ -63,11 +63,12 @@ func replayJobView(row q.ManagedRealtimeReplayJob) (RealtimeReplayJob, error) {
 	}
 	result.Selected = len(items)
 	for _, outcome := range result.Outcomes {
-		if outcome.Status == "replayed" {
+		switch outcome.Status {
+		case "replayed":
 			result.Replayed++
-		} else if outcome.Status == "eligible" {
+		case "eligible":
 			result.Eligible++
-		} else {
+		default:
 			result.Skipped++
 		}
 	}
@@ -92,7 +93,7 @@ func (s *PgStore) CreateRealtimeReplayJob(ctx context.Context, ep, ch, name stri
 	if err != nil {
 		return RealtimeReplayJob{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := q.New()
 	gid := replayJobUUID(g.id)
 	count, err := queries.CountActiveReplayJobs(ctx, tx, gid)
@@ -142,7 +143,7 @@ func (s *PgStore) ListRealtimeReplayJobs(ctx context.Context, ep, ch, name strin
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := q.New().ListReplayJobs(ctx, tx, q.ListReplayJobsParams{GroupID: replayJobUUID(g.id), RowLimit: api.RealtimeReplayJobListMax})
 	if err != nil {
 		return nil, err
@@ -173,7 +174,7 @@ func (s *PgStore) ControlRealtimeReplayJob(ctx context.Context, ep, ch, name, id
 	if err != nil {
 		return RealtimeReplayJob{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := q.New()
 	row, err := queries.ReadReplayJob(ctx, tx, q.ReadReplayJobParams{GroupID: replayJobUUID(g.id), ID: replayJobUUID(id)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -226,7 +227,7 @@ func (s *PgStore) runRealtimeReplayJob(ctx context.Context, candidate q.DueRepla
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if replayJobUUID(g.id) != candidate.GroupID {
 		return nil
 	}

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Realtime Consumer Group Message.
+ */
 export type RealtimeConsumerGroupMessage = {
   sequence: string;
   data_base64: string;

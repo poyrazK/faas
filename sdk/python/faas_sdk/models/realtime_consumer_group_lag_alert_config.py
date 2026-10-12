@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RealtimeConsumerGroupLagAlertConfig")
 
 @_attrs_define
 class RealtimeConsumerGroupLagAlertConfig:
+    """Realtime Consumer Group Lag Alert Config."""
+
     enabled: bool
     unassigned_threshold: str | Unset = "0"
     """0 disables backlog threshold; maximum 1000000000."""

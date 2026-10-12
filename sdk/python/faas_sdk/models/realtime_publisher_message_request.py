@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RealtimePublisherMessageRequest")
 
 @_attrs_define
 class RealtimePublisherMessageRequest:
+    """Realtime Publisher Message Request."""
+
     event_type: str
     data_base64: str
     ttl_seconds: int | Unset = 0

@@ -107,7 +107,7 @@ func (s *PgStore) ChangeManagedRealtimeAccess(ctx context.Context, ep, principal
 	if err != nil {
 		return ManagedRealtimeAccess{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var endpoint string
 	if err = tx.QueryRow(ctx, `SELECT id FROM managed_realtime_endpoints WHERE id=$1 AND auth_mode='oidc_jwt' FOR UPDATE`, ep).Scan(&endpoint); err != nil {
 		return ManagedRealtimeAccess{}, mapErr(err)
