@@ -816,18 +816,19 @@ type Manager struct {
 	// ADR-472: observed restart survivors have no reconstructed lifecycle
 	// owner. Their slots and IDs stay quarantined; they are never live-map
 	// entries, cleanup identities or permission to replay a failure report.
-	restartQuarantine     map[string]struct{}
-	restartInventoryDone  bool
-	resourceJournal       *ResourceJournal
-	resourceLinks         map[string]ownedResourceLink
-	linkProbe             func(string, int) (*resourceLinkIdentity, error)
-	linkContext           func() (*resourceMountIdentity, error)
-	linkDelete            func(int) error
-	resourceNetworks      map[string]resourceAsset             // observed by this running owner only
-	namespaceProbe        func(string) (*resourceAsset, error) // tests inject kernel observations
-	namespaceContext      func() (*resourceMountIdentity, error)
-	processGenerations    map[string]uint64
-	nextProcessGeneration uint64
+	restartQuarantine          map[string]struct{}
+	restartInventoryDone       bool
+	resourceJournal            *ResourceJournal
+	resourceLinks              map[string]ownedResourceLink
+	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
+	linkContext                func() (*resourceMountIdentity, error)
+	linkDelete                 func(int) error
+	resourceNetworks           map[string]resourceAsset             // observed by this running owner only
+	namespaceProbe             func(string) (*resourceAsset, error) // tests inject kernel observations
+	namespaceContext           func() (*resourceMountIdentity, error)
+	processGenerations         map[string]uint64
+	nextProcessGeneration      uint64
+	managedPostgresDrainNodeID string // configured local compute identity, before serving
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -5793,6 +5794,11 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		return flight.exitCode, flight.err
 	}
 	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, err) }()
+	return m.destroyWithReservation(ctx, context.WithoutCancel(ctx), instance, exportDir)
+}
+
+// The caller retains the teardown reservation through all physical checks.
+func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instance, exportDir string) (exitCode int, err error) {
 	joinedOperation := m.hasInstanceOperation(instance)
 	if err = m.joinForTeardown(ctx, instance); err != nil {
 		return 0, err
@@ -5809,7 +5815,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
-	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
 	}

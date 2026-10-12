@@ -59,6 +59,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"managed_postgres_creation_receipts":                 CloneSchemaIdentity,
 		"managed_postgres_accounting_reconciliations":        CloneSchemaIdentity,
 		"managed_postgres_resizes":                           CloneSchemaOperational,
+		"managed_postgres_cutover_drains":                    CloneSchemaOperational,
 		"object_bucket_versioning":                           CloneSchemaConfiguration,
 		"object_s3_copy_source_grants":                       CloneSchemaConfiguration,
 		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,

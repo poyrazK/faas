@@ -1333,18 +1333,22 @@ type CommitBlockedEvent struct {
 }
 
 type CommitReceipt struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	SourceID       pgtype.UUID
-	EventID        pgtype.UUID
-	EventType      string
-	Payload        []byte
-	InvocationID   pgtype.UUID
-	OperationState string
-	CompletedAt    pgtype.Timestamptz
-	AcceptedAt     pgtype.Timestamptz
-	OperationID    pgtype.UUID
-	Routing        []byte
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	SourceID                pgtype.UUID
+	EventID                 pgtype.UUID
+	EventType               string
+	Payload                 []byte
+	InvocationID            pgtype.UUID
+	OperationState          string
+	CompletedAt             pgtype.Timestamptz
+	AcceptedAt              pgtype.Timestamptz
+	OperationID             pgtype.UUID
+	Routing                 []byte
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+	SchemaVersion           string
 }
 
 type CommitReplayRequest struct {
@@ -1373,6 +1377,7 @@ type CommitSource struct {
 	OperationPolicy      pgtype.Text
 	ContractVersion      int32
 	AllowTenantSelection bool
+	Destination          string
 }
 
 type ComputeNode struct {
@@ -2812,6 +2817,47 @@ type EventDeliverySlot struct {
 	AccountID      pgtype.UUID
 	AppID          pgtype.UUID
 	SubscriptionID string
+}
+
+type EventExecutionCoverage struct {
+	SubscriptionID      pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	StartedAt           pgtype.Timestamptz
+	BaselineKnown       bool
+	LostAt              pgtype.Timestamptz
+	LossReason          string
+	LedgerStartedAt     pgtype.Timestamptz
+	LedgerBaselineKnown bool
+	LedgerLostThroughAt pgtype.Timestamptz
+}
+
+type EventExecutionOutcome struct {
+	RootInvocationID    pgtype.UUID
+	RootCreatedAt       pgtype.Timestamptz
+	InvocationID        pgtype.UUID
+	ReplayGeneration    int64
+	Attempt             int32
+	Kind                string
+	SubscriptionID      pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	FinishedAt          pgtype.Timestamptz
+	Outcome             string
+	LatencySeconds      float64
+	RetainUntil         pgtype.Timestamptz
+	InvocationCreatedAt pgtype.Timestamptz
+}
+
+type EventExecutionRoot struct {
+	RootInvocationID pgtype.UUID
+	RootCreatedAt    pgtype.Timestamptz
+	SubscriptionID   pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	OutboxID         int64
+	RetentionSeconds int32
 }
 
 type EventFanoutAttemptHistory struct {
@@ -4282,6 +4328,24 @@ type ManagedPostgresCutoverCredential struct {
 	Kid                        pgtype.Text
 	ValueHash                  pgtype.Text
 	VerifiedAt                 pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverDrain struct {
+	ID               pgtype.UUID
+	CutoverID        pgtype.UUID
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	InstanceID       pgtype.UUID
+	NodeID           pgtype.UUID
+	WakeID           pgtype.UUID
+	OwnerNodeID      pgtype.UUID
+	OwnerRevision    int64
+	FencedAt         pgtype.Timestamptz
+	State            string
+	NativeGeneration pgtype.UUID
+	KernelBootID     pgtype.UUID
+	RetiredAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {

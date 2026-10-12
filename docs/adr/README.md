@@ -839,6 +839,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
 
+- [ADR-934: Transactional event consumer SDK](934-transactional-event-consumer-sdk.md)
+
+- [ADR-935: Commit application event publication](935-commit-application-event-publication.md)
+
 - [ADR-944: Isolated durable entity restore validation](944-durable-entity-isolated-restore-validation.md)
 
 - [ADR-945: Durable entity operation observability](945-durable-entity-operation-observability.md)

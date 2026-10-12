@@ -1796,13 +1796,14 @@ Manage transactional PostgreSQL outbox sources (internal)
 
 Register a fixed app destination
 
-`gregale commit add --name <NAME> --operation-policy <NAME> [--contract-version <VERSION>] [--allow-tenant-selection]`
+`gregale commit add --name <NAME> [--destination <DESTINATION>] [--operation-policy <NAME>] [--contract-version <VERSION>] [--allow-tenant-selection]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
-| `--operation-policy <NAME>` | managed Operations queue policy | required |
-| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` |
+| `--destination <DESTINATION>` | immutable destination (default operation) | one of `operation` · `event` |
+| `--operation-policy <NAME>` | required for operation destinations; forbidden for event destinations |  |
+| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` · `3` |
 | `--allow-tenant-selection` | grant version 2 account-owner customer selection |  |
 
 ### commit connection
@@ -1837,6 +1838,98 @@ Read-only source diagnostics and optional local database checks
 |---|---|---|
 | `--file <PATH>` | local TLS PostgreSQL credential file; never uploaded |  |
 
+### commit recovery-alerts
+
+Manage saved historical alerts without polling
+
+`gregale commit recovery-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | saved recovery watch checkpoint |  |
+| `--replay` | emit pending historical alerts as JSON lines |  |
+| `--ack-alerts <PATH>` | atomically acknowledge exact incident_id/sequence entries |  |
+
+### commit recovery-status
+
+Read current delivery evidence for saved recovery attempts
+
+`gregale commit recovery-status [--plan <PATH>] [--result <PATH>] [--resume <PATH>] [--refresh <PATH>] [--watch] [--watch-diagnostics] [--checkpoint <PATH>] [--read-retries <N>] [--diagnostics] [--ack-alerts <PATH>] [--alerts-json] [--stall-threshold <DURATION>] [--max-diagnostic-age <DURATION>] [--max-observation-age <DURATION>] [--interval <DURATION>] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--result <PATH>` | saved apply result JSON |  |
+| `--resume <PATH>` | continue saved status unread items and failed reads |  |
+| `--refresh <PATH>` | reread saved status selection and track changes |  |
+| `--watch` | monitor acknowledged recovery executions |  |
+| `--watch-diagnostics` | watch until complete, fresh diagnostic coverage; enables watch and diagnostics |  |
+| `--checkpoint <PATH>` | atomically save watch progress for restart |  |
+| `--read-retries <N>` | total transient watch read retries (0..20; default 0) |  |
+| `--diagnostics` | include bounded live delivery blocker diagnostics |  |
+| `--ack-alerts <PATH>` | exact alert acknowledgements JSON (requires checkpoint and resume or refresh) |  |
+| `--alerts-json` | watch blocker lifecycle JSON lines on stderr (requires stall-threshold) |  |
+| `--stall-threshold <DURATION>` | persistent blocker alerts (100ms-24h; requires watch, diagnostics and max-diagnostic-age) |  |
+| `--max-diagnostic-age <DURATION>` | diagnostic sample age limit (100ms-24h; requires diagnostics) |  |
+| `--max-observation-age <DURATION>` | watch evidence age limit (100ms-24h; default disabled) |  |
+| `--interval <DURATION>` | watch interval (100ms-1m; default 1s) |  |
+| `--limit <N>` | subscriber observations (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-apply
+
+Apply freshly revalidated reviewed recovery actions
+
+`gregale commit recovery-apply [--plan <PATH>] [--yes] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--yes` | confirm recovery submissions |  |
+| `--limit <N>` | eligible items examined (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-plan
+
+Plan selective recovery from fresh receipt evidence
+
+`gregale commit recovery-plan [--report <PATH>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | saved delivery report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit delivery-report
+
+Sample recent publication subscriber outcomes
+
+`gregale commit delivery-report [--refresh <PATH>] [--resume <PATH>] [--recipient-pages <N>] [--limit <N>] [--before <CURSOR>] [--subscription-id <UUID>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--refresh <PATH>` | reread saved selection with fresh observations |  |
+| `--resume <PATH>` | resume saved report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--limit <N>` | publications per page (1..200; default 50) |  |
+| `--before <CURSOR>` | history next_before cursor |  |
+| `--subscription-id <UUID>` | filter original subscriber |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit history
+
+List retained publication acceptance receipts
+
+`gregale commit history [--before <CURSOR>] [--limit <N>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | next_before continuation cursor |  |
+| `--limit <N>` | receipts per page (1..200; default 50) |  |
+
 ### commit inspect
 
 Inspect event acceptance, retained execution and blocked observations
@@ -1845,10 +1938,11 @@ Inspect event acceptance, retained execution and blocked observations
 
 Wait without cancelling durable work on timeout
 
-`gregale commit wait [--until <STATE>] [--timeout <D>] [--interval <D>]`
+`gregale commit wait [--subscription-id <UUID>] [--until <STATE>] [--timeout <D>] [--interval <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--subscription-id <UUID>` | original application subscriber; requires --until completed |  |
 | `--until <STATE>` | accepted or completed |  |
 | `--timeout <D>` | maximum wait (default 2m) |  |
 | `--interval <D>` | poll interval (default 1s) |  |
@@ -2197,6 +2291,51 @@ Inspect retained consumer executions and handler outcomes
 | Flag | Meaning | |
 |---|---|---|
 | `--window <5m|15m|1h|6h|24h>` | attempt and completion window (default 5m) |  |
+
+### events delivery-health-alerts
+
+Inspect, replay, or acknowledge a local delivery health alert queue
+
+`gregale events delivery-health-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | delivery health checkpoint |  |
+| `--replay` | replay pending JSON lines |  |
+| `--ack-alerts <PATH>` | exact acknowledgements JSON |  |
+
+### events subscription-delivery-health
+
+Inspect routing, retained executions, and oldest pending blockers
+
+`gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
+| `--watch` | watch configured local health thresholds |  |
+| `--alerts-json` | lifecycle alert JSON lines on stderr |  |
+| `--interval <DURATION>` | poll interval (100ms-1m) |  |
+| `--timeout <DURATION>` | watch deadline (up to 24h) |  |
+| `--max-age <DURATION>` | maximum sample age |  |
+| `--oldest-pending-threshold <DURATION>` | pending acceptance age threshold |  |
+| `--retrying-threshold <N>` | retained retrying execution threshold |  |
+| `--dead-letters-threshold <N>` | retained dead-letter execution threshold |  |
+| `--pause-threshold <DURATION>` | subscription pause duration threshold |  |
+| `--circuit-threshold <DURATION>` | locally sampled circuit restriction duration |  |
+| `--capacity-threshold <DURATION>` | locally sampled capacity wait duration |  |
+| `--waiting-reason-count <REASON=N>` | repeatable pending reason count threshold |  |
+| `--waiting-reason-duration <REASON=DURATION>` | repeatable sustained nonzero reason threshold |  |
+| `--checkpoint <PATH>` | persist delivery health watch state |  |
+| `--resume` | resume checkpoint with fresh evidence |  |
+| `--ack-inbox <PATH>` | live acknowledgement JSON batch; requires checkpoint |  |
+| `--slo-routing-latency <DURATION>` | recorded routing p95 target |  |
+| `--slo-completion-latency <DURATION>` | successful completion p95 target |  |
+| `--slo-retry-rate <N>` | routing retries/second target |  |
+| `--slo-dead-letter-rate <N>` | dead letters/second target |  |
+| `--slo-routing-failure-budget <PERCENT>` | terminal routing failure budget |  |
+| `--slo-min-samples <N>` | minimum window samples |  |
+| `--slo-sustain <DURATION>` | sustained fresh breach duration |  |
 
 ### events subscription-health
 
@@ -2562,10 +2701,12 @@ Inspect immutable routing outcomes and replay history for one event
 
 Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries
 
-`gregale events replay [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
+`gregale events replay [--expected-accepted-at <RFC3339>] [--expected-generation <N>] [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--expected-accepted-at <RFC3339>` | guard original acceptance in replay transaction |  |
+| `--expected-generation <N>` | guard routing generation; requires expected-accepted-at |  |
 | `--allow-expired` | explicitly bypass captured delivery age |  |
 | `--event-id <ID>` | published event id | required |
 | `--event-source <SOURCE>` | published event source | required |

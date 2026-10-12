@@ -12,6 +12,10 @@ from ..models.commit_source_response_contract_version import (
     CommitSourceResponseContractVersion,
     check_commit_source_response_contract_version,
 )
+from ..models.commit_source_response_destination import (
+    CommitSourceResponseDestination,
+    check_commit_source_response_destination,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CommitSourceResponse")
@@ -28,12 +32,13 @@ class CommitSourceResponse:
     contract_version: CommitSourceResponseContractVersion
     allow_tenant_selection: bool
     operation_policy: str | Unset = UNSET
-    """Immutable managed Operations policy. Absent only for legacy internal sources."""
+    """Immutable managed Operations policy. Absent for legacy internal sources and event destinations."""
     relay_status: str | Unset = UNSET
     last_checked_at: datetime.datetime | Unset = UNSET
     pending_events: int | Unset = UNSET
     blocked_events: int | Unset = UNSET
     oldest_pending_at: datetime.datetime | Unset = UNSET
+    destination: CommitSourceResponseDestination | Unset = "operation"
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +70,10 @@ class CommitSourceResponse:
         if not isinstance(self.oldest_pending_at, Unset):
             oldest_pending_at = self.oldest_pending_at.isoformat()
 
+        destination: str | Unset = UNSET
+        if not isinstance(self.destination, Unset):
+            destination = self.destination
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,6 +98,8 @@ class CommitSourceResponse:
             field_dict["blocked_events"] = blocked_events
         if oldest_pending_at is not UNSET:
             field_dict["oldest_pending_at"] = oldest_pending_at
+        if destination is not UNSET:
+            field_dict["destination"] = destination
 
         return field_dict
 
@@ -129,6 +140,13 @@ class CommitSourceResponse:
         else:
             oldest_pending_at = datetime.datetime.fromisoformat(_oldest_pending_at)
 
+        _destination = d.pop("destination", UNSET)
+        destination: CommitSourceResponseDestination | Unset
+        if isinstance(_destination, Unset):
+            destination = UNSET
+        else:
+            destination = check_commit_source_response_destination(_destination)
+
         commit_source_response = cls(
             id=id,
             app_id=app_id,
@@ -142,6 +160,7 @@ class CommitSourceResponse:
             pending_events=pending_events,
             blocked_events=blocked_events,
             oldest_pending_at=oldest_pending_at,
+            destination=destination,
         )
 
         commit_source_response.additional_properties = d

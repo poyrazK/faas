@@ -110,6 +110,7 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	AssociateEventExecutionRoot(ctx context.Context, db DBTX, arg AssociateEventExecutionRootParams) (AssociateEventExecutionRootRow, error)
 	AttachProjectEnvironmentCloneDeployment(ctx context.Context, db DBTX, arg AttachProjectEnvironmentCloneDeploymentParams) (int64, error)
 	AuthorizeBindingReleaseTraffic(ctx context.Context, db DBTX, fences []byte) (bool, error)
 	AuthorizeCheckedRollback(ctx context.Context, db DBTX, requestID string) (string, error)
@@ -166,6 +167,8 @@ type Querier interface {
 	// upload_session_already_cancelled.
 	CancelUploadSession(ctx context.Context, db DBTX, arg CancelUploadSessionParams) error
 	CancelWorkflowOutboundAttempts(ctx context.Context, db DBTX, arg CancelWorkflowOutboundAttemptsParams) error
+	CaptureAssociatedEventAttempts(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
+	CaptureAssociatedEventCompletion(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
 	CaptureProjectDependencyTargets(ctx context.Context, db DBTX, arg CaptureProjectDependencyTargetsParams) ([]CaptureProjectDependencyTargetsRow, error)
 	CaptureProjectEnvironmentCloneQueues(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneQueuesParams) (CaptureProjectEnvironmentCloneQueuesRow, error)
 	CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneWorkPoliciesParams) (CaptureProjectEnvironmentCloneWorkPoliciesRow, error)
@@ -256,6 +259,11 @@ type Querier interface {
 	CommitManagedSource(ctx context.Context, db DBTX, arg CommitManagedSourceParams) (CommitManagedSourceRow, error)
 	CommitOperationHistory(ctx context.Context, db DBTX, arg CommitOperationHistoryParams) (CommitOperationHistoryRow, error)
 	CommitPolicyWouldInvalidateSource(ctx context.Context, db DBTX, arg CommitPolicyWouldInvalidateSourceParams) (bool, error)
+	CommitPublicationAcceptance(ctx context.Context, db DBTX, arg CommitPublicationAcceptanceParams) (CommitPublicationAcceptanceRow, error)
+	CommitPublicationReceipt(ctx context.Context, db DBTX, arg CommitPublicationReceiptParams) error
+	CommitPublicationReplay(ctx context.Context, db DBTX, arg CommitPublicationReplayParams) (CommitPublicationReplayRow, error)
+	CommitPublicationSchema(ctx context.Context, db DBTX, arg CommitPublicationSchemaParams) (CommitPublicationSchemaRow, error)
+	CommitPublicationSource(ctx context.Context, db DBTX, arg CommitPublicationSourceParams) (CommitPublicationSourceRow, error)
 	CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error)
 	CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error)
 	CommitSourceForManagedAdmission(ctx context.Context, db DBTX, arg CommitSourceForManagedAdmissionParams) (CommitSourceForManagedAdmissionRow, error)
@@ -636,6 +644,7 @@ type Querier interface {
 	EventCircuitSave(ctx context.Context, db DBTX, arg EventCircuitSaveParams) (int64, error)
 	EventCircuitWindow(ctx context.Context, db DBTX, arg EventCircuitWindowParams) (EventCircuitWindowRow, error)
 	EventConsumerExecutionAttempts(ctx context.Context, db DBTX, arg EventConsumerExecutionAttemptsParams) (EventConsumerExecutionAttemptsRow, error)
+	EventConsumerExecutionCoverage(ctx context.Context, db DBTX, arg EventConsumerExecutionCoverageParams) (EventConsumerExecutionCoverageRow, error)
 	EventConsumerExecutionInvocations(ctx context.Context, db DBTX, arg EventConsumerExecutionInvocationsParams) ([]EventConsumerExecutionInvocationsRow, error)
 	// Admission roots include settled receipts and materialized backfill recipients.
 	EventConsumerExecutionRoots(ctx context.Context, db DBTX, arg EventConsumerExecutionRootsParams) ([]EventConsumerExecutionRootsRow, error)
@@ -646,6 +655,7 @@ type Querier interface {
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
 	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
+	EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg EventExecutionLedgerWindowParams) (EventExecutionLedgerWindowRow, error)
 	EventExecutionRecoveryBoundary(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventExecutionRecoveryCandidates(ctx context.Context, db DBTX, arg EventExecutionRecoveryCandidatesParams) ([]EventExecutionRecoveryCandidatesRow, error)
 	EventExecutionRecoveryReceipt(ctx context.Context, db DBTX, arg EventExecutionRecoveryReceiptParams) (int64, error)
@@ -669,13 +679,17 @@ type Querier interface {
 	EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error)
 	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error)
 	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) (int64, error)
+	EventRecipientBlockerTarget(ctx context.Context, db DBTX, arg EventRecipientBlockerTargetParams) (EventRecipientBlockerTargetRow, error)
+	EventRecipientBlockerWaiting(ctx context.Context, db DBTX, arg EventRecipientBlockerWaitingParams) ([]EventRecipientBlockerWaitingRow, error)
 	EventRecipientClaim(ctx context.Context, db DBTX, arg EventRecipientClaimParams) (EventRecipientClaimRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)
+	EventRecipientGuardedReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientGuardedReplayReceiptParams) (EventRecipientGuardedReplayReceiptRow, error)
 	EventRecipientInitializeReceipt(ctx context.Context, db DBTX, arg EventRecipientInitializeReceiptParams) (int64, error)
 	EventRecipientInsert(ctx context.Context, db DBTX, arg EventRecipientInsertParams) error
 	EventRecipientLockReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error)
 	EventRecipientReplayCandidates(ctx context.Context, db DBTX, arg EventRecipientReplayCandidatesParams) ([]EventRecipientReplayCandidatesRow, error)
+	EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error)
 	EventRecipientReplayHasMore(ctx context.Context, db DBTX, arg EventRecipientReplayHasMoreParams) (bool, error)
 	EventRecipientReplayLegacy(ctx context.Context, db DBTX, arg EventRecipientReplayLegacyParams) (int64, error)
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
@@ -1037,6 +1051,7 @@ type Querier interface {
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
 	GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	GetManagedPostgresDrain(ctx context.Context, db DBTX, id string) (ManagedPostgresCutoverDrain, error)
 	GetManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error)
 	GetManagedPostgresReconciliationLedger(ctx context.Context, db DBTX, arg GetManagedPostgresReconciliationLedgerParams) (GetManagedPostgresReconciliationLedgerRow, error)
@@ -1268,6 +1283,7 @@ type Querier interface {
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
+	InsertManagedPostgresDrain(ctx context.Context, db DBTX, arg InsertManagedPostgresDrainParams) (ManagedPostgresCutoverDrain, error)
 	InsertManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg InsertManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	// ADR-581: only a validated new reservation can prove provider I/O has not begun.
 	InsertManagedPostgresReservation(ctx context.Context, db DBTX, arg InsertManagedPostgresReservationParams) (ManagedPostgresDatabase, error)
@@ -1644,6 +1660,7 @@ type Querier interface {
 	ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error)
 	ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg ListBuildsAwaitingImageParams) ([]ListBuildsAwaitingImageRow, error)
 	ListClonePostgresWriteFences(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ProjectEnvironmentClonePostgresWriteFence, error)
+	ListCommitPublications(ctx context.Context, db DBTX, arg ListCommitPublicationsParams) ([]ListCommitPublicationsRow, error)
 	// CP-1: read heartbeat history for one node, newest first. The
 	// $2 parameter is nullable: passing pgtype.Timestamptz{} (the Go
 	// zero value, mapped to SQL NULL by sqlc) means "no lower bound,
@@ -1837,6 +1854,7 @@ type Querier interface {
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
+	ListPendingManagedPostgresDrains(ctx context.Context, db DBTX, arg ListPendingManagedPostgresDrainsParams) ([]ManagedPostgresCutoverDrain, error)
 	ListPlatformTenantCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesParams) ([][]byte, error)
 	ListPlatformTenantCustomerOperationMilestonesBySubject(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesBySubjectParams) ([][]byte, error)
 	ListPlatformTenantCustomerOperationWorkflowStateHistory(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationWorkflowStateHistoryParams) ([][]byte, error)
@@ -2051,6 +2069,10 @@ type Querier interface {
 	LockManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, databaseIds []string) ([]ManagedPostgresDatabase, error)
 	LockManagedPostgresCutoverForVerification(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverForVerificationParams) (ManagedPostgresCutover, error)
 	LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverLeaseParams) (ManagedPostgresCutover, error)
+	LockManagedPostgresDrainApp(ctx context.Context, db DBTX, appID string) (LockManagedPostgresDrainAppRow, error)
+	LockManagedPostgresDrainInstance(ctx context.Context, db DBTX, instanceID string) (LockManagedPostgresDrainInstanceRow, error)
+	LockManagedPostgresDrainMember(ctx context.Context, db DBTX, id string) (ManagedPostgresCutoverDrain, error)
+	LockManagedPostgresDrainReservation(ctx context.Context, db DBTX, arg LockManagedPostgresDrainReservationParams) (LockManagedPostgresDrainReservationRow, error)
 	// ADR-531: managed PostgreSQL lifecycle reads include the separately pinned
 	// dataset identity. These replace the catalog adapter's dynamic projections.
 	LockManagedPostgresLifecycleAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
@@ -2610,6 +2632,8 @@ type Querier interface {
 	// live; expired patches are never served.
 	PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneDevSourcePatchesParams) (int64, error)
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
+	PruneEventExecutionOutcomes(ctx context.Context, db DBTX, arg PruneEventExecutionOutcomesParams) (int64, error)
+	PruneEventExecutionRoots(ctx context.Context, db DBTX, arg PruneEventExecutionRootsParams) (int64, error)
 	PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error)
 	PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error)
 	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)
@@ -3067,6 +3091,7 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
+	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error
 	ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX, arg ReleaseProductionNamedQueueClaimsParams) error
@@ -3284,6 +3309,7 @@ type Querier interface {
 	SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	SaveManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverCredentialParams) (int64, error)
 	SaveManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverVerificationParams) (int64, error)
+	SaveManagedPostgresDrainProof(ctx context.Context, db DBTX, arg SaveManagedPostgresDrainProofParams) (int64, error)
 	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) error
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
@@ -3367,6 +3393,7 @@ type Querier interface {
 	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error
 	StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error)
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	StopManagedPostgresDrainInstance(ctx context.Context, db DBTX, arg StopManagedPostgresDrainInstanceParams) (int64, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap

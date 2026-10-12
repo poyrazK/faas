@@ -901,6 +901,12 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 		}
 		_, held := holds[work.ID]
 		if work.Delivered && work.DeliveredAt.Before(before) && !held {
+			for _, recipient := range work.RecipientSnapshot {
+				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
+			}
+			for _, recipient := range work.routingRecipients {
+				m.loseSubscriptionExecutionCoverageLocked(recipient.Recipient.ID, "receipt_deleted", time.Now().UTC())
+			}
 			delete(m.eventFanout, key)
 			for receiptKey, receipt := range m.webhookAutomationReceipts {
 				if receipt.outboxID == work.ID {
@@ -1034,19 +1040,34 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context
 	return m.ReplayFailedPublishedEventRecipientWithAgeOverride(ctx, accountID, appID, eventSource, eventID, subscriptionID, false)
 }
 func (m *MemStore) ReplayFailedPublishedEventRecipientWithAgeOverride(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool) error {
+	return m.replayFailedPublishedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID, allowExpired, nil, nil)
+}
+
+func (m *MemStore) replayFailedPublishedEventRecipient(_ context.Context, accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expected *time.Time, generation *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.replayFailedEventRecipientLocked(accountID, appID, eventSource, eventID, subscriptionID, allowExpired, nil)
+	return m.replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID, allowExpired, nil, expected, generation)
 }
+
 func (m *MemStore) replayFailedEventRecipientLocked(accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expectation *api.EventRoutingRecoveryExpectation, observedAt ...time.Time) error {
+	return m.replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID, allowExpired, expectation, nil, nil, observedAt...)
+}
+
+func (m *MemStore) replayFailedEventRecipientWithGuardsLocked(accountID, appID, eventSource, eventID, subscriptionID string, allowExpired bool, expectation *api.EventRoutingRecoveryExpectation, expected *time.Time, generation *int64, observedAt ...time.Time) error {
 	now := time.Now().UTC()
 	if len(observedAt) > 0 {
 		now = observedAt[0]
 	}
-	for _, work := range m.eventFanout {
+	for key, work := range m.eventFanout {
+		if expected != nil && key != canonicalMemUUID(accountID)+"\x00"+eventSource+"\x00"+eventID {
+			continue
+		}
 		var event publishedEventIdentity
 		if json.Unmarshal(work.Payload, &event) != nil || event.ID != eventID || event.Source != eventSource {
 			continue
+		}
+		if expected != nil && !work.CreatedAt.Equal(*expected) {
+			return ErrEventReplayAcceptanceChanged
 		}
 		var replayRecipient PublishedEventRecipient
 		var recipientFound bool
@@ -1059,6 +1080,21 @@ func (m *MemStore) replayFailedEventRecipientLocked(accountID, appID, eventSourc
 		}
 		if !recipientFound {
 			continue
+		}
+		if generation != nil {
+			own := work.routingRecipients[subscriptionID]
+			if !work.RecipientClaims || own == nil {
+				return ErrInvalidArgument
+			}
+			if own.State == "enqueued" {
+				return ErrNotFound
+			}
+			if own.Generation != *generation {
+				return ErrEventReplayGenerationChanged
+			}
+			if own.State != "failed" {
+				return ErrConflict
+			}
 		}
 		if expectation != nil {
 			if err := m.checkEventRecoveryLocked(work, replayRecipient, *expectation); err != nil {
