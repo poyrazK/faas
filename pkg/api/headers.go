@@ -58,6 +58,11 @@ const (
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
 	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	// DeadlineHeader carries the request budget left, in milliseconds, when
+	// the gateway hands a request to the guest (ADR-1150). The function
+	// runner bounds the invocation by it; handlers may read it to stop
+	// early. A customer-supplied value never reaches the guest.
+	DeadlineHeader = "X-Faas-Deadline-Ms"
 	// Workflow step headers identify the run, step and attempt a workflow
 	// step request belongs to (docs/event-driven.md). Only scheduler-authored
 	// workflow invocations carry them to the guest.
