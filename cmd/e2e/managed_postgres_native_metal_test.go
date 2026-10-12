@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/netip"
@@ -17,7 +18,6 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
@@ -37,7 +37,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Fatal("SQL guest acceptance requires root on x86_64 Linux")
 	}
-	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP"} {
+	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP", "GREGALE_POSTGRES_NATIVE_CA_PATH"} {
 		if os.Getenv(required) == "" {
 			t.Fatalf("missing native SQL prerequisite %s", required)
 		}
@@ -80,7 +80,20 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if err := secretbox.WriteRecipientFile(public, identity); err != nil {
 		t.Fatal(err)
 	}
+	hmac := make([]byte, 32)
+	if _, err := rand.Read(hmac); err != nil {
+		t.Fatal(err)
+	}
+	hmacPath := filepath.Join(keys, "host.hmac")
+	if err := os.WriteFile(hmacPath, hmac, 0400); err != nil {
+		t.Fatal(err)
+	}
+	fixture := postgresfixture.New(t, pool, identity, hmac, proxy.Host, proxy.Port)
+	if fixture == nil {
+		t.Fatal("customer SQL fixture missing")
+	}
 	environment := []string{
+		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
 		"FAAS_RELEASE_PHASE_ENABLED=1",
 		"FAAS_APP_TASK_DISPATCH=1",
 		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
@@ -88,6 +101,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + public,
 		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + public,
 	}
+	environment = append(environment, fixture.DaemonEnvironment(t)...)
 	// The daemon harness deliberately inherits a narrow environment. Forward
 	// the isolated scanner configuration explicitly; all scans remain required.
 	for _, name := range []string{"GRYPE_DB_CACHE_DIR", "GRYPE_DB_AUTO_UPDATE"} {
@@ -116,14 +130,6 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	app, err := store.AppByID(t.Context(), appID)
 	if err != nil || len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != proxyCIDR || len(app.EgressPorts) != 1 || app.EgressPorts[0] != 5432 {
 		t.Fatal("public app policy did not persist the isolated SQL destination and port")
-	}
-	hmac, err := os.ReadFile(h.HostHMACKeyPath)
-	if err != nil {
-		t.Fatal("read isolated host signing key")
-	}
-	fixture := postgresfixture.New(t, pool, identity, hmac, proxy.Host, proxy.Port)
-	if fixture == nil {
-		t.Fatal("customer SQL fixture missing")
 	}
 	database, bindings := fixture.Create(t, account, appID)
 	uri := func(binding mp.Binding) string {
@@ -259,6 +265,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			return task.Kind == state.AppTaskKindManual && task.Status == state.AppTaskSucceeded
 		})
 	})
+	workload := func(t *testing.T, binding mp.Binding, method string) { last = probe(t, binding, method) }
 	rotate := func(t *testing.T, parked bool) {
 		t.Helper()
 		old := bindings[mp.CredentialReadWrite]
@@ -266,7 +273,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if !parked {
 			// Manual tasks may outlast the serving guest's idle window. Issue
 			// real SQL immediately before rotating and require a running guest.
-			last = probe(t, old, "")
+			workload(t, old, "")
 		}
 		instances, err := store.ListInstancesForApp(t.Context(), appID)
 		if err != nil {
@@ -280,29 +287,47 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if (!parked && !running) || (parked && (!parkedGuest || running)) {
 			t.Fatal("SQL rotation did not begin in its required guest state")
 		}
-		rotated, err := fixture.Bindings.Rotate(t.Context(), account, old.ID)
+		// Inspect the snapshots eligible immediately before this rotation. An
+		// earlier rotation or failed restore may already have staled the original
+		// capture; checking that original again would not prove invalidation.
+		rows, err := pool.Query(t.Context(), `SELECT id FROM snapshots WHERE deployment_id=$1 AND NOT stale`, deploymentID)
 		if err != nil {
-			t.Fatal("SQL credential rotation failed")
+			t.Fatal(err)
+		}
+		var eligible []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			eligible = append(eligible, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if parked {
+			// Lose the notification before submitting the public intent. Killing
+			// schedd afterward could race with a completed retirement and never
+			// exercise durable replay at all.
+			if err := h.KillSchedd(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body, status := doReq(t, h, key, http.MethodPost, "/v1/postgres/bindings/"+old.ID+"/rotate", nil)
+		var response api.ManagedPostgresBinding
+		if status != http.StatusOK || json.Unmarshal(body, &response) != nil || response.CredentialGeneration != old.CredentialGeneration+1 || !response.RotationPending {
+			t.Fatalf("public SQL rotation failed: status=%d", status)
+		}
+		rotated, err := fixture.Catalog.GetBinding(t.Context(), account, old.ID)
+		if err != nil || rotated.RotationWakeID == "" {
+			t.Fatal("public SQL rotation was not committed")
 		}
 		bindings[mp.CredentialReadWrite] = rotated
-		// Exercise the production rotation's durable restart seam. Provider
-		// management runs in-process; no retirement receipt is fabricated here.
-		if _, err := state.InvalidateAppSnapshotsAtExistingStamp(t.Context(), store, appID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CompareAndSetAppStatus(t.Context(), appID, state.AppActive, state.AppEvictedCold); err != nil {
-			t.Fatal("rotation runtime refresh claim failed")
-		}
-		var stale bool
-		if err := pool.QueryRow(t.Context(), `SELECT stale FROM snapshots WHERE id=$1`, initialSnapshot).Scan(&stale); err != nil || !stale {
-			t.Fatal("rotation left the old SQL credential snapshot eligible")
-		}
-		payload, err := json.Marshal(map[string]string{"app_id": appID, "wake_id": rotated.RotationWakeID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Notify(t.Context(), pool, db.NotifyRuntimeConfigRestart, string(payload)); err != nil {
-			t.Fatal(err)
+		var remaining int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM snapshots WHERE id=ANY($1::uuid[]) AND NOT stale`, eligible).Scan(&remaining); err != nil || remaining != 0 {
+			t.Fatal("public rotation left the old SQL credential snapshot eligible")
 		}
 		if parked {
 			// The durable restart must remain replayable across scheduler loss.
@@ -312,7 +337,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		postgresNativeWait(t, "scheduler rotation retirement", func(ctx context.Context) bool {
 			current, err := fixture.Catalog.GetBinding(ctx, account, old.ID)
-			return err == nil && current.RotationCleanupReady
+			return err == nil && (current.RotationCleanupReady || current.RotationPreviousGeneration == 0)
 		})
 		for _, oldInstance := range instances {
 			if !state.State(oldInstance.State).CountsForRAM() {
@@ -323,13 +348,15 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 				t.Fatal("scheduler retired SQL credential before old guest drained")
 			}
 		}
-		if _, err := fixture.Bindings.ReconcileRotationCleanup(t.Context(), account, old.ID); err != nil {
-			t.Fatal("credential retirement reconciliation failed")
-		}
+		postgresNativeWait(t, "public rotation completion", func(ctx context.Context) bool {
+			body, status := doReq(t, h, key, http.MethodGet, "/v1/postgres/bindings/"+old.ID, nil)
+			var current api.ManagedPostgresBinding
+			return status == http.StatusOK && json.Unmarshal(body, &current) == nil && !current.RotationPending && current.CredentialGeneration == rotated.CredentialGeneration
+		})
 		if fixture.VerifyRevoked(t.Context(), oldURI) != nil {
 			t.Fatal("retired credential still authenticates or SQL is unavailable")
 		}
-		last = probe(t, rotated, "")
+		workload(t, rotated, "")
 	}
 	phase("running_rotation_and_retirement", func(t *testing.T) { rotate(t, false) })
 	phase("pooled_disconnect_recovery", func(t *testing.T) {
@@ -360,6 +387,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		rotate(t, true)
 	})
+	postgresNativeStarterPhases(t, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot)
 	phase("independent_cleanup", func(t *testing.T) { cleanup() })
 }
 

@@ -3,12 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One bounded HTTP request, TCP stream, or new TCP connection fault for matching internal scenario services.
+ * One bounded HTTP request, private-service DNS lookup, TCP stream, or new TCP connection fault for matching scenario workloads.
  */
 export type ScenarioTestChaosRule = {
   from?: string;
   to: string;
-  kind: 'latency' | 'http_status' | 'tcp_latency' | 'tcp_bandwidth' | 'tcp_timeout' | 'tcp_reset' | 'tcp_connect_timeout' | 'tcp_connect_refused';
+  kind: 'latency' | 'http_status' | 'dns_latency' | 'dns_timeout' | 'dns_servfail' | 'dns_nxdomain' | 'tcp_latency' | 'tcp_bandwidth' | 'tcp_timeout' | 'tcp_reset' | 'tcp_connect_timeout' | 'tcp_connect_refused';
   percent: number;
   latency_ms?: number;
   status_code?: number;
