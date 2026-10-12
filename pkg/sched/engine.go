@@ -4949,6 +4949,19 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("cooldown")
 		return nil
 	}
+	// ADR-087's cheap path reassigns parked-only apps, and peer-to-peer
+	// live migration is not implemented (see the hook note below), so an
+	// app with resident instances stays pinned. Re-homing it anyway left
+	// those instances outside the new owner's admission ledger: on
+	// production-us the new owner admitted max_concurrency more on the
+	// peer, cold-booting them, while the old owner's instance still ran
+	// (hunt #9, H9-101: 3 running against max_concurrency 2).
+	if live, err := e.appHasResidentInstances(ctx, app.ID); err != nil {
+		return fmt.Errorf("sched: pressure rebalance: list instances: %w", err)
+	} else if live {
+		e.observePressure("no_eligibility")
+		return nil
+	}
 	// Peer selection — name-ASC sort, deterministic.
 	// Tier A10 / ADR-088: per-app overflow_node preference. If
 	// the customer pinned a spill target, try it first; on
@@ -5082,6 +5095,21 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // observePressure is the per-outcome pressure-rebalancer metric
 // helper. Centralising the nil-safety keeps the call sites
 // single-line.
+// appHasResidentInstances reports whether any instance of appID still holds
+// resident RAM (state.CountsForRAM), wherever it runs.
+func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	for _, ins := range instances {
+		if state.State(ins.State).CountsForRAM() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *Engine) observePressure(outcome string) {
 	if e.ops != nil {
 		e.ops.PressureReassignments(outcome).Inc()

@@ -285,6 +285,39 @@ func TestRebalancePressuredApps_EmitsPressureRebalancedNotify(t *testing.T) {
 	}
 }
 
+// adr: 087 — the cheap path reassigns parked-only apps. Production-us hunt
+// #9 (H9-101): an app under its own max_concurrency was re-homed while its
+// instance still ran on the old owner; the new owner admitted two more on the
+// peer, 3 running against a cap of 2. An app with a resident instance stays
+// pinned until it parks.
+func TestRebalancePressuredApps_KeepsAppsWithResidentInstancesPinned(t *testing.T) {
+	store, ctx, defaultLocal, _ := pressureTestOwners(t)
+	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, defaultLocal.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	notif := &fakeNotifier{}
+	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
+	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
+		t.Fatalf("RebalancePressuredApps: %v", err)
+	}
+	got, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != defaultLocal.ID || got.ReassignedAt != nil {
+		t.Fatalf("app with a running instance moved to %q (reassigned_at %v); it must stay on its owner", got.NodeID, got.ReassignedAt)
+	}
+	if n := countPressureRebalancedNotifies(notif); n != 0 {
+		t.Fatalf("pressure_rebalanced notifies = %d, want 0", n)
+	}
+}
+
 // TestRebalancePressuredApps_PolicySkipLive pins the skip_live
 // policy: the path completes the reassign but does NOT call
 // MigrateLiveInstances (the live-migration shape is the
