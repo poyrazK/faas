@@ -744,6 +744,7 @@ func (r *fakeObjectProvider) MultipartErr() *error { return &r.multipartErr }
 func (r *fakeObjectProvider) MultipartParts() *objectstorage.MultipartPartsPage {
 	return &r.multipartParts
 }
+func (r *fakeObjectProvider) Objects() *map[string][]byte { return &r.objects }
 
 // Members of googleJWKSVerifier
 func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }

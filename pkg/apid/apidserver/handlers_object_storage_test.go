@@ -158,6 +158,7 @@ func TestObjectStorageUnconfiguredUsageFeedBlocksNewBucketsButNotCleanup(t *test
 	}
 	// Idempotent retries and deletion of existing buckets remain available.
 	bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "existing"}, nil), 200)
+	provider.objects = map[string][]byte{}
 	if response := e.do(t, "DELETE", path+"/"+bucket.ID, nil, nil); response.Code != 204 {
 		t.Fatalf("cleanup with missing usage feed = %d %s", response.Code, response.Body.String())
 	}
@@ -206,6 +207,9 @@ func TestObjectStorageLifecycleAndProviderSwitch(t *testing.T) {
 	if r = e.do(t, "DELETE", "/v1/apps/bucket-app", nil, nil); r.Code != 409 {
 		t.Fatal("app orphaned buckets", r.Code)
 	}
+	// The listing shows the bucket empty, so this 409 is the provider's own
+	// refusal (an object written after the check) and the rollback path.
+	a.objects = map[string][]byte{}
 	a.deleteErr = objectstorage.ErrNotEmpty
 	if r = e.do(t, "DELETE", path+"/"+first.ID, nil, nil); r.Code != 409 {
 		t.Fatal(r.Code, r.Body.String())
