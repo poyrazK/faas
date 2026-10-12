@@ -299,6 +299,16 @@ def rpc_response(request_id, result):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
+def protocol_response(value, protocol):
+    if protocol != CURRENT_PROTOCOL or not isinstance(value.get("result"), dict):
+        return value
+    result = dict(value["result"])
+    result.setdefault("resultType", "complete")
+    if any(key in result for key in ("tools", "resources", "resourceTemplates", "prompts", "contents", "supportedVersions")):
+        result.update(ttlMs=0, cacheScope="private")
+    return {**value, "result": result}
+
+
 def rpc_error(request_id, code, message):
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
@@ -924,7 +934,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         })
         if use_sse:
             try:
-                self.write_sse_message(result)
+                self.write_sse_message(protocol_response(result, protocol))
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
             except OSError:
@@ -1393,7 +1403,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         headers = {}
         if protocol:
             headers["MCP-Protocol-Version"] = protocol
-        self.send_json(status, value, headers)
+        self.send_json(status, protocol_response(value, protocol), headers)
 
     def send_json(self, status, value, extra_headers=None):
         body = json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")

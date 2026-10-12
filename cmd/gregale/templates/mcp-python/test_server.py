@@ -26,6 +26,17 @@ class MCPStarterTests(unittest.TestCase):
             headers={"Content-Type":"application/json","Accept":"application/json","MCP-Protocol-Version":"2026-07-28","Mcp-Method":"tools/call","Mcp-Name":name}
             with urlopen(Request(self.base+"/mcp",data=json.dumps(body).encode(),headers=headers),timeout=3) as response:
                 self.assertEqual(response.status,200);self.assertIn(want,response.read().decode())
+    def test_catalog_result_metadata(self):
+        for version in ["2026-07-28", "2025-11-25"]:
+            body={"jsonrpc":"2.0","id":1,"method":"tools/list"}
+            headers={"Content-Type":"application/json","MCP-Protocol-Version":version,"Mcp-Method":"tools/list"}
+            with urlopen(Request(self.base+"/mcp",data=json.dumps(body).encode(),headers=headers),timeout=3) as response:
+                result=json.load(response)["result"]
+            if version=="2026-07-28":
+                self.assertEqual(result["resultType"],"complete")
+                self.assertEqual(result["ttlMs"],0)
+                self.assertEqual(result["cacheScope"],"private")
+            else:self.assertNotIn("resultType",result)
     def test_origin_and_health(self):
         for origin in [None,"https://trusted.example"]:
             with urlopen(Request(self.base+"/healthz",headers={} if origin is None else {"Origin":origin}),timeout=3) as response:

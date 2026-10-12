@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,5 +130,41 @@ func TestCatalogContractPinControlsReadinessAndServing(t *testing.T) {
 		blockedResponse, httptest.NewRequest(http.MethodPost, "/mcp", nil))
 	if blockedResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("mismatched catalog pin served MCP request with status %d", blockedResponse.Code)
+	}
+}
+
+// adr: 426 — the modern client requires complete results and private cache metadata.
+func TestCatalogHTTPProtocolResultMetadata(t *testing.T) {
+	config, err := loadMCPConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := newAuthenticator(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{currentProtocol, legacyProtocol} {
+		req := httptest.NewRequest(http.MethodPost, config.Endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("MCP-Protocol-Version", version)
+		req.Header.Set("Mcp-Method", "tools/list")
+		response := httptest.NewRecorder()
+		handleHTTP(config, auth, nil, response, req)
+		if response.Code != 200 {
+			t.Fatalf("status %d: %s", response.Code, response.Body.String())
+		}
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
+			t.Fatal(err)
+		}
+		if version == currentProtocol {
+			if wire.Result["resultType"] != "complete" || wire.Result["ttlMs"] != float64(0) || wire.Result["cacheScope"] != "private" {
+				t.Fatalf("modern metadata: %#v", wire.Result)
+			}
+		} else if _, ok := wire.Result["resultType"]; ok {
+			t.Fatalf("modern metadata leaked into legacy catalog: %#v", wire.Result)
+		}
 	}
 }

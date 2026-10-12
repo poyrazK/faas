@@ -630,7 +630,7 @@ func streamDemo(w http.ResponseWriter, r *http.Request, id, progressToken json.R
 
 	result := map[string]any{"content": []map[string]string{{"type": "text", "text": "Streaming complete."}}}
 	if stream {
-		_ = writeSSEMessage(w, rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
+		_ = writeSSEMessage(w, rpcResponse{JSONRPC: "2.0", ID: id, Result: protocolResult(w, result)})
 		flusher.Flush()
 		return
 	}
@@ -959,7 +959,33 @@ func validRPCID(raw json.RawMessage) bool {
 }
 
 func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
-	writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
+	writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: protocolResult(w, result)})
+}
+
+// Modern successful results and caller-specific cache metadata are required on the wire.
+func protocolResult(w http.ResponseWriter, result any) any {
+	if w.Header().Get("MCP-Protocol-Version") != currentProtocol {
+		return result
+	}
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return result
+	}
+	wire := make(map[string]any, len(fields)+3)
+	for key, value := range fields {
+		wire[key] = value
+	}
+	if _, ok := wire["resultType"]; !ok {
+		wire["resultType"] = "complete"
+	}
+	for _, key := range []string{"tools", "resources", "resourceTemplates", "prompts", "contents", "supportedVersions"} {
+		if _, ok := wire[key]; ok {
+			wire["ttlMs"] = 0
+			wire["cacheScope"] = "private"
+			break
+		}
+	}
+	return wire
 }
 
 func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string, status int) {
