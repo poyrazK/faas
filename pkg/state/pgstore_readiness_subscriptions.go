@@ -162,7 +162,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 	q := sqlc.New()
 	// Match checklist writers' account-first lock order before locking the subscription.
 	for _, u := range watchUpdates {
-		if u.Playbook != nil {
+		if u.Playbook != nil || u.ResponseWatchID != "" {
 			account, _ := operationUUID(r.Account)
 			if _, err = q.LockCustomerOperationAccount(ctx, tx, account); err != nil {
 				return mapErr(err)
@@ -221,8 +221,16 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		if err = json.Unmarshal(payload, &n); err != nil {
 			return err
 		}
+		refreshed := false
+		if u.ResponseWatchID != "" && n.PlaybookStep != nil && n.PlaybookEvidence != nil {
+			rows, e := readPGPlaybookProgress(ctx, tx, playbookStepResponseIdentity(r, n))
+			if e != nil {
+				return e
+			}
+			n, refreshed = refreshPlaybookStepResponse(n, rows)
+		}
 		updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
-		if !ok {
+		if !ok && !refreshed {
 			continue
 		}
 		payload, err = json.Marshal(updated)

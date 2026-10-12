@@ -3,10 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReadinessAssignmentChange } from './OperationWorkflowReadinessAssignmentChange.js';
+import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
 /**
  * OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
  */
 export type OperationWorkflowPlaybookStepAssignment = {
+  /**
+   * OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain intervening owner changes; incomplete source history prevents fallback.
+   */
+  source_revision?: number;
+  response?: OperationWorkflowReadinessEscalationResponse;
   /**
    * OperationWorkflowPlaybookStepAssignment.progress_id. Exact pinned checklist identity.
    */
@@ -36,7 +42,7 @@ export type OperationWorkflowPlaybookStepAssignment = {
    */
   last_step_owner: string;
   /**
-   * OperationWorkflowPlaybookStepAssignment.manual_owner. Any manual inbox ownership change prevents later checklist synchronization from overwriting it.
+   * OperationWorkflowPlaybookStepAssignment.manual_owner. Manual inbox changes or automatic fallback protect queue ownership from later checklist synchronization.
    */
   manual_owner: boolean;
   /**

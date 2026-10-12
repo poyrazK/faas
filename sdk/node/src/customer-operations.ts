@@ -855,6 +855,6 @@ export interface OperationWorkflowPlaybookOutcomeGuidance { follow_up_assignment
 
 export interface OperationWorkflowPlaybookOutcomeFollowUp { outcome_code: string; observation: OperationWorkflowPlaybookBusinessOutcome; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean }
 
-export interface OperationWorkflowPlaybookStepAssignmentPolicy { label: string; owner: string; complete_after_seconds: number }
+export interface OperationWorkflowPlaybookStepAssignmentPolicy { acknowledge_after_seconds?: number; fallback_owner?: string; label: string; owner: string; complete_after_seconds: number }
 export interface OperationWorkflowPlaybookStepAssignmentReference { outcome_code: string; item_index: number; notification: OperationWorkflowReadinessOutcomeEscalationReference }
-export interface OperationWorkflowPlaybookStepAssignment { progress_id: string; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; due_at: string; last_step_owner: string; manual_owner: boolean; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
+export interface OperationWorkflowPlaybookStepAssignment { source_revision?: number; response?: OperationWorkflowReadinessEscalationResponse; progress_id: string; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; due_at: string; last_step_owner: string; manual_owner: boolean; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }

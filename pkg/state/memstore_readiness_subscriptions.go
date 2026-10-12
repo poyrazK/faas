@@ -176,8 +176,15 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 			if n.Sequence != u.Sequence {
 				continue
 			}
+			refreshed := false
+			if u.ResponseWatchID != "" && n.PlaybookStep != nil && n.PlaybookEvidence != nil {
+				identity := playbookStepResponseIdentity(r, n)
+				if row, exists := data.playbookProgress[n.PlaybookStep.ProgressID]; exists && row.key() == identity.key() {
+					n, refreshed = refreshPlaybookStepResponse(n, []api.OperationWorkflowPlaybookProgress{row.Progress})
+				}
+			}
 			updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
-			if ok {
+			if ok || refreshed {
 				data.readinessInbox[r.Subscription.ID][i] = updated
 				if n.BusinessOutcomeWatch != nil && n.BusinessOutcomeWatch.Escalation != nil {
 					for j, target := range data.readinessInbox[r.Subscription.ID] {

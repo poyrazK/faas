@@ -55,11 +55,17 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 	copied.Status, copied.DeadlineNotifiedAt = "deadline_missed", &now
 	n = withEscalationResponse(n, &copied)
 	reassigned := false
-	if copied.FallbackOwner != "" && n.Coordination.Owner == copied.InitialOwner && len(copied.History) == 0 && !copied.HistoryTruncated && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
+	if copied.FallbackOwner != "" && copied.FallbackOwner != copied.InitialOwner && n.Coordination.Owner == copied.InitialOwner && len(copied.History) == 0 && !copied.HistoryTruncated && n.Coordination.Revision < api.OperationWorkflowReadinessCoordinationRevisionMax {
 		c := *n.Coordination
 		c.Owner, c.UpdatedBy, c.UpdatedAt = copied.FallbackOwner, "system:escalation_response", now
 		c.Revision++
 		appendReadinessAssignment(&copied, api.OperationWorkflowReadinessAssignmentChange{FromOwner: n.Coordination.Owner, ToOwner: c.Owner, At: now, Actor: c.UpdatedBy, Reason: "response_deadline_fallback"})
+		if n.PlaybookStep != nil {
+			step := *n.PlaybookStep
+			step.ManualOwner = true
+			appendPlaybookStepAssignmentHistory(&step, api.OperationWorkflowReadinessAssignmentChange{FromOwner: n.Coordination.Owner, ToOwner: c.Owner, At: now, Actor: c.UpdatedBy, Reason: "response_deadline_fallback"})
+			n.PlaybookStep = &step
+		}
 		n.Coordination = &c
 		reassigned = true
 	}
@@ -105,8 +111,11 @@ func readinessEscalationCoordination(n api.OperationWorkflowReadinessNotificatio
 	return n
 }
 
-// Both escalation families share human response semantics, without inventing a readiness baseline.
+// Assigned steps and both escalation families share response semantics without inventing a readiness baseline.
 func escalationResponse(n api.OperationWorkflowReadinessNotification) (string, *api.OperationWorkflowReadinessEscalationResponse) {
+	if n.PlaybookStep != nil {
+		return n.ID, n.PlaybookStep.Response
+	}
 	if n.PlaybookEscalation != nil {
 		return n.PlaybookEscalation.WatchID, n.PlaybookEscalation.Response
 	}
@@ -120,7 +129,11 @@ func escalationResponseWatchID(n api.OperationWorkflowReadinessNotification) str
 	return id
 }
 func withEscalationResponse(n api.OperationWorkflowReadinessNotification, response *api.OperationWorkflowReadinessEscalationResponse) api.OperationWorkflowReadinessNotification {
-	if n.PlaybookEscalation != nil {
+	if n.PlaybookStep != nil {
+		step := *n.PlaybookStep
+		step.Response = response
+		n.PlaybookStep = &step
+	} else if n.PlaybookEscalation != nil {
 		e := *n.PlaybookEscalation
 		e.Response = response
 		n.PlaybookEscalation = &e

@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowPlaybookStepAssignmentPolicy = {
   /**
+   * OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue delivery; zero disables. Separate from the original step completion deadline.
+   */
+  acknowledge_after_seconds?: number;
+  /**
+   * OperationWorkflowPlaybookStepAssignmentPolicy.fallback_owner. Optional distinct fallback team; requires a positive response window. Assignment changes preserve human ownership history.
+   */
+  fallback_owner?: string;
+  /**
    * OperationWorkflowPlaybookStepAssignmentPolicy.label. Exact unique declared follow-up label.
    */
   label: string;

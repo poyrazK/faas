@@ -85,7 +85,7 @@ func CanonicalOperationWorkflowPlaybooks(input []OperationWorkflowPlaybook) ([]O
 			slices.SortFunc(r.OutcomeGuidance[j].FollowUpAssignments, func(a, b OperationWorkflowPlaybookStepAssignmentPolicy) int { return strings.Compare(a.Label, b.Label) })
 			assigned := map[string]bool{}
 			for _, policy := range guidance.FollowUpAssignments {
-				if !slices.Contains(guidance.FollowUpSteps, policy.Label) || assigned[policy.Label] || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || policy.CompleteAfterSeconds < 1 || policy.CompleteAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds {
+				if policy.AcknowledgeAfterSeconds < 0 || policy.AcknowledgeAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (policy.FallbackOwner != "" && (policy.AcknowledgeAfterSeconds == 0 || policy.FallbackOwner == policy.Owner || !text(policy.FallbackOwner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true))) || !slices.Contains(guidance.FollowUpSteps, policy.Label) || assigned[policy.Label] || !text(policy.Owner, OperationWorkflowReadinessFollowUpOwnerMaxBytes, true) || policy.CompleteAfterSeconds < 1 || policy.CompleteAfterSeconds > OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds {
 					return nil, fmt.Errorf("workflow playbook step assignment is invalid or duplicated")
 				}
 				assigned[policy.Label] = true

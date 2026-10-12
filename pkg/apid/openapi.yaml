@@ -81396,6 +81396,16 @@ components:
       description: OperationWorkflowPlaybookStepAssignmentPolicy. Pinned team and completion window for one declared outcome follow-up step; coordination only.
       required: [label, owner, complete_after_seconds]
       properties:
+        acknowledge_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue delivery; zero disables. Separate from the original step completion deadline.
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowPlaybookStepAssignmentPolicy.fallback_owner. Optional distinct fallback team; requires a positive response window. Assignment changes preserve human ownership history.
         label:
           type: string
           description: OperationWorkflowPlaybookStepAssignmentPolicy.label. Exact unique declared follow-up label.
@@ -81432,6 +81442,13 @@ components:
       description: OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue. Polling preserves manual coordination and bounded ownership history.
       required: [progress_id, outcome_code, item_index, label, status, due_at, last_step_owner, manual_owner, history, history_truncated]
       properties:
+        source_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain intervening owner changes; incomplete source history prevents fallback.
+        response:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponse'
         progress_id:
           type: string
           format: uuid
@@ -81460,7 +81477,7 @@ components:
           description: OperationWorkflowPlaybookStepAssignment.last_step_owner. Latest synchronized checklist assignment, distinct from a manual queue override.
         manual_owner:
           type: boolean
-          description: OperationWorkflowPlaybookStepAssignment.manual_owner. Any manual inbox ownership change prevents later checklist synchronization from overwriting it.
+          description: OperationWorkflowPlaybookStepAssignment.manual_owner. Manual inbox changes or automatic fallback protect queue ownership from later checklist synchronization.
         history:
           type: array
           maxItems: 16

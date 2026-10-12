@@ -361,9 +361,11 @@ type OperationWorkflowPlaybookOutcomeFollowUp struct {
 }
 
 type OperationWorkflowPlaybookStepAssignmentPolicy struct {
-	Label                string `json:"label" yaml:"label" toml:"label"`
-	Owner                string `json:"owner" yaml:"owner" toml:"owner"`
-	CompleteAfterSeconds int64  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
+	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty" yaml:"acknowledge_after_seconds,omitempty" toml:"acknowledge_after_seconds"`
+	FallbackOwner           string `json:"fallback_owner,omitempty" yaml:"fallback_owner,omitempty" toml:"fallback_owner"`
+	Label                   string `json:"label" yaml:"label" toml:"label"`
+	Owner                   string `json:"owner" yaml:"owner" toml:"owner"`
+	CompleteAfterSeconds    int64  `json:"complete_after_seconds" yaml:"complete_after_seconds" toml:"complete_after_seconds"`
 }
 type OperationWorkflowPlaybookStepAssignmentReference struct {
 	OutcomeCode  string                                               `json:"outcome_code"`
@@ -371,14 +373,16 @@ type OperationWorkflowPlaybookStepAssignmentReference struct {
 	Notification OperationWorkflowReadinessOutcomeEscalationReference `json:"notification"`
 }
 type OperationWorkflowPlaybookStepAssignment struct {
-	ProgressID       string                                       `json:"progress_id"`
-	OutcomeCode      string                                       `json:"outcome_code"`
-	ItemIndex        int                                          `json:"item_index"`
-	Label            string                                       `json:"label"`
-	Status           string                                       `json:"status"`
-	DueAt            time.Time                                    `json:"due_at"`
-	LastStepOwner    string                                       `json:"last_step_owner"`
-	ManualOwner      bool                                         `json:"manual_owner"`
-	History          []OperationWorkflowReadinessAssignmentChange `json:"history"`
-	HistoryTruncated bool                                         `json:"history_truncated"`
+	SourceRevision   int64                                         `json:"source_revision,omitempty"`
+	Response         *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
+	ProgressID       string                                        `json:"progress_id"`
+	OutcomeCode      string                                        `json:"outcome_code"`
+	ItemIndex        int                                           `json:"item_index"`
+	Label            string                                        `json:"label"`
+	Status           string                                        `json:"status"`
+	DueAt            time.Time                                     `json:"due_at"`
+	LastStepOwner    string                                        `json:"last_step_owner"`
+	ManualOwner      bool                                          `json:"manual_owner"`
+	History          []OperationWorkflowReadinessAssignmentChange  `json:"history"`
+	HistoryTruncated bool                                          `json:"history_truncated"`
 }
