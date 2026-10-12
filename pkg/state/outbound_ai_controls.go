@@ -40,12 +40,14 @@ type OutboundCredentialKey struct {
 }
 
 // OutboundAIBudgetAlert is one budget threshold outboundd recorded at
-// settlement. AppID is set only for an app budget.
+// settlement. AppID is set only for an app budget, EndUser only for an end
+// user's budget (ADR-995).
 type OutboundAIBudgetAlert struct {
 	ID               string
 	IntegrationID    string
 	Budget           string
 	AppID            string
+	EndUser          string
 	PeriodStart      time.Time
 	ThresholdPercent int32
 	Limit            int64
@@ -70,6 +72,8 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64
 	TTFBMS            *int64
 	Attempts          int
+	// EndUser is empty when the call named no end user (ADR-994).
+	EndUser string
 }
 
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and

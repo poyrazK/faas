@@ -24,5 +24,9 @@ export type OutboundAIRequestLogEntry = {
   duration_ms: number;
   ttfb_ms: number | null;
   attempts: number;
+  /**
+   * The call's X-Gregale-AI-User value (ADR-994).
+   */
+  end_user: string | null;
 };
 

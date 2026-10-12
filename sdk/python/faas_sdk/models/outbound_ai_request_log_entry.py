@@ -36,6 +36,8 @@ class OutboundAIRequestLogEntry:
     duration_ms: int
     ttfb_ms: int | None
     attempts: int
+    end_user: None | str
+    """The call's X-Gregale-AI-User value (ADR-994)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +76,9 @@ class OutboundAIRequestLogEntry:
 
         attempts = self.attempts
 
+        end_user: None | str
+        end_user = self.end_user
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -93,6 +98,7 @@ class OutboundAIRequestLogEntry:
                 "duration_ms": duration_ms,
                 "ttfb_ms": ttfb_ms,
                 "attempts": attempts,
+                "end_user": end_user,
             }
         )
 
@@ -149,6 +155,13 @@ class OutboundAIRequestLogEntry:
 
         attempts = d.pop("attempts")
 
+        def _parse_end_user(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        end_user = _parse_end_user(d.pop("end_user"))
+
         outbound_ai_request_log_entry = cls(
             id=id,
             created_at=created_at,
@@ -165,6 +178,7 @@ class OutboundAIRequestLogEntry:
             duration_ms=duration_ms,
             ttfb_ms=ttfb_ms,
             attempts=attempts,
+            end_user=end_user,
         )
 
         outbound_ai_request_log_entry.additional_properties = d

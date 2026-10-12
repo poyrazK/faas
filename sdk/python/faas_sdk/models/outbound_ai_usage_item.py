@@ -33,7 +33,8 @@ class OutboundAIUsageItem:
     cache_write_tokens: int
     output_tokens: int
     cost_millicents: int | Unset = UNSET
-    """Priced from the list in effect at each call and rounded up per call; zero without a price list."""
+    """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
+    unpriced model."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

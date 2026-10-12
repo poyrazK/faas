@@ -14,5 +14,13 @@ export type PutOutboundAIPolicyRequest = {
    * Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
    */
   request_log_enabled?: boolean;
+  /**
+   * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+   */
+  user_daily_token_limit?: number | null;
+  /**
+   * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+   */
+  user_daily_cost_limit_millicents?: number | null;
 };
 
