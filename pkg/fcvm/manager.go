@@ -5847,6 +5847,25 @@ func (m *Manager) LiveInstances() map[string]*Instance {
 	return out
 }
 
+// AppInstanceIDs returns the ids of the ordinary app VMs this Manager runs.
+// Builder, execution, app-task, qualification, job and warm-pool VMs settle
+// through their own lifecycles and are left out. vmmd's live-VM reap uses it
+// to find VMs that outlived their instance row (production-us hunt #9,
+// H9-171).
+func (m *Manager) AppInstanceIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.live))
+	for id, inst := range m.live {
+		if inst == nil || inst.Lease.IsBuilder || inst.ExecutionOnly || inst.AppTaskOnly ||
+			inst.QualificationOnly || inst.IsJob || inst.Paused {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // LastLivenessDestroyAtForDeployment (issue #554 closure /
 // ADR-078 cooldown gate, code review #725 finding F1) returns the
 // most recent ReportLivenessFailed stamp for the named deployment,

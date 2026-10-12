@@ -59,6 +59,14 @@ const DefaultHeartbeatConcurrency = 32
 // The whole sweep can continue probing other nodes when one transport hangs.
 const DefaultHeartbeatProbeTimeout = 5 * time.Second
 
+// DefaultHeartbeatFailureThreshold is how many consecutive failed pings mark
+// a node unavailable. Marking it fails the node over: the recovery arbiter
+// parks its instances. One ping timing out on a starved control plane did
+// that to both production-us nodes about 22 times in 36 minutes, while their
+// VMs kept running (production-us hunt #9, H9-171). Three probes at the 30 s
+// interval stay inside the 90 s staleness budget peers already use.
+const DefaultHeartbeatFailureThreshold = 3
+
 // HeartbeatGapSummary is re-exported from pkg/state for the same
 // reason: schedd callers use it in the property test
 // (heartbeat_gap_test.go) without importing pkg/state directly.
@@ -127,6 +135,16 @@ type Heartbeat struct {
 	Concurrency int
 	// ProbeTimeout bounds each dial + Ping. Zero uses the default.
 	ProbeTimeout time.Duration
+	// FailureThreshold is how many consecutive failed pings mark a node
+	// unavailable. Zero uses DefaultHeartbeatFailureThreshold.
+	FailureThreshold int
+	// onReachable runs after every successful ping of a node. It must not
+	// block the sweep. Set via WithReachableHook.
+	onReachable func(ctx context.Context, nodeID string)
+
+	// failMu guards failures, the consecutive failed pings per node.
+	failMu   sync.Mutex
+	failures map[string]int
 
 	// recoverMu guards recovering.
 	recoverMu sync.Mutex
@@ -161,6 +179,17 @@ func (h *Heartbeat) WithOwnerNodeID(nodeID string) *Heartbeat {
 		return h
 	}
 	h.ownerNodeID = nodeID
+	return h
+}
+
+// WithReachableHook registers fn to run after every successful ping of a
+// node. cmd/schedd wires the engine's destroy of VMs the recovery arbiter
+// parked while the node looked dead. fn must not block.
+func (h *Heartbeat) WithReachableHook(fn func(ctx context.Context, nodeID string)) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.onReachable = fn
 	return h
 }
 
@@ -502,6 +531,11 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
+		if failures, threshold := h.noteProbeFailure(n.ID), h.failureThreshold(); !wasUnavailable && failures < threshold {
+			h.log.Warn("heartbeat: ping failed; node stays in rotation below the failure threshold",
+				"node_id", n.ID, "node_name", n.Name, "failures", failures, "threshold", threshold, "err", err)
+			return
+		}
 		// A dead node gets flipped unavailable so placement
 		// skips it on the next Wake. We don't fail the
 		// sweep — one bad node must not block the others.
@@ -528,6 +562,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		}
 		return
 	}
+	h.nodeAnswered(ctx, n.ID)
 	// Ping succeeded: stamp last_heartbeat_at, and if the node
 	// was previously unavailable, transition it to `recovering`
 	// (still admitting, but the recovery arbiter now owns the
@@ -661,6 +696,36 @@ func (h *Heartbeat) emitNodeFailed(ctx context.Context, n state.ComputeNode, las
 	})
 }
 
+func (h *Heartbeat) failureThreshold() int {
+	if h.FailureThreshold > 0 {
+		return h.FailureThreshold
+	}
+	return DefaultHeartbeatFailureThreshold
+}
+
+// noteProbeFailure counts a failed ping and returns the node's consecutive
+// failures.
+func (h *Heartbeat) noteProbeFailure(nodeID string) int {
+	h.failMu.Lock()
+	defer h.failMu.Unlock()
+	if h.failures == nil {
+		h.failures = map[string]int{}
+	}
+	h.failures[nodeID]++
+	return h.failures[nodeID]
+}
+
+// nodeAnswered resets the node's failed-ping count and runs the reachable
+// hook.
+func (h *Heartbeat) nodeAnswered(ctx context.Context, nodeID string) {
+	h.failMu.Lock()
+	delete(h.failures, nodeID)
+	h.failMu.Unlock()
+	if h.onReachable != nil {
+		h.onReachable(ctx, nodeID)
+	}
+}
+
 // markRecovering records a node the watchdog just flipped inactive so
 // TickRecover keeps probing it.
 func (h *Heartbeat) markRecovering(n state.ComputeNode) {
@@ -741,6 +806,7 @@ func (h *Heartbeat) TickRecover(ctx context.Context) {
 			// Still down. Keep it in the set and try next tick.
 			continue
 		}
+		h.nodeAnswered(ctx, fresh.ID)
 		var reactivateErr error
 		switch fresh.Lifecycle {
 		case state.NodeLifecycleUnavailable:
