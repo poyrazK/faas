@@ -42,6 +42,7 @@ import (
 	"net/netip"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,7 +143,50 @@ const (
 	cloudflareWorkerZone         = "gregale.dev"
 	edgeOriginalStatusHeader     = "X-Faas-Edge-Original-Status"
 	edgeOrigin504TransportStatus = http.StatusConflict
+	// edgeRestorableHeader lists the statuses the edge Worker can restore
+	// from the 409 transport ("502,504").
+	edgeRestorableHeader = "X-Faas-Edge-Restorable"
 )
+
+// edgeTransportStatus reports whether an origin status must cross the
+// Cloudflare Worker hop as 409 + X-Faas-Edge-Original-Status, because
+// Cloudflare replaces origin 502/504 bodies with its own HTML page before the
+// Worker can see them. 504 is encoded for every Worker subrequest (the
+// original contract). 502 is encoded only when the Worker advertises it, so a
+// Worker that predates it never hands a customer a raw 409. Production-us
+// hunt #9 (H9-96): an app OOM-killed mid-request reached API clients as
+// Cloudflare HTML with no request id.
+func edgeTransportStatus(r *http.Request, status int) bool {
+	if r == nil || !strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone) {
+		return false
+	}
+	switch status {
+	case http.StatusGatewayTimeout:
+		return true
+	case http.StatusBadGateway:
+		for _, value := range strings.Split(r.Header.Get(edgeRestorableHeader), ",") {
+			if strings.TrimSpace(value) == "502" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// edgeTransportWriter applies edgeTransportStatus to a problem the public
+// proxy writes itself (internal round-trip failures).
+type edgeTransportWriter struct {
+	http.ResponseWriter
+	r *http.Request
+}
+
+func (w edgeTransportWriter) WriteHeader(status int) {
+	if edgeTransportStatus(w.r, status) {
+		w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(status))
+		status = edgeOrigin504TransportStatus
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
 
 // WithTrustedIngressCIDRs configures the network peers allowed to supply the
 // canonical X-Forwarded-For and X-Forwarded-Proto values. The slice is copied
@@ -531,7 +575,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			writeForwarderProblem(w, http.StatusServiceUnavailable)
 			return
 		}
-		writeForwarderProblem(w, http.StatusBadGateway)
+		writeForwarderProblem(edgeTransportWriter{ResponseWriter: w, r: r}, http.StatusBadGateway)
 		return
 	}
 	// copyResponseBody owns Body.Close (issue #687: closes it on
@@ -540,8 +584,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
 	// leak that to the customer.
-	encodeOrigin504 := resp.StatusCode == http.StatusGatewayTimeout &&
-		strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone)
+	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
 	replacedStatic := map[string]bool{}
 	for k, vv := range resp.Header {
@@ -648,12 +691,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		w.Header().Del("Content-Length")
 	}
 	responseStatus := resp.StatusCode
-	if encodeOrigin504 {
-		// Cloudflare replaces origin 504 bodies before a Worker can inspect
-		// them. CF-Worker is added to Worker subrequests by Cloudflare, so
-		// carry the response through its origin hop as a non-5xx status. The
-		// edge Worker restores 504 and removes this private marker.
-		w.Header().Set(edgeOriginalStatusHeader, "504")
+	if encodeOriginStatus {
+		// Cloudflare replaces origin 502/504 bodies before a Worker can
+		// inspect them. CF-Worker is added to Worker subrequests by
+		// Cloudflare, so carry the response through its origin hop as a
+		// non-5xx status. The edge Worker restores the status and removes
+		// this private marker.
+		w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 		responseStatus = edgeOrigin504TransportStatus
 	}
 	w.WriteHeader(responseStatus)

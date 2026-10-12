@@ -617,6 +617,64 @@ func TestInternalReverseProxy_Encodes504ForCloudflareWorkerSubrequest(t *testing
 	}
 }
 
+// Production-us hunt #9 (H9-96): an app OOM-killed mid-request gave the
+// gateway's "App connection failed" 502, but Cloudflare replaced it with its
+// HTML page. A 502 rides the Worker hop as 409 + marker only when the Worker
+// advertises it can restore 502; an older Worker still gets the raw 502.
+func TestInternalReverseProxy_Encodes502OnlyForAWorkerThatRestoresIt(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"code":"bad_gateway","status":502}`))
+	}))
+	defer upstream.Close()
+	for _, tc := range []struct {
+		name       string
+		worker     bool
+		restorable string
+		wantStatus int
+		wantMarker string
+	}{
+		{name: "worker advertises 502", worker: true, restorable: "502,504", wantStatus: edgeOrigin504TransportStatus, wantMarker: "502"},
+		{name: "older worker", worker: true, wantStatus: http.StatusBadGateway},
+		{name: "direct request", restorable: "502,504", wantStatus: http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.worker {
+				req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+			}
+			if tc.restorable != "" {
+				req.Header.Set(edgeRestorableHeader, tc.restorable)
+			}
+			rr := httptest.NewRecorder()
+			p.ServeHTTP(rr, req)
+			if rr.Code != tc.wantStatus || rr.Header().Get(edgeOriginalStatusHeader) != tc.wantMarker {
+				t.Fatalf("status = %d marker = %q, want %d %q", rr.Code, rr.Header().Get(edgeOriginalStatusHeader), tc.wantStatus, tc.wantMarker)
+			}
+			if !strings.Contains(rr.Body.String(), "bad_gateway") {
+				t.Fatalf("body = %q, want the problem body", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestInternalReverseProxy_EncodesItsOwn502ForARestoringWorker(t *testing.T) {
+	p := NewInternalReverseProxy(&stubDialer{dialErr: errors.New("connection refused")}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(cloudflareWorkerHeader, cloudflareWorkerZone)
+	req.Header.Set(edgeRestorableHeader, "502,504")
+	rr := httptest.NewRecorder()
+	p.ServeHTTP(rr, req)
+	if rr.Code != edgeOrigin504TransportStatus || rr.Header().Get(edgeOriginalStatusHeader) != "502" {
+		t.Fatalf("status = %d marker = %q, want the 409 transport of 502", rr.Code, rr.Header().Get(edgeOriginalStatusHeader))
+	}
+	if !strings.Contains(rr.Body.String(), api.CodeBadGateway) {
+		t.Fatalf("body = %q, want the App connection failed problem", rr.Body.String())
+	}
+}
+
 func TestInternalReverseProxy_DoesNotTrustApplicationEdgeStatusMarker(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(edgeOriginalStatusHeader, "504")
