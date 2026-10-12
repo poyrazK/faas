@@ -339,6 +339,7 @@
   window.renderReadinessBusinessOutcome(parent,completion.business_outcome,scope,'Business result observed at completion');
   const link=(id,label)=>{if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
   for(const id of completion.evidence_operation_ids || [])link(id,'Completion evidence Operation');
+  if(completion.playbook_outcome){const result=completion.playbook_outcome;text(parent,'Business resolution: '+result.resolution.replace(/_/g,' ')+' · '+result.alignment.replace(/_/g,' '));text(parent,result.explanation);window.renderReadinessBusinessOutcome(parent,result.observation.evidence,scope,'Business evidence captured at closure');}
   const evidence=completion.evidence;
   text(parent,'Evidence at completion: '+evidence.status+' · checked '+new Date(evidence.checked_at).toLocaleString());
   text(parent,evidence.explanation);
@@ -347,17 +348,19 @@
   for(const reason of evidence.remaining_reasons || [])text(parent,'Remaining requirement at completion: '+reason);
   for(const warning of evidence.warnings || [])text(parent,warning);
  };
- window.mountReadinessCompletion = (parent, c, detail, scope, onSaved) => {
+ window.mountReadinessCompletion = (parent, c, detail, scope, onSaved, playbookEscalation) => {
   const container=document.createElement('div');parent.append(container);let watched;
   const render=()=>{
    container.replaceChildren();window.renderReadinessCompletion(container,c.completion,scope);if(watched)window.renderReadinessVerification(container,watched,scope);
    if(!c.follow_up_at || c.completion)return;
    const form=document.createElement('form');container.append(form);
-   text(form,'Complete this follow-up with a recorded outcome. This closes coordination; it does not resolve application blockers. Evidence is checked again when saving.');
+   text(form,playbookEscalation ? 'Record why this playbook escalation is closed. Current application evidence is captured when saving; human resolution and reported business success remain separate.' : 'Complete this follow-up with a recorded outcome. This closes coordination; it does not resolve application blockers. Evidence is checked again when saving.');
    const field=(label,input)=>{const l=document.createElement('label');l.textContent=label;l.append(input);form.append(l);return input;};
    const outcome=field('Completion outcome ',document.createElement('select'));
    for(const [value,label] of [['resolved','Resolved'],['no_longer_applicable','No longer applicable'],['handed_off','Handed off']]){const o=document.createElement('option');o.value=value;o.textContent=label;outcome.append(o);}
-   const note=field('Completion note ',document.createElement('textarea'));note.required=true;note.maxLength=1024;
+   const business=playbookEscalation ? field('Business resolution ',document.createElement('select')) : null;
+   if(business)for(const [value,label] of [['expected_outcome_achieved','Expected outcome achieved'],['alternative_accepted','Alternative accepted'],['follow_up_canceled','Follow-up canceled']]){const o=document.createElement('option');o.value=value;o.textContent=label;business.append(o);}
+   const note=field('Completion note ',document.createElement('textarea'));note.required=!business;note.maxLength=1024;
    const expected=field('Expected business outcome code (optional, application-defined terminal outcome slug) ',document.createElement('input'));expected.maxLength=64;expected.pattern='[a-z][a-z0-9-]{0,63}';
    const outcomeWatch=field('Watch for the expected business outcome after completion ',document.createElement('input'));outcomeWatch.type='checkbox';
    const deadline=field('Optional business outcome deadline (your local timezone) ',document.createElement('input'));deadline.type='datetime-local';deadline.disabled=true;
@@ -375,13 +378,14 @@
    const watch=field('Watch pending verification after completion (up to 16 saved resolutions) ',document.createElement('input'));watch.type='checkbox';
    const ids=field('Evidence Operation UUIDs (up to 8, separated by spaces or commas; required for resolved) ',document.createElement('textarea'));ids.required=true;
    outcome.addEventListener('change',()=>{ids.required=outcome.value==='resolved';});
+   if(business){for(const input of [outcome,expected,outcomeWatch,deadline,escalate,escalationOwner,escalationDelay,escalationNote,responseTarget,responseDelay,fallbackOwner,watch]){input.disabled=true;input.parentElement.hidden=true;}note.parentElement.firstChild.textContent='Explanation (optional) ';ids.parentElement.firstChild.textContent='Evidence Operation UUIDs (optional, up to 8) ';outcome.disabled=true;expected.disabled=outcomeWatch.disabled=deadline.disabled=escalate.disabled=watch.disabled=true;ids.required=false;const sync=()=>{outcome.value=business.value==='follow_up_canceled' ? 'no_longer_applicable' : 'resolved';};business.addEventListener('change',sync);sync();text(form,'This records a fresh business observation against the pinned expectation. Mismatch or unavailable evidence is preserved and does not block closure. The explanation and evidence Operation references are optional.');}
    const preview=document.createElement('button');preview.type='button';preview.textContent='Check evidence before completion';form.append(preview);
    const handoff=document.createElement('div');form.append(handoff);
    const save=document.createElement('button');save.type='submit';save.textContent='Complete follow-up';form.append(save);
    const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
    preview.addEventListener('click',async()=>{preview.disabled=true;try{const check=await request(detail);if(container.isConnected)window.renderReadinessHandoff(handoff,check,scope);}catch(error){result.textContent=error.message;}finally{preview.disabled=false;}});
    form.addEventListener('submit',async event=>{event.preventDefault();const evidenceIDs=ids.value.trim() ? ids.value.trim().split(/[\s,]+/) : [];if(evidenceIDs.length>8){result.textContent='Use at most 8 evidence Operation UUIDs.';return;}save.disabled=true;preview.disabled=true;try{
-    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{escalation_policy:outcomeWatch.checked && escalate.checked ? {owner:escalationOwner.value,note:escalationNote.value,follow_up_after_seconds:Number(escalationDelay.value)*60,acknowledge_after_seconds:responseTarget.checked ? Number(responseDelay.value)*60 : undefined,fallback_owner:responseTarget.checked ? fallbackOwner.value || undefined : undefined} : undefined,watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
+    const updated=await request(detail,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:c.status,owner:c.owner,note:c.note,completion:{playbook_resolution:business ? business.value : undefined,escalation_policy:outcomeWatch.checked && escalate.checked ? {owner:escalationOwner.value,note:escalationNote.value,follow_up_after_seconds:Number(escalationDelay.value)*60,acknowledge_after_seconds:responseTarget.checked ? Number(responseDelay.value)*60 : undefined,fallback_owner:responseTarget.checked ? fallbackOwner.value || undefined : undefined} : undefined,watch_outcome:outcomeWatch.checked,outcome_deadline_at:outcomeWatch.checked && deadline.value ? new Date(deadline.value).toISOString() : undefined,expected_outcome_code:expected.value || undefined,outcome:outcome.value,note:note.value,evidence_operation_ids:evidenceIDs,watch_verification:watch.checked}})});
     Object.assign(c,updated.coordination);delete c.follow_up_at;watched=updated;render();await onSaved(updated);
    }catch(error){result.textContent=error.message+' Refresh before retrying a conflicting completion.';}finally{save.disabled=false;preview.disabled=false;}});
   };
@@ -482,7 +486,7 @@
    savedDueInput=submittedDueInput;describeReminder(updated.reminder);Object.assign(c,updated.coordination);due.disabled=!!c.completion;if(!updated.coordination.acknowledged_by){delete c.acknowledged_by;delete c.acknowledged_at;}if(!updated.coordination.follow_up_at)delete c.follow_up_at;updateCoordinationStatus();renderCompletion();li.dataset.owner=updated.coordination.owner;li.dataset.pending=String(!!updated.coordination.follow_up_at);applyFollowupFilters();result.textContent='Saved '+updated.coordination.status+' by '+updated.coordination.updated_by+'.';
   }catch(error){result.textContent=error.message+' Refresh the inbox before retrying a conflicting edit.';}finally{save.disabled=false;}});
   li.append(form);
-  const renderCompletion=window.mountReadinessCompletion(li,c,detailURL,panel.dataset.scope,async updated=>{describeReminder(updated.reminder);due.value='';due.disabled=true;savedDueInput='';updateCoordinationStatus();li.dataset.pending='false';applyFollowupFilters();result.textContent='Follow-up completion recorded. See the evidence check and remaining requirements below.';});
+  const renderCompletion=window.mountReadinessCompletion(li,c,detailURL,panel.dataset.scope,async updated=>{describeReminder(updated.reminder);due.value='';due.disabled=true;savedDueInput='';updateCoordinationStatus();li.dataset.pending='false';applyFollowupFilters();result.textContent='Follow-up completion recorded. See the evidence check and remaining requirements below.';},notification.playbook_escalation);
   const handoff=document.createElement('div');li.append(handoff);
   const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
   check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){window.renderReadinessHandoff(handoff,current);}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
@@ -583,7 +587,7 @@
    }catch(error){status.textContent=error.message+' Reload the queue before retrying a conflicting edit.';}finally{save.disabled=false;clear.disabled=false;}
   };
   edit.addEventListener('submit',event=>{event.preventDefault();void mutate(due.value===savedDueInput && c.follow_up_at ? c.follow_up_at : new Date(due.value).toISOString());});clear.addEventListener('click',()=>{void mutate(undefined);});
-  window.mountReadinessCompletion(li,c,detail,row.scope,async()=>{if(applied?.toString()===viewQuery)await refresh();});
+  window.mountReadinessCompletion(li,c,detail,row.scope,async()=>{if(applied?.toString()===viewQuery)await refresh();},row.playbook_escalation);
   const handoff=document.createElement('div');li.append(handoff);
   const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
   check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detail);if(li.isConnected)window.renderReadinessHandoff(handoff,current,row.scope);}catch(error){status.textContent=error.message;}finally{check.disabled=false;}});

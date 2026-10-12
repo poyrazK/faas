@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookCompletionOutcome } from './OperationWorkflowPlaybookCompletionOutcome.js';
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 import type { OperationWorkflowReadinessCompletionEvidence } from './OperationWorkflowReadinessCompletionEvidence.js';
 import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './OperationWorkflowReadinessOutcomeEscalationPolicy.js';
@@ -9,6 +10,7 @@ import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './Operat
  * Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write evidence check. Retained with the original notification.
  */
 export type OperationWorkflowReadinessCompletion = {
+  playbook_outcome?: OperationWorkflowPlaybookCompletionOutcome;
   escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy;
   /**
    * OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.

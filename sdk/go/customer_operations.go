@@ -339,3 +339,5 @@ type OperationWorkflowPlaybookOutcomeChange = api.OperationWorkflowPlaybookOutco
 
 type OperationWorkflowPlaybookOutcomeDeadlinePolicy = api.OperationWorkflowPlaybookOutcomeDeadlinePolicy
 type OperationWorkflowPlaybookOutcomeEscalation = api.OperationWorkflowPlaybookOutcomeEscalation
+
+type OperationWorkflowPlaybookCompletionOutcome = api.OperationWorkflowPlaybookCompletionOutcome

@@ -24,6 +24,13 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 		return out, nil
 	}
 	r := req.Completion
+	businessCompletion := r.PlaybookResolution != ""
+	if businessCompletion {
+		expectedOutcome := map[string]string{"expected_outcome_achieved": "resolved", "alternative_accepted": "resolved", "follow_up_canceled": "no_longer_applicable"}[r.PlaybookResolution]
+		if expectedOutcome == "" || r.Outcome != expectedOutcome || r.WatchOutcome || r.WatchVerification || r.ExpectedOutcomeCode != "" || r.OutcomeDeadlineAt != nil || r.EscalationPolicy != nil {
+			return out, ErrInvalidArgument
+		}
+	}
 	if r.EscalationPolicy != nil {
 		policy := *r.EscalationPolicy
 		if policy.AcknowledgeAfterSeconds < 0 || policy.AcknowledgeAfterSeconds > api.OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (policy.FallbackOwner != "" && (policy.AcknowledgeAfterSeconds == 0 || policy.FallbackOwner == policy.Owner || strings.TrimSpace(policy.FallbackOwner) != policy.FallbackOwner || len(policy.FallbackOwner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(policy.FallbackOwner) || strings.IndexFunc(policy.FallbackOwner, unicode.IsControl) >= 0)) {
@@ -47,7 +54,7 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 	if r.ExpectedOutcomeCode != "" && api.ValidateOperationWorkflowStateName(r.ExpectedOutcomeCode) != nil {
 		return out, ErrInvalidArgument
 	}
-	if req.FollowUpAt != nil || (r.Outcome != "resolved" && r.Outcome != "no_longer_applicable" && r.Outcome != "handed_off") || strings.TrimSpace(r.Note) == "" || len(r.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(r.Note) || r.EvidenceOperationIDs == nil || len(r.EvidenceOperationIDs) > api.OperationWorkflowReadinessCompletionEvidenceMax || (r.Outcome == "resolved" && len(r.EvidenceOperationIDs) == 0) {
+	if req.FollowUpAt != nil || (r.Outcome != "resolved" && r.Outcome != "no_longer_applicable" && r.Outcome != "handed_off") || (!businessCompletion && strings.TrimSpace(r.Note) == "") || len(r.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(r.Note) || r.EvidenceOperationIDs == nil || len(r.EvidenceOperationIDs) > api.OperationWorkflowReadinessCompletionEvidenceMax || (!businessCompletion && r.Outcome == "resolved" && len(r.EvidenceOperationIDs) == 0) {
 		return out, ErrInvalidArgument
 	}
 	ids := make([]string, 0, len(r.EvidenceOperationIDs))
@@ -103,6 +110,15 @@ func prepareReadinessCompletion(ctx context.Context, store readinessSubscription
 		e.Warnings = append(e.Warnings, "Follow-up completion does not establish workflow readiness: "+check.Status+".")
 	}
 	out.PreparedCompletion = &api.OperationWorkflowReadinessCompletion{EscalationPolicy: r.EscalationPolicy, WatchOutcome: r.WatchOutcome, OutcomeDeadlineAt: r.OutcomeDeadlineAt, ExpectedOutcomeCode: r.ExpectedOutcomeCode, WatchVerification: r.WatchVerification, Outcome: r.Outcome, Note: r.Note, EvidenceOperationIDs: ids, Evidence: e}
+	if businessCompletion {
+		if check.Notification.PlaybookEscalation == nil || check.Notification.PlaybookEvidence == nil {
+			return out, ErrInvalidArgument
+		}
+		out.PreparedCompletion.PlaybookOutcome, err = readPlaybookCompletionOutcome(ctx, store, account, tenant, app, scope, check.Notification, r.PlaybookResolution, operator)
+		if err != nil {
+			return out, err
+		}
+	}
 	if r.ExpectedOutcomeCode != "" {
 		out.PreparedCompletion.BusinessOutcome, err = readReadinessBusinessOutcome(ctx, store, account, tenant, app, scope, check.Notification, r.ExpectedOutcomeCode, operator)
 		if err != nil {

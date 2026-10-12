@@ -91,6 +91,17 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 			e.ExpectedOutcomeCode = completion.ExpectedOutcomeCode
 			links(e, completion.EvidenceOperationIDs...)
 			links(e, completion.Evidence.ReportingOperationID)
+			if result := completion.PlaybookOutcome; result != nil {
+				e.Summary = "Playbook completion: " + result.Resolution + " · " + result.Alignment + ". " + result.Explanation
+				e.ExpectedOutcomeCode = result.Observation.Evidence.ExpectedOutcomeCode
+				e.ReportedOutcomeCode = result.Observation.Evidence.ReportedOutcomeCode
+				e.StateRevision = result.Observation.Evidence.StateRevision
+				if n.PlaybookEscalation != nil {
+					e.PlaybookProgressID = n.PlaybookEscalation.ProgressID
+				}
+				links(e, result.Observation.Evidence.ReportingOperationID)
+				observation("playbook_completion_outcome", result.Observation.Evidence)
+			}
 			if completion.BusinessOutcome != nil {
 				observation("completion_outcome", *completion.BusinessOutcome)
 			}

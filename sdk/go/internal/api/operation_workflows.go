@@ -296,3 +296,11 @@ type OperationWorkflowPlaybookOutcomeEscalation struct {
 	Current           OperationWorkflowPlaybookBusinessOutcome      `json:"current"`
 	SuccessObservedAt *time.Time                                    `json:"success_observed_at,omitempty"`
 }
+
+// Completion captures a human disposition and an advisory pre-write business observation.
+type OperationWorkflowPlaybookCompletionOutcome struct {
+	Resolution  string                                   `json:"resolution"`
+	Alignment   string                                   `json:"alignment"`
+	Explanation string                                   `json:"explanation"`
+	Observation OperationWorkflowPlaybookBusinessOutcome `json:"observation"`
+}

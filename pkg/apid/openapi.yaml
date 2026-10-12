@@ -79395,10 +79395,14 @@ components:
       - updated_by
     OperationWorkflowReadinessCompletionRequest:
       type: object
-      description: An asserted coordination outcome with a required note; resolved requires at least one retained evidence Operation.
+      description: An asserted coordination outcome. Generic completion requires a note and resolved requires retained evidence; playbook business completion captures its own current evidence.
         Closing does not prove business resolution.
       additionalProperties: false
       properties:
+        playbook_resolution:
+          type: string
+          enum: [expected_outcome_achieved, alternative_accepted, follow_up_canceled]
+          description: OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires no_longer_applicable. Uses the frozen expectation, permits empty note and evidence IDs, and excludes extra outcome or verification watches.
         escalation_policy:
           $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationPolicy'
         watch_outcome:
@@ -79429,7 +79433,7 @@ components:
           type: string
           description: OperationWorkflowReadinessCompletionRequest.note. Retained follow-up completion value; never changes application
             evidence.
-          minLength: 1
+          minLength: 0
           maxLength: 1024
         evidence_operation_ids:
           type: array
@@ -79450,6 +79454,8 @@ components:
         check. Retained with the original notification.
       additionalProperties: false
       properties:
+        playbook_outcome:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookCompletionOutcome'
         escalation_policy:
           $ref: '#/components/schemas/OperationWorkflowReadinessOutcomeEscalationPolicy'
         watch_outcome:
@@ -81254,6 +81260,25 @@ components:
           type: string
           format: date-time
           description: OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation, retained through corrections or evidence loss; does not prove when the business result occurred.
+    OperationWorkflowPlaybookCompletionOutcome:
+      type: object
+      additionalProperties: false
+      description: OperationWorkflowPlaybookCompletionOutcome. Immutable human disposition and exact scoped advisory application evidence observed before completion; neither establishes causation nor authorizes execution.
+      required: [resolution, alignment, explanation, observation]
+      properties:
+        resolution:
+          type: string
+          enum: [expected_outcome_achieved, alternative_accepted, follow_up_canceled]
+          description: OperationWorkflowPlaybookCompletionOutcome.resolution. Human business disposition, distinct from application reports.
+        alignment:
+          type: string
+          enum: [matches, mismatch, unavailable, not_applicable]
+          description: OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted alternative matches a different terminal result; cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable evidence is unavailable.
+        explanation:
+          type: string
+          description: OperationWorkflowPlaybookCompletionOutcome.explanation. Server explanation of disposition alignment; does not prevent human closure.
+        observation:
+          $ref: '#/components/schemas/OperationWorkflowPlaybookBusinessOutcome'
     OperationWorkflowPlaybookEvidenceRequirement:
       type: object
       additionalProperties: false

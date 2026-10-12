@@ -156,6 +156,7 @@ type OperationWorkflowReadinessDueReminder struct {
 
 // Completion closes coordination only; outcome is an operator/customer assertion.
 type OperationWorkflowReadinessCompletionRequest struct {
+	PlaybookResolution   string                                             `json:"playbook_resolution,omitempty"`
 	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
 	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
 	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
@@ -166,6 +167,7 @@ type OperationWorkflowReadinessCompletionRequest struct {
 	EvidenceOperationIDs []string                                           `json:"evidence_operation_ids"`
 }
 type OperationWorkflowReadinessCompletion struct {
+	PlaybookOutcome      *OperationWorkflowPlaybookCompletionOutcome        `json:"playbook_outcome,omitempty"`
 	EscalationPolicy     *OperationWorkflowReadinessOutcomeEscalationPolicy `json:"escalation_policy,omitempty"`
 	WatchOutcome         bool                                               `json:"watch_outcome,omitempty"`
 	OutcomeDeadlineAt    *time.Time                                         `json:"outcome_deadline_at,omitempty"`
