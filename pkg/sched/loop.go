@@ -3563,6 +3563,18 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 }
 
 func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
+	// The step's own timeout (bounded per plan by WorkflowStepMaxTimeout) is
+	// the attempt deadline. The shared synth client's fixed Timeout used to
+	// cut every step at 30 s whatever it declared (production-us hunt #9,
+	// H9-151), so steps use a client bounded only by this context. A step
+	// without a timeout keeps that client's limit.
+	client := h.client
+	if timeout > 0 {
+		client = h.contextBoundClient()
+	} else if client != nil && client.Timeout > 0 {
+		timeout = client.Timeout
+		client = h.contextBoundClient()
+	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3594,7 +3606,7 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 		ManagedOperationGeneration: generation,
 		OperationResultVersion:     boolToProtocolVersion(operationID != ""),
 	}
-	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
+	out, statusCode, err := h.invokeWithStatusUsing(ctx, client, appID, inv, nil)
 	if err != nil {
 		return 0, nil, time.Time{}, err
 	}
@@ -3633,6 +3645,21 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 }
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
+	return h.invokeWithStatusUsing(ctx, h.client, appID, inv, wake)
+}
+
+// contextBoundClient shares the synth transport but drops the client-wide
+// Timeout, leaving the request's context as the only deadline.
+func (h *httpGatewaySynth) contextBoundClient() *http.Client {
+	if h.client == nil {
+		return &http.Client{}
+	}
+	bound := *h.client
+	bound.Timeout = 0
+	return &bound
+}
+
+func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *http.Client, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -3720,7 +3747,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			}
 		}
 	}
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
 	}
