@@ -8741,7 +8741,9 @@ const (
 	// the floor, not the ceiling; per-call context.WithTimeout calls
 	// in handlers continue to enforce their own sub-ceilings
 	// (EdgeRuleJWTVerifyTimeoutDefault, dashboard 3s, billing 30s,
-	// sync-invoke 5-30s).
+	// sync-invoke 5-30s). Sync invoke and deploy source uploads and
+	// submissions (reqbudget.IsDeploySubmissionRequest) get
+	// RequestBudgetMax instead.
 	RequestBudgetApidDefault = 5 * time.Second
 	// RequestBudgetDefaultOverrideHeader is the platform-wide
 	// default header name a kind=budget rule's AllowOverrideHeader
