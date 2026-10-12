@@ -2,11 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 /**
  * First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
+   */
+  acceptance?: OperationWorkflowReviewResponseHandoffAcceptance;
   /**
    * OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode began; unknown legacy ownership prevents automatic handoff.
    */

@@ -80663,6 +80663,9 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        acceptance:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptance'
+          description: OperationWorkflowReviewResponseDecisionReview.acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
         initial_owner:
           type: string
           description: OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode began; unknown legacy ownership prevents automatic handoff.
@@ -80752,12 +80755,57 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
           description: OperationWorkflowReviewResponseDecision.health. Immutable reviewed snapshot including original freshness timestamps.
       required: [kind, reason, owner, at, actor, health]
+    OperationWorkflowReviewResponseHandoffAcceptanceRequest:
+      type: object
+      additionalProperties: false
+      description: Accept the current reassigned review for its responsible team. Parent response must remain active with the handed-off owner and a future check-in, without an accompanying decision.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffAcceptanceRequest.decision_at. Exact decision timestamp of the handed-off episode.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffAcceptanceRequest.required_at. Exact requirement timestamp of the handed-off episode; stale episodes conflict.
+        note:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseHandoffAcceptanceRequest.note. Nonblank UTF-8 acceptance note up to 1024 bytes; line breaks and tabs allowed.
+      required: [decision_at, required_at, note]
+    OperationWorkflowReviewResponseHandoffAcceptance:
+      type: object
+      additionalProperties: false
+      description: Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying team membership or satisfying the original review deadline.
+      properties:
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffAcceptance.owner. Responsible handed-off team at acceptance time.
+        actor:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffAcceptance.actor. Authenticated operator who recorded acceptance.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffAcceptance.at. Server acceptance time.
+        note:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffAcceptance.note. Operator acceptance note.
+        check_in_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffAcceptance.check_in_at. Future check-in committed at acceptance; later edits do not rewrite this record.
+      required: [owner, actor, at, note, check_in_at]
     OperationWorkflowReviewResponseRequest:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        handoff_acceptance:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptanceRequest'
+          description: OperationWorkflowReviewResponseRequest.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
         decision_review_fallback_owner:
           type: string
           maxLength: 256
@@ -81041,6 +81089,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        handoff_acceptance:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptance'
+          description: OperationWorkflowReviewResponseChange.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
         decision_review_fallback_owner:
           type: string
           maxLength: 256
@@ -81059,7 +81110,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

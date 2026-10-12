@@ -901,3 +901,6 @@ export type OperationWorkflowReviewResponseDecision = import('./generated/models
 
 export type OperationWorkflowReviewResponseDecisionReview = import('./generated/models/OperationWorkflowReviewResponseDecisionReview.js').OperationWorkflowReviewResponseDecisionReview;
 export type OperationWorkflowReviewResponseDecisionReviewEvent = import('./generated/models/OperationWorkflowReviewResponseDecisionReviewEvent.js').OperationWorkflowReviewResponseDecisionReviewEvent;
+
+export type OperationWorkflowReviewResponseHandoffAcceptanceRequest = import('./generated/models/OperationWorkflowReviewResponseHandoffAcceptanceRequest.js').OperationWorkflowReviewResponseHandoffAcceptanceRequest;
+export type OperationWorkflowReviewResponseHandoffAcceptance = import('./generated/models/OperationWorkflowReviewResponseHandoffAcceptance.js').OperationWorkflowReviewResponseHandoffAcceptance;

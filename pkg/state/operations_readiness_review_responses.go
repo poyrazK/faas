@@ -55,6 +55,11 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if alert.Coordination == nil || alert.Coordination.Revision != req.Revision || alert.Coordination.Completion != nil {
 		return nil, ErrConflict
 	}
+	if input.HandoffAcceptance != nil {
+		if err := validateReviewHandoffAcceptance(alert, *input); err != nil {
+			return nil, err
+		}
+	}
 	response := &api.OperationWorkflowReviewResponse{DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
 	if alert.ReviewResponse != nil {
 		response.DecisionReviewFallbackOwner = alert.ReviewResponse.DecisionReviewFallbackOwner

@@ -9,6 +9,9 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_handoff_acceptance import (
+        OperationWorkflowReviewResponseHandoffAcceptance,
+    )
     from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
 
@@ -33,6 +36,9 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset = UNSET
+    """Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
+    team membership or satisfying the original review deadline."""
     initial_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode
     began; unknown legacy ownership prevents automatic handoff."""
@@ -67,6 +73,10 @@ class OperationWorkflowReviewResponseDecisionReview:
 
         health = self.health.to_dict()
 
+        acceptance: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.acceptance, Unset):
+            acceptance = self.acceptance.to_dict()
+
         initial_owner = self.initial_owner
 
         owner_changed = self.owner_changed
@@ -97,6 +107,8 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if acceptance is not UNSET:
+            field_dict["acceptance"] = acceptance
         if initial_owner is not UNSET:
             field_dict["initial_owner"] = initial_owner
         if owner_changed is not UNSET:
@@ -118,6 +130,9 @@ class OperationWorkflowReviewResponseDecisionReview:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_handoff_acceptance import (
+            OperationWorkflowReviewResponseHandoffAcceptance,
+        )
         from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
         d = dict(src_dict)
@@ -128,6 +143,13 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        _acceptance = d.pop("acceptance", UNSET)
+        acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset
+        if isinstance(_acceptance, Unset):
+            acceptance = UNSET
+        else:
+            acceptance = OperationWorkflowReviewResponseHandoffAcceptance.from_dict(_acceptance)
 
         initial_owner = d.pop("initial_owner", UNSET)
 
@@ -160,6 +182,7 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            acceptance=acceptance,
             initial_owner=initial_owner,
             owner_changed=owner_changed,
             fallback_owner=fallback_owner,

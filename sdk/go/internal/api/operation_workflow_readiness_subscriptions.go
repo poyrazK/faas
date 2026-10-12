@@ -483,15 +483,16 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
-	DecisionReviewFallbackOwner *string                                         `json:"decision_review_fallback_owner,omitempty"`
-	DecisionReviewAfterSeconds  *int64                                          `json:"decision_review_after_seconds,omitempty"`
-	Decision                    *OperationWorkflowReviewResponseDecisionRequest `json:"decision,omitempty"`
-	FallbackOwner               *string                                         `json:"fallback_owner,omitempty"`
-	Owner                       string                                          `json:"owner"`
-	Plan                        string                                          `json:"plan"`
-	Status                      string                                          `json:"status"`
-	CheckInAt                   *time.Time                                      `json:"check_in_at,omitempty"`
-	Reviews                     []OperationWorkflowReviewResponseLinkRequest    `json:"reviews,omitempty"`
+	HandoffAcceptance           *OperationWorkflowReviewResponseHandoffAcceptanceRequest `json:"handoff_acceptance,omitempty"`
+	DecisionReviewFallbackOwner *string                                                  `json:"decision_review_fallback_owner,omitempty"`
+	DecisionReviewAfterSeconds  *int64                                                   `json:"decision_review_after_seconds,omitempty"`
+	Decision                    *OperationWorkflowReviewResponseDecisionRequest          `json:"decision,omitempty"`
+	FallbackOwner               *string                                                  `json:"fallback_owner,omitempty"`
+	Owner                       string                                                   `json:"owner"`
+	Plan                        string                                                   `json:"plan"`
+	Status                      string                                                   `json:"status"`
+	CheckInAt                   *time.Time                                               `json:"check_in_at,omitempty"`
+	Reviews                     []OperationWorkflowReviewResponseLinkRequest             `json:"reviews,omitempty"`
 }
 type OperationWorkflowReviewResponseLinkRequest struct {
 	SubscriptionID string `json:"subscription_id"`
@@ -534,17 +535,18 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated            bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
-	DecisionReviewFallbackOwner string                                   `json:"decision_review_fallback_owner,omitempty"`
-	DecisionReviewAfterSeconds  int64                                    `json:"decision_review_after_seconds,omitempty"`
-	Decision                    *OperationWorkflowReviewResponseDecision `json:"decision,omitempty"`
-	FallbackOwner               string                                   `json:"fallback_owner,omitempty"`
-	Reason                      string                                   `json:"reason,omitempty"`
-	Owner                       string                                   `json:"owner"`
-	Plan                        string                                   `json:"plan"`
-	Status                      string                                   `json:"status"`
-	CheckInAt                   *time.Time                               `json:"check_in_at,omitempty"`
-	At                          time.Time                                `json:"at"`
-	Actor                       string                                   `json:"actor"`
+	HandoffAcceptance           *OperationWorkflowReviewResponseHandoffAcceptance `json:"handoff_acceptance,omitempty"`
+	DecisionReviewFallbackOwner string                                            `json:"decision_review_fallback_owner,omitempty"`
+	DecisionReviewAfterSeconds  int64                                             `json:"decision_review_after_seconds,omitempty"`
+	Decision                    *OperationWorkflowReviewResponseDecision          `json:"decision,omitempty"`
+	FallbackOwner               string                                            `json:"fallback_owner,omitempty"`
+	Reason                      string                                            `json:"reason,omitempty"`
+	Owner                       string                                            `json:"owner"`
+	Plan                        string                                            `json:"plan"`
+	Status                      string                                            `json:"status"`
+	CheckInAt                   *time.Time                                        `json:"check_in_at,omitempty"`
+	At                          time.Time                                         `json:"at"`
+	Actor                       string                                            `json:"actor"`
 }
 
 // Check-in events preserve the original deadline and response snapshot at escalation.
@@ -608,18 +610,19 @@ type OperationWorkflowReviewResponseDecision struct {
 
 // Review requirements remain latched until an explicit decision replaces the reviewed intent.
 type OperationWorkflowReviewResponseDecisionReview struct {
-	InitialOwner       string                                `json:"initial_owner,omitempty"`
-	OwnerChanged       bool                                  `json:"owner_changed,omitempty"`
-	FallbackOwner      string                                `json:"fallback_owner,omitempty"`
-	PreviousOwner      string                                `json:"previous_owner,omitempty"`
-	Owner              string                                `json:"owner,omitempty"`
-	Reassigned         bool                                  `json:"reassigned,omitempty"`
-	DueAt              *time.Time                            `json:"due_at,omitempty"`
-	DeadlineNotifiedAt *time.Time                            `json:"deadline_notified_at,omitempty"`
-	DecisionAt         time.Time                             `json:"decision_at"`
-	RequiredAt         time.Time                             `json:"required_at"`
-	Changes            []string                              `json:"changes"`
-	Health             OperationWorkflowReviewResponseHealth `json:"health"`
+	Acceptance         *OperationWorkflowReviewResponseHandoffAcceptance `json:"acceptance,omitempty"`
+	InitialOwner       string                                            `json:"initial_owner,omitempty"`
+	OwnerChanged       bool                                              `json:"owner_changed,omitempty"`
+	FallbackOwner      string                                            `json:"fallback_owner,omitempty"`
+	PreviousOwner      string                                            `json:"previous_owner,omitempty"`
+	Owner              string                                            `json:"owner,omitempty"`
+	Reassigned         bool                                              `json:"reassigned,omitempty"`
+	DueAt              *time.Time                                        `json:"due_at,omitempty"`
+	DeadlineNotifiedAt *time.Time                                        `json:"deadline_notified_at,omitempty"`
+	DecisionAt         time.Time                                         `json:"decision_at"`
+	RequiredAt         time.Time                                         `json:"required_at"`
+	Changes            []string                                          `json:"changes"`
+	Health             OperationWorkflowReviewResponseHealth             `json:"health"`
 }
 type OperationWorkflowReviewResponseDecisionReviewEvent struct {
 	SourceNotificationID string                                        `json:"source_notification_id"`
@@ -629,3 +632,16 @@ type OperationWorkflowReviewResponseDecisionReviewEvent struct {
 }
 
 const OperationWorkflowReviewResponseDecisionReviewDefaultSeconds = 86400
+
+type OperationWorkflowReviewResponseHandoffAcceptanceRequest struct {
+	DecisionAt time.Time `json:"decision_at"`
+	RequiredAt time.Time `json:"required_at"`
+	Note       string    `json:"note"`
+}
+type OperationWorkflowReviewResponseHandoffAcceptance struct {
+	Owner     string    `json:"owner"`
+	Actor     string    `json:"actor"`
+	At        time.Time `json:"at"`
+	Note      string    `json:"note"`
+	CheckInAt time.Time `json:"check_in_at"`
+}

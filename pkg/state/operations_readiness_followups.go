@@ -71,6 +71,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if req.ReviewResponse != nil && req.PreparedReviewResponse == nil {
 		return n, ErrConflict
 	}
+	if req.ReviewResponse != nil && req.ReviewResponse.HandoffAcceptance != nil {
+		if err := validateReviewHandoffAcceptance(n, *req.ReviewResponse); err != nil {
+			return n, err
+		}
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if req.PreparedReviewResponse != nil {
 		response := *req.PreparedReviewResponse
@@ -106,11 +111,23 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			response.Decision = &decision
 		}
 		response.UpdatedAt, response.UpdatedBy = now, actor
+		var acceptanceForHistory *api.OperationWorkflowReviewResponseHandoffAcceptance
+		if req.ReviewResponse.HandoffAcceptance != nil {
+			if response.CheckInAt == nil || !response.CheckInAt.After(now) {
+				return n, ErrConflict
+			}
+			acceptanceForHistory = &api.OperationWorkflowReviewResponseHandoffAcceptance{Owner: response.Owner, Actor: actor, At: now, Note: req.ReviewResponse.HandoffAcceptance.Note, CheckInAt: *response.CheckInAt}
+			response.DecisionReview.Acceptance = acceptanceForHistory
+		}
+		changeReason := "human_update"
+		if acceptanceForHistory != nil {
+			changeReason = "handoff_accepted"
+		}
 		var decisionForHistory *api.OperationWorkflowReviewResponseDecision
 		if req.ReviewResponse.Decision != nil {
 			decisionForHistory = response.Decision
 		}
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, Reason: "human_update", FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true

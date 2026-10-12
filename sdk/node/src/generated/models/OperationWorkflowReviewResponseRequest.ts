@@ -3,11 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecisionRequest } from './OperationWorkflowReviewResponseDecisionRequest.js';
+import type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './OperationWorkflowReviewResponseHandoffAcceptanceRequest.js';
 import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
 /**
  * OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
  */
 export type OperationWorkflowReviewResponseRequest = {
+  /**
+   * OperationWorkflowReviewResponseRequest.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
+   */
+  handoff_acceptance?: OperationWorkflowReviewResponseHandoffAcceptanceRequest;
   /**
    * OperationWorkflowReviewResponseRequest.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
    */

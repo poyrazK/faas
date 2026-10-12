@@ -18,6 +18,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+    from ..models.operation_workflow_review_response_handoff_acceptance import (
+        OperationWorkflowReviewResponseHandoffAcceptance,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
@@ -40,6 +43,9 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset = UNSET
+    """Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
+    team membership or satisfying the original review deadline."""
     decision_review_fallback_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for
     future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes
@@ -70,6 +76,10 @@ class OperationWorkflowReviewResponseChange:
 
         actor = self.actor
 
+        handoff_acceptance: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_acceptance, Unset):
+            handoff_acceptance = self.handoff_acceptance.to_dict()
+
         decision_review_fallback_owner = self.decision_review_fallback_owner
 
         decision_review_after_seconds = self.decision_review_after_seconds
@@ -99,6 +109,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if handoff_acceptance is not UNSET:
+            field_dict["handoff_acceptance"] = handoff_acceptance
         if decision_review_fallback_owner is not UNSET:
             field_dict["decision_review_fallback_owner"] = decision_review_fallback_owner
         if decision_review_after_seconds is not UNSET:
@@ -117,6 +129,9 @@ class OperationWorkflowReviewResponseChange:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_review_response_decision import OperationWorkflowReviewResponseDecision
+        from ..models.operation_workflow_review_response_handoff_acceptance import (
+            OperationWorkflowReviewResponseHandoffAcceptance,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -128,6 +143,13 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _handoff_acceptance = d.pop("handoff_acceptance", UNSET)
+        handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset
+        if isinstance(_handoff_acceptance, Unset):
+            handoff_acceptance = UNSET
+        else:
+            handoff_acceptance = OperationWorkflowReviewResponseHandoffAcceptance.from_dict(_handoff_acceptance)
 
         decision_review_fallback_owner = d.pop("decision_review_fallback_owner", UNSET)
 
@@ -162,6 +184,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            handoff_acceptance=handoff_acceptance,
             decision_review_fallback_owner=decision_review_fallback_owner,
             decision_review_after_seconds=decision_review_after_seconds,
             decision=decision,

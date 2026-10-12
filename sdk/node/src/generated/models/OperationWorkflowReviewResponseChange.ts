@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
+import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 /**
  * OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
  */
 export type OperationWorkflowReviewResponseChange = {
+  /**
+   * OperationWorkflowReviewResponseChange.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
+   */
+  handoff_acceptance?: OperationWorkflowReviewResponseHandoffAcceptance;
   /**
    * OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
    */
@@ -26,7 +31,7 @@ export type OperationWorkflowReviewResponseChange = {
   /**
    * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
    */
-  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue';
+  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted';
   /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */
