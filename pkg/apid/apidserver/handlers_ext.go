@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/deploymentread"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
@@ -2006,18 +2007,7 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 
 // getDeployment returns one deployment by id.
 func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
-	d, err := s.store.DeploymentByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such deployment")
-		return
-	}
-	app, err := s.store.AppByID(r.Context(), d.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such deployment")
-		return
-	}
-	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
+	deploymentread.Handler{Store: s.store, Response: s.deploymentResponseWithBuild}.Get(w, r, acct)
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the

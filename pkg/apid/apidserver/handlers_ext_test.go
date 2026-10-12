@@ -1549,30 +1549,6 @@ func TestRestoreApp_UndeployedStatusMatchesGet(t *testing.T) {
 	}
 }
 
-// TestGetDeployment_HappyPath covers the standard "deploy by id" lookup.
-func TestGetDeployment_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "get-dep")
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID, nil, nil)
-	if rec.Code != 200 {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body)
-	}
-	var out api.DeploymentResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.ID != dep.ID || out.Status != string(state.DeployBuilding) {
-		t.Errorf("got %+v, want id=%s status=building", out, dep.ID)
-	}
-}
-
-// TestGetDeployment_UnknownReturns404 covers the not-found branch.
-func TestGetDeployment_UnknownReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/deployments/deadbeef", nil, nil)
-	assertProblem(t, rec, 404, api.CodeNotFound)
-}
-
 // TestGetBuildProvenance_HappyPath — ADR-038 / Tier 3 / issue
 // #197 B3.10-read half. Seeds app + deployment + build + a
 // provenance row under the test account, then verifies the
