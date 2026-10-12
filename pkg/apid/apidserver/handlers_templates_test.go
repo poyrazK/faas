@@ -4,7 +4,7 @@
 // hydrates its wizard's <select> from this endpoint; the CLI's
 // runtime validator reads the same templates.Names locally. Both
 // paths must agree — the deploy doc notes the release pairing.
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestListTemplates_ReturnsAllNames asserts every name in
@@ -21,7 +22,7 @@ import (
 // missed in templates.Names (or vice versa) and a description added
 // without a CategoryFor entry.
 func TestListTemplates_ReturnsAllNames(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/templates", nil)
 	r.AddCookie(cookie)
@@ -65,7 +66,7 @@ func TestListTemplates_ReturnsAllNames(t *testing.T) {
 // caller today, but the route is /v1/* so a future API consumer
 // should not see the catalog anonymously.
 func TestListTemplates_RequiresSessionAuth(t *testing.T) {
-	srv, _ := newAuthedDashboardServer(t)
+	srv, _ := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/v1/templates", nil)
 	// no cookie

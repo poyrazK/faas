@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Tests for handlers_obs_on_behalf_of.go (operator-as-tenant view,
 // P1). The helper's job is:
@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,7 +36,7 @@ import (
 // belonging to the target. The tests below use this harness to
 // exercise each branch of resolveOnBehalfOf.
 type onBehalfOfHarness struct {
-	s          *server
+	s          *apidserver.Server
 	store      *state.MemStore
 	caller     state.Account
 	target     state.Account
@@ -69,7 +70,7 @@ func newOnBehalfOfHarness(t *testing.T) *onBehalfOfHarness {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
 	srv.WithAdminAllowlist(caller.Email)
 
 	return &onBehalfOfHarness{
@@ -86,7 +87,7 @@ func TestResolveOnBehalfOf_Absent(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/v1/apps/anything/metrics", nil)
 	w := httptest.NewRecorder()
 
-	target, ok := h.s.resolveOnBehalfOf(w, r, h.caller, "metrics")
+	target, ok := h.s.ResolveOnBehalfOf(w, r, h.caller, "metrics")
 	if !ok {
 		t.Fatalf("resolveOnBehalfOf returned ok=false on absent on_behalf_of (no error written)")
 	}
@@ -104,7 +105,7 @@ func TestResolveOnBehalfOf_Slug(t *testing.T) {
 		"/v1/apps/x/metrics?on_behalf_of="+h.targetSlug, nil)
 	w := httptest.NewRecorder()
 
-	target, ok := h.s.resolveOnBehalfOf(w, r, h.caller, "metrics")
+	target, ok := h.s.ResolveOnBehalfOf(w, r, h.caller, "metrics")
 	if !ok {
 		t.Fatalf("expected ok=true; response code=%d body=%q", w.Code, w.Body.String())
 	}
@@ -119,7 +120,7 @@ func TestResolveOnBehalfOf_SlugUnknown_404(t *testing.T) {
 		"/v1/apps/x/metrics?on_behalf_of=does-not-exist", nil)
 	w := httptest.NewRecorder()
 
-	_, ok := h.s.resolveOnBehalfOf(w, r, h.caller, "metrics")
+	_, ok := h.s.ResolveOnBehalfOf(w, r, h.caller, "metrics")
 	if ok {
 		t.Fatalf("expected ok=false on unknown slug")
 	}
@@ -162,7 +163,7 @@ func TestResolveOnBehalfOf_NotInAllowlist_403(t *testing.T) {
 		"/v1/apps/x/metrics?on_behalf_of="+h.targetSlug, nil)
 	w := httptest.NewRecorder()
 
-	_, ok := h.s.resolveOnBehalfOf(w, r, otherAdmin, "metrics")
+	_, ok := h.s.ResolveOnBehalfOf(w, r, otherAdmin, "metrics")
 	if ok {
 		t.Fatalf("expected ok=false when caller not in allowlist")
 	}

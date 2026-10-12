@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"reflect"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -77,7 +78,7 @@ func TestSummariseBetaFunnel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := summariseBetaFunnel(now, tt.accounts, tt.apps, tt.deployments, tt.firstSuccess)
+			got := apidserver.SummariseBetaFunnel(now, tt.accounts, tt.apps, tt.deployments, tt.firstSuccess)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("summariseBetaFunnel() = %+v, want %+v", got, tt.want)
 			}

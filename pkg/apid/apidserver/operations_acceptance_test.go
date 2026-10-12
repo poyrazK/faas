@@ -1,7 +1,7 @@
 // ADR-521: customer operations preserve ownership, execution fences and independent delivery.
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"bufio"
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -68,9 +69,9 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, logger, "gregale.dev", noopNotifier{})
-	srv.operation.AdmissionEnabled = true
-	owner := httptest.NewServer(srv.handler())
+	srv := apidserver.NewServer(store, logger, "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Operation()).AdmissionEnabled = true
+	owner := httptest.NewServer(srv.Handler())
 	t.Cleanup(owner.Close)
 	call := func(method, path, bearer string, body any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -81,7 +82,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		r.Header.Set("Authorization", "Bearer "+bearer)
 		w := httptest.NewRecorder()
-		srv.handler().ServeHTTP(w, r)
+		srv.Handler().ServeHTTP(w, r)
 		return w
 	}
 	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "operations-sdk", Type: state.AppTypeApp, Status: state.AppActive, ConsumerAuthMode: api.ConsumerAuthModeRequired, PlatformTenantRequired: true})
@@ -159,7 +160,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	(*srv.Operation()).WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,10 +174,10 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	if err := os.WriteFile(jwksPath, jwks, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
+	if err := srv.ConfigureOperations(apidserver.Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.AdmissionEnabled = false
+	(*srv.Operation()).AdmissionEnabled = false
 	identity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("audience") != workloadidentity.OperationsAudience {
 			http.Error(w, "audience", 400)
@@ -297,7 +298,7 @@ const server=http.createServer(async(req,res)=>{
 		t.Fatal("Node Operations startup failed")
 	}
 	backend := &operationsAcceptanceBackend{store: store, app: app, plan: acct.Plan}
-	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), logger).WithConsumerAuth(operationsAcceptanceConsumerStore{store}).WithOperationRoutes(gateway.DurableOperationRoutes{Store: store, Admission: srv.operation.Preview})
+	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), logger).WithConsumerAuth(operationsAcceptanceConsumerStore{store}).WithOperationRoutes(gateway.DurableOperationRoutes{Store: store, Admission: (*srv.Operation()).Preview})
 	request := func(payload string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "https://"+app.Slug+".gregale.dev/exports", strings.NewReader(payload))
 		r.Header.Set("Authorization", "Bearer "+ingressKeys[0])
@@ -338,7 +339,7 @@ const server=http.createServer(async(req,res)=>{
 	if denied := call(http.MethodPost, "/v1/platform-tenant-self/customer-operations", customerTokens[0], api.OperationStartRequest{DefinitionID: def.ID, Input: []byte(`{"count":1}`)}); denied.Code != http.StatusServiceUnavailable {
 		t.Fatalf("closed API admission: %d", denied.Code)
 	}
-	engine, err := sched.NewEngine(ctx, store, sched.NewNodeLedger(), nil, noopNotifier{}, "acceptance", logger)
+	engine, err := sched.NewEngine(ctx, store, sched.NewNodeLedger(), nil, apidserver.NoopNotifier{}, "acceptance", logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +423,7 @@ const server=http.createServer(async(req,res)=>{
 	cancelRequest.Header.Set("Authorization", "Bearer "+customerTokens[0])
 	cancelRequest.Header.Set("Idempotency-Key", "cancel-export")
 	cancelReceipt := httptest.NewRecorder()
-	srv.handler().ServeHTTP(cancelReceipt, cancelRequest)
+	srv.Handler().ServeHTTP(cancelReceipt, cancelRequest)
 	if cancelReceipt.Code != http.StatusAccepted {
 		t.Fatalf("cancel-work admission: %d %s", cancelReceipt.Code, cancelReceipt.Body.String())
 	}

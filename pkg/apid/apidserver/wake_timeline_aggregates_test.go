@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Regression tests for aggregateWakeTimeline (review-fix cluster,
 // commit 3 of PR #1097). The helper is shared between the HTML
@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,7 +51,7 @@ func TestAggregateWakeTimeline_DescendingCutoffBreak(t *testing.T) {
 		"w-recent": {Trigger: "http", AtCapacityPresent: true, AtCapacity: true},
 		"w-old":    {Trigger: "http", AtCapacityPresent: true, AtCapacity: true},
 	}
-	agg := aggregateWakeTimeline(instances, metas, cutoff)
+	agg := apidserver.AggregateWakeTimeline(instances, metas, cutoff)
 	if agg.WakeCount24h != 2 {
 		t.Errorf("WakeCount24h = %d, want 2 (pre-cutoff row must be excluded)", agg.WakeCount24h)
 	}
@@ -81,7 +82,7 @@ func TestAggregateWakeTimeline_TwoDenominatorRule(t *testing.T) {
 		"w1": {Trigger: "http", AtCapacityPresent: true, AtCapacity: true},
 		"w2": {Trigger: "cron", AtCapacityPresent: true, AtCapacity: false},
 	}
-	agg := aggregateWakeTimeline(instances, metas, cutoff)
+	agg := apidserver.AggregateWakeTimeline(instances, metas, cutoff)
 	if agg.WakeCount24h != 4 {
 		t.Errorf("WakeCount24h = %d, want 4 (all rows in window)", agg.WakeCount24h)
 	}
@@ -117,7 +118,7 @@ func TestAggregateWakeTimeline_AtCapacityRequiresAllThree(t *testing.T) {
 		// though AtCapacity is true (pre-PR-A fleet).
 		"w3": {Trigger: "http", AtCapacityPresent: false, AtCapacity: true},
 	}
-	agg := aggregateWakeTimeline(instances, metas, cutoff)
+	agg := apidserver.AggregateWakeTimeline(instances, metas, cutoff)
 	if agg.AtCapacityCount != 1 {
 		t.Errorf("AtCapacityCount = %d, want 1 (only w1)", agg.AtCapacityCount)
 	}
@@ -141,7 +142,7 @@ func TestAggregateWakeTimeline_TriggerHistogramExcludesEmpty(t *testing.T) {
 		"w2": {Trigger: "cron"},
 		"w3": {Trigger: ""}, // excluded from histogram
 	}
-	agg := aggregateWakeTimeline(instances, metas, cutoff)
+	agg := apidserver.AggregateWakeTimeline(instances, metas, cutoff)
 	if got := agg.TriggerHistogram["http"]; got != 1 {
 		t.Errorf("TriggerHistogram[http] = %d, want 1", got)
 	}
@@ -165,7 +166,7 @@ func TestAggregateWakeTimeline_TriggerClassHistogram(t *testing.T) {
 		"w-crawler": {Trigger: "gateway", TriggerClass: "crawler"},
 		"w-unknown": {Trigger: "gateway"},
 	}
-	agg := aggregateWakeTimeline(instances, metas, now.Add(-24*time.Hour))
+	agg := apidserver.AggregateWakeTimeline(instances, metas, now.Add(-24*time.Hour))
 	if agg.TriggerClassHistogram["monitor"] != 1 || agg.TriggerClassHistogram["crawler"] != 1 {
 		t.Fatalf("TriggerClassHistogram = %+v, want monitor=1 crawler=1", agg.TriggerClassHistogram)
 	}
@@ -180,7 +181,7 @@ func TestAggregateWakeTimeline_TriggerClassHistogram(t *testing.T) {
 // the wire rather than `null`. AppWakeTimelineResponse doc
 // comment in pkg/api/dto.go explicitly calls this out.
 func TestAggregateWakeTimeline_NilSliceReturnsEmptyMap(t *testing.T) {
-	agg := aggregateWakeTimeline(nil, nil, time.Now().UTC())
+	agg := apidserver.AggregateWakeTimeline(nil, nil, time.Now().UTC())
 	if agg.TriggerHistogram == nil {
 		t.Errorf("TriggerHistogram is nil — wire-shape contract requires non-nil empty map")
 	}
@@ -203,7 +204,7 @@ func TestAggregateWakeTimeline_DivisionByZeroGuard(t *testing.T) {
 	instances := []state.Instance{
 		{ID: "1", StartedAt: now.Add(-1 * time.Hour), WakeID: "w1"},
 	}
-	agg := aggregateWakeTimeline(instances, map[string]state.WakeBootMeta{}, cutoff)
+	agg := apidserver.AggregateWakeTimeline(instances, map[string]state.WakeBootMeta{}, cutoff)
 	if agg.WakeCount24h != 1 {
 		t.Errorf("WakeCount24h = %d, want 1", agg.WakeCount24h)
 	}
@@ -223,7 +224,7 @@ func TestWakeTimelineWindow_ExplicitBounds(t *testing.T) {
 		{ID: "old", StartedAt: now.Add(-48 * time.Hour), WakeID: "old"},
 		{ID: "older", StartedAt: now.Add(-72 * time.Hour), WakeID: "older"},
 	}
-	rows := wakeTimelineWindow(instances, now.Add(-24*time.Hour), now)
+	rows := apidserver.WakeTimelineWindow(instances, now.Add(-24*time.Hour), now)
 	if len(rows) != 1 || rows[0].WakeID != "new" {
 		t.Fatalf("window rows = %#v, want only new row", rows)
 	}

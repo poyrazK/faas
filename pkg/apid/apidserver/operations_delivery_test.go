@@ -1,5 +1,5 @@
 // adr: 521
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"

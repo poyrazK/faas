@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	initial := []string{" Worker ", "FRONTEND", "frontend"}
-	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "customer-billing", AllowedServiceCallers: &initial,
 	}, nil)
 	if rec.Code != http.StatusCreated {
@@ -22,7 +23,7 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 	}
 	assertCallers := func(want *[]string) {
 		t.Helper()
-		got, err := e.store.AppBySlug(t.Context(), "customer-billing")
+		got, err := (*e.Store()).AppBySlug(t.Context(), "customer-billing")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +31,7 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 			(got.Manifest.AllowedServiceCallers != nil && !reflect.DeepEqual(*got.Manifest.AllowedServiceCallers, *want)) {
 			t.Fatalf("stored callers = %v, want %v", got.Manifest.AllowedServiceCallers, want)
 		}
-		read := e.do(t, http.MethodGet, "/v1/apps/customer-billing", nil, nil)
+		read := e.Do(t, http.MethodGet, "/v1/apps/customer-billing", nil, nil)
 		if read.Code != http.StatusOK {
 			t.Fatalf("read: %d %s", read.Code, read.Body)
 		}
@@ -46,24 +47,24 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 	normalized := []string{"frontend", "worker"}
 	assertCallers(&normalized)
 	denyAllAtCreate := []string{}
-	rec = e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	rec = e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "locked-service", AllowedServiceCallers: &denyAllAtCreate,
 	}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("deny-all create: %d %s", rec.Code, rec.Body)
 	}
-	locked, err := e.store.AppBySlug(t.Context(), "locked-service")
+	locked, err := (*e.Store()).AppBySlug(t.Context(), "locked-service")
 	if err != nil || locked.Manifest.AllowedServiceCallers == nil || len(*locked.Manifest.AllowedServiceCallers) != 0 {
 		t.Fatalf("deny-all create policy = %v, %v", locked.Manifest.AllowedServiceCallers, err)
 	}
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{}, nil)
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("omitted policy patch: %d %s", rec.Code, rec.Body)
 	}
 	assertCallers(&normalized)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`["identity"]`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -72,7 +73,7 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 	identity := []string{"identity"}
 	assertCallers(&identity)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`[]`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -81,7 +82,7 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 	empty := []string{}
 	assertCallers(&empty)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/customer-billing", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`null`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -91,14 +92,14 @@ func TestStandaloneAllowedServiceCallersCreateAndPatch(t *testing.T) {
 }
 
 func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	initial := api.ServiceCallerScopes{
 		" Frontend ": {
 			Methods:      []string{"post", "GET"},
 			PathPrefixes: []string{"/v1/orders/"},
 		},
 	}
-	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "scoped-billing", AllowedServiceCallScopes: &initial,
 	}, nil)
 	if rec.Code != http.StatusCreated {
@@ -110,14 +111,14 @@ func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
 	}}
 	assertScopes := func(expected *api.ServiceCallerScopes) {
 		t.Helper()
-		stored, err := e.store.AppBySlug(t.Context(), "scoped-billing")
+		stored, err := (*e.Store()).AppBySlug(t.Context(), "scoped-billing")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(stored.Manifest.AllowedServiceCallScopes, expected) {
 			t.Fatalf("stored scopes = %#v, want %#v", stored.Manifest.AllowedServiceCallScopes, expected)
 		}
-		read := e.do(t, http.MethodGet, "/v1/apps/scoped-billing", nil, nil)
+		read := e.Do(t, http.MethodGet, "/v1/apps/scoped-billing", nil, nil)
 		if read.Code != http.StatusOK {
 			t.Fatalf("read: %d %s", read.Code, read.Body)
 		}
@@ -131,7 +132,7 @@ func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
 	}
 	assertScopes(&want)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
 		AllowedServiceCallScopes: json.RawMessage(`{"identity":{"methods":["get"],"path_prefixes":["/health"]}}`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -140,7 +141,7 @@ func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
 	identity := api.ServiceCallerScopes{"identity": {Methods: []string{"GET"}, PathPrefixes: []string{"/health"}}}
 	assertScopes(&identity)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
 		AllowedServiceCallScopes: json.RawMessage(`{}`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -149,7 +150,7 @@ func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
 	empty := api.ServiceCallerScopes{}
 	assertScopes(&empty)
 
-	rec = e.do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/scoped-billing", api.UpdateAppRequest{
 		AllowedServiceCallScopes: json.RawMessage(`null`),
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -159,13 +160,13 @@ func TestStandaloneAllowedServiceCallScopesCreateAndPatch(t *testing.T) {
 }
 
 func TestStandaloneAllowedServiceCallersRejectsInvalidAndSourceOwned(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "standalone"}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "standalone"}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed app: %d %s", rec.Code, rec.Body)
 	}
 	for _, raw := range []json.RawMessage{json.RawMessage(`["../escape"]`), json.RawMessage(`123`)} {
-		rec = e.do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallers: raw}, nil)
+		rec = e.Do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallers: raw}, nil)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid policy %s: %d %s", raw, rec.Code, rec.Body)
 		}
@@ -175,7 +176,7 @@ func TestStandaloneAllowedServiceCallersRejectsInvalidAndSourceOwned(t *testing.
 		json.RawMessage(`{"frontend":{"methods":[],"path_prefixes":["/health"]}}`),
 		json.RawMessage(`[]`),
 	} {
-		rec = e.do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallScopes: raw}, nil)
+		rec = e.Do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallScopes: raw}, nil)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid call scopes %s: %d %s", raw, rec.Code, rec.Body)
 		}
@@ -188,53 +189,53 @@ func TestStandaloneAllowedServiceCallersRejectsInvalidAndSourceOwned(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = e.do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallers: tooManyJSON}, nil)
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/standalone", api.UpdateAppRequest{AllowedServiceCallers: tooManyJSON}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("oversized policy: %d %s", rec.Code, rec.Body)
 	}
-	stored, err := e.store.AppBySlug(t.Context(), "standalone")
+	stored, err := (*e.Store()).AppBySlug(t.Context(), "standalone")
 	if err != nil || stored.Manifest.AllowedServiceCallers != nil {
 		t.Fatalf("invalid PATCH changed policy: %+v, %v", stored.Manifest, err)
 	}
 	invalidCreate := []string{"../escape"}
-	rec = e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "invalid-callers", AllowedServiceCallers: &invalidCreate}, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "invalid-callers", AllowedServiceCallers: &invalidCreate}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid create policy: %d %s", rec.Code, rec.Body)
 	}
 
-	project, err := e.store.CreateProject(t.Context(), state.Project{AccountID: e.acct.ID, Slug: "project"})
+	project, err := (*e.Store()).CreateProject(t.Context(), state.Project{AccountID: (*e.Acct()).ID, Slug: "project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.store.CreateApp(t.Context(), state.App{
-		AccountID: e.acct.ID, ProjectID: project.ID, Slug: "project-billing", WorkloadName: "billing", Status: state.AppActive,
+	_, err = (*e.Store()).CreateApp(t.Context(), state.App{
+		AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "project-billing", WorkloadName: "billing", Status: state.AppActive,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = e.do(t, http.MethodPatch, "/v1/apps/project-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/project-billing", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`["frontend"]`),
 	}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("project policy patch: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.do(t, http.MethodPatch, "/v1/apps/project-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/project-billing", api.UpdateAppRequest{
 		AllowedServiceCallScopes: json.RawMessage(`{"frontend":{"methods":["GET"],"path_prefixes":["/health"]}}`),
 	}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("project call-scope patch: %d %s", rec.Code, rec.Body)
 	}
-	projectApp, err := e.store.AppBySlug(t.Context(), "project-billing")
+	projectApp, err := (*e.Store()).AppBySlug(t.Context(), "project-billing")
 	if err != nil || projectApp.Manifest.AllowedServiceCallers != nil {
 		t.Fatalf("project policy changed: %+v, %v", projectApp.Manifest, err)
 	}
-	_, err = e.store.CreateApp(t.Context(), state.App{
-		AccountID: e.acct.ID, Slug: "pr-1-standalone", PreviewOfSlug: "standalone", Status: state.AppActive,
+	_, err = (*e.Store()).CreateApp(t.Context(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "pr-1-standalone", PreviewOfSlug: "standalone", Status: state.AppActive,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec = e.do(t, http.MethodPatch, "/v1/apps/pr-1-standalone", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/pr-1-standalone", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`null`),
 	}, nil)
 	if rec.Code != http.StatusConflict {
@@ -243,25 +244,25 @@ func TestStandaloneAllowedServiceCallersRejectsInvalidAndSourceOwned(t *testing.
 }
 
 func TestStandaloneAllowedServiceCallersAuditsOldAndNew(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	initial := []string{"frontend"}
-	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "audit-billing", AllowedServiceCallers: &initial,
 	}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.do(t, http.MethodPatch, "/v1/apps/audit-billing", api.UpdateAppRequest{
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/audit-billing", api.UpdateAppRequest{
 		AllowedServiceCallers: json.RawMessage(`["identity"]`),
 	}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
 	}
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := findEventByKind(rows, "app.updated")
+	event := apidserver.FindEventByKind(rows, "app.updated")
 	if event == nil {
 		t.Fatal("app.updated event missing")
 	}

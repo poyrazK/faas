@@ -1,5 +1,5 @@
 // ADR-521: customer operations preserve ownership, execution fences and independent delivery.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,9 +48,9 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	srv.operation.AdmissionEnabled = true
-	retried, err := srv.enqueueRetry(ctx, app, dep, state.StageName("source_download"))
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Operation()).AdmissionEnabled = true
+	retried, err := srv.EnqueueRetry(ctx, app, dep, state.StageName("source_download"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +61,8 @@ func TestOperationBuildRetryRetainsDefinition(t *testing.T) {
 	if _, err := store.BuildByDeployment(ctx, retried.ID); err != nil {
 		t.Fatal("accepted retry has no build", err)
 	}
-	srv.operation.AdmissionEnabled = false
-	if _, err := srv.enqueueRetry(ctx, app, dep, state.StageName("source_download")); err == nil {
+	(*srv.Operation()).AdmissionEnabled = false
+	if _, err := srv.EnqueueRetry(ctx, app, dep, state.StageName("source_download")); err == nil {
 		t.Fatal("retry created an operation deployment while admission disabled")
 	}
 	latest, err := store.LatestDeployment(ctx, app.ID)

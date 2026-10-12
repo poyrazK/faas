@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -49,15 +50,15 @@ func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 		t.Fatalf("deactivate candidate: %v", err)
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
-	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	var got []prometheusTargetGroup
+	var got []apidserver.PrometheusTargetGroup
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode discovery response: %v", err)
 	}
@@ -88,11 +89,11 @@ func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert replacement: %v", err)
 	}
-	req = httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	req = httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec = httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
-	var replacement []prometheusTargetGroup
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
+	var replacement []apidserver.PrometheusTargetGroup
 	if err := json.Unmarshal(rec.Body.Bytes(), &replacement); err != nil {
 		t.Fatalf("decode replacement response: %v", err)
 	}
@@ -102,11 +103,11 @@ func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 }
 
 func TestComputeMetricsDiscoveryRejectsNonLoopback(t *testing.T) {
-	srv := newServer(state.NewMemStore(), nil, "gregale.dev", nil)
-	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(state.NewMemStore(), nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "203.0.113.10:8080"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, want 404", rec.Code)
 	}
@@ -131,15 +132,15 @@ func TestComputeMetricsDiscoveryScalesTo1000Nodes(t *testing.T) {
 		}
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
-	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	var got []prometheusTargetGroup
+	var got []apidserver.PrometheusTargetGroup
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode discovery response: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestComputeMetricsDiscoveryScalesTo1000Nodes(t *testing.T) {
 
 func TestComputeMetricsDiscoveryRejectsMoreThan1000ConfiguredNodes(t *testing.T) {
 	store := state.NewMemStore()
-	for i := 0; i < maxMetricsDiscoveryTargets+1; i++ {
+	for i := 0; i < apidserver.MaxMetricsDiscoveryTargets+1; i++ {
 		name := fmt.Sprintf("compute-%04d.faas", i)
 		vmmdTarget := fmt.Sprintf("tcp://vmmd-%04d.faas:50051", i)
 		target := fmt.Sprintf("tcp://%s:8080", name)
@@ -170,11 +171,11 @@ func TestComputeMetricsDiscoveryRejectsMoreThan1000ConfiguredNodes(t *testing.T)
 		}
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
-	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s, want 503", rec.Code, rec.Body.String())
 	}
@@ -200,7 +201,7 @@ func TestComputeMetricsTargetValidation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, got := computeMetricsTarget(tc.raw)
+			_, got := apidserver.ComputeMetricsTarget(tc.raw)
 			if got != tc.want {
 				t.Fatalf("computeMetricsTarget(%q)=%v, want %v", tc.raw, got, tc.want)
 			}
@@ -209,7 +210,7 @@ func TestComputeMetricsTargetValidation(t *testing.T) {
 }
 
 func TestPromtailMetricsTargetReusesComputeHost(t *testing.T) {
-	got, ok := promtailMetricsTarget("tcp://fsn-2.gregale.dev:8080")
+	got, ok := apidserver.PromtailMetricsTarget("tcp://fsn-2.gregale.dev:8080")
 	if !ok {
 		t.Fatal("promtailMetricsTarget rejected a valid compute target")
 	}
@@ -219,7 +220,7 @@ func TestPromtailMetricsTargetReusesComputeHost(t *testing.T) {
 }
 
 func TestNodeMetricsTargetReusesComputeHost(t *testing.T) {
-	got, ok := daemonMetricsTarget("9100")("tcp://fsn-2.gregale.dev:8080")
+	got, ok := apidserver.DaemonMetricsTarget("9100")("tcp://fsn-2.gregale.dev:8080")
 	if !ok {
 		t.Fatal("node metrics target rejected a valid compute target")
 	}
@@ -243,15 +244,15 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 		t.Fatalf("upsert active node: %v", err)
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
-	req := httptest.NewRequest(http.MethodGet, promtailMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, apidserver.PromtailMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	var got []prometheusTargetGroup
+	var got []apidserver.PrometheusTargetGroup
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode discovery response: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		t.Fatalf("upsert active node: %v", err)
 	}
 
-	srv := newServer(store, nil, "gregale.dev", nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil)
 	tests := []struct {
 		name    string
 		path    string
@@ -286,12 +287,12 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		want    string
 		job     string
 	}{
-		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
-		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
-		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
-		{name: "node", path: nodeMetricsDiscoveryPath, handler: srv.nodeMetricsDiscovery, want: "192.0.2.2:9100", job: "node-compute"},
-		{name: "realtimed", path: realtimedMetricsDiscoveryPath, handler: srv.realtimedMetricsDiscovery, want: "192.0.2.2:9107", job: "realtimed"},
-		{name: "schedd", path: scheddMetricsDiscoveryPath, handler: srv.scheddMetricsDiscovery, want: "192.0.2.2:9103", job: "schedd-compute"},
+		{name: "vmmd", path: apidserver.VmmdMetricsDiscoveryPath, handler: srv.VmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
+		{name: "imaged", path: apidserver.ImagedMetricsDiscoveryPath, handler: srv.ImagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
+		{name: "builderd", path: apidserver.BuilderdMetricsDiscoveryPath, handler: srv.BuilderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+		{name: "node", path: apidserver.NodeMetricsDiscoveryPath, handler: srv.NodeMetricsDiscovery, want: "192.0.2.2:9100", job: "node-compute"},
+		{name: "realtimed", path: apidserver.RealtimedMetricsDiscoveryPath, handler: srv.RealtimedMetricsDiscovery, want: "192.0.2.2:9107", job: "realtimed"},
+		{name: "schedd", path: apidserver.ScheddMetricsDiscoveryPath, handler: srv.ScheddMetricsDiscovery, want: "192.0.2.2:9103", job: "schedd-compute"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,7 +303,7 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
-			var got []prometheusTargetGroup
+			var got []apidserver.PrometheusTargetGroup
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("decode discovery response: %v", err)
 			}
@@ -344,11 +345,11 @@ func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
 	}
 
 	ops := wire.NewOpsMetrics("apid_discovery_test")
-	srv := newServer(store, nil, "gregale.dev", nil).WithOpsMetrics(context.Background(), ops)
-	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	srv := apidserver.NewServer(store, nil, "gregale.dev", nil).WithOpsMetrics(context.Background(), ops)
+	req := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
+	srv.MetricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -368,10 +369,10 @@ func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
 		t.Errorf("metrics body missing last-success timestamp:\n%s", body)
 	}
 
-	forbiddenReq := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
+	forbiddenReq := httptest.NewRequest(http.MethodGet, apidserver.ComputeMetricsDiscoveryPath, nil)
 	forbiddenReq.RemoteAddr = "203.0.113.10:8080"
 	forbiddenRec := httptest.NewRecorder()
-	srv.metricsDiscoveryHandler().ServeHTTP(forbiddenRec, forbiddenReq)
+	srv.MetricsDiscoveryHandler().ServeHTTP(forbiddenRec, forbiddenReq)
 	if forbiddenRec.Code != http.StatusNotFound {
 		t.Fatalf("forbidden status=%d, want 404", forbiddenRec.Code)
 	}

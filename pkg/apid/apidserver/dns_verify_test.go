@@ -13,7 +13,7 @@
 // custom dialer that respects the test TLS server hostname;
 // production uses tls.Dial. Both paths share the SAN check.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // TestCNAMELookupFunc_Roundtrip: the production seam is a thin
@@ -33,33 +35,33 @@ import (
 // pointer is non-nil and the helper is invocable; the real
 // resolver behaviour is exercised by the integration tests.
 func TestCNAMELookupFunc_Roundtrip(t *testing.T) {
-	if cnameLookupFunc == nil {
+	if (*apidserver.CnameLookupFunc) == nil {
 		t.Fatal("cnameLookupFunc is nil")
 	}
 	// Sanity: the production resolver must answer anything
 	// (the lookup may fail with NXDOMAIN, but it must not panic).
-	_, _ = cnameLookupFunc(context.Background(), "gregale.invalid.")
+	_, _ = (*apidserver.CnameLookupFunc)(context.Background(), "gregale.invalid.")
 }
 
 // TestCNAMELookupFunc_Fake: inject a fake resolver that returns
 // a fixed CNAME target. Mirrors the TXT verifier fake pattern.
 func TestCNAMELookupFunc_Fake(t *testing.T) {
-	prev := cnameLookupFunc
-	defer func() { cnameLookupFunc = prev }()
-	cnameLookupFunc = func(_ context.Context, target string) (string, error) {
+	prev := (*apidserver.CnameLookupFunc)
+	defer func() { (*apidserver.CnameLookupFunc) = prev }()
+	(*apidserver.CnameLookupFunc) = func(_ context.Context, target string) (string, error) {
 		if target == "app.example.com" {
 			return "edge.gregale.dev", nil
 		}
 		return "", &net.DNSError{Err: "no such host", Name: target}
 	}
-	got, err := cnameLookupFunc(context.Background(), "app.example.com")
+	got, err := (*apidserver.CnameLookupFunc)(context.Background(), "app.example.com")
 	if err != nil {
 		t.Fatalf("cname: %v", err)
 	}
 	if got != "edge.gregale.dev" {
 		t.Errorf("cname = %q, want edge.gregale.dev", got)
 	}
-	if _, err := cnameLookupFunc(context.Background(), "missing.example.com"); err == nil {
+	if _, err := (*apidserver.CnameLookupFunc)(context.Background(), "missing.example.com"); err == nil {
 		t.Errorf("missing host: expected error, got nil")
 	}
 }
@@ -136,7 +138,7 @@ func TestSanContains(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sanContains(tc.sans, tc.query); got != tc.want {
+			if got := apidserver.SanContains(tc.sans, tc.query); got != tc.want {
 				t.Errorf("sanContains(%v, %q) = %v, want %v", tc.sans, tc.query, got, tc.want)
 			}
 		})
@@ -154,9 +156,9 @@ func TestDialCert_HappyPath(t *testing.T) {
 	// Replace the production dialer with one that points at srv.
 	// httptest.NewTLSServer.Listen returns a string "127.0.0.1:NNN";
 	// we dial the host part on the port the server binds.
-	prev := dialCertFunc
-	defer func() { dialCertFunc = prev }()
-	dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+	prev := (*apidserver.DialCertFunc)
+	defer func() { (*apidserver.DialCertFunc) = prev }()
+	(*apidserver.DialCertFunc) = func(ctx context.Context, domain string) (*x509.Certificate, error) {
 		// Bind a tls.Config that accepts the test cert.
 		host, port, err := net.SplitHostPort(srv.Listener.Addr().String())
 		if err != nil {
@@ -178,13 +180,13 @@ func TestDialCert_HappyPath(t *testing.T) {
 		// we allow the helper to return the leaf regardless of SAN
 		// matching because the helper's CDN detection is exercised
 		// in the unit test below (TestDialCert_CDNCert).
-		_ = sanContains
+		_ = apidserver.SanContains
 		return leaf, nil
 	}
 
 	// Now call dialCert via the var; the test cert IS for the
 	// server's host, so the membership check passes.
-	cert, err := dialCert(context.Background(), "any-throws-away")
+	cert, err := apidserver.DialCert(context.Background(), "any-throws-away")
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -200,9 +202,9 @@ func TestDialCert_HappyPath(t *testing.T) {
 // has SANs but they don't include the target domain). Asserts
 // errCDNCert wraps the helper output.
 func TestDialCert_CDNCert(t *testing.T) {
-	prev := dialCertFunc
-	defer func() { dialCertFunc = prev }()
-	dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+	prev := (*apidserver.DialCertFunc)
+	defer func() { (*apidserver.DialCertFunc) = prev }()
+	(*apidserver.DialCertFunc) = func(ctx context.Context, domain string) (*x509.Certificate, error) {
 		// Fake a leaf cert with SANs that DON'T include target.
 		return nil, errors.New("cert SANs=[cdn.example.net]")
 	}
@@ -211,7 +213,7 @@ func TestDialCert_CDNCert(t *testing.T) {
 	// production dialCert sanity-test is covered by the
 	// integration tests. Here we just assert the test seam is
 	// invocable and renders the expected error.
-	_, err := dialCert(context.Background(), "missing.example.com")
+	_, err := apidserver.DialCert(context.Background(), "missing.example.com")
 	if err == nil {
 		t.Fatal("expected error from CDN case")
 	}
@@ -229,16 +231,16 @@ func TestDialCert_CDNCert(t *testing.T) {
 // can surface CertStatus="dial_failed:<reason>" instead of leaving
 // CertNotAfter/CertSANs silently empty.
 func TestDialCert_DialFailure(t *testing.T) {
-	prev := dialCertFunc
-	defer func() { dialCertFunc = prev }()
-	dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
-		return nil, errCertFailure
+	prev := (*apidserver.DialCertFunc)
+	defer func() { (*apidserver.DialCertFunc) = prev }()
+	(*apidserver.DialCertFunc) = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+		return nil, (*apidserver.ErrCertFailure)
 	}
-	_, err := dialCert(context.Background(), "x.example.com")
+	_, err := apidserver.DialCert(context.Background(), "x.example.com")
 	if err == nil {
 		t.Fatal("expected errCertFailure")
 	}
-	if !errors.Is(err, errCertFailure) {
+	if !errors.Is(err, (*apidserver.ErrCertFailure)) {
 		t.Errorf("errCertFailure not in chain: %v", err)
 	}
 }
@@ -248,9 +250,9 @@ func TestDialCert_DialFailure(t *testing.T) {
 // that hangs on DialContext and assert dialCert returns when ctx
 // is cancelled.
 func TestDialCert_CtxCancellation(t *testing.T) {
-	prev := dialCertFunc
-	defer func() { dialCertFunc = prev }()
-	dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+	prev := (*apidserver.DialCertFunc)
+	defer func() { (*apidserver.DialCertFunc) = prev }()
+	(*apidserver.DialCertFunc) = func(ctx context.Context, domain string) (*x509.Certificate, error) {
 		dialer := &net.Dialer{}
 		_, err := dialer.DialContext(ctx, "tcp", "203.0.113.1:443") // TEST-NET-3 (RFC 5737).
 		if err != nil {
@@ -261,12 +263,12 @@ func TestDialCert_CtxCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := dialCert(ctx, "x.example.com")
+	_, err := apidserver.DialCert(ctx, "x.example.com")
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected ctx timeout error")
 	}
-	if !errors.Is(err, errCertFailure) {
+	if !errors.Is(err, (*apidserver.ErrCertFailure)) {
 		t.Errorf("errCertFailure not in chain: %v", err)
 	}
 	if elapsed > 2*time.Second {
@@ -294,7 +296,7 @@ func TestIsPublicCertAddress(t *testing.T) {
 		raw, want := raw, want
 		t.Run(raw, func(t *testing.T) {
 			t.Parallel()
-			if got := isPublicCertAddress(net.ParseIP(raw)); got != want {
+			if got := apidserver.IsPublicCertAddress(net.ParseIP(raw)); got != want {
 				t.Errorf("isPublicCertAddress(%s) = %v, want %v", raw, got, want)
 			}
 		})
@@ -302,19 +304,21 @@ func TestIsPublicCertAddress(t *testing.T) {
 }
 
 func TestDialCertRejectsMixedPublicPrivateAnswersWithoutDial(t *testing.T) {
-	previousLookup, previousDial := certLookupIPFunc, certDialContextFunc
-	t.Cleanup(func() { certLookupIPFunc, certDialContextFunc = previousLookup, previousDial })
-	certLookupIPFunc = func(context.Context, string) ([]net.IPAddr, error) {
+	previousLookup, previousDial := (*apidserver.CertLookupIPFunc), (*apidserver.CertDialContextFunc)
+	t.Cleanup(func() {
+		(*apidserver.CertLookupIPFunc), (*apidserver.CertDialContextFunc) = previousLookup, previousDial
+	})
+	(*apidserver.CertLookupIPFunc) = func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}, {IP: net.ParseIP("10.0.0.8")}}, nil
 	}
 	dials := 0
-	certDialContextFunc = func(context.Context, string, string) (net.Conn, error) {
+	(*apidserver.CertDialContextFunc) = func(context.Context, string, string) (net.Conn, error) {
 		dials++
 		return nil, errors.New("unexpected dial")
 	}
 
-	_, err := dialCertFunc(context.Background(), "customer.example")
-	if !errors.Is(err, errCertAddressBlocked) {
+	_, err := (*apidserver.DialCertFunc)(context.Background(), "customer.example")
+	if !errors.Is(err, (*apidserver.ErrCertAddressBlocked)) {
 		t.Fatalf("error = %v, want errCertAddressBlocked", err)
 	}
 	if dials != 0 {
@@ -323,21 +327,23 @@ func TestDialCertRejectsMixedPublicPrivateAnswersWithoutDial(t *testing.T) {
 }
 
 func TestDialCertPinsApprovedResolutionToNumericAddress(t *testing.T) {
-	previousLookup, previousDial := certLookupIPFunc, certDialContextFunc
-	t.Cleanup(func() { certLookupIPFunc, certDialContextFunc = previousLookup, previousDial })
+	previousLookup, previousDial := (*apidserver.CertLookupIPFunc), (*apidserver.CertDialContextFunc)
+	t.Cleanup(func() {
+		(*apidserver.CertLookupIPFunc), (*apidserver.CertDialContextFunc) = previousLookup, previousDial
+	})
 	lookups := 0
-	certLookupIPFunc = func(context.Context, string) ([]net.IPAddr, error) {
+	(*apidserver.CertLookupIPFunc) = func(context.Context, string) ([]net.IPAddr, error) {
 		lookups++
 		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
 	}
-	certDialContextFunc = func(_ context.Context, _, address string) (net.Conn, error) {
+	(*apidserver.CertDialContextFunc) = func(_ context.Context, _, address string) (net.Conn, error) {
 		if address != "8.8.8.8:443" {
 			t.Fatalf("dial address = %q, want pinned numeric address", address)
 		}
 		return nil, errors.New("stop after address assertion")
 	}
 
-	_, _ = dialCertFunc(context.Background(), "customer.example")
+	_, _ = (*apidserver.DialCertFunc)(context.Background(), "customer.example")
 	if lookups != 1 {
 		t.Fatalf("DNS lookups = %d, want 1", lookups)
 	}
@@ -353,4 +359,4 @@ func fmtErr(err error) error {
 type dialErr struct{ msg string }
 
 func (e *dialErr) Error() string { return e.msg }
-func (e *dialErr) Unwrap() error { return errCertFailure }
+func (e *dialErr) Unwrap() error { return (*apidserver.ErrCertFailure) }

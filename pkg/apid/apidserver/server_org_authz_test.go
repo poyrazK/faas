@@ -21,7 +21,7 @@
 // authn-only test (TestAllV1Routes_RequireAuthOrLimit already covers
 // them).
 
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -98,14 +99,14 @@ var orgRoutesRequiringAuthorize = []struct {
 // with state.ErrNotFound — the path that produces
 // api.ErrOrgRoleForbidden.
 func TestOrgRoutes_GatedByAuthorize(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 
 	// Seed an org the principal is NOT a member of. The slug is
 	// the placeholder in orgRoutesRequiringAuthorize ("example-slug");
 	// the principal (e.acct) is intentionally never added to
 	// org_members for this org, so LoadOrg's membership lookup
 	// fails with state.ErrNotFound → 403 CodeOrgRoleForbidden.
-	if _, err := e.store.CreateOrg(context.Background(), state.Org{
+	if _, err := (*e.Store()).CreateOrg(context.Background(), state.Org{
 		Slug: "example-slug",
 		Name: "Example Org",
 	}); err != nil {
@@ -119,8 +120,8 @@ func TestOrgRoutes_GatedByAuthorize(t *testing.T) {
 			// Bearer with ScopesAdminOnly — passes s.authLimited /
 			// s.requireMFA / s.requireScope so the only gate that
 			// can fire is the authz gate.
-			req.Header.Set("Authorization", "Bearer "+e.key)
-			e.h.ServeHTTP(rec, req)
+			req.Header.Set("Authorization", "Bearer "+(*e.Key()))
+			(*e.H()).ServeHTTP(rec, req)
 			if rec.Code < 400 {
 				t.Errorf("status = %d (body = %s), want 4xx — route is NOT behind AuthorizeOrgAction", rec.Code, rec.Body.String())
 			}
@@ -156,14 +157,14 @@ func TestOrgRoutes_GatedByAuthorize(t *testing.T) {
 //
 // Same route table as above; the only difference is the slug.
 func TestOrgRoutes_GatedByAuthorize_UnknownSlug(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 
 	for _, r := range orgRoutesRequiringAuthorize {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(r.method, r.path, nil)
-			req.Header.Set("Authorization", "Bearer "+e.key)
-			e.h.ServeHTTP(rec, req)
+			req.Header.Set("Authorization", "Bearer "+(*e.Key()))
+			(*e.H()).ServeHTTP(rec, req)
 			if rec.Code < 400 {
 				t.Errorf("status = %d, want 4xx", rec.Code)
 			}

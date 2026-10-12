@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
@@ -21,16 +22,16 @@ func installTriggerSecretIdentity(t *testing.T) *age.X25519Identity {
 	if err != nil {
 		t.Fatalf("GenerateX25519Identity: %v", err)
 	}
-	previousRecipient := setSecretRecipient
-	previousIdentities := mfaIdentities
-	previousIdentity := mfaIdentity
-	setSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	mfaIdentity = func() *age.X25519Identity { return identity }
+	previousRecipient := (*apidserver.SetSecretRecipient)
+	previousIdentities := (*apidserver.MfaIdentities)
+	previousIdentity := (*apidserver.MfaIdentity)
+	(*apidserver.SetSecretRecipient) = func() *age.X25519Recipient { return identity.Recipient() }
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	(*apidserver.MfaIdentity) = func() *age.X25519Identity { return identity }
 	t.Cleanup(func() {
-		setSecretRecipient = previousRecipient
-		mfaIdentities = previousIdentities
-		mfaIdentity = previousIdentity
+		(*apidserver.SetSecretRecipient) = previousRecipient
+		(*apidserver.MfaIdentities) = previousIdentities
+		(*apidserver.MfaIdentity) = previousIdentity
 	})
 	return identity
 }
@@ -39,13 +40,13 @@ func kafkaConfig(password string) json.RawMessage {
 	return json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password":"` + password + `"}}`)
 }
 
-func createKafkaTriggerForSecretTest(t *testing.T, e testEnv, password string) api.Trigger {
+func createKafkaTriggerForSecretTest(t *testing.T, e apidserver.TestEnv, password string) api.Trigger {
 	t.Helper()
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "secret-app"})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "secret-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID: app.ID, Kind: api.TriggerKindKafka, Slug: "orders", Config: kafkaConfig(password),
 	}, nil)
 	if rec.Code != http.StatusCreated {
@@ -63,7 +64,7 @@ func TestTriggerResponseRedactsKafkaSecrets(t *testing.T) {
 		Kind:   string(api.TriggerKindKafka),
 		Config: []byte(`{"sasl":{"username":"svc","password":"plain","password_sealed":"YQ=="},"tls":{"client_cert":"cert","client_key":"key","client_key_sealed":"Yg=="}}`),
 	}
-	body, err := json.Marshal(triggerResponse(row))
+	body, err := json.Marshal(apidserver.TriggerResponse(row))
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -79,12 +80,12 @@ func TestTriggerResponseRedactsKafkaSecrets(t *testing.T) {
 
 func TestCreateTriggerSealsStoredCredentialsAndRedactsResponse(t *testing.T) {
 	identity := installTriggerSecretIdentity(t)
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	trigger := createKafkaTriggerForSecretTest(t, e, "create-secret")
 	if bytes.Contains(trigger.Config, []byte("create-secret")) || !bytes.Contains(trigger.Config, []byte(`"password_set":true`)) {
 		t.Fatalf("customer config was not redacted: %s", trigger.Config)
 	}
-	stored, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	stored, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	if err != nil {
 		t.Fatalf("TriggerByID: %v", err)
 	}
@@ -98,15 +99,15 @@ func TestCreateTriggerSealsStoredCredentialsAndRedactsResponse(t *testing.T) {
 }
 
 func TestCreateTriggerFailsClosedWithoutSecretRecipient(t *testing.T) {
-	previous := setSecretRecipient
-	setSecretRecipient = func() *age.X25519Recipient { return nil }
-	t.Cleanup(func() { setSecretRecipient = previous })
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "secret-app"})
+	previous := (*apidserver.SetSecretRecipient)
+	(*apidserver.SetSecretRecipient) = func() *age.X25519Recipient { return nil }
+	t.Cleanup(func() { (*apidserver.SetSecretRecipient) = previous })
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "secret-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
 		AppID: app.ID, Kind: api.TriggerKindKafka, Slug: "orders", Config: kafkaConfig("must-not-store"),
 	}, nil)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -123,12 +124,12 @@ func TestCreateTriggerFailsClosedWithoutSecretRecipient(t *testing.T) {
 
 func TestBatchCreateTriggerSealsCredentialsAndRedactsResponse(t *testing.T) {
 	installTriggerSecretIdentity(t)
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "batch-secret-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "batch-secret-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/triggers:batch_create", api.CreateTriggerBatchRequest{
 		AppID: app.ID,
 		ManifestYAML: `triggers:
   - kind: kafka
@@ -150,7 +151,7 @@ func TestBatchCreateTriggerSealsCredentialsAndRedactsResponse(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "batch-secret") || !strings.Contains(rec.Body.String(), `"password_set":true`) {
 		t.Fatalf("batch response was not redacted: %s", rec.Body.String())
 	}
-	stored, err := e.store.ListTriggersForApp(t.Context(), app.ID)
+	stored, err := (*e.Store()).ListTriggersForApp(t.Context(), app.ID)
 	if err != nil || len(stored) != 1 {
 		t.Fatalf("ListTriggersForApp = %d, %v", len(stored), err)
 	}
@@ -161,22 +162,22 @@ func TestBatchCreateTriggerSealsCredentialsAndRedactsResponse(t *testing.T) {
 
 func TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword(t *testing.T) {
 	identity := installTriggerSecretIdentity(t)
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	trigger := createKafkaTriggerForSecretTest(t, e, "old-secret")
-	before, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	before, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	if err != nil {
 		t.Fatalf("TriggerByID before patch: %v (id=%q)", err, trigger.ID)
 	}
-	if _, err := e.store.AppByID(t.Context(), uuidFromPgtype(before.AppID).String()); err != nil {
-		t.Fatalf("AppByID before patch: %v (app_id=%q)", err, uuidFromPgtype(before.AppID).String())
+	if _, err := (*e.Store()).AppByID(t.Context(), apidserver.UuidFromPgtype(before.AppID).String()); err != nil {
+		t.Fatalf("AppByID before patch: %v (app_id=%q)", err, apidserver.UuidFromPgtype(before.AppID).String())
 	}
 
 	preserveConfig := json.RawMessage(`{"brokers":["new:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"new-user","password_set":true}}`)
-	rec := e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: preserveConfig}, nil)
+	rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: preserveConfig}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preserve status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	stored, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	stored, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	if err != nil {
 		t.Fatalf("TriggerByID preserve: %v", err)
 	}
@@ -185,22 +186,22 @@ func TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword(t *testing.T) {
 		t.Fatalf("preserved config = %s, %v", opened, err)
 	}
 
-	rec = e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: kafkaConfig("new-secret")}, nil)
+	rec = e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: kafkaConfig("new-secret")}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	stored, _ = e.store.TriggerByID(t.Context(), trigger.ID)
+	stored, _ = (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	opened, err = triggerconfig.Open(api.TriggerKindKafka, stored.Config, []*age.X25519Identity{identity})
 	if err != nil || bytes.Contains(opened, []byte("old-secret")) || !bytes.Contains(opened, []byte("new-secret")) {
 		t.Fatalf("rotated config = %s, %v", opened, err)
 	}
 
 	withoutSASL := json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`)
-	rec = e.do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: withoutSASL}, nil)
+	rec = e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: withoutSASL}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("remove status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	stored, _ = e.store.TriggerByID(t.Context(), trigger.ID)
+	stored, _ = (*e.Store()).TriggerByID(t.Context(), trigger.ID)
 	opened, err = triggerconfig.Open(api.TriggerKindKafka, stored.Config, []*age.X25519Identity{identity})
 	if err != nil || bytes.Contains(opened, []byte("sasl")) || bytes.Contains(opened, []byte("new-secret")) {
 		t.Fatalf("removed config = %s, %v", opened, err)
@@ -209,23 +210,23 @@ func TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword(t *testing.T) {
 
 func TestUpdateTriggerCorruptStoredSecretReturnsSanitizedProblem(t *testing.T) {
 	installTriggerSecretIdentity(t)
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "corrupt-app"})
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "corrupt-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
-	created, err := e.store.CreateTriggerIfUnderQuota(t.Context(), app.ID, string(api.TriggerKindKafka), "orders", true,
+	created, err := (*e.Store()).CreateTriggerIfUnderQuota(t.Context(), app.ID, string(api.TriggerKindKafka), "orders", true,
 		[]byte(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_sealed":"bm90LWFnZQ=="}}`),
 		"", 64, 1000, 5, 6_291_456, "commit", limits)
 	if err != nil {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
-	id := uuidFromPgtype(created.ID).String()
-	if _, err := e.store.TriggerByID(t.Context(), id); err != nil {
+	id := apidserver.UuidFromPgtype(created.ID).String()
+	if _, err := (*e.Store()).TriggerByID(t.Context(), id); err != nil {
 		t.Fatalf("TriggerByID before corrupt patch: %v (id=%q, raw=%q)", err, id, created.ID.String())
 	}
-	rec := e.do(t, http.MethodPatch, "/v1/triggers/"+id, api.UpdateTriggerRequest{
+	rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+id, api.UpdateTriggerRequest{
 		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
 	}, nil)
 	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "bm90LWFnZQ") {

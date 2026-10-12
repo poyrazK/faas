@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestProjectEnvironmentReleasesReportsLiveAndUndeployedWorkloads(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	other, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "shop-worker", WorkloadName: "worker", Status: state.AppActive,
@@ -33,9 +34,9 @@ func TestProjectEnvironmentReleasesReportsLiveAndUndeployedWorkloads(t *testing.
 		t.Fatal(err)
 	}
 
-	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/releases", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/releases", "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.getProjectEnvironmentReleases(rec, req, acct)
+	srv.GetProjectEnvironmentReleases(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -69,7 +70,7 @@ func TestProjectEnvironmentReleasesReportsLiveAndUndeployedWorkloads(t *testing.
 }
 
 func TestListProjectEnvironmentPromotionsPaginatesAndFilters(t *testing.T) {
-	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -98,9 +99,9 @@ func TestListProjectEnvironmentPromotionsPaginatesAndFilters(t *testing.T) {
 		}
 	}
 
-	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?limit=2&from=staging", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?limit=2&from=staging", "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.listProjectEnvironmentPromotions(rec, req, acct)
+	srv.ListProjectEnvironmentPromotions(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page 1 status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -112,9 +113,9 @@ func TestListProjectEnvironmentPromotionsPaginatesAndFilters(t *testing.T) {
 		t.Fatalf("page 1=%+v", first)
 	}
 
-	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?limit=2&from=staging&before="+first.NextBefore, "shop", nil)
+	req, rec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?limit=2&from=staging&before="+first.NextBefore, "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.listProjectEnvironmentPromotions(rec, req, acct)
+	srv.ListProjectEnvironmentPromotions(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("page 2 status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -126,8 +127,8 @@ func TestListProjectEnvironmentPromotionsPaginatesAndFilters(t *testing.T) {
 		t.Fatalf("page 2=%+v, want final filtered history item", second)
 	}
 
-	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?status=bad", "shop", nil)
+	req, rec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions?status=bad", "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.listProjectEnvironmentPromotions(rec, req, acct)
-	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	srv.ListProjectEnvironmentPromotions(rec, req, acct)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }

@@ -1,10 +1,11 @@
-package apidserver
+package apidserver_test
 
 import (
 	"math"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAllocateRequestAnalyticsRouteCost_ReconcilesLargestRemainder(t *testing.T) {
@@ -14,7 +15,7 @@ func TestAllocateRequestAnalyticsRouteCost_ReconcilesLargestRemainder(t *testing
 		{Route: "__other__", Requests: 3},
 	}
 
-	requests, allocated, other := allocateRequestAnalyticsRouteCost(routes, 3, 10)
+	requests, allocated, other := apidserver.AllocateRequestAnalyticsRouteCost(routes, 3, 10)
 	if requests != 9 || allocated != 10 || other != 3 {
 		t.Fatalf("allocation totals = requests %d, cost %d, other cost %d; want 9, 10, 3", requests, allocated, other)
 	}
@@ -29,7 +30,7 @@ func TestAllocateRequestAnalyticsRouteCost_ReconcilesLargestRemainder(t *testing
 func TestAllocateRequestAnalyticsRouteCost_LeavesCostUnallocatedWithoutRequests(t *testing.T) {
 	routes := []api.RequestAnalyticsRoute{{Route: "/unused", Requests: 0}}
 
-	requests, allocated, other := allocateRequestAnalyticsRouteCost(routes, 0, 123)
+	requests, allocated, other := apidserver.AllocateRequestAnalyticsRouteCost(routes, 0, 123)
 	if requests != 0 || allocated != 0 || other != 0 {
 		t.Fatalf("allocation totals = requests %d, cost %d, other cost %d; want 0, 0, 0", requests, allocated, other)
 	}
@@ -46,7 +47,7 @@ func TestMillicentsAsEUR(t *testing.T) {
 		{value: 0, want: "0.00000"},
 		{value: 1_234_567, want: "12.34567"},
 	} {
-		if got := millicentsAsEUR(tc.value); got != tc.want {
+		if got := apidserver.MillicentsAsEUR(tc.value); got != tc.want {
 			t.Errorf("millicentsAsEUR(%d) = %q, want %q", tc.value, got, tc.want)
 		}
 	}

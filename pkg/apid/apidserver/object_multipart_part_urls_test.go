@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -39,42 +40,42 @@ func (p blockedMultipartURLStore) IssueObjectMultipartURLCredential(ctx context.
 
 // adr: 550
 func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
-	_, teardown := withTestIdentities(t)
+	_, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	for _, operation := range []string{state.ObjectMultipartAborting, state.ObjectMultipartCompleting} {
 		t.Run(operation, func(t *testing.T) {
-			e := setup(t, api.PlanHobby)
-			if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+			e := apidserver.Setup(t, api.PlanHobby)
+			if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 				t.Fatal(err)
 			}
-			createApp(t, e, "sign-race")
-			p := blockedMultipartURLStore{MemStore: e.store, entered: make(chan struct{}), release: make(chan struct{})}
-			e.s.store = p
+			apidserver.CreateApp(t, e, "sign-race")
+			p := blockedMultipartURLStore{MemStore: (*e.Store()), entered: make(chan struct{}), release: make(chan struct{})}
+			(*(*e.S()).Store()) = p
 			var release sync.Once
 			defer release.Do(func() { close(p.release) })
-			e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
-			b := bucketResponse(t, e.do(t, "POST", "/v1/apps/sign-race/buckets", map[string]any{"name": "assets"}, nil), 201)
-			qualifyObjectAccounting(t, e, b.ID)
+			(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))
+			b := apidserver.BucketResponse(t, e.Do(t, "POST", "/v1/apps/sign-race/buckets", map[string]any{"name": "assets"}, nil), 201)
+			apidserver.QualifyObjectAccounting(t, e, b.ID)
 			base := "/v1/apps/sign-race/buckets/" + b.ID + "/multipart-uploads"
-			response := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "race", SizeBytes: 10}, nil)
+			response := e.Do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "race", SizeBytes: 10}, nil)
 			var u api.ObjectMultipartUpload
 			if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &u) != nil {
 				t.Fatal(response.Code, response.Body.String())
 			}
 			done := make(chan *httptest.ResponseRecorder, 1)
 			go func() {
-				done <- e.do(t, "POST", base+"/"+u.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
+				done <- e.Do(t, "POST", base+"/"+u.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
 			}()
 			select {
 			case <-p.entered:
 			case <-time.After(5 * time.Second):
 				t.Fatal("signing did not reach atomic URL admission")
 			}
-			app, err := e.store.AppBySlug(t.Context(), "sign-race")
+			app, err := (*e.Store()).AppBySlug(t.Context(), "sign-race")
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = e.store.ClaimObjectMultipartUpload(t.Context(), e.acct.ID, app.ID, b.ID, u.ID, "mutation", operation, []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"part"`}}, false)
+			_, err = (*e.Store()).ClaimObjectMultipartUpload(t.Context(), (*e.Acct()).ID, app.ID, b.ID, u.ID, "mutation", operation, []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"part"`}}, false)
 			release.Do(func() { close(p.release) })
 			if err != nil {
 				t.Fatal(err)
@@ -104,7 +105,7 @@ func TestObjectMultipartSignedURLAbortEndToEndPG(t *testing.T) {
 
 func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	t.Helper()
-	identity, teardown := withTestIdentities(t)
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	const key = "目录 /+%.bin"
 	const native = "private-upload/+%?"
@@ -205,12 +206,12 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.st.CreateAPIKey(ctx, f.account.ID, hash, "multipart", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	management := func() (*server, *httptest.Server, *api.Client) {
-		s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-		if e := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); e != nil {
+	management := func() (*apidserver.Server, *httptest.Server, *api.Client) {
+		s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+		if e := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); e != nil {
 			t.Fatal(e)
 		}
-		srv := httptest.NewServer(s.handler())
+		srv := httptest.NewServer(s.Handler())
 		t.Cleanup(srv.Close)
 		return s, srv, api.NewClient(srv.URL, token)
 	}
@@ -270,10 +271,10 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=now() WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*recovery.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != initialLists+1 {
+	if err = (*recovery.Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != initialLists+1 {
 		t.Fatal("restart cleanup of remaining parts", err, aborts.Load(), lists.Load())
 	}
 	assertReservation()
@@ -281,13 +282,13 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=now() WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
+	if err = (*recovery.Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
 		t.Fatal("verified cleanup", err, aborts.Load(), lists.Load())
 	}
 	// Legacy fixed-size uploads keep their untracked key grant even after
 	// verified abort; cleanup cannot rewrite the provider inventory baseline.
 	assertReservation()
-	if err = recovery.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err = (*recovery.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	if err = client.AbortObjectMultipartUpload(ctx, f.app.Slug, f.bucket.ID, u.ID); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {

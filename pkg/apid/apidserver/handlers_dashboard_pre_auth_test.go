@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"io"
@@ -9,21 +9,22 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	config := &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 20, Burst: 40,
 		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 2, Burst: 4,
 			Coordination: api.PreAuthCoordinationCentral, ObserveTargets: true,
 			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 3, Coordination: api.PreAuthCoordinationCentral}}},
 	}
-	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil); rec.Code != http.StatusCreated {
+	if rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create app: %d %s", rec.Code, rec.Body.String())
 	}
-	installPromFixture(t, &e, func(query string) string {
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		if strings.Contains(query, `gateway_requests_total`) && strings.Contains(query, `[15m]`) {
 			return `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[0,"40"]}]}}`
 		}
@@ -41,7 +42,7 @@ func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/apps/protected-app/pre-auth?range=15m", nil)
-	e.s.renderAppPreAuth(rec, req, slog.New(slog.NewTextHandler(io.Discard, nil)), e.acct, "protected-app")
+	(*e.S()).RenderAppPreAuth(rec, req, slog.New(slog.NewTextHandler(io.Discard, nil)), (*e.Acct()), "protected-app")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dashboard: %d %s", rec.Code, rec.Body.String())
 	}
@@ -64,7 +65,7 @@ func TestDashboardPreAuthRendersScopedObservations(t *testing.T) {
 }
 
 func TestDashboardPreAuthOffDegradedAndTenantIsolation(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +117,7 @@ func TestParseAppPreAuthPath(t *testing.T) {
 		{"my-app/other/pre-auth", "", false},
 		{"/pre-auth", "", false},
 	} {
-		slug, ok := parseAppPreAuthPath(tc.input)
+		slug, ok := apidserver.ParseAppPreAuthPath(tc.input)
 		if slug != tc.slug || ok != tc.ok {
 			t.Errorf("parseAppPreAuthPath(%q) = %q, %v", tc.input, slug, ok)
 		}

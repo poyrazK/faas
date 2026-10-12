@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/google/pprof/profile"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 )
@@ -49,38 +50,38 @@ func TestCPUProfileRegressionAPIAndConcurrentEdit(t *testing.T) {
 	req.Investigation.Baseline.Start = req.Investigation.Baseline.Start.Add(-100 * time.Second)
 	req.Investigation.Baseline.End = req.Investigation.Baseline.End.Add(-100 * time.Second)
 	backend := &regressionQueryCapture{baseline: req.Investigation.Baseline}
-	e.s.profileBackend = backend
-	row, err := e.store.SaveProfileInvestigation(t.Context(), e.acct.ID, app.ID, "", req)
+	(*(*e.S()).ProfileBackend()) = backend
+	row, err := (*e.Store()).SaveProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, "", req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/" + app.Slug + "/profiles/investigations/" + row.ID + "/check"
 	check := api.CheckProfileRegressionRequest{ExpectedRevision: &row.Revision}
-	if rec := e.do(t, "POST", path, map[string]any{"expected_revision": 1, "options": map[string]any{"absolute_increase_cpu_per_second": .01, "minimum_profiles": 3, "minimum_coverage_ratio": .8}}, nil); rec.Code != 400 {
+	if rec := e.Do(t, "POST", path, map[string]any{"expected_revision": 1, "options": map[string]any{"absolute_increase_cpu_per_second": .01, "minimum_profiles": 3, "minimum_coverage_ratio": .8}}, nil); rec.Code != 400 {
 		t.Fatal("partial threshold configuration accepted", rec.Code)
 	}
-	if rec := e.do(t, "POST", path, api.CheckProfileRegressionRequest{}, nil); rec.Code != 400 {
+	if rec := e.Do(t, "POST", path, api.CheckProfileRegressionRequest{}, nil); rec.Code != 400 {
 		t.Fatal("missing revision", rec.Code)
 	}
 	readKey, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "read", []string{api.ScopeAppsRead}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "read", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do(t, "POST", path, check, map[string]string{"Authorization": "Bearer " + readKey}); rec.Code != 403 {
+	if rec := e.Do(t, "POST", path, check, map[string]string{"Authorization": "Bearer " + readKey}); rec.Code != 403 {
 		t.Fatal("read key wrote assessment", rec.Code)
 	}
-	if rec := e.do(t, "POST", path, check, map[string]string{"Authorization": ""}); rec.Code != 401 {
+	if rec := e.Do(t, "POST", path, check, map[string]string{"Authorization": ""}); rec.Code != 401 {
 		t.Fatal("unauthenticated check", rec.Code)
 	}
-	rec := e.do(t, "POST", path, check, nil)
+	rec := e.Do(t, "POST", path, check, nil)
 	var out api.ProfileInvestigationResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err, rec.Body.String())
 	}
-	if rec.Code != 200 || out.Saved.Revision != 2 || out.Saved.Assessment == nil || out.Saved.Assessment.Status != "regressed" || len(out.Saved.Assessment.Evidence) != 2 || backend.queries != 2 || backend.tenant != e.acct.ID || backend.app != app.ID || backend.scope != "prod" || rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Code != 200 || out.Saved.Revision != 2 || out.Saved.Assessment == nil || out.Saved.Assessment.Status != "regressed" || len(out.Saved.Assessment.Evidence) != 2 || backend.queries != 2 || backend.tenant != (*e.Acct()).ID || backend.app != app.ID || backend.scope != "prod" || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, "POST", path, check, nil); rec.Code != 409 || backend.queries != 2 {
+	if rec := e.Do(t, "POST", path, check, nil); rec.Code != 409 || backend.queries != 2 {
 		t.Fatal("stale check queried", rec.Code)
 	}
 	check.ExpectedRevision = &out.Saved.Revision
@@ -88,14 +89,14 @@ func TestCPUProfileRegressionAPIAndConcurrentEdit(t *testing.T) {
 		backend.afterQuery = nil
 		req.ExpectedRevision = &out.Saved.Revision
 		req.Investigation.Notes = "Edited during check"
-		if _, err := e.store.SaveProfileInvestigation(t.Context(), e.acct.ID, app.ID, row.ID, req); err != nil {
+		if _, err := (*e.Store()).SaveProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, row.ID, req); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if rec := e.do(t, "POST", path, check, nil); rec.Code != 409 {
+	if rec := e.Do(t, "POST", path, check, nil); rec.Code != 409 {
 		t.Fatal("racing edit overwritten", rec.Code, rec.Body.String())
 	}
-	got, err := e.store.GetProfileInvestigation(t.Context(), e.acct.ID, app.ID, row.ID)
+	got, err := (*e.Store()).GetProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, row.ID)
 	if err != nil || got.Investigation.Notes != "Edited during check" || got.Assessment.InvestigationRevision == got.Revision {
 		t.Fatal("old result appears current", got, err)
 	}
@@ -105,7 +106,7 @@ func TestCPUProfileRegressionUnavailableAndDashboardCSRF(t *testing.T) {
 	e, app, req, backend := profileInvestigationFixture(t)
 	req.Investigation.Baseline.Start = req.Investigation.Baseline.Start.Add(-30 * 24 * time.Hour)
 	req.Investigation.Baseline.End = req.Investigation.Baseline.End.Add(-30 * 24 * time.Hour)
-	row, err := e.store.SaveProfileInvestigation(t.Context(), e.acct.ID, app.ID, "", req)
+	row, err := (*e.Store()).SaveProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, "", req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +114,8 @@ func TestCPUProfileRegressionUnavailableAndDashboardCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.sessions = mgr
-	token, err := middleware.IssueForAuthenticatedNamed(mgr, profileInvestigationCSRFAction, e.acct.ID, profileInvestigationCSRFCookie)
+	(*(*e.S()).Sessions()) = mgr
+	token, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.ProfileInvestigationCSRFAction, (*e.Acct()).ID, apidserver.ProfileInvestigationCSRFCookie)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,12 +125,12 @@ func TestCPUProfileRegressionUnavailableAndDashboardCSRF(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.SetPathValue("slug", app.Slug)
 		r.SetPathValue("id", row.ID)
-		r = r.WithContext(WithAccount(r.Context(), e.acct))
+		r = r.WithContext(apidserver.WithAccount(r.Context(), (*e.Acct())))
 		if cookie != "" {
-			r.AddCookie(&http.Cookie{Name: profileInvestigationCSRFCookie, Value: cookie})
+			r.AddCookie(&http.Cookie{Name: apidserver.ProfileInvestigationCSRFCookie, Value: cookie})
 		}
 		rec := httptest.NewRecorder()
-		e.s.dashboardCheckProfileRegression(rec, r)
+		(*e.S()).DashboardCheckProfileRegression(rec, r)
 		return rec
 	}
 	if rec := post(""); rec.Code != 400 {
@@ -138,7 +139,7 @@ func TestCPUProfileRegressionUnavailableAndDashboardCSRF(t *testing.T) {
 	if rec := post(token); rec.Code != 303 || !strings.Contains(rec.Header().Get("Location"), "investigation_id="+row.ID) {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	got, err := e.store.GetProfileInvestigation(t.Context(), e.acct.ID, app.ID, row.ID)
+	got, err := (*e.Store()).GetProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, row.ID)
 	if err != nil || got.Revision != 2 || got.Assessment == nil || got.Assessment.Status != "inconclusive" || got.Assessment.Total != nil || backend.queries != 0 || !got.Assessment.Baseline.Start.Equal(req.Investigation.Baseline.Start) {
 		t.Fatal("unavailable history silently substituted", got, err)
 	}

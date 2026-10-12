@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,12 +11,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
@@ -25,13 +27,13 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 	}
 	call := func(handler func(http.ResponseWriter, *http.Request, state.Account), account state.Account, query, id string) *httptest.ResponseRecorder {
 		t.Helper()
-		req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/release-sets"+query, "shop", nil)
+		req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/release-sets"+query, "shop", nil)
 		req.SetPathValue("environment", "production")
 		req.SetPathValue("release", id)
 		handler(rec, req, account)
 		return rec
 	}
-	if rec := call(srv.getActiveProjectReleaseSet, acct, "", ""); rec.Code != http.StatusNotFound {
+	if rec := call(srv.GetActiveProjectReleaseSet, acct, "", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("empty active: %d %s", rec.Code, rec.Body.String())
 	}
 	var published []state.ProjectReleaseSet
@@ -53,39 +55,39 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 		published = append(published, release)
 	}
 	var page api.ProjectReleaseSetListResponse
-	rec := call(srv.listProjectReleaseSets, acct, "?limit=1", "")
+	rec := call(srv.ListProjectReleaseSets, acct, "?limit=1", "")
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].ID != published[1].ID || page.NextBefore == "" {
 		t.Fatalf("page: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = call(srv.listProjectReleaseSets, acct, "?limit=1&before="+url.QueryEscape(page.NextBefore), "")
+	rec = call(srv.ListProjectReleaseSets, acct, "?limit=1&before="+url.QueryEscape(page.NextBefore), "")
 	page = api.ProjectReleaseSetListResponse{}
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].ID != published[0].ID || page.NextBefore != "" {
 		t.Fatalf("next: %d %s", rec.Code, rec.Body.String())
 	}
 	var active api.ProjectReleaseSetResponse
-	rec = call(srv.getActiveProjectReleaseSet, acct, "", "")
+	rec = call(srv.GetActiveProjectReleaseSet, acct, "", "")
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &active) != nil || active.ID != published[1].ID {
 		t.Fatalf("active: %d %s", rec.Code, rec.Body.String())
 	}
-	rec = call(srv.getProjectReleaseSet, acct, "", published[0].ID)
+	rec = call(srv.GetProjectReleaseSet, acct, "", published[0].ID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("retired graph: %d %s", rec.Code, rec.Body.String())
 	}
 	for _, query := range []string{"?limit=0", "?limit=101", "?limit=invalid", "?before=broken"} {
-		if rec := call(srv.listProjectReleaseSets, acct, query, ""); rec.Code != http.StatusBadRequest {
+		if rec := call(srv.ListProjectReleaseSets, acct, query, ""); rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", query, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := call(srv.getProjectReleaseSet, acct, "", "invalid"); rec.Code != http.StatusBadRequest {
+	if rec := call(srv.GetProjectReleaseSet, acct, "", "invalid"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid UUID: %d", rec.Code)
 	}
 	foreign := state.Account{ID: uuid.NewString()}
-	for _, handler := range []func(http.ResponseWriter, *http.Request, state.Account){srv.listProjectReleaseSets, srv.getActiveProjectReleaseSet, srv.getProjectReleaseSet} {
+	for _, handler := range []func(http.ResponseWriter, *http.Request, state.Account){srv.ListProjectReleaseSets, srv.GetActiveProjectReleaseSet, srv.GetProjectReleaseSet} {
 		if rec := call(handler, foreign, "", published[0].ID); rec.Code != http.StatusNotFound {
 			t.Fatalf("foreign read: %d %s", rec.Code, rec.Body.String())
 		}
 	}
-	snapshot, problem := srv.loadProjectEnvironmentState(ctx, acct, project.Slug, "production")
+	snapshot, problem := srv.LoadProjectEnvironmentState(ctx, acct, project.Slug, "production")
 	if problem != nil || snapshot.ReleaseSetStatus != "active" || snapshot.ActiveReleaseSet == nil || snapshot.ActiveReleaseSet.ID != published[1].ID {
 		t.Fatalf("state graph: %+v %v", snapshot, problem)
 	}
@@ -101,9 +103,9 @@ func (s failedReleaseReader) ActiveProjectReleaseSet(context.Context, string, st
 }
 
 func TestEnvironmentStateDoesNotHideReleaseReadFailure(t *testing.T) {
-	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
-	srv.store = failedReleaseReader{store}
-	if _, problem := srv.loadProjectEnvironmentState(context.Background(), acct, project.Slug, "production"); problem == nil {
+	srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
+	(*srv.Store()) = failedReleaseReader{store}
+	if _, problem := srv.LoadProjectEnvironmentState(context.Background(), acct, project.Slug, "production"); problem == nil {
 		t.Fatal("failed release read was represented as no active release")
 	}
 }

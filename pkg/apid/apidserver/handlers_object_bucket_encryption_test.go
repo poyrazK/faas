@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -12,20 +12,21 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 561
 func TestBucketDefaultEncryptionAuthorityMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	bucketDefaultEncryptionAuthority(t, e.s, e.store, e.acct)
+	e := apidserver.Setup(t, api.PlanPro)
+	bucketDefaultEncryptionAuthority(t, (*e.S()), (*e.Store()), (*e.Acct()))
 }
 func TestBucketDefaultEncryptionAuthorityPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	bucketDefaultEncryptionAuthority(t, e.s, e.store, e.acct)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	bucketDefaultEncryptionAuthority(t, (*e.S()), (*e.Store()), (*e.Acct()))
 }
 
-func bucketDefaultEncryptionAuthority(t *testing.T, s *server, st state.Store, account state.Account) {
+func bucketDefaultEncryptionAuthority(t *testing.T, s *apidserver.Server, st state.Store, account state.Account) {
 	var nativeCalls atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nativeCalls.Add(1)
@@ -34,7 +35,7 @@ func bucketDefaultEncryptionAuthority(t *testing.T, s *server, st state.Store, a
 	}))
 	defer upstream.Close()
 	_, b, backend, _ := seedEncryptionJournalStorage(t, s, st, account, upstream.URL)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	path := "/v1/apps/encrypted-journal/buckets/" + b.ID + "/encryption"
@@ -43,7 +44,7 @@ func bucketDefaultEncryptionAuthority(t *testing.T, s *server, st state.Store, a
 		r.Header.Set("Authorization", "Bearer "+bearer)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		s.handler().ServeHTTP(w, r)
+		s.Handler().ServeHTTP(w, r)
 		return w
 	}
 	body := `{"encryption":{"algorithm":"aws:kms","key_id":"` + backend.Encryption.Keys[0].Reference + `"}}`

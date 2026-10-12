@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bufio"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -27,7 +28,7 @@ func TestStartSSEStreamOutlivesRequestBudgetAndWriteTimeout(t *testing.T) {
 	}
 	const beats = 8
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w, ctx, cancel := startSSEStream(w, r)
+		w, ctx, cancel := apidserver.StartSSEStream(w, r)
 		defer cancel()
 		flusher, _ := w.(http.Flusher)
 		tick := time.NewTicker(50 * time.Millisecond)

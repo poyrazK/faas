@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAPIContractFallback(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	tests := []struct {
 		name       string
 		method     string
@@ -30,10 +31,10 @@ func TestAPIContractFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			if tt.auth {
-				req.Header.Set("Authorization", "Bearer "+e.key)
+				req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 			}
 			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, req)
+			(*e.H()).ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
 			}
@@ -55,8 +56,8 @@ func TestAPIContractFallback(t *testing.T) {
 }
 
 func TestAPIContractFallback_PreservesNonAPIResponse(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodGet, "/not-a-real-browser-route", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodGet, "/not-a-real-browser-route", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d", rec.Code)
 	}
@@ -66,20 +67,20 @@ func TestAPIContractFallback_PreservesNonAPIResponse(t *testing.T) {
 }
 
 func TestInternalMetricsRoutesAreAbsentFromPublicHandler(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	paths := []string{
-		computeMetricsDiscoveryPath,
-		vmmdMetricsDiscoveryPath,
-		imagedMetricsDiscoveryPath,
-		builderdMetricsDiscoveryPath,
-		promtailMetricsDiscoveryPath,
-		scheddMetricsDiscoveryPath,
+		apidserver.ComputeMetricsDiscoveryPath,
+		apidserver.VmmdMetricsDiscoveryPath,
+		apidserver.ImagedMetricsDiscoveryPath,
+		apidserver.BuilderdMetricsDiscoveryPath,
+		apidserver.PromtailMetricsDiscoveryPath,
+		apidserver.ScheddMetricsDiscoveryPath,
 	}
 	for _, path := range paths {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.RemoteAddr = "127.0.0.1:12345"
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s status=%d, want 404", path, rec.Code)
 		}

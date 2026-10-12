@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -130,17 +131,17 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.client.PutBucketLifecycleConfiguration(ctx, &awss3.PutBucketLifecycleConfigurationInput{Bucket: aws.String("assets"), LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{ID: aws.String("abandoned"), Status: types.ExpirationStatusEnabled, Filter: &types.LifecycleRuleFilter{Prefix: aws.String("tmp/")}, AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: &days}}}}}); err != nil {
 		t.Fatal(err)
 	}
-	owner := func(enabled bool) *server {
+	owner := func(enabled bool) *apidserver.Server {
 		t.Helper()
-		s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-		if e := s.runtimeConfig.apply(runtimeConfigS3, boolJSON(enabled)); e != nil {
+		s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+		if e := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, apidserver.BoolJSON(enabled)); e != nil {
 			t.Fatal(e)
 		}
 		return s
 	}
 	s := owner(true)
 	before := requests.Load()
-	if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != before {
+	if err = (*s.Object()).ReconcileObjectLifecycle(ctx, nil); err != nil || requests.Load() != before {
 		t.Fatal("abort discovery called the provider", err, requests.Load(), before)
 	}
 	stored, err := f.st.GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, *u.UploadId)
@@ -167,7 +168,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			t.Fatal(err)
 		}
 	} else {
-		if err = owner(true).object.ReconcileObjectLifecycle(ctx, nil); err != nil {
+		if err = (*owner(true).Object()).ReconcileObjectLifecycle(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		j, e := f.st.GetObjectLifecycleScan(ctx, f.account.ID, f.bucket.ID, stored.LifecycleAbort.ScanID)
@@ -175,7 +176,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 			t.Fatal("scan did not finish discovery", j, e)
 		}
 	}
-	if err = owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
+	if err = (*owner(false).Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertUsage(10)
@@ -187,7 +188,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		if _, e := f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=clock_timestamp() WHERE id=$1`, *u.UploadId); e != nil {
 			t.Fatal(e)
 		}
-		if e := owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); e != nil {
+		if e := (*owner(false).Object()).ReconcileObjectMultipartUploads(ctx, nil); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -216,7 +217,7 @@ func objectLifecycleMultipartEndToEnd(t *testing.T, lostACK bool) {
 		t.Fatal("restart lost terminal receipt", got, err)
 	}
 	finalRequests := requests.Load()
-	if err = owner(false).object.ReconcileObjectMultipartUploads(ctx, nil); err != nil || requests.Load() != finalRequests {
+	if err = (*owner(false).Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil || requests.Load() != finalRequests {
 		t.Fatal("terminal cleanup replay", err, requests.Load())
 	}
 }

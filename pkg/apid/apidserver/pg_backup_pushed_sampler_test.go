@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestPgBackupPushedSamplerReadsVerifiedState(t *testing.T) {
@@ -26,7 +28,7 @@ func TestPgBackupPushedSamplerReadsVerifiedState(t *testing.T) {
 		formatUnix(now.Add(-30*time.Second))+"\n")
 
 	ops := wire.NewOpsMetrics("apid_pg_backup_test")
-	newPgBackupPushedSampler(ops, slog.New(slog.NewTextHandler(io.Discard, nil))).tick()
+	apidserver.NewPgBackupPushedSampler(ops, slog.New(slog.NewTextHandler(io.Discard, nil))).Tick()
 
 	assertNear(t, testutil.ToFloat64(ops.PgBackupLastPushed()), float64(now.Add(-5*time.Minute).Unix()), 1)
 	assertNear(t, testutil.ToFloat64(ops.PgWalPruneLastSuccessful()), float64(now.Add(-15*time.Minute).Unix()), 1)
@@ -38,7 +40,7 @@ func TestPgBackupPushedSamplerReadsVerifiedState(t *testing.T) {
 func TestPgBackupPushedSamplerMissingStateEmitsZero(t *testing.T) {
 	swapBackupStateRoot(t, t.TempDir())
 	ops := wire.NewOpsMetrics("apid_pg_backup_empty_test")
-	newPgBackupPushedSampler(ops, slog.New(slog.NewTextHandler(io.Discard, nil))).tick()
+	apidserver.NewPgBackupPushedSampler(ops, slog.New(slog.NewTextHandler(io.Discard, nil))).Tick()
 	for name, gauge := range map[string]prometheus.Gauge{
 		"backup": ops.PgBackupLastPushed(),
 		"bytes":  ops.PgWalArchiveBytes(),
@@ -53,9 +55,9 @@ func TestPgBackupPushedSamplerMissingStateEmitsZero(t *testing.T) {
 }
 
 func TestPgBackupPushedSamplerNilOpsStops(t *testing.T) {
-	s := newPgBackupPushedSampler(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := apidserver.NewPgBackupPushedSampler(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	done := make(chan struct{})
-	go func() { s.run(context.Background()); close(done) }()
+	go func() { s.Run(context.Background()); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -65,9 +67,9 @@ func TestPgBackupPushedSamplerNilOpsStops(t *testing.T) {
 
 func swapBackupStateRoot(t *testing.T, root string) {
 	t.Helper()
-	previous := pgBackupStateRoot
-	pgBackupStateRoot = root
-	t.Cleanup(func() { pgBackupStateRoot = previous })
+	previous := (*apidserver.PgBackupStateRoot)
+	(*apidserver.PgBackupStateRoot) = root
+	t.Cleanup(func() { (*apidserver.PgBackupStateRoot) = previous })
 }
 
 func writeState(t *testing.T, root, name, value string) {

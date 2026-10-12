@@ -19,6 +19,7 @@
 - **Consequences:**
   - **Separate compilation.** An extracted domain's tests compile as their own package, and `cmd/apid` shrinks with each move. A change to one domain no longer recompiles the others.
   - **Router tests stay.** Tests that need the full router and auth chain (the `newServer` harness) stay in `cmd/apid`. Domain packages get small local harnesses.
+  - **Tests compile as two units (2026-10-12).** Measured on `pkg/apid/apidserver` with `-c=1 -dwarf=false`, the source alone peaks at 2.4 GB; the tests drive the rest. With 553 test files (96k lines) in the external `apidserver_test` package, reaching internals through `export_test.go`, `go test` compiles two units and the compiler's peak heap fell from 15.1 GB to 8.7 GB. New tests go in `apidserver_test` unless they need something the bridge cannot expose, such as a struct literal with unexported fields.
   - **Facades are temporary.** A facade can be deleted once no `cmd/apid` caller is left.
   - **Kit stays stateless.** Code that needs `*server` state does not belong in `httpkit`. It takes the dependency explicitly instead.
   - **Same ownership boundary.** `pkg/apid/**` is apid code: other daemons import only the existing `pkg/apid` router predicate, never domain packages.

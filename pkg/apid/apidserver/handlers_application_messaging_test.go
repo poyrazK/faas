@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,15 +7,16 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestSendAppMessageEnqueuesCloudEvent(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "billing")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "billing")
 
-	rec := e.do(t, http.MethodPost, "/v1/apps/billing/inbox", api.SendAppMessageRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps/billing/inbox", api.SendAppMessageRequest{
 		Type:      "invoice.created",
 		Data:      json.RawMessage(`{"invoice_id":"inv_123"}`),
 		QueueName: "billing-work",
@@ -30,7 +31,7 @@ func TestSendAppMessageEnqueuesCloudEvent(t *testing.T) {
 	if response.EventID == "" || response.TargetApp != "billing" || response.StatusURL == "" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	inv, err := e.store.InvocationByID(t.Context(), response.ID)
+	inv, err := (*e.Store()).InvocationByID(t.Context(), response.ID)
 	if err != nil {
 		t.Fatalf("InvocationByID: %v", err)
 	}
@@ -51,10 +52,10 @@ func TestSendAppMessageEnqueuesCloudEvent(t *testing.T) {
 
 func TestDeliverAppEventEnqueuesRegisteredWebhook(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "checkout-api")
+	apidserver.MustSeedApp(t, e, "checkout-api")
 	hook := mustCreateWebhook(t, e, "checkout-api", webhookReq())
 
-	rec := e.do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
 		Destination: hook.TargetURL,
 		Type:        "order.paid",
 		Data:        json.RawMessage(`{"order_id":"ord_123"}`),
@@ -69,7 +70,7 @@ func TestDeliverAppEventEnqueuesRegisteredWebhook(t *testing.T) {
 	if response.WebhookID != hook.ID || response.Event != "order.paid" || response.Status != "pending" || response.StatusURL == "" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	delivery, err := e.store.AppWebhookDeliveryByID(t.Context(), response.ID)
+	delivery, err := (*e.Store()).AppWebhookDeliveryByID(t.Context(), response.ID)
 	if err != nil {
 		t.Fatalf("AppWebhookDeliveryByID: %v", err)
 	}
@@ -83,8 +84,8 @@ func TestDeliverAppEventEnqueuesRegisteredWebhook(t *testing.T) {
 
 func TestDeliverAppEventRejectsUnregisteredDestination(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "checkout-api")
-	rec := e.do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
+	apidserver.MustSeedApp(t, e, "checkout-api")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
 		Destination: "https://unregistered.example/hook",
 		Type:        "order.paid",
 		Data:        json.RawMessage(`{}`),

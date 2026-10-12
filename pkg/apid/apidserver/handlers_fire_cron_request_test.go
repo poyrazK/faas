@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Handler tests for GET /v1/cron-fire-now-requests/{request_id}
 // (issue #791 PR-D / ADR-090 §Sub-decision 7).
@@ -28,18 +28,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetFireCronRequest_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "fire-req-happy", "0 4 * * *")
-	requestID, err := e.store.InsertFireNowRequest(context.Background(), cronID, e.acct.ID)
+	requestID, err := (*e.Store()).InsertFireNowRequest(context.Background(), cronID, (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("InsertFireNowRequest: %v", err)
 	}
 
-	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -57,8 +58,8 @@ func TestGetFireCronRequest_HappyPath(t *testing.T) {
 	if resp.Status != string(state.FireNowStatusPending) {
 		t.Errorf("status = %q, want pending", resp.Status)
 	}
-	if resp.AccountID != e.acct.ID {
-		t.Errorf("account_id = %q, want %q", resp.AccountID, e.acct.ID)
+	if resp.AccountID != (*e.Acct()).ID {
+		t.Errorf("account_id = %q, want %q", resp.AccountID, (*e.Acct()).ID)
 	}
 	if resp.RequestedAt == "" {
 		t.Errorf("requested_at empty; want an RFC3339Nano string")
@@ -77,24 +78,24 @@ func TestGetFireCronRequest_HappyPath(t *testing.T) {
 }
 
 func TestGetFireCronRequest_TerminalSucceeded(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "fire-req-term", "0 4 * * *")
-	requestID, err := e.store.InsertFireNowRequest(context.Background(), cronID, e.acct.ID)
+	requestID, err := (*e.Store()).InsertFireNowRequest(context.Background(), cronID, (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("InsertFireNowRequest: %v", err)
 	}
 	// Lifecycle: pending → running (claim) → succeeded (mark).
 	// Mark* helpers require Status=Running (set by ClaimPending-
 	// FireNowRequest) so the read shape sees a fully-terminal row.
-	if _, err := e.store.ClaimPendingFireNowRequest(context.Background()); err != nil {
+	if _, err := (*e.Store()).ClaimPendingFireNowRequest(context.Background()); err != nil {
 		t.Fatalf("ClaimPendingFireNowRequest: %v", err)
 	}
 	invID := uuid.NewString()
-	if err := e.store.MarkFireNowRequestSucceeded(context.Background(), requestID, invID, ""); err != nil {
+	if err := (*e.Store()).MarkFireNowRequestSucceeded(context.Background(), requestID, invID, ""); err != nil {
 		t.Fatalf("MarkFireNowRequestSucceeded: %v", err)
 	}
 
-	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -114,27 +115,27 @@ func TestGetFireCronRequest_TerminalSucceeded(t *testing.T) {
 }
 
 func TestGetFireCronRequest_CommandCronIncludesTaskID(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, _ := seedAppTaskDeployment(t, e, "fire-req-command-task")
-	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 0 1 1 *", "", true, state.CronOptions{
+	e := apidserver.Setup(t, api.PlanPro)
+	app, _ := apidserver.SeedAppTaskDeployment(t, e, "fire-req-command-task")
+	cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), app.ID, "0 0 1 1 *", "", true, state.CronOptions{
 		Command: []string{"bin/maintenance"},
 	})
 	if err != nil {
 		t.Fatalf("CreateCronWithOptions: %v", err)
 	}
-	requestID, err := e.store.InsertFireNowRequest(context.Background(), cron.ID, e.acct.ID)
+	requestID, err := (*e.Store()).InsertFireNowRequest(context.Background(), cron.ID, (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("InsertFireNowRequest: %v", err)
 	}
-	if _, err := e.store.ClaimPendingFireNowRequest(context.Background()); err != nil {
+	if _, err := (*e.Store()).ClaimPendingFireNowRequest(context.Background()); err != nil {
 		t.Fatalf("ClaimPendingFireNowRequest: %v", err)
 	}
-	task, err := e.store.CreateManualCronAppTaskForFireNow(context.Background(), requestID, time.Now().UTC())
+	task, err := (*e.Store()).CreateManualCronAppTaskForFireNow(context.Background(), requestID, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
 	}
 
-	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
+	rec := e.Do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -148,9 +149,9 @@ func TestGetFireCronRequest_CommandCronIncludesTaskID(t *testing.T) {
 }
 
 func TestGetFireCronRequest_MissingRowIs404(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	missing := uuid.NewString()
-	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
+	rec := e.Do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -169,24 +170,24 @@ func TestGetFireCronRequest_MissingRowIs404(t *testing.T) {
 // forbidden from reading account A's fire-now row, and the
 // returned body must match the missing-row body byte-for-byte.
 func TestGetFireCronRequest_CrossAccountIs404(t *testing.T) {
-	eA := setup(t, api.PlanPro)
+	eA := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, eA, "fire-req-cross", "0 4 * * *")
-	requestID, err := eA.store.InsertFireNowRequest(context.Background(), cronID, eA.acct.ID)
+	requestID, err := (*eA.Store()).InsertFireNowRequest(context.Background(), cronID, (*eA.Acct()).ID)
 	if err != nil {
 		t.Fatalf("InsertFireNowRequest: %v", err)
 	}
 
 	// Account B with their own valid session — must NOT see A's row.
-	eB := setup(t, api.PlanPro)
+	eB := apidserver.Setup(t, api.PlanPro)
 
-	rec := eB.do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
+	rec := eB.Do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account GET status = %d, want 404; body=%s",
 			rec.Code, rec.Body.String())
 	}
 
 	missing := uuid.NewString()
-	missingRec := eB.do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
+	missingRec := eB.Do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("missing-row GET status = %d, want 404", missingRec.Code)
 	}
@@ -201,14 +202,14 @@ func TestGetFireCronRequest_CrossAccountIs404(t *testing.T) {
 // cannot use the response shape to distinguish "bad id" from
 // "missing id" or "wrong account".
 func TestGetFireCronRequest_BadUUIDIs404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/not-a-uuid-shape", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/cron-fire-now-requests/not-a-uuid-shape", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (closed oracle); body=%s",
 			rec.Code, rec.Body.String())
 	}
 	missing := uuid.NewString()
-	missingRec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
+	missingRec := e.Do(t, "GET", "/v1/cron-fire-now-requests/"+missing, nil, nil)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("missing-row status = %d, want 404", missingRec.Code)
 	}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/base64"
@@ -9,24 +9,25 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	endpointID := createRealtimeEndpointForTest(t, e)
 	path := "/v1/apps/rt-actions/realtime/endpoints/" + endpointID + "/channels/updates/retained-messages"
 	request := api.ManagedRealtimeRetainedMessageRequest{
 		DataBase64: base64.StdEncoding.EncodeToString([]byte("first")), IdempotencyKey: "one",
 	}
-	if disabled := e.do(t, http.MethodPost, path, request, nil); disabled.Code != http.StatusNotFound {
+	if disabled := e.Do(t, http.MethodPost, path, request, nil); disabled.Code != http.StatusNotFound {
 		t.Fatalf("preview-disabled append = %d %s", disabled.Code, disabled.Body)
 	}
-	if disabled := e.do(t, http.MethodGet, path+"?after=0", nil, nil); disabled.Code != http.StatusNotFound {
+	if disabled := e.Do(t, http.MethodGet, path+"?after=0", nil, nil); disabled.Code != http.StatusNotFound {
 		t.Fatalf("preview-disabled read = %d %s", disabled.Code, disabled.Body)
 	}
-	e.s.WithRealtimeHistoryPreviewEnabled(true)
-	first := e.do(t, http.MethodPost, path, request, nil)
+	(*e.S()).WithRealtimeHistoryPreviewEnabled(true)
+	first := e.Do(t, http.MethodPost, path, request, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("append = %d %s", first.Code, first.Body)
 	}
@@ -34,7 +35,7 @@ func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
 	if err := json.Unmarshal(first.Body.Bytes(), &message); err != nil || message.Sequence != 1 {
 		t.Fatalf("first message = %+v, %v", message, err)
 	}
-	duplicate := e.do(t, http.MethodPost, path, request, nil)
+	duplicate := e.Do(t, http.MethodPost, path, request, nil)
 	if duplicate.Code != http.StatusCreated {
 		t.Fatalf("duplicate = %d %s", duplicate.Code, duplicate.Body)
 	}
@@ -42,21 +43,21 @@ func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
 		t.Fatalf("duplicate message = %+v, %v", message, err)
 	}
 	request.DataBase64 = base64.StdEncoding.EncodeToString([]byte("different"))
-	if conflict := e.do(t, http.MethodPost, path, request, nil); conflict.Code != http.StatusConflict {
+	if conflict := e.Do(t, http.MethodPost, path, request, nil); conflict.Code != http.StatusConflict {
 		t.Fatalf("conflicting key = %d %s", conflict.Code, conflict.Body)
 	}
 	for i := 2; i <= state.ManagedRealtimeHistoryMaxMessages+1; i++ {
-		_, err := e.store.AppendManagedRealtimeChannelMessage(
+		_, err := (*e.Store()).AppendManagedRealtimeChannelMessage(
 			t.Context(), endpointID, "updates", []byte(fmt.Sprintf("m%d", i)), false, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	gap := e.do(t, http.MethodGet, path+"?after=0", nil, nil)
-	if gap.Code != http.StatusGone || problemCode(t, gap) != "history_unavailable" {
+	gap := e.Do(t, http.MethodGet, path+"?after=0", nil, nil)
+	if gap.Code != http.StatusGone || apidserver.ProblemCode(t, gap) != "history_unavailable" {
 		t.Fatalf("expired cursor = %d %s", gap.Code, gap.Body)
 	}
-	page := e.do(t, http.MethodGet, path+"?after=1&limit=2", nil, nil)
+	page := e.Do(t, http.MethodGet, path+"?after=1&limit=2", nil, nil)
 	if page.Code != http.StatusOK {
 		t.Fatalf("history = %d %s", page.Code, page.Body)
 	}
@@ -70,17 +71,17 @@ func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
 }
 
 func TestManagedRealtimeHistoryUsagePreview(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	path := "/v1/account/realtime-history-usage"
-	if response := e.do(t, http.MethodGet, path, nil, nil); response.Code != http.StatusNotFound {
+	if response := e.Do(t, http.MethodGet, path, nil, nil); response.Code != http.StatusNotFound {
 		t.Fatalf("preview disabled = %d %s", response.Code, response.Body)
 	}
-	e.s.WithRealtimeHistoryPreviewEnabled(true)
+	(*e.S()).WithRealtimeHistoryPreviewEnabled(true)
 	endpointID := createRealtimeEndpointForTest(t, e)
-	if _, err := e.store.AppendManagedRealtimeChannelMessage(t.Context(), endpointID, "updates", []byte("payload"), false, ""); err != nil {
+	if _, err := (*e.Store()).AppendManagedRealtimeChannelMessage(t.Context(), endpointID, "updates", []byte("payload"), false, ""); err != nil {
 		t.Fatal(err)
 	}
-	response := e.do(t, http.MethodGet, path, nil, nil)
+	response := e.Do(t, http.MethodGet, path, nil, nil)
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("usage = %d %s headers=%v", response.Code, response.Body, response.Header())
 	}
@@ -101,13 +102,13 @@ func TestManagedRealtimeHistoryUsagePreview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "realtime-usage-test", []string{tc.scope}); err != nil {
+		if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "realtime-usage-test", []string{tc.scope}); err != nil {
 			t.Fatal(err)
 		}
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("Authorization", "Bearer "+key)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		if rec.Code != tc.want {
 			t.Fatalf("scope %s: got %d, want %d: %s", tc.scope, rec.Code, tc.want, rec.Body)
 		}
