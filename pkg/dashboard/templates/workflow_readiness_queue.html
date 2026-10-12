@@ -133,6 +133,9 @@
 <label>Protected result <select name="impact_kind"><option value="">No impact watch</option><option value="milestone">Milestone</option><option value="outcome">Outcome</option></select></label>
 <label>Result code <input name="impact_code" maxlength="64"></label>
 <label>Notification owner <input name="impact_owner" maxlength="256"></label>
+<label>Acknowledge risk alerts within seconds <input name="impact_acknowledge_after_seconds" type="number" min="0" max="604800" step="1" placeholder="Optional"></label>
+<label>Fallback team <input name="impact_fallback_owner" maxlength="256"></label>
+<p>A positive acknowledgment window requires a notification owner. The fallback must be a different team.</p>
 <p>The initial observation is silent. Later first-critical, first-overdue and source-confirmed tracked-review clearance changes enter this inbox. This watch uses the subscription customer and environment scope.</p>
 </fieldset>
 <button type="submit">Create subscription</button>
@@ -357,7 +360,7 @@
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   window.renderPlaybookStepAssignment(parent,notification.playbook_step);
-  if(notification.business_impact){const event=notification.business_impact;const impactTenant=impactSubscriptions.find(sub=>sub.id===select.value)?.tenant_id||panel.dataset.tenant||'';text(parent,'Protected '+event.kind+' '+event.code+' · '+event.workflow+' · '+event.reasons.map(reason=>reason.replace(/_/g,' ')).join(', ')+' · '+new Date(event.checked_at).toLocaleString());text(parent,'Retained unique reviews: '+(event.previous?.review_count||0)+' → '+(event.current?.review_count||0)+' · Critical: '+(event.previous?.critical_count||0)+' → '+(event.current?.critical_count||0)+' · Overdue: '+(event.previous?.overdue_count||0)+' → '+(event.current?.overdue_count||0));const button=document.createElement('button');button.type='button';button.textContent='Show matching review queue';button.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('gregale-business-impact-queue',{detail:{scope:panel.dataset.scope,tenant_id:impactTenant,workflow:event.workflow,impact_kind:event.kind,impact_code:event.code}})));parent.append(button);text(parent,'Advisory review confidence, independent of reported application outcome. Clearance confirms tracked retained source reviews; coverage limits still apply.');}
+  if(notification.business_impact){const event=notification.business_impact;const impactTenant=impactSubscriptions.find(sub=>sub.id===select.value)?.tenant_id||panel.dataset.tenant||'';text(parent,'Protected '+event.kind+' '+event.code+' · '+event.workflow+' · '+event.reasons.map(reason=>reason.replace(/_/g,' ')).join(', ')+' · '+new Date(event.checked_at).toLocaleString());text(parent,'Retained unique reviews: '+(event.previous?.review_count||0)+' → '+(event.current?.review_count||0)+' · Critical: '+(event.previous?.critical_count||0)+' → '+(event.current?.critical_count||0)+' · Overdue: '+(event.previous?.overdue_count||0)+' → '+(event.current?.overdue_count||0));const button=document.createElement('button');button.type='button';button.textContent='Show matching review queue';button.addEventListener('click',()=>window.dispatchEvent(new CustomEvent('gregale-business-impact-queue',{detail:{scope:panel.dataset.scope,tenant_id:impactTenant,workflow:event.workflow,impact_kind:event.kind,impact_code:event.code}})));parent.append(button);window.renderEscalationResponse(parent,event.response);if(event.response)text(parent,'Acknowledging this alert takes responsibility; it does not resolve the underlying reviews.');text(parent,'Advisory review confidence, independent of reported application outcome. Clearance confirms tracked retained source reviews; coverage limits still apply.');}
   if(notification.dependency_regression){const event=notification.dependency_regression;text(parent,'Dependency regression observed '+new Date(event.checked_at).toLocaleString());for(const step of event.reopened_prerequisites)text(parent,'Reopened prerequisite · '+step.outcome_code+' · '+step.label);for(const step of event.affected_steps){text(parent,'Affected step · '+step.outcome_code+' · '+step.label+' · waiting for '+step.readiness.waiting_for.join(', '));if(step.readiness.review_suggested)text(parent,'Completed step needs review; its original review is preserved.');}text(parent,'Reviews, deadlines and existing queue assignments are unchanged.');}
 
   const missed=notification.escalation_response;
@@ -568,7 +571,7 @@
   const fields = new FormData(form);
   const body = {name:fields.get('name'),scope:panel.dataset.scope,events:fields.getAll('event'),unassigned:panel.dataset.unassigned === 'true'};
   for (const [field,value] of Object.entries({tenant_id:panel.dataset.tenant,workflow:panel.dataset.workflow,target_operation:panel.dataset.operation,owner:panel.dataset.owner})) if (value) body[field] = value;
-  if(fields.get('impact_kind') || fields.get('impact_code'))body.business_impact_watches=[{workflow:fields.get('impact_workflow'),kind:fields.get('impact_kind'),code:fields.get('impact_code'),owner:fields.get('impact_owner')||undefined}];
+  if(fields.get('impact_kind') || fields.get('impact_code'))body.business_impact_watches=[{workflow:fields.get('impact_workflow'),kind:fields.get('impact_kind'),code:fields.get('impact_code'),owner:fields.get('impact_owner')||undefined,acknowledge_after_seconds:fields.get('impact_acknowledge_after_seconds')?Number(fields.get('impact_acknowledge_after_seconds')):undefined,fallback_owner:fields.get('impact_fallback_owner')||undefined}];
   try { const sub = await request(panel.dataset.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await load(sub.id); }
   catch (error) { message.textContent = error.message; }
   finally { create.disabled = false; }
@@ -620,10 +623,12 @@
   if(window.renderReadinessEscalation)window.renderReadinessEscalation(li,row.outcome_escalation,row.scope);
   if(window.renderPlaybookEscalation)window.renderPlaybookEscalation(li,row.playbook_escalation,row.scope);
   if(window.renderPlaybookStepAssignment)window.renderPlaybookStepAssignment(li,row.playbook_step);
+  if(row.business_impact){const event=row.business_impact;text(li,'Protected '+event.kind+' '+event.code+' · '+event.reasons.map(reason=>reason.replace(/_/g,' ')).join(', '));window.renderEscalationResponse(li,event.response);text(li,'Alert acknowledgment and source review decisions are separate.');}
   if(row.reminder)text(li,'Due reminder published '+new Date(row.reminder.created_at).toLocaleString());
   text(li,(row.overdue ? 'Overdue' : 'Upcoming')+' · '+new Date(c.follow_up_at).toLocaleString()+' · '+(c.owner || 'Unassigned'));
   text(li,row.subscription_name+' · '+row.kind+' · '+c.status+' · '+row.scope+(row.platform_tenant_id ? ' · customer '+row.platform_tenant_id : ''));
-  if(row.workflow)text(li,row.workflow+' / '+row.instance_id+' · '+row.subject.type+': '+row.subject.id+' · '+row.operation+': '+row.from_state+' → '+row.to_state);
+  if(row.workflow && row.subject)text(li,row.workflow+' / '+row.instance_id+' · '+row.subject.type+': '+row.subject.id+' · '+row.operation+': '+row.from_state+' → '+row.to_state);
+  if(row.workflow && !row.subject)text(li,'Aggregate business-impact alert · '+row.workflow);
   if(c.note)text(li,c.note);
   const scopeQuery=new URLSearchParams({scope:row.scope});if(row.subscription_tenant_id)scopeQuery.set('tenant_id',row.subscription_tenant_id);
   const inbox=document.createElement('a');inbox.href=panel.dataset.queueUrl+'?'+scopeQuery+'#readiness-subscriptions/'+encodeURIComponent(row.subscription_id)+'/'+row.sequence;inbox.textContent='Open original notification in its inbox';li.append(inbox);

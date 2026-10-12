@@ -27,6 +27,13 @@ class OperationWorkflowReadinessImpactWatchRequest:
     """OperationWorkflowReadinessImpactWatchRequest.kind. Protected result category."""
     code: str
     """OperationWorkflowReadinessImpactWatchRequest.code. Exact protected result slug."""
+    acknowledge_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessImpactWatchRequest.acknowledge_after_seconds. Optional response window from
+    delivery of critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance
+    notices have no target. Acknowledgment is independent of resolving source review obligations."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReadinessImpactWatchRequest.fallback_owner. Optional distinct fallback team, requires a
+    positive response window. Guarded handoff preserves manual assignment history and the original deadline."""
     owner: str | Unset = UNSET
     """OperationWorkflowReadinessImpactWatchRequest.owner. Optional team assigned new impact notifications; does
     not filter review queue source owners."""
@@ -37,6 +44,10 @@ class OperationWorkflowReadinessImpactWatchRequest:
         kind: str = self.kind
 
         code = self.code
+
+        acknowledge_after_seconds = self.acknowledge_after_seconds
+
+        fallback_owner = self.fallback_owner
 
         owner = self.owner
 
@@ -49,6 +60,10 @@ class OperationWorkflowReadinessImpactWatchRequest:
                 "code": code,
             }
         )
+        if acknowledge_after_seconds is not UNSET:
+            field_dict["acknowledge_after_seconds"] = acknowledge_after_seconds
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
         if owner is not UNSET:
             field_dict["owner"] = owner
 
@@ -63,12 +78,18 @@ class OperationWorkflowReadinessImpactWatchRequest:
 
         code = d.pop("code")
 
+        acknowledge_after_seconds = d.pop("acknowledge_after_seconds", UNSET)
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
         owner = d.pop("owner", UNSET)
 
         operation_workflow_readiness_impact_watch_request = cls(
             workflow=workflow,
             kind=kind,
             code=code,
+            acknowledge_after_seconds=acknowledge_after_seconds,
+            fallback_owner=fallback_owner,
             owner=owner,
         )
 

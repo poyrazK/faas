@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
+    from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
     from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
 
@@ -42,6 +43,9 @@ class OperationWorkflowReadinessEscalationResponseEvent:
     reassigned: bool
     """OperationWorkflowReadinessEscalationResponseEvent.reassigned. Retained acknowledgment target or assignment
     observation; never modifies application business reports."""
+    business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
+    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only."""
     source: OperationWorkflowReadinessSnapshotEntry | Unset = UNSET
     """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
     playbook: OperationWorkflowPlaybookEvidenceEvent | Unset = UNSET
@@ -60,6 +64,10 @@ class OperationWorkflowReadinessEscalationResponseEvent:
         owner = self.owner
 
         reassigned = self.reassigned
+
+        business_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_impact, Unset):
+            business_impact = self.business_impact.to_dict()
 
         source: dict[str, Any] | Unset = UNSET
         if not isinstance(self.source, Unset):
@@ -81,6 +89,8 @@ class OperationWorkflowReadinessEscalationResponseEvent:
                 "reassigned": reassigned,
             }
         )
+        if business_impact is not UNSET:
+            field_dict["business_impact"] = business_impact
         if source is not UNSET:
             field_dict["source"] = source
         if playbook is not UNSET:
@@ -91,6 +101,7 @@ class OperationWorkflowReadinessEscalationResponseEvent:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook_evidence_event import OperationWorkflowPlaybookEvidenceEvent
+        from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
         from ..models.operation_workflow_readiness_snapshot_entry import OperationWorkflowReadinessSnapshotEntry
 
         d = dict(src_dict)
@@ -105,6 +116,13 @@ class OperationWorkflowReadinessEscalationResponseEvent:
         owner = d.pop("owner")
 
         reassigned = d.pop("reassigned")
+
+        _business_impact = d.pop("business_impact", UNSET)
+        business_impact: OperationWorkflowReadinessImpactEvent | Unset
+        if isinstance(_business_impact, Unset):
+            business_impact = UNSET
+        else:
+            business_impact = OperationWorkflowReadinessImpactEvent.from_dict(_business_impact)
 
         _source = d.pop("source", UNSET)
         source: OperationWorkflowReadinessSnapshotEntry | Unset
@@ -127,6 +145,7 @@ class OperationWorkflowReadinessEscalationResponseEvent:
             deadline_at=deadline_at,
             owner=owner,
             reassigned=reassigned,
+            business_impact=business_impact,
             source=source,
             playbook=playbook,
         )

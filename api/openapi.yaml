@@ -79897,6 +79897,9 @@ components:
         Does not automatically schedule a second follow-up or indicate business failure.
       additionalProperties: false
       properties:
+        business_impact:
+          $ref: '#/components/schemas/OperationWorkflowReadinessImpactEvent'
+          description: OperationWorkflowReadinessEscalationResponseEvent.business_impact. Original protected-result alert context, without a new response target or fabricated transition baseline.
         escalation_notification_id:
           type: string
           description: OperationWorkflowReadinessEscalationResponseEvent.escalation_notification_id. Retained acknowledgment target
@@ -80449,6 +80452,9 @@ components:
       description: Compact pending follow-up with original inbox references; no application readiness is inferred.
       additionalProperties: false
       properties:
+        business_impact:
+          $ref: '#/components/schemas/OperationWorkflowReadinessImpactEvent'
+          description: OperationWorkflowReadinessFollowUp.business_impact. Aggregate alert context and its acknowledgment target; no individual subject or transition is inferred.
         playbook_step:
           $ref: '#/components/schemas/OperationWorkflowPlaybookStepAssignment'
         playbook_escalation:
@@ -80544,6 +80550,16 @@ components:
       description: OperationWorkflowReadinessImpactWatchRequest. Protected business result monitoring of retained unresolved human reviews in a scoped application environment; advisory confidence only.
       required: [workflow, kind, code]
       properties:
+        acknowledge_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowReadinessImpactWatchRequest.acknowledge_after_seconds. Optional response window from delivery of critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance notices have no target. Acknowledgment is independent of resolving source review obligations.
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessImpactWatchRequest.fallback_owner. Optional distinct fallback team, requires a positive response window. Guarded handoff preserves manual assignment history and the original deadline.
         workflow:
           type: string
           minLength: 1
@@ -80568,6 +80584,16 @@ components:
       description: OperationWorkflowReadinessImpactWatch. Protected business result monitoring of retained unresolved human reviews in a scoped application environment; advisory confidence only.
       required: [workflow, kind, code, evaluated_at, coverage_incomplete]
       properties:
+        acknowledge_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: OperationWorkflowReadinessImpactWatch.acknowledge_after_seconds. Optional response window from delivery of critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance notices have no target. Acknowledgment is independent of resolving source review obligations.
+        fallback_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReadinessImpactWatch.fallback_owner. Optional distinct fallback team, requires a positive response window. Guarded handoff preserves manual assignment history and the original deadline.
         workflow:
           type: string
           minLength: 1
@@ -80602,6 +80628,9 @@ components:
       description: OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human reviews in a scoped application environment; advisory confidence only.
       required: [workflow, kind, code, checked_at, reasons]
       properties:
+        response:
+          $ref: '#/components/schemas/OperationWorkflowReadinessEscalationResponse'
+          description: OperationWorkflowReadinessImpactEvent.response. Immutable alert acknowledgment target and retained assignment history; source review clearance does not acknowledge the alert.
         workflow:
           type: string
           minLength: 1

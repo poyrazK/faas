@@ -37,6 +37,13 @@ class OperationWorkflowReadinessImpactWatch:
     coverage_incomplete: bool
     """OperationWorkflowReadinessImpactWatch.coverage_incomplete. Candidate-window or 64-obligation tracking limit,
     missing source, or unresolved source after queue disappearance suppresses a clearance assertion."""
+    acknowledge_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessImpactWatch.acknowledge_after_seconds. Optional response window from delivery of
+    critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance notices have no
+    target. Acknowledgment is independent of resolving source review obligations."""
+    fallback_owner: str | Unset = UNSET
+    """OperationWorkflowReadinessImpactWatch.fallback_owner. Optional distinct fallback team, requires a positive
+    response window. Guarded handoff preserves manual assignment history and the original deadline."""
     owner: str | Unset = UNSET
     """OperationWorkflowReadinessImpactWatch.owner. Optional team assigned new impact notifications; does not
     filter review queue source owners."""
@@ -55,6 +62,10 @@ class OperationWorkflowReadinessImpactWatch:
 
         coverage_incomplete = self.coverage_incomplete
 
+        acknowledge_after_seconds = self.acknowledge_after_seconds
+
+        fallback_owner = self.fallback_owner
+
         owner = self.owner
 
         current: dict[str, Any] | Unset = UNSET
@@ -72,6 +83,10 @@ class OperationWorkflowReadinessImpactWatch:
                 "coverage_incomplete": coverage_incomplete,
             }
         )
+        if acknowledge_after_seconds is not UNSET:
+            field_dict["acknowledge_after_seconds"] = acknowledge_after_seconds
+        if fallback_owner is not UNSET:
+            field_dict["fallback_owner"] = fallback_owner
         if owner is not UNSET:
             field_dict["owner"] = owner
         if current is not UNSET:
@@ -94,6 +109,10 @@ class OperationWorkflowReadinessImpactWatch:
 
         coverage_incomplete = d.pop("coverage_incomplete")
 
+        acknowledge_after_seconds = d.pop("acknowledge_after_seconds", UNSET)
+
+        fallback_owner = d.pop("fallback_owner", UNSET)
+
         owner = d.pop("owner", UNSET)
 
         _current = d.pop("current", UNSET)
@@ -109,6 +128,8 @@ class OperationWorkflowReadinessImpactWatch:
             code=code,
             evaluated_at=evaluated_at,
             coverage_incomplete=coverage_incomplete,
+            acknowledge_after_seconds=acknowledge_after_seconds,
+            fallback_owner=fallback_owner,
             owner=owner,
             current=current,
         )

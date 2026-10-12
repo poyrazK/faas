@@ -127,6 +127,7 @@ type OperationWorkflowReadinessFollowUpOptions struct {
 	Limit          int    `json:"limit,omitempty"`
 }
 type OperationWorkflowReadinessFollowUp struct {
+	BusinessImpact       *OperationWorkflowReadinessImpactEvent       `json:"business_impact,omitempty"`
 	PlaybookStep         *OperationWorkflowPlaybookStepAssignment     `json:"playbook_step,omitempty"`
 	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation  `json:"playbook_escalation,omitempty"`
 	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation `json:"outcome_escalation,omitempty"`
@@ -328,6 +329,7 @@ type OperationWorkflowReadinessAssignmentChange struct {
 	Reason    string    `json:"reason"`
 }
 type OperationWorkflowReadinessEscalationResponseEvent struct {
+	BusinessImpact           *OperationWorkflowReadinessImpactEvent   `json:"business_impact,omitempty"`
 	EscalationNotificationID string                                   `json:"escalation_notification_id"`
 	EscalationSequence       int64                                    `json:"escalation_sequence"`
 	Source                   *OperationWorkflowReadinessSnapshotEntry `json:"source,omitempty"`
@@ -443,26 +445,31 @@ type OperationWorkflowReadinessImpactOwner struct {
 
 // Impact watches observe retained review queues; configuration is fixed until subscription deletion.
 type OperationWorkflowReadinessImpactWatchRequest struct {
-	Workflow string `json:"workflow"`
-	Kind     string `json:"kind"`
-	Code     string `json:"code"`
-	Owner    string `json:"owner,omitempty"`
+	AcknowledgeAfterSeconds int64  `json:"acknowledge_after_seconds,omitempty"`
+	FallbackOwner           string `json:"fallback_owner,omitempty"`
+	Workflow                string `json:"workflow"`
+	Kind                    string `json:"kind"`
+	Code                    string `json:"code"`
+	Owner                   string `json:"owner,omitempty"`
 }
 type OperationWorkflowReadinessImpactWatch struct {
-	Workflow           string                                   `json:"workflow"`
-	Kind               string                                   `json:"kind"`
-	Code               string                                   `json:"code"`
-	Owner              string                                   `json:"owner,omitempty"`
-	Current            *OperationWorkflowReadinessImpactSummary `json:"current,omitempty"`
-	EvaluatedAt        time.Time                                `json:"evaluated_at"`
-	CoverageIncomplete bool                                     `json:"coverage_incomplete"`
+	AcknowledgeAfterSeconds int64                                    `json:"acknowledge_after_seconds,omitempty"`
+	FallbackOwner           string                                   `json:"fallback_owner,omitempty"`
+	Workflow                string                                   `json:"workflow"`
+	Kind                    string                                   `json:"kind"`
+	Code                    string                                   `json:"code"`
+	Owner                   string                                   `json:"owner,omitempty"`
+	Current                 *OperationWorkflowReadinessImpactSummary `json:"current,omitempty"`
+	EvaluatedAt             time.Time                                `json:"evaluated_at"`
+	CoverageIncomplete      bool                                     `json:"coverage_incomplete"`
 }
 type OperationWorkflowReadinessImpactEvent struct {
-	Workflow  string                                   `json:"workflow"`
-	Kind      string                                   `json:"kind"`
-	Code      string                                   `json:"code"`
-	CheckedAt time.Time                                `json:"checked_at"`
-	Reasons   []string                                 `json:"reasons"`
-	Previous  *OperationWorkflowReadinessImpactSummary `json:"previous,omitempty"`
-	Current   *OperationWorkflowReadinessImpactSummary `json:"current,omitempty"`
+	Response  *OperationWorkflowReadinessEscalationResponse `json:"response,omitempty"`
+	Workflow  string                                        `json:"workflow"`
+	Kind      string                                        `json:"kind"`
+	Code      string                                        `json:"code"`
+	CheckedAt time.Time                                     `json:"checked_at"`
+	Reasons   []string                                      `json:"reasons"`
+	Previous  *OperationWorkflowReadinessImpactSummary      `json:"previous,omitempty"`
+	Current   *OperationWorkflowReadinessImpactSummary      `json:"current,omitempty"`
 }

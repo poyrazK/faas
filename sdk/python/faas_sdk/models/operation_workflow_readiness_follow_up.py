@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
 
 
@@ -50,6 +51,9 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
+    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only."""
     playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
     """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
     Polling preserves manual coordination and bounded ownership history."""
@@ -108,6 +112,10 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        business_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_impact, Unset):
+            business_impact = self.business_impact.to_dict()
+
         playbook_step: dict[str, Any] | Unset = UNSET
         if not isinstance(self.playbook_step, Unset):
             playbook_step = self.playbook_step.to_dict()
@@ -161,6 +169,8 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if business_impact is not UNSET:
+            field_dict["business_impact"] = business_impact
         if playbook_step is not UNSET:
             field_dict["playbook_step"] = playbook_step
         if playbook_escalation is not UNSET:
@@ -195,6 +205,7 @@ class OperationWorkflowReadinessFollowUp:
         from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
 
         d = dict(src_dict)
@@ -215,6 +226,13 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _business_impact = d.pop("business_impact", UNSET)
+        business_impact: OperationWorkflowReadinessImpactEvent | Unset
+        if isinstance(_business_impact, Unset):
+            business_impact = UNSET
+        else:
+            business_impact = OperationWorkflowReadinessImpactEvent.from_dict(_business_impact)
 
         _playbook_step = d.pop("playbook_step", UNSET)
         playbook_step: OperationWorkflowPlaybookStepAssignment | Unset
@@ -285,6 +303,7 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            business_impact=business_impact,
             playbook_step=playbook_step,
             playbook_escalation=playbook_escalation,
             outcome_escalation=outcome_escalation,

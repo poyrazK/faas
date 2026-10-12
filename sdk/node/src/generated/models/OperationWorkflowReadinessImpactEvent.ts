@@ -2,11 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReadinessEscalationResponse } from './OperationWorkflowReadinessEscalationResponse.js';
 import type { OperationWorkflowReadinessImpactSummary } from './OperationWorkflowReadinessImpactSummary.js';
 /**
  * OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human reviews in a scoped application environment; advisory confidence only.
  */
 export type OperationWorkflowReadinessImpactEvent = {
+  /**
+   * OperationWorkflowReadinessImpactEvent.response. Immutable alert acknowledgment target and retained assignment history; source review clearance does not acknowledge the alert.
+   */
+  response?: OperationWorkflowReadinessEscalationResponse;
   /**
    * OperationWorkflowReadinessImpactEvent.workflow. Exact workflow identity.
    */

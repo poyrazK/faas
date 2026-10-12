@@ -17,6 +17,7 @@ from ..models.operation_workflow_readiness_impact_event_reasons_item import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_readiness_escalation_response import OperationWorkflowReadinessEscalationResponse
     from ..models.operation_workflow_readiness_impact_summary import OperationWorkflowReadinessImpactSummary
 
 
@@ -41,6 +42,10 @@ class OperationWorkflowReadinessImpactEvent:
     reasons: list[OperationWorkflowReadinessImpactEventReasonsItem]
     """OperationWorkflowReadinessImpactEvent.reasons. First critical or overdue review transition, or source-
     confirmed clearance of tracked obligations; stable observations remain silent."""
+    response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
+    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
+    Assignment history retains the latest 16 changes."""
     previous: OperationWorkflowReadinessImpactSummary | Unset = UNSET
     """OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
     business result, separate from reported business outcome."""
@@ -62,6 +67,10 @@ class OperationWorkflowReadinessImpactEvent:
             reasons_item: str = reasons_item_data
             reasons.append(reasons_item)
 
+        response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.response, Unset):
+            response = self.response.to_dict()
+
         previous: dict[str, Any] | Unset = UNSET
         if not isinstance(self.previous, Unset):
             previous = self.previous.to_dict()
@@ -81,6 +90,8 @@ class OperationWorkflowReadinessImpactEvent:
                 "reasons": reasons,
             }
         )
+        if response is not UNSET:
+            field_dict["response"] = response
         if previous is not UNSET:
             field_dict["previous"] = previous
         if current is not UNSET:
@@ -90,6 +101,9 @@ class OperationWorkflowReadinessImpactEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_readiness_escalation_response import (
+            OperationWorkflowReadinessEscalationResponse,
+        )
         from ..models.operation_workflow_readiness_impact_summary import OperationWorkflowReadinessImpactSummary
 
         d = dict(src_dict)
@@ -107,6 +121,13 @@ class OperationWorkflowReadinessImpactEvent:
             reasons_item = check_operation_workflow_readiness_impact_event_reasons_item(reasons_item_data)
 
             reasons.append(reasons_item)
+
+        _response = d.pop("response", UNSET)
+        response: OperationWorkflowReadinessEscalationResponse | Unset
+        if isinstance(_response, Unset):
+            response = UNSET
+        else:
+            response = OperationWorkflowReadinessEscalationResponse.from_dict(_response)
 
         _previous = d.pop("previous", UNSET)
         previous: OperationWorkflowReadinessImpactSummary | Unset
@@ -128,6 +149,7 @@ class OperationWorkflowReadinessImpactEvent:
             code=code,
             checked_at=checked_at,
             reasons=reasons,
+            response=response,
             previous=previous,
             current=current,
         )

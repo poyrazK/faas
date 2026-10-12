@@ -30,6 +30,9 @@ func validateImpactWatchRequests(watches []api.OperationWorkflowReadinessImpactW
 	}
 	seen := map[impactSummaryKey]bool{}
 	for _, watch := range watches {
+		if watch.AcknowledgeAfterSeconds < 0 || watch.AcknowledgeAfterSeconds > api.OperationWorkflowReadinessOutcomeEscalationDelayMaxSeconds || (watch.AcknowledgeAfterSeconds > 0 && watch.Owner == "") || (watch.FallbackOwner != "" && (watch.AcknowledgeAfterSeconds == 0 || watch.FallbackOwner == watch.Owner || len(watch.FallbackOwner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(watch.FallbackOwner) || strings.TrimSpace(watch.FallbackOwner) != watch.FallbackOwner || strings.IndexFunc(watch.FallbackOwner, unicode.IsControl) >= 0)) {
+			return ErrInvalidArgument
+		}
 		key := impactSummaryKey{watch.Workflow, watch.Kind, watch.Code}
 		if seen[key] || api.ValidateOperationWorkflowName(watch.Workflow) != nil || !slices.Contains([]string{"milestone", "outcome"}, watch.Kind) || api.ValidateOperationWorkflowStateName(watch.Code) != nil || len(watch.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(watch.Owner) || strings.TrimSpace(watch.Owner) != watch.Owner || strings.IndexFunc(watch.Owner, unicode.IsControl) >= 0 {
 			return ErrInvalidArgument
@@ -137,6 +140,11 @@ func evaluateReadinessImpactWatches(ctx context.Context, store readinessSubscrip
 			n := readinessSubscriptionNotify(r, "business_impact_changed", "Review confidence for a protected business result changed. Inspect the matching review queue; application business execution and reported outcomes are unchanged.", nil)
 			n.BusinessImpact = &api.OperationWorkflowReadinessImpactEvent{Workflow: watch.Workflow, Kind: watch.Kind, Code: watch.Code, CheckedAt: checked, Reasons: reasons, Previous: watch.Current, Current: current}
 			n.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: watch.Owner, UpdatedAt: n.CreatedAt, UpdatedBy: "system:business-impact-watch"}
+			if watch.AcknowledgeAfterSeconds > 0 && !slices.Contains(reasons, "reviews_cleared") {
+				deadline := n.CreatedAt.Add(time.Duration(watch.AcknowledgeAfterSeconds) * time.Second)
+				n.BusinessImpact.Response = &api.OperationWorkflowReadinessEscalationResponse{DeadlineAt: deadline, InitialOwner: watch.Owner, FallbackOwner: watch.FallbackOwner, Status: "awaiting", History: []api.OperationWorkflowReadinessAssignmentChange{}}
+				n.Coordination.FollowUpAt = &deadline
+			}
 			notices = append(notices, n)
 		}
 		watch.Current = current

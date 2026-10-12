@@ -7,6 +7,14 @@
  */
 export type OperationWorkflowReadinessImpactWatchRequest = {
   /**
+   * OperationWorkflowReadinessImpactWatchRequest.acknowledge_after_seconds. Optional response window from delivery of critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance notices have no target. Acknowledgment is independent of resolving source review obligations.
+   */
+  acknowledge_after_seconds?: number;
+  /**
+   * OperationWorkflowReadinessImpactWatchRequest.fallback_owner. Optional distinct fallback team, requires a positive response window. Guarded handoff preserves manual assignment history and the original deadline.
+   */
+  fallback_owner?: string;
+  /**
    * OperationWorkflowReadinessImpactWatchRequest.workflow. Exact workflow identity.
    */
   workflow: string;

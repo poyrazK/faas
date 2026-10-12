@@ -107,7 +107,7 @@ func createReadinessSubscription(ctx context.Context, store readinessSubscriptio
 	record := readinessSubscriptionRecord{Subscription: out, Baseline: page.Snapshot, Seen: map[string]string{}, Account: uuid.MustParse(account).String(), Tenant: selectedTenant, Operator: operator, NextEvaluation: time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)}
 	if len(req.BusinessImpactWatches) > 0 {
 		for _, watch := range req.BusinessImpactWatches {
-			record.Subscription.BusinessImpactWatches = append(record.Subscription.BusinessImpactWatches, api.OperationWorkflowReadinessImpactWatch{Workflow: watch.Workflow, Kind: watch.Kind, Code: watch.Code, Owner: watch.Owner})
+			record.Subscription.BusinessImpactWatches = append(record.Subscription.BusinessImpactWatches, api.OperationWorkflowReadinessImpactWatch{Workflow: watch.Workflow, Kind: watch.Kind, Code: watch.Code, Owner: watch.Owner, AcknowledgeAfterSeconds: watch.AcknowledgeAfterSeconds, FallbackOwner: watch.FallbackOwner})
 		}
 		if _, err = evaluateReadinessImpactWatches(ctx, store, &record, true); err != nil {
 			return api.OperationWorkflowReadinessSubscription{}, err

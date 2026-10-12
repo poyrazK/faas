@@ -74,6 +74,9 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 	if isPlaybookDependencyReview(n) {
 		summary = "The dependency validity review was not resolved by its pinned deadline. Confirm the work remains valid or request redo in the workflow case; inbox acknowledgment alone does not resolve the review."
 	}
+	if n.BusinessImpact != nil {
+		summary = "The business-impact alert was not acknowledged by its response deadline. Review assignment history and the matching queue; alert acknowledgment is separate from resolving underlying review obligations."
+	}
 	notice := readinessSubscriptionNotify(r, "escalation_response_overdue", summary, nil)
 
 	if n.PlaybookEvidence != nil {
@@ -82,7 +85,12 @@ func applyReadinessEscalationResponse(r *readinessSubscriptionRecord, n api.Oper
 		source.OutcomeChange = nil
 		notice.PlaybookEvidence = &source
 	}
-	notice.EscalationResponse = &api.OperationWorkflowReadinessEscalationResponseEvent{EscalationNotificationID: n.ID, EscalationSequence: n.Sequence, Source: readinessNotificationBaseline(n), Playbook: notice.PlaybookEvidence, CheckedAt: now, DeadlineAt: copied.DeadlineAt, Owner: n.Coordination.Owner, Reassigned: reassigned}
+	if n.BusinessImpact != nil {
+		source := *n.BusinessImpact
+		source.Response = nil
+		notice.BusinessImpact = &source
+	}
+	notice.EscalationResponse = &api.OperationWorkflowReadinessEscalationResponseEvent{EscalationNotificationID: n.ID, EscalationSequence: n.Sequence, BusinessImpact: notice.BusinessImpact, Source: readinessNotificationBaseline(n), Playbook: notice.PlaybookEvidence, CheckedAt: now, DeadlineAt: copied.DeadlineAt, Owner: n.Coordination.Owner, Reassigned: reassigned}
 	return n, []api.OperationWorkflowReadinessNotification{notice}, true
 }
 
@@ -122,6 +130,9 @@ func readinessEscalationCoordination(n api.OperationWorkflowReadinessNotificatio
 
 // Assigned steps and both escalation families share response semantics without inventing a readiness baseline.
 func escalationResponse(n api.OperationWorkflowReadinessNotification) (string, *api.OperationWorkflowReadinessEscalationResponse) {
+	if n.BusinessImpact != nil {
+		return n.ID, n.BusinessImpact.Response
+	}
 	if n.PlaybookStep != nil {
 		return n.ID, n.PlaybookStep.Response
 	}
@@ -138,7 +149,11 @@ func escalationResponseWatchID(n api.OperationWorkflowReadinessNotification) str
 	return id
 }
 func withEscalationResponse(n api.OperationWorkflowReadinessNotification, response *api.OperationWorkflowReadinessEscalationResponse) api.OperationWorkflowReadinessNotification {
-	if n.PlaybookStep != nil {
+	if n.BusinessImpact != nil {
+		event := *n.BusinessImpact
+		event.Response = response
+		n.BusinessImpact = &event
+	} else if n.PlaybookStep != nil {
 		step := *n.PlaybookStep
 		step.Response = response
 		n.PlaybookStep = &step
