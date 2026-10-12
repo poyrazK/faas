@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"golang.org/x/sys/unix"
 )
@@ -80,6 +81,19 @@ func boot() error {
 		return fmt.Errorf("mount basics: %w", err)
 	}
 	guestStage("mount-basics")
+	// ADR-1027: a database VM's drive1 is its persistent volume, never an
+	// overlay upper, so database mode is decided before overlay assembly.
+	if cmdline, readErr := os.ReadFile("/proc/cmdline"); readErr == nil {
+		database, major, parseErr := dbguest.ParseCmdline(string(cmdline))
+		if parseErr != nil {
+			_ = poweroffDatabase()
+			return fmt.Errorf("database mode: %w", parseErr)
+		}
+		if database {
+			guestStage("mode-database")
+			return runDatabaseGuest(slog.Default(), major)
+		}
+	}
 	root, err := assembleOverlay()
 	if err != nil {
 		return fmt.Errorf("assemble overlay: %w", err)

@@ -344,3 +344,26 @@ func indexOf(ss []string, target string) int {
 	}
 	return -1
 }
+
+// TestNetworklessConfigOmitsNetworkInterfaces pins the Firecracker config
+// shape of networkless VMs: a nil interface list must be omitted, because
+// Firecracker 1.7 rejects "network-interfaces": null and the VM never boots
+// (found booting the first database VM, ADR-1027).
+func TestNetworklessConfigOmitsNetworkInterfaces(t *testing.T) {
+	cfg := BuildColdBootConfig(ColdBootSpec{KernelKey: "k", BaseKey: "b", LayerKey: "l", VcpuCount: 1, MemSizeMiB: 128, Networkless: true}, 0)
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "network-interfaces") {
+		t.Fatalf("networkless config carries network-interfaces: %s", raw)
+	}
+	app := BuildColdBootConfig(ColdBootSpec{KernelKey: "k", BaseKey: "b", LayerKey: "l", VcpuCount: 1, MemSizeMiB: 128, Tap: "tap0"}, 0)
+	raw, err = json.Marshal(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"network-interfaces":[{"iface_id":"eth0","host_dev_name":"tap0"}]`) {
+		t.Fatalf("app config lost its interface: %s", raw)
+	}
+}

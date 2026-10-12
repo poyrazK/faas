@@ -1,0 +1,216 @@
+// adr: 1027
+package dbvm
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/fcvm"
+)
+
+func validSpec() Spec {
+	return Spec{
+		KernelPath: "/srv/fc/kernel/1.7.0",
+		BasePath:   "/srv/fc/base/postgres-17.ext4",
+		VolumePath: "/srv/db/volumes/db-1.img",
+		Major:      17,
+		VcpuCount:  1,
+		MemSizeMiB: 384,
+		GuestCID:   0x2000,
+		VsockUDS:   "/run/db/db-1.vsock",
+	}
+}
+
+// TestBuildConfigIsNetworklessAndDurable pins the database VM shape of
+// ADR-1027: no network interface, a read-only root base, and a volume whose
+// guest flushes reach the host.
+func TestBuildConfigIsNetworklessAndDurable(t *testing.T) {
+	cfg, err := BuildConfig(validSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.NetworkInterfaces) != 0 {
+		t.Fatalf("database VM has network interfaces: %+v", cfg.NetworkInterfaces)
+	}
+	if len(cfg.Drives) != 2 {
+		t.Fatalf("drives = %+v", cfg.Drives)
+	}
+	base, volume := cfg.Drives[0], cfg.Drives[1]
+	if base.DriveID != DriveBase || !base.IsRootDevice || !base.IsReadOnly || base.CacheType != "" {
+		t.Fatalf("base drive = %+v", base)
+	}
+	if volume.DriveID != DriveVolume || volume.IsRootDevice || volume.IsReadOnly || volume.CacheType != fcvm.DriveCacheWriteback {
+		t.Fatalf("volume drive = %+v", volume)
+	}
+	if cfg.Entropy == nil || cfg.VsockDevice == nil || cfg.VsockDevice.GuestCID != 0x2000 {
+		t.Fatalf("entropy/vsock missing: %+v %+v", cfg.Entropy, cfg.VsockDevice)
+	}
+	args := cfg.BootSource.BootArgs
+	if !strings.Contains(args, dbguest.ModeArg) || !strings.Contains(args, dbguest.MajorArgKey+"=17") {
+		t.Fatalf("boot args lack database mode: %q", args)
+	}
+	if strings.Contains(args, "ip=") {
+		t.Fatalf("database VM boot args configure networking: %q", args)
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "network-interfaces") {
+		t.Fatalf("Firecracker config carries network-interfaces: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"cache_type":"Writeback"`) {
+		t.Fatalf("Firecracker config lacks write-back volume caching: %s", raw)
+	}
+}
+
+func TestBuildConfigRejectsInvalidSpecs(t *testing.T) {
+	cases := map[string]func(*Spec){
+		"no volume":         func(s *Spec) { s.VolumePath = "" },
+		"no vsock":          func(s *Spec) { s.VsockUDS = "" },
+		"zero vcpus":        func(s *Spec) { s.VcpuCount = 0 },
+		"too little memory": func(s *Spec) { s.MemSizeMiB = 64 },
+		"reserved cid":      func(s *Spec) { s.GuestCID = 2 },
+		"unsupported major": func(s *Spec) { s.Major = 12 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := validSpec()
+			mutate(&s)
+			if _, err := BuildConfig(s); err == nil {
+				t.Fatal("BuildConfig accepted an invalid spec")
+			}
+		})
+	}
+}
+
+func TestAppDrivesKeepDefaultCacheType(t *testing.T) {
+	raw, err := json.Marshal(fcvm.Drive{DriveID: "layer", PathOnHost: "/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "cache_type") {
+		t.Fatalf("app drive JSON changed: %s", raw)
+	}
+}
+
+func TestCreateVolumeRejectsOutOfRangeSizes(t *testing.T) {
+	dir := t.TempDir()
+	for _, size := range []int64{0, MinVolumeBytes - 1, MaxVolumeBytes + 1} {
+		if err := CreateVolume(context.Background(), filepath.Join(dir, "v.img"), size); err == nil {
+			t.Fatalf("CreateVolume accepted size %d", size)
+		}
+	}
+}
+
+// fakeFirecracker serves Firecracker's host vsock protocol on a unix socket
+// and hands each accepted guest stream to handle.
+func fakeFirecracker(t *testing.T, handle func(port string, conn net.Conn)) string {
+	t.Helper()
+	dir, err := shortTempDir(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uds := filepath.Join(dir, "v.sock")
+	ln, err := net.Listen("unix", uds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				line, err := bufio.NewReader(conn).ReadString('\n')
+				if err != nil || !strings.HasPrefix(line, "CONNECT ") {
+					return
+				}
+				port := strings.TrimSpace(strings.TrimPrefix(line, "CONNECT "))
+				_, _ = conn.Write([]byte("OK 1073741824\n"))
+				handle(port, conn)
+			}()
+		}
+	}()
+	return uds
+}
+
+func TestControlRoundTrip(t *testing.T) {
+	uds := fakeFirecracker(t, func(port string, conn net.Conn) {
+		if port != "5433" {
+			return
+		}
+		line, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req dbguest.Request
+		if json.Unmarshal(line, &req) != nil || req.Op != dbguest.OpStatus {
+			return
+		}
+		_ = json.NewEncoder(conn).Encode(dbguest.Response{State: dbguest.StateReady, Major: 17})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := WaitState(ctx, uds, dbguest.StateReady)
+	if err != nil || resp.Major != 17 {
+		t.Fatalf("WaitState = %+v, %v", resp, err)
+	}
+}
+
+func TestControlRejectsInvalidRequestLocally(t *testing.T) {
+	if _, err := Control(context.Background(), "/nonexistent", dbguest.Request{Op: dbguest.OpBootstrap}); err == nil {
+		t.Fatal("bootstrap without a password was sent")
+	}
+}
+
+func TestWaitStateSurfacesGuestFailure(t *testing.T) {
+	uds := fakeFirecracker(t, func(_ string, conn net.Conn) {
+		if _, err := bufio.NewReader(conn).ReadBytes('\n'); err == nil {
+			_ = json.NewEncoder(conn).Encode(dbguest.Response{State: dbguest.StateFailed, Error: dbguest.ErrCodeMajorMismatch})
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := WaitState(ctx, uds, dbguest.StateReady); err == nil || !strings.Contains(err.Error(), dbguest.ErrCodeMajorMismatch) {
+		t.Fatalf("WaitState error = %v", err)
+	}
+}
+
+func TestDialRejectedConnect(t *testing.T) {
+	dir, err := shortTempDir(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uds := filepath.Join(dir, "v.sock")
+	ln, err := net.Listen("unix", uds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = bufio.NewReader(conn).ReadString('\n')
+			_ = conn.Close() // Firecracker closes when no guest listener exists.
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := Dial(ctx, uds, dbguest.DataPort); err == nil {
+		t.Fatal("Dial succeeded without a guest listener")
+	}
+}

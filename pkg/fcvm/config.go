@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 // Firecracker machine config + jailer invocation builders (spec §4.4, Appendix
@@ -15,10 +16,13 @@ import (
 // VMConfig is the Firecracker configuration file (`--config-file`). JSON tags
 // match the Firecracker API schema exactly — do not rename.
 type VMConfig struct {
-	BootSource        BootSource `json:"boot-source"`
-	Drives            []Drive    `json:"drives"`
-	MachineConfig     Machine    `json:"machine-config"`
-	NetworkInterfaces []NetIface `json:"network-interfaces"`
+	BootSource    BootSource `json:"boot-source"`
+	Drives        []Drive    `json:"drives"`
+	MachineConfig Machine    `json:"machine-config"`
+	// NetworkInterfaces is omitted when empty: Firecracker rejects a JSON
+	// null here ("expected a sequence"), which a nil slice would marshal to
+	// for networkless execution and database VMs (ADR-1027).
+	NetworkInterfaces []NetIface `json:"network-interfaces,omitempty"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
 	// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials
@@ -83,7 +87,16 @@ type Drive struct {
 	IsRootDevice bool         `json:"is_root_device"`
 	IsReadOnly   bool         `json:"is_read_only"`
 	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
+	// CacheType is empty (Firecracker's "Unsafe") for app layers, which are
+	// disposable. Database volumes set DriveCacheWriteback (ADR-1027).
+	CacheType string `json:"cache_type,omitempty"`
 }
+
+// DriveCacheWriteback makes Firecracker advertise flush support and fsync
+// the host file on every guest flush. The default "Unsafe" ignores guest
+// flushes: acceptable for disposable app layers, data loss for a database
+// volume (ADR-1027).
+const DriveCacheWriteback = "Writeback"
 
 // RateLimiter is Firecracker's device rate limiter: token buckets on bytes
 // and on operations.
@@ -224,6 +237,17 @@ const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
+
+// DatabaseBootArgs is the kernel command line of a database VM (ADR-1027):
+// the networkless execution line, which configures no guest network, plus
+// guest-init's database-mode arguments for the given PostgreSQL major.
+func DatabaseBootArgs(major int) (string, error) {
+	mode, err := dbguest.BootArgs(major)
+	if err != nil {
+		return "", err
+	}
+	return withGuestTimer(executionBootArgs) + " " + mode, nil
+}
 
 // withGuestTimer inserts the timer profile after the console arguments.
 func withGuestTimer(args string) string {
