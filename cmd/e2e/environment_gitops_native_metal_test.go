@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -258,5 +259,27 @@ func stageNativeAcceptanceBase(t *testing.T, storageRoot string) {
 	}
 	if err := os.WriteFile(dest+".content", content, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// This locally patched base is a lifecycle fixture, not Grype evidence.
+	// Model the admission sidecar explicitly so the VM can exercise the
+	// reviewed workload's native boot and qualification path. The image
+	// identity must match vmmd's configured test-only base generation.
+	baseRef := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF")
+	if baseRef == "" {
+		t.Fatal("native acceptance base has no configured generation")
+	}
+	scan, err := json.Marshal(struct {
+		Image                string         `json:"image"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
+	}{
+		Image:    baseRef,
+		Findings: map[string]int{"CRITICAL": 0}, FixAvailableFindings: map[string]int{"CRITICAL": 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Put(t.Context(), wire.ScanKeyForBaseKey(key), bytes.NewReader(scan)); err != nil {
+		t.Fatalf("publish private base admission fixture: %v", err)
 	}
 }
