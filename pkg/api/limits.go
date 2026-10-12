@@ -4424,6 +4424,12 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
+	// ADR-909 (proposed) charge: what admission by measured memory would book
+	// for a running instance. schedd only reports it (shadow mode); admission
+	// still books BillableRAMMB. See MeasuredChargeMB.
+	MeasuredChargeFloorMB         = 64
+	MeasuredChargeHeadroomPercent = 25
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to

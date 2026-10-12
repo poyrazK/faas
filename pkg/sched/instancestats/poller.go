@@ -277,6 +277,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if p.FleetStats != nil {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -304,6 +305,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 			}
 		}
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
@@ -321,6 +323,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
+	p.publishMemoryShadow(instances, rows)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per

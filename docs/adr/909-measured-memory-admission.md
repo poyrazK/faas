@@ -82,6 +82,22 @@ its measured working set plugged and grow to plan RAM on demand. Unplugging
 then enforces measured charges, and gives eviction a step short of freezing
 or parking.
 
+## Shadow mode (implemented 2026-10-12)
+
+schedd computes both bookings without changing admission. Every
+instance-stats tick (200 ms) sums, per node, over the instances invariant 2
+counts:
+
+- `schedd_node_memory_reserved_mb`: plan RAM + 8 MB, what admission books
+  today;
+- `schedd_node_memory_measured_mb`: `api.MeasuredChargeMB`, the instance's
+  cgroup memory (at least `MeasuredChargeFloorMB`, 64 MB) plus
+  `MeasuredChargeHeadroomPercent` (25%), capped at plan RAM + 8 MB. An
+  instance without a sample books its full reservation.
+
+Their ratio on production nodes, over real traffic, is the evidence this ADR
+needs before admission itself changes.
+
 ## Validation plan
 
 - Property tests: the charge never exceeds plan + 8 MB, Σ(plan + 8) never
