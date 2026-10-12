@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func workspaceSelectorTarGz(t *testing.T, firstName, secondName string) []byte {
@@ -45,17 +46,17 @@ func TestScanProjectOnlyAcceptsRootQualifiedWorkspaceSelector(t *testing.T) {
 	spool := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
-	req := scanAuditRegressionRequest(t, e.key, workspaceSelectorTarGz(t, "frontend-api", "backend-api"), map[string]string{
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+	req := scanAuditRegressionRequest(t, (*e.Key()), workspaceSelectorTarGz(t, "frontend-api", "backend-api"), map[string]string{
 		"project_slug": "root-selector",
 		"only":         "frontend/api",
 	})
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan status = %d; body=%s", rec.Code, rec.Body.String())
 	}
-	var response scanPlanResponse
+	var response apidserver.ScanPlanResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +69,13 @@ func TestScanProjectAmbiguousNameSelectorListsBothRoots(t *testing.T) {
 	spool := t.TempDir()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
-	req := scanAuditRegressionRequest(t, e.key, workspaceSelectorTarGz(t, "shared-api", "shared-api"), map[string]string{
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
+	req := scanAuditRegressionRequest(t, (*e.Key()), workspaceSelectorTarGz(t, "shared-api", "shared-api"), map[string]string{
 		"project_slug": "ambiguous-selector",
 		"only":         "shared-api",
 	})
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "frontend/api") || !strings.Contains(rec.Body.String(), "backend/api") {
 		t.Fatalf("ambiguous selector response = %d %s", rec.Code, rec.Body.String())
 	}

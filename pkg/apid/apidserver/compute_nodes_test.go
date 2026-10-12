@@ -13,7 +13,7 @@
 //      NOT leak the body's parse-error side (so a brute-force can't
 //      fish for handler bodies via crafted JSON).
 
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,9 +50,9 @@ func newComputeNodeTestServerWithStore(t *testing.T, adminCSV, email string) (*h
 	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("seed key: %v", err)
 	}
-	srv := newServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
 	srv.WithAdminAllowlist(adminCSV)
-	ts := httptest.NewServer(srv.handler())
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, key, store
 }
@@ -106,7 +107,7 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST upsert: status=%d", resp.StatusCode)
 	}
-	var posted computeNodeResponse
+	var posted apidserver.ComputeNodeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&posted); err != nil {
 		t.Fatalf("decode POST response: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET list: status=%d", resp.StatusCode)
 	}
-	var listed []computeNodeResponse
+	var listed []apidserver.ComputeNodeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestComputeNodes_AllowlistHitUpsertsAndLists(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET detail: status=%d", resp.StatusCode)
 	}
-	var detailed computeNodeResponse
+	var detailed apidserver.ComputeNodeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&detailed); err != nil {
 		t.Fatalf("decode detail: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestComputeNodes_EnrollmentPreservesMetadataAndAuditsTrace(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST enrollment: status=%d", resp.StatusCode)
 	}
-	var response computeNodeResponse
+	var response apidserver.ComputeNodeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestComputeNodes_EnrollmentPreservesMetadataAndAuditsTrace(t *testing.T) {
 func TestComputeNodeResponseOmitsHostCertificate(t *testing.T) {
 	certificate := "private-node-certificate"
 	fingerprint := "sha256:public-fingerprint"
-	body, err := json.Marshal(toComputeNodeResponse(state.ComputeNode{
+	body, err := json.Marshal(apidserver.ToComputeNodeResponse(state.ComputeNode{
 		Name:            "box-east-1",
 		HostCertificate: &certificate,
 		CertFingerprint: &fingerprint,
@@ -285,23 +286,23 @@ func TestComputeNodes_RejectsUnreachableGatewayMetricsTarget(t *testing.T) {
 }
 
 func TestComputeNodes_HardDeleteRefusesDefaultLocal(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/default-local?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	rec := e.DoAdmin(t, http.MethodDelete, "/v1/compute-nodes/default-local?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("default-local hard-delete: status=%d, want 409", rec.Code)
 	}
 }
 
 func TestComputeNodes_DeleteEnqueuesRetirement(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	node, err := (*e.Store()).UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
 		Name: "box-retire", TargetURL: "tcp://100.64.0.2:50051",
 		Lifecycle: state.NodeLifecycleMaintenance,
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-retire?confirm=true&reason=hardware_eol", nil, nil)
+	rec := e.DoAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-retire?confirm=true&reason=hardware_eol", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retire delete: status=%d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -312,33 +313,33 @@ func TestComputeNodes_DeleteEnqueuesRetirement(t *testing.T) {
 	if got.Kind != string(state.OperatorIntentKindNodeRetire) || got.RequestedLifecycle != string(state.NodeLifecycleRetired) {
 		t.Fatalf("unexpected retirement receipt: %+v", got)
 	}
-	fresh, err := e.store.NodeGet(context.Background(), node.ID)
+	fresh, err := (*e.Store()).NodeGet(context.Background(), node.ID)
 	if err != nil || fresh.Lifecycle != state.NodeLifecycleMaintenance {
 		t.Fatalf("delete mutated node before schedd dispatch: node=%+v err=%v", fresh, err)
 	}
 }
 
 func TestComputeNodes_HardDeleteOnlyUnusedRetiredNode(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	node, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	node, err := (*e.Store()).UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
 		Name: "box-mistake", TargetURL: "tcp://100.64.0.3:50051",
 		Lifecycle: state.NodeLifecycleRetired,
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rec := e.doAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-mistake?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
+	rec := e.DoAdmin(t, http.MethodDelete, "/v1/compute-nodes/box-mistake?hard=1&confirm=true&reason=mistaken_enrollment", nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("hard delete: status=%d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
-	if _, err := e.store.NodeGet(context.Background(), node.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).NodeGet(context.Background(), node.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted node lookup: got %v, want ErrNotFound", err)
 	}
 }
 
 func TestComputeNodes_EnrollmentRefusesRetiredName(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
-	if _, err := e.store.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	if _, err := (*e.Store()).UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
 		Name: "box-retired-name", TargetURL: "tcp://100.64.0.4:50051",
 		Lifecycle: state.NodeLifecycleRetired,
 	}); err != nil {
@@ -348,8 +349,8 @@ func TestComputeNodes_EnrollmentRefusesRetiredName(t *testing.T) {
 		Name: "box-retired-name", TargetURL: "tcp://100.64.0.5:50051",
 		VPCPUs: 8, MemMB: 8192, MaxConcurrency: 16, AdmissionCeilingMB: 4096,
 	}
-	rec := e.do(t, http.MethodPost, "/v1/compute-nodes", body, nil)
-	assertProblem(t, rec, http.StatusConflict, "node_retired")
+	rec := e.Do(t, http.MethodPost, "/v1/compute-nodes", body, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, "node_retired")
 }
 
 // seedHeartbeatTestNode is the shared seed for the heartbeats-history
@@ -386,7 +387,7 @@ func TestComputeNodes_Heartbeats_RoundTrip(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET heartbeats: status=%d", resp.StatusCode)
 	}
-	var out computeNodeHeartbeatsResponse
+	var out apidserver.ComputeNodeHeartbeatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -441,9 +442,9 @@ func seedHeartbeatSingleRow(t *testing.T, at time.Time) (*httptest.Server, strin
 	if err := store.AppendComputeNodeHeartbeat(context.Background(), node.ID, at, at, "heartbeat_tick"); err != nil {
 		t.Fatalf("seed heartbeat: %v", err)
 	}
-	srv := newServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
 	srv.WithAdminAllowlist("ops@example.com")
-	ts := httptest.NewServer(srv.handler())
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, key, "box-hb"
 }
@@ -473,9 +474,9 @@ func TestComputeNodes_Heartbeats_SinceFilter(t *testing.T) {
 			t.Fatalf("seed row %d: %v", i, err)
 		}
 	}
-	srv := newServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
 	srv.WithAdminAllowlist("ops@example.com")
-	ts := httptest.NewServer(srv.handler())
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	tok := mintAdminToken(t, store)
 
@@ -488,7 +489,7 @@ func TestComputeNodes_Heartbeats_SinceFilter(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET: status=%d", resp.StatusCode)
 	}
-	var out computeNodeHeartbeatsResponse
+	var out apidserver.ComputeNodeHeartbeatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -517,7 +518,7 @@ func TestComputeNodes_Heartbeats_SinceClamped(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET: status=%d", resp.StatusCode)
 	}
-	var out computeNodeHeartbeatsResponse
+	var out apidserver.ComputeNodeHeartbeatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -540,7 +541,7 @@ func TestComputeNodes_Heartbeats_SinceNotClamped(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET: status=%d", resp.StatusCode)
 	}
-	var out computeNodeHeartbeatsResponse
+	var out apidserver.ComputeNodeHeartbeatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -635,9 +636,9 @@ func TestComputeNodes_Heartbeats_GapClassification(t *testing.T) {
 			t.Fatalf("seed row %d: %v", i, err)
 		}
 	}
-	srv := newServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, nil, "gregale.dev", nil, "", nil, nil, nil, nil, 0, "")
 	srv.WithAdminAllowlist("ops@example.com")
-	ts := httptest.NewServer(srv.handler())
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	tok := mintAdminToken(t, store)
 
@@ -646,7 +647,7 @@ func TestComputeNodes_Heartbeats_GapClassification(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET: status=%d", resp.StatusCode)
 	}
-	var out computeNodeHeartbeatsResponse
+	var out apidserver.ComputeNodeHeartbeatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

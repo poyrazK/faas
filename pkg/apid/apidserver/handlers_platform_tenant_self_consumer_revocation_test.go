@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,17 +10,18 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "self-revocation", "Self revocation", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "self-revocation", "Self revocation", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "other-self-revocation", "Other tenant", 250)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "other-self-revocation", "Other tenant", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +33,9 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 	}
 	makeCustomer := func(slug, tenantID, externalRef string) customer {
 		t.Helper()
-		plan := e.acct.Plan
-		app, err := e.store.CreateApp(ctx, state.App{
-			AccountID:      e.acct.ID,
+		plan := (*e.Acct()).Plan
+		app, err := (*e.Store()).CreateApp(ctx, state.App{
+			AccountID:      (*e.Acct()).ID,
 			Slug:           slug,
 			Type:           state.AppTypeApp,
 			Status:         state.AppActive,
@@ -45,17 +46,17 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 			t.Fatalf("seed app %s: %v", slug, err)
 		}
 		appID := app.ID
-		consumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, externalRef, "Customer "+externalRef)
+		consumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, externalRef, "Customer "+externalRef)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if tenantID != "" {
-			consumer, err = e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, tenantID, consumer.ID)
+			consumer, err = (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, tenantID, consumer.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		key, err := e.store.CreateConsumerKeyForConsumer(ctx, e.acct.ID, consumer.ID,
+		key, err := (*e.Store()).CreateConsumerKeyForConsumer(ctx, (*e.Acct()).ID, consumer.ID,
 			"initial", "pfx-"+externalRef[:8], api.HashAPIKey("secret-"+externalRef), []string{"read"}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -69,7 +70,7 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 
 	createToken := func(name, scope string) api.CreatePlatformTenantAccessTokenResponse {
 		t.Helper()
-		created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+		created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 			api.CreatePlatformTenantAccessTokenRequest{Name: name, Scopes: []string{scope}}, nil)
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create %s token: %d %s", scope, created.Code, created.Body)
@@ -87,7 +88,7 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 		req := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/consumers/revoke", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	ids, err := json.Marshal(api.RevokePlatformTenantSelfConsumersRequest{ConsumerIDs: []string{first.consumer.ID, second.consumer.ID}})
@@ -108,13 +109,13 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 		if hidden := request(manage.Token, string(body)); hidden.Code != http.StatusNotFound || strings.Contains(hidden.Body.String(), foreign.consumer.ID) || strings.Contains(hidden.Body.String(), unlinked.consumer.ID) {
 			t.Fatalf("foreign or unlinked customer was enumerable: %d %s", hidden.Code, hidden.Body)
 		}
-		stillActive, err := e.store.GetAPIConsumerByID(ctx, e.acct.ID, first.consumer.ID)
+		stillActive, err := (*e.Store()).GetAPIConsumerByID(ctx, (*e.Acct()).ID, first.consumer.ID)
 		if err != nil || !stillActive.Active() {
 			t.Fatalf("failed batch partially revoked owned customer: %+v err=%v", stillActive, err)
 		}
 	}
 
-	if _, err := e.store.SetPlatformTenantStatus(ctx, e.acct.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantStatus(ctx, (*e.Acct()).ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
 		t.Fatal(err)
 	}
 	response := request(manage.Token, string(ids))
@@ -130,17 +131,17 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 		t.Fatalf("revocation response=%+v body=%s", revoked, response.Body)
 	}
 	for _, item := range []customer{first, second} {
-		loaded, err := e.store.GetAPIConsumerByID(ctx, e.acct.ID, item.consumer.ID)
+		loaded, err := (*e.Store()).GetAPIConsumerByID(ctx, (*e.Acct()).ID, item.consumer.ID)
 		if err != nil || loaded.Status != state.APIConsumerStatusRevoked {
 			t.Fatalf("customer %s status=%+v err=%v", item.consumer.ID, loaded, err)
 		}
-		keys, err := e.store.ListConsumerKeysForApp(ctx, e.acct.ID, item.app)
+		keys, err := (*e.Store()).ListConsumerKeysForApp(ctx, (*e.Acct()).ID, item.app)
 		if err != nil || len(keys) != 1 || keys[0].ID != item.key.ID || keys[0].RevokedAt == nil {
 			t.Fatalf("customer %s keys=%+v err=%v", item.consumer.ID, keys, err)
 		}
 	}
 	for _, item := range []customer{foreign, unlinked} {
-		loaded, err := e.store.GetAPIConsumerByID(ctx, e.acct.ID, item.consumer.ID)
+		loaded, err := (*e.Store()).GetAPIConsumerByID(ctx, (*e.Acct()).ID, item.consumer.ID)
 		if err != nil || !loaded.Active() {
 			t.Fatalf("unselected customer %s was changed: %+v err=%v", item.consumer.ID, loaded, err)
 		}
@@ -154,12 +155,12 @@ func TestPlatformTenantSelfConsumerRevocationIsScopedAtomicAndRetrySafe(t *testi
 }
 
 func TestPlatformTenantSelfConsumerRevocationRejectsEmptyBatch(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "empty-revocation", "Empty revocation", 250)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "empty-revocation", "Empty revocation", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+	created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 		api.CreatePlatformTenantAccessTokenRequest{Name: "customer manager", Scopes: []string{api.ScopePlatformTenantConsumersManage}}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create manager token: %d %s", created.Code, created.Body)
@@ -171,7 +172,7 @@ func TestPlatformTenantSelfConsumerRevocationRejectsEmptyBatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/consumers/revoke", bytes.NewBufferString(`{"consumer_ids":[]}`))
 	req.Header.Set("Authorization", "Bearer "+token.Token)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty batch status=%d body=%s", rec.Code, rec.Body)
 	}

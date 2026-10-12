@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,17 +12,19 @@ import (
 	"time"
 
 	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "managed-disconnect-test", Version: "v1",
 		Steps: []api.CreateManagedExecutionWorkflowStep{
@@ -30,7 +32,7 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 			{Label: "second", InputFromPreviousResult: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 		},
 	}
-	created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-workflow-create"})
+	created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-workflow-create"})
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("create managed workflow = %d: %s", created.Code, created.Body.String())
 	}
@@ -44,7 +46,7 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 	if strings.Contains(created.Body.String(), "return {ok:true}") {
 		t.Fatal("workflow response exposed source")
 	}
-	replayed := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-workflow-retry"})
+	replayed := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-workflow-retry"})
 	if replayed.Code != http.StatusAccepted {
 		t.Fatalf("identical workflow retry = %d: %s", replayed.Code, replayed.Body.String())
 	}
@@ -55,13 +57,13 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 	changed := request
 	changed.Steps = append([]api.CreateManagedExecutionWorkflowStep(nil), request.Steps...)
 	changed.Steps[0].Request.Source = "return {ok:false}"
-	conflict := e.do(t, http.MethodPost, "/v1/execution-workflows", changed, map[string]string{"Idempotency-Key": "managed-workflow-changed"})
+	conflict := e.Do(t, http.MethodPost, "/v1/execution-workflows", changed, map[string]string{"Idempotency-Key": "managed-workflow-changed"})
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("changed workflow retry = %d: %s", conflict.Code, conflict.Body.String())
 	}
 
 	workflowURL := "/v1/execution-workflows/" + request.WorkflowID
-	status := e.do(t, http.MethodGet, workflowURL, nil, nil)
+	status := e.Do(t, http.MethodGet, workflowURL, nil, nil)
 	if status.Code != http.StatusOK {
 		t.Fatalf("empty workflow summary = %d: %s", status.Code, status.Body.String())
 	}
@@ -73,17 +75,17 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 		t.Fatalf("managed-only summary = %+v", summary)
 	}
 
-	jobStore := state.ExecutionWorkflowJobStore(e.store)
+	jobStore := state.ExecutionWorkflowJobStore((*e.Store()))
 	jobClaim, err := jobStore.ClaimExecutionWorkflowJob(context.Background(), "test-worker", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
 		t.Fatalf("admit first step: %v", err)
 	}
-	workflowRuns := state.ExecutionWorkflowStore(e.store)
-	firstRows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), e.acct.ID, request.WorkflowID, nil, "", 10, 0)
-	if err != nil || len(firstRows) != 1 || firstRows[0].StepLabel != managedExecutionWorkflowStepLabel(response.PlanID, "first") {
+	workflowRuns := state.ExecutionWorkflowStore((*e.Store()))
+	firstRows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil, "", 10, 0)
+	if err != nil || len(firstRows) != 1 || firstRows[0].StepLabel != apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "first") {
 		t.Fatalf("first Run receipts = %+v, %v", firstRows, err)
 	}
 	completeManagedWorkflowRun(t, e, identity, firstRows[0].ID, `{"ok":true}`)
@@ -92,16 +94,16 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
 		t.Fatalf("admit second step: %v", err)
 	}
-	allRows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), e.acct.ID, request.WorkflowID, nil, "", 10, 0)
+	allRows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil, "", 10, 0)
 	if err != nil || len(allRows) != 2 {
 		t.Fatalf("second Run receipts = %+v, %v", allRows, err)
 	}
 	var second state.Execution
 	for _, row := range allRows {
-		if row.StepLabel == managedExecutionWorkflowStepLabel(response.PlanID, "second") {
+		if row.StepLabel == apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "second") {
 			second = row
 		}
 	}
@@ -114,10 +116,10 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), jobClaim); err != nil {
 		t.Fatalf("complete workflow: %v", err)
 	}
-	status = e.do(t, http.MethodGet, workflowURL, nil, nil)
+	status = e.Do(t, http.MethodGet, workflowURL, nil, nil)
 	if status.Code != http.StatusOK || json.Unmarshal(status.Body.Bytes(), &summary) != nil {
 		t.Fatalf("terminal workflow summary = %d: %s", status.Code, status.Body.String())
 	}
@@ -127,11 +129,11 @@ func TestManagedExecutionWorkflowContinuesFromDurableRunReceipts(t *testing.T) {
 }
 
 func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "managed-dag-test", Version: "v1", MaxParallelSteps: 2,
 		FailurePolicy: api.ExecutionWorkflowManagedFailureContinueIndependent,
@@ -142,7 +144,7 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 				Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 		},
 	}
-	created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-dag-create"})
+	created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-dag-create"})
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("create managed DAG = %d: %s", created.Code, created.Body.String())
 	}
@@ -150,16 +152,16 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	jobs := state.ExecutionWorkflowJobStore(e.store)
+	jobs := state.ExecutionWorkflowJobStore((*e.Store()))
 	claim, err := jobs.ClaimExecutionWorkflowJob(context.Background(), "managed-dag-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("drive managed DAG fan-out: %v", err)
 	}
-	workflowRuns := state.ExecutionWorkflowStore(e.store)
-	rows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), e.acct.ID, request.WorkflowID, nil, "", 10, 0)
+	workflowRuns := state.ExecutionWorkflowStore((*e.Store()))
+	rows, err := workflowRuns.ListExecutionsByWorkflow(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil, "", 10, 0)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("independent root receipts = %+v, %v; want two parallel roots", rows, err)
 	}
@@ -167,11 +169,11 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 	for _, row := range rows {
 		rootLabels[row.StepLabel] = true
 	}
-	if !rootLabels[managedExecutionWorkflowStepLabel(response.PlanID, "inspect")] || !rootLabels[managedExecutionWorkflowStepLabel(response.PlanID, "test")] {
+	if !rootLabels[apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "inspect")] || !rootLabels[apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "test")] {
 		t.Fatalf("fan-out receipts = %+v", rows)
 	}
 	for i := 0; i < 2; i++ {
-		runClaim, claimErr := e.store.ClaimExecution(context.Background(), "managed-dag-test", time.Now().UTC().Add(time.Second), time.Minute)
+		runClaim, claimErr := (*e.Store()).ClaimExecution(context.Background(), "managed-dag-test", time.Now().UTC().Add(time.Second), time.Minute)
 		if claimErr != nil {
 			t.Fatal(claimErr)
 		}
@@ -186,19 +188,19 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("drive managed DAG fan-in: %v", err)
 	}
-	jobAfterFanIn, err := jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	jobAfterFanIn, err := jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	joinLabel := managedExecutionWorkflowStepLabel(response.PlanID, "summarize")
-	join, err := workflowRuns.ExecutionWorkflowStepByLabel(context.Background(), e.acct.ID, request.WorkflowID, jobAfterFanIn.RunsPrincipalID, joinLabel)
+	joinLabel := apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "summarize")
+	join, err := workflowRuns.ExecutionWorkflowStepByLabel(context.Background(), (*e.Acct()).ID, request.WorkflowID, jobAfterFanIn.RunsPrincipalID, joinLabel)
 	if err != nil {
 		t.Fatalf("fan-in Run receipt = %+v, %v; workflow job = %+v", join, err, jobAfterFanIn)
 	}
-	runClaim, err := e.store.ClaimExecution(context.Background(), "managed-dag-test", time.Now().UTC().Add(time.Second), time.Minute)
+	runClaim, err := (*e.Store()).ClaimExecution(context.Background(), "managed-dag-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || runClaim.ID != join.ID {
 		t.Fatalf("claim fan-in Run = %q, %v; want %q", runClaim.ID, err, join.ID)
 	}
@@ -206,7 +208,7 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inputs map[string]managedWorkflowDependencyInput
+	var inputs map[string]apidserver.ManagedWorkflowDependencyInput
 	if err := json.Unmarshal(decoded.Input, &inputs); err != nil {
 		t.Fatalf("decode dependency results %s: %v", decoded.Input, err)
 	}
@@ -220,21 +222,21 @@ func TestManagedExecutionWorkflowFansOutAndCollectsDependencyResults(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("finish managed DAG: %v", err)
 	}
-	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil || job.Status != api.ManagedExecutionWorkflowSucceeded || job.NextStep != 3 {
 		t.Fatalf("terminal managed DAG = %+v, %v", job, err)
 	}
 }
 
 func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "managed-contract-dag", Version: "v1", MaxParallelSteps: 2,
 		FailurePolicy: api.ExecutionWorkflowManagedFailureContinueIndependent,
@@ -249,11 +251,11 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 	invalidSchema := request
 	invalidSchema.Steps = append([]api.CreateManagedExecutionWorkflowStep(nil), request.Steps...)
 	invalidSchema.Steps[0].ResultSchema = json.RawMessage(`{"$ref":"https://example.com/schema.json"}`)
-	invalid := e.do(t, http.MethodPost, "/v1/execution-workflows", invalidSchema, map[string]string{"Idempotency-Key": "managed-contract-invalid-schema"})
+	invalid := e.Do(t, http.MethodPost, "/v1/execution-workflows", invalidSchema, map[string]string{"Idempotency-Key": "managed-contract-invalid-schema"})
 	if invalid.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("managed workflow with external result schema = %d: %s", invalid.Code, invalid.Body.String())
 	}
-	created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-contract-create"})
+	created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-contract-create"})
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("create result-contract workflow = %d: %s", created.Code, created.Body.String())
 	}
@@ -262,16 +264,16 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jobs := state.ExecutionWorkflowJobStore(e.store)
+	jobs := state.ExecutionWorkflowJobStore((*e.Store()))
 	claim, err := jobs.ClaimExecutionWorkflowJob(context.Background(), "managed-contract-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("admit independent steps: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		runClaim, claimErr := e.store.ClaimExecution(context.Background(), "managed-contract-test", time.Now().UTC().Add(time.Second), time.Minute)
+		runClaim, claimErr := (*e.Store()).ClaimExecution(context.Background(), "managed-contract-test", time.Now().UTC().Add(time.Second), time.Minute)
 		if claimErr != nil {
 			t.Fatal(claimErr)
 		}
@@ -286,19 +288,19 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("admit result fan-in: %v", err)
 	}
-	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	join, err := state.ExecutionWorkflowStore(e.store).ExecutionWorkflowStepByLabel(context.Background(), e.acct.ID, request.WorkflowID, job.RunsPrincipalID,
-		managedExecutionWorkflowStepLabel(response.PlanID, "summarize"))
+	join, err := state.ExecutionWorkflowStore((*e.Store())).ExecutionWorkflowStepByLabel(context.Background(), (*e.Acct()).ID, request.WorkflowID, job.RunsPrincipalID,
+		apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "summarize"))
 	if err != nil {
 		t.Fatalf("result-contract fan-in receipt = %+v, %v", join, err)
 	}
-	runClaim, err := e.store.ClaimExecution(context.Background(), "managed-contract-test", time.Now().UTC().Add(time.Second), time.Minute)
+	runClaim, err := (*e.Store()).ClaimExecution(context.Background(), "managed-contract-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || runClaim.ID != join.ID {
 		t.Fatalf("claim result-contract fan-in Run = %q, %v; want %q", runClaim.ID, err, join.ID)
 	}
@@ -306,7 +308,7 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inputs map[string]managedWorkflowDependencyInput
+	var inputs map[string]apidserver.ManagedWorkflowDependencyInput
 	if err := json.Unmarshal(decoded.Input, &inputs); err != nil {
 		t.Fatalf("decode result-contract dependency inputs %s: %v", decoded.Input, err)
 	}
@@ -320,15 +322,15 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("complete result-contract workflow: %v", err)
 	}
-	job, err = jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err = jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil || job.Status != api.ManagedExecutionWorkflowFailed || job.NextStep != 3 ||
 		!strings.Contains(job.LastError, `step "collect" result contract failed`) {
 		t.Fatalf("terminal result-contract workflow = %+v, %v", job, err)
 	}
-	rows, err := state.ExecutionWorkflowStore(e.store).ListExecutionsByWorkflow(context.Background(), e.acct.ID, request.WorkflowID, nil, "", 10, 0)
+	rows, err := state.ExecutionWorkflowStore((*e.Store())).ListExecutionsByWorkflow(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil, "", 10, 0)
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("Run receipts after result-contract failure = %+v, %v", rows, err)
 	}
@@ -340,11 +342,11 @@ func TestManagedExecutionWorkflowEnforcesResultSchemaBeforeFanIn(t *testing.T) {
 }
 
 func TestManagedExecutionWorkflowStagesArtifactFromEarlierStep(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "managed-artifact-test", Version: "v1",
 		Steps: []api.CreateManagedExecutionWorkflowStep{
@@ -358,11 +360,11 @@ func TestManagedExecutionWorkflowStagesArtifactFromEarlierStep(t *testing.T) {
 	invalid.Steps[1].Request.Source = "print('review')"
 	invalid.Steps[1].Request.Entrypoint = ""
 	invalid.Steps[1].Request.Files = nil
-	invalidResponse := e.do(t, http.MethodPost, "/v1/execution-workflows", invalid, map[string]string{"Idempotency-Key": "managed-artifact-invalid"})
+	invalidResponse := e.Do(t, http.MethodPost, "/v1/execution-workflows", invalid, map[string]string{"Idempotency-Key": "managed-artifact-invalid"})
 	if invalidResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("managed artifact without an entrypoint bundle = %d: %s", invalidResponse.Code, invalidResponse.Body.String())
 	}
-	created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-artifact-create"})
+	created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-artifact-create"})
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("create artifact workflow = %d: %s", created.Code, created.Body.String())
 	}
@@ -370,15 +372,15 @@ func TestManagedExecutionWorkflowStagesArtifactFromEarlierStep(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	jobs := state.ExecutionWorkflowJobStore(e.store)
+	jobs := state.ExecutionWorkflowJobStore((*e.Store()))
 	claim, err := jobs.ClaimExecutionWorkflowJob(context.Background(), "managed-artifact-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("admit artifact producer: %v", err)
 	}
-	runClaim, err := e.store.ClaimExecution(context.Background(), "managed-artifact-test", time.Now().UTC().Add(time.Second), time.Minute)
+	runClaim, err := (*e.Store()).ClaimExecution(context.Background(), "managed-artifact-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || !strings.HasSuffix(runClaim.StepLabel, ":collect") {
 		t.Fatalf("claim artifact producer = %q, %v", runClaim.StepLabel, err)
 	}
@@ -392,10 +394,10 @@ func TestManagedExecutionWorkflowStagesArtifactFromEarlierStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("admit artifact consumer: %v", err)
 	}
-	runClaim, err = e.store.ClaimExecution(context.Background(), "managed-artifact-test", time.Now().UTC().Add(time.Second), time.Minute)
+	runClaim, err = (*e.Store()).ClaimExecution(context.Background(), "managed-artifact-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || !strings.HasSuffix(runClaim.StepLabel, ":review") {
 		t.Fatalf("claim artifact consumer = %q, %v", runClaim.StepLabel, err)
 	}
@@ -413,10 +415,10 @@ func TestManagedExecutionWorkflowStagesArtifactFromEarlierStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("complete artifact workflow: %v", err)
 	}
-	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil || job.Status != api.ManagedExecutionWorkflowSucceeded || job.NextStep != 2 {
 		t.Fatalf("terminal artifact workflow = %+v, %v", job, err)
 	}
@@ -431,30 +433,30 @@ func TestManagedWorkflowCannotConsumeFailedArtifactDependency(t *testing.T) {
 	}}
 	step := plan.Steps[2]
 	dependencies := []string{"collect", "independent"}
-	observed := []managedWorkflowObservedStep{
+	observed := []apidserver.ManagedWorkflowObservedStep{
 		{Run: state.Execution{Status: api.ExecutionStatusFailed}, HasRun: true},
 		{Run: state.Execution{Status: api.ExecutionStatusFailed}, HasRun: true},
 		{},
 	}
-	if managedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
+	if apidserver.ManagedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
 		t.Fatal("fan-in was allowed without its artifact-producing step")
 	}
 	observed[0].Run.Status = api.ExecutionStatusSucceeded
-	if !managedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
+	if !apidserver.ManagedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
 		t.Fatal("fan-in was blocked after its artifact producer succeeded")
 	}
 	observed[0].ContractFailure = "result does not match its declared schema"
-	if managedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
+	if apidserver.ManagedWorkflowCanConsumeFailedDependencies(step, dependencies, plan, observed) {
 		t.Fatal("fan-in was allowed to consume an artifact from a contract-failed producer")
 	}
 }
 
 func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "managed-partial-dag", Version: "v1", MaxParallelSteps: 2,
 		FailurePolicy: api.ExecutionWorkflowManagedFailureContinueIndependent,
@@ -465,7 +467,7 @@ func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) 
 				Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 		},
 	}
-	created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-partial-dag-create"})
+	created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-partial-dag-create"})
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("create managed partial DAG = %d: %s", created.Code, created.Body.String())
 	}
@@ -473,16 +475,16 @@ func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) 
 	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	jobs := state.ExecutionWorkflowJobStore(e.store)
+	jobs := state.ExecutionWorkflowJobStore((*e.Store()))
 	claim, err := jobs.ClaimExecutionWorkflowJob(context.Background(), "managed-partial-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("drive partial DAG fan-out: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		runClaim, claimErr := e.store.ClaimExecution(context.Background(), "managed-partial-test", time.Now().UTC().Add(time.Second), time.Minute)
+		runClaim, claimErr := (*e.Store()).ClaimExecution(context.Background(), "managed-partial-test", time.Now().UTC().Add(time.Second), time.Minute)
 		if claimErr != nil {
 			t.Fatal(claimErr)
 		}
@@ -496,19 +498,19 @@ func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("drive partial DAG fan-in: %v", err)
 	}
-	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err := jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	join, err := state.ExecutionWorkflowStore(e.store).ExecutionWorkflowStepByLabel(context.Background(), e.acct.ID, request.WorkflowID, job.RunsPrincipalID,
-		managedExecutionWorkflowStepLabel(response.PlanID, "summarize"))
+	join, err := state.ExecutionWorkflowStore((*e.Store())).ExecutionWorkflowStepByLabel(context.Background(), (*e.Acct()).ID, request.WorkflowID, job.RunsPrincipalID,
+		apidserver.ManagedExecutionWorkflowStepLabel(response.PlanID, "summarize"))
 	if err != nil {
 		t.Fatalf("partial-result fan-in receipt = %+v, %v", join, err)
 	}
-	runClaim, err := e.store.ClaimExecution(context.Background(), "managed-partial-test", time.Now().UTC().Add(time.Second), time.Minute)
+	runClaim, err := (*e.Store()).ClaimExecution(context.Background(), "managed-partial-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || runClaim.ID != join.ID {
 		t.Fatalf("claim partial-result fan-in Run = %q, %v; want %q", runClaim.ID, err, join.ID)
 	}
@@ -516,7 +518,7 @@ func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inputs map[string]managedWorkflowDependencyInput
+	var inputs map[string]apidserver.ManagedWorkflowDependencyInput
 	if err := json.Unmarshal(decoded.Input, &inputs); err != nil {
 		t.Fatalf("decode partial dependency results %s: %v", decoded.Input, err)
 	}
@@ -529,28 +531,28 @@ func TestManagedExecutionWorkflowContinuesIndependentAfterFailure(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.driveManagedExecutionWorkflow(context.Background(), claim); err != nil {
+	if err := (*e.S()).DriveManagedExecutionWorkflow(context.Background(), claim); err != nil {
 		t.Fatalf("finish partial DAG: %v", err)
 	}
-	job, err = jobs.ExecutionWorkflowJobByKey(context.Background(), e.acct.ID, request.WorkflowID, nil)
+	job, err = jobs.ExecutionWorkflowJobByKey(context.Background(), (*e.Acct()).ID, request.WorkflowID, nil)
 	if err != nil || job.Status != api.ManagedExecutionWorkflowFailed || job.NextStep != 3 {
 		t.Fatalf("partial workflow terminal state = %+v, %v", job, err)
 	}
 }
 
 func TestManagedExecutionWorkflowIsKeyFamilyScoped(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
-	owner := createRunsOnlyKey(t, e, "managed-workflow-owner")
-	other := createRunsOnlyKey(t, e, "managed-workflow-other")
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
+	owner := apidserver.CreateRunsOnlyKey(t, e, "managed-workflow-owner")
+	other := apidserver.CreateRunsOnlyKey(t, e, "managed-workflow-other")
 	request := api.CreateManagedExecutionWorkflowRequest{
 		WorkflowID: "key-family-private", Version: "v1",
 		Steps: []api.CreateManagedExecutionWorkflowStep{{Label: "step", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return 1"}}},
 	}
-	created := e.doAs(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-owner-submit"}, owner)
+	created := e.DoAs(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-owner-submit"}, owner)
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("owner submit = %d: %s", created.Code, created.Body.String())
 	}
@@ -558,14 +560,14 @@ func TestManagedExecutionWorkflowIsKeyFamilyScoped(t *testing.T) {
 		key  string
 		code int
 	}{{owner, http.StatusOK}, {other, http.StatusNotFound}} {
-		rec := e.doAs(t, http.MethodGet, "/v1/execution-workflows/"+request.WorkflowID, nil, nil, check.key)
+		rec := e.DoAs(t, http.MethodGet, "/v1/execution-workflows/"+request.WorkflowID, nil, nil, check.key)
 		if rec.Code != check.code {
 			t.Fatalf("workflow summary for key = %d, want %d: %s", rec.Code, check.code, rec.Body.String())
 		}
 	}
 	broadPlan := request
 	broadPlan.Version = "v2"
-	broadCreate := e.do(t, http.MethodPost, "/v1/execution-workflows", broadPlan, map[string]string{"Idempotency-Key": "managed-broad-submit"})
+	broadCreate := e.Do(t, http.MethodPost, "/v1/execution-workflows", broadPlan, map[string]string{"Idempotency-Key": "managed-broad-submit"})
 	if broadCreate.Code != http.StatusAccepted {
 		t.Fatalf("broad submit sharing workflow id = %d: %s", broadCreate.Code, broadCreate.Body.String())
 	}
@@ -575,16 +577,16 @@ func TestManagedExecutionWorkflowIsKeyFamilyScoped(t *testing.T) {
 	}
 	otherPlan := request
 	otherPlan.Version = "v3"
-	otherCreate := e.doAs(t, http.MethodPost, "/v1/execution-workflows", otherPlan, map[string]string{"Idempotency-Key": "managed-other-submit"}, other)
+	otherCreate := e.DoAs(t, http.MethodPost, "/v1/execution-workflows", otherPlan, map[string]string{"Idempotency-Key": "managed-other-submit"}, other)
 	if otherCreate.Code != http.StatusAccepted {
 		t.Fatalf("other key-family submit sharing workflow id = %d: %s", otherCreate.Code, otherCreate.Body.String())
 	}
-	broadReplay := e.do(t, http.MethodPost, "/v1/execution-workflows", broadPlan, map[string]string{"Idempotency-Key": "managed-broad-replay"})
+	broadReplay := e.Do(t, http.MethodPost, "/v1/execution-workflows", broadPlan, map[string]string{"Idempotency-Key": "managed-broad-replay"})
 	var broadReplayResponse api.ManagedExecutionWorkflowResponse
 	if broadReplay.Code != http.StatusAccepted || json.Unmarshal(broadReplay.Body.Bytes(), &broadReplayResponse) != nil || broadReplayResponse.PlanID != broadResponse.PlanID {
 		t.Fatalf("broad retry replay = %d: %s", broadReplay.Code, broadReplay.Body.String())
 	}
-	broadSummary := e.do(t, http.MethodGet, "/v1/execution-workflows/"+request.WorkflowID, nil, nil)
+	broadSummary := e.Do(t, http.MethodGet, "/v1/execution-workflows/"+request.WorkflowID, nil, nil)
 	var broadSummaryResponse api.ExecutionWorkflowResponse
 	if broadSummary.Code != http.StatusOK || json.Unmarshal(broadSummary.Body.Bytes(), &broadSummaryResponse) != nil || len(broadSummaryResponse.Managed) != 3 {
 		t.Fatalf("broad workflow summary = %d: %s", broadSummary.Code, broadSummary.Body.String())
@@ -592,24 +594,24 @@ func TestManagedExecutionWorkflowIsKeyFamilyScoped(t *testing.T) {
 }
 
 func TestManagedExecutionWorkflowQueueIsBoundedPerAccount(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	identity := enableExecutionAPIForTest(t, &e)
-	previousIdentities := mfaIdentities
-	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
-	t.Cleanup(func() { mfaIdentities = previousIdentities })
+	e := apidserver.Setup(t, api.PlanPro)
+	identity := apidserver.EnableExecutionAPIForTest(t, &e)
+	previousIdentities := (*apidserver.MfaIdentities)
+	(*apidserver.MfaIdentities) = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { (*apidserver.MfaIdentities) = previousIdentities })
 	requests := make([]api.CreateManagedExecutionWorkflowRequest, 0, state.ExecutionWorkflowManagedMaxActivePerAccount)
 	for i := 0; i < state.ExecutionWorkflowManagedMaxActivePerAccount; i++ {
 		request := api.CreateManagedExecutionWorkflowRequest{
 			WorkflowID: "managed-limit-" + strconv.Itoa(i), Version: "v1",
 			Steps: []api.CreateManagedExecutionWorkflowStep{{Label: "step", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return 1"}}},
 		}
-		created := e.do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-limit-" + strconv.Itoa(i)})
+		created := e.Do(t, http.MethodPost, "/v1/execution-workflows", request, map[string]string{"Idempotency-Key": "managed-limit-" + strconv.Itoa(i)})
 		if created.Code != http.StatusAccepted {
 			t.Fatalf("create active workflow %d = %d: %s", i, created.Code, created.Body.String())
 		}
 		requests = append(requests, request)
 	}
-	replay := e.do(t, http.MethodPost, "/v1/execution-workflows", requests[0], map[string]string{"Idempotency-Key": "managed-limit-replay"})
+	replay := e.Do(t, http.MethodPost, "/v1/execution-workflows", requests[0], map[string]string{"Idempotency-Key": "managed-limit-replay"})
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("duplicate active workflow replay = %d: %s", replay.Code, replay.Body.String())
 	}
@@ -617,35 +619,35 @@ func TestManagedExecutionWorkflowQueueIsBoundedPerAccount(t *testing.T) {
 		WorkflowID: "managed-limit-overflow", Version: "v1",
 		Steps: []api.CreateManagedExecutionWorkflowStep{{Label: "step", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return 1"}}},
 	}
-	full := e.do(t, http.MethodPost, "/v1/execution-workflows", overflow, map[string]string{"Idempotency-Key": "managed-limit-overflow"})
+	full := e.Do(t, http.MethodPost, "/v1/execution-workflows", overflow, map[string]string{"Idempotency-Key": "managed-limit-overflow"})
 	if full.Code != http.StatusServiceUnavailable || !strings.Contains(full.Body.String(), "queue is full") {
 		t.Fatalf("overflow workflow response = %d: %s", full.Code, full.Body.String())
 	}
 }
 
-func completeManagedWorkflowRun(t *testing.T, e testEnv, identity *age.X25519Identity, executionID string, result string) {
+func completeManagedWorkflowRun(t *testing.T, e apidserver.TestEnv, identity *age.X25519Identity, executionID string, result string) {
 	t.Helper()
 	ctx := context.Background()
-	claim, err := e.store.ClaimExecution(ctx, "managed-workflow-test", time.Now().UTC().Add(time.Second), time.Minute)
+	claim, err := (*e.Store()).ClaimExecution(ctx, "managed-workflow-test", time.Now().UTC().Add(time.Second), time.Minute)
 	if err != nil || claim.ID != executionID {
 		t.Fatalf("claim managed Run = %q, %v; want %q", claim.ID, err, executionID)
 	}
 	completeManagedWorkflowClaimedRun(t, e, identity, claim, result, `{"ok":true}`)
 }
 
-func completeManagedWorkflowClaimedRun(t *testing.T, e testEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string) {
+func completeManagedWorkflowClaimedRun(t *testing.T, e apidserver.TestEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string) {
 	completeManagedWorkflowClaimedRunWithStatus(t, e, identity, claim, result, expectedInput, api.ExecutionStatusSucceeded)
 }
 
-func completeManagedWorkflowClaimedRunWithStatus(t *testing.T, e testEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string, status api.ExecutionStatus) {
+func completeManagedWorkflowClaimedRunWithStatus(t *testing.T, e apidserver.TestEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string, status api.ExecutionStatus) {
 	completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t, e, identity, claim, result, expectedInput, status, nil)
 }
 
-func completeManagedWorkflowClaimedRunWithArtifacts(t *testing.T, e testEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result string, artifacts []api.ExecutionArtifact) {
+func completeManagedWorkflowClaimedRunWithArtifacts(t *testing.T, e apidserver.TestEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result string, artifacts []api.ExecutionArtifact) {
 	completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t, e, identity, claim, result, "", api.ExecutionStatusSucceeded, artifacts)
 }
 
-func completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t *testing.T, e testEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string, status api.ExecutionStatus, artifacts []api.ExecutionArtifact) {
+func completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t *testing.T, e apidserver.TestEnv, identity *age.X25519Identity, claim state.ExecutionClaim, result, expectedInput string, status api.ExecutionStatus, artifacts []api.ExecutionArtifact) {
 	t.Helper()
 	ctx := context.Background()
 	decoded, err := executionpayload.DecodeRequest(ctx, []*age.X25519Identity{identity}, claim.SealedPayload, claim.PayloadKID)
@@ -656,7 +658,7 @@ func completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t *testing.T, e tes
 		t.Fatalf("dependent Run input = %s, want %s", decoded.Input, expectedInput)
 	}
 	startedAt := time.Now().UTC().Add(time.Second)
-	if _, err := e.store.MarkExecutionRunning(ctx, claim.ID, *claim.LeaseToken, startedAt); err != nil {
+	if _, err := (*e.Store()).MarkExecutionRunning(ctx, claim.ID, *claim.LeaseToken, startedAt); err != nil {
 		t.Fatal(err)
 	}
 	params := state.CompleteExecutionParams{
@@ -670,7 +672,7 @@ func completeManagedWorkflowClaimedRunWithStatusAndArtifacts(t *testing.T, e tes
 		params.FailureCode = &failureCode
 		params.FailureMessage = &failureMessage
 	}
-	_, err = e.store.CompleteExecution(ctx, params)
+	_, err = (*e.Store()).CompleteExecution(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,10 +1,11 @@
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -13,7 +14,7 @@ func TestManagedPostgresSpecDefaultsToScaleToZero(t *testing.T) {
 	if !ok {
 		t.Fatal("hobby limits unavailable")
 	}
-	spec, err := managedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{
+	spec, err := apidserver.ManagedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{
 		Name: "app-db", Region: "eu-central-1",
 	}, limits)
 	if err != nil {
@@ -32,7 +33,7 @@ func TestManagedPostgresSpecRejectsAlwaysOnUntilEntitled(t *testing.T) {
 				t.Fatal("plan limits unavailable")
 			}
 			alwaysOn := false
-			_, err := managedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{
+			_, err := apidserver.ManagedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{
 				Name: "app-db", Region: "eu-central-1", ScaleToZero: &alwaysOn,
 			}, limits)
 			if !errors.Is(err, managedpostgres.ErrQuotaExceeded) {

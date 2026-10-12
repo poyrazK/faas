@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestJobRegistryCredentialsRoundTrip(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	job := seedJob(t, e, "private-job", "registry.example/worker:latest")
+	job := apidserver.SeedJob(t, e, "private-job", "registry.example/worker:latest")
 	const marker = "job-password-marker"
-	rec := e.do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
+	rec := e.Do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
 		Registry: "https://registry.example", Username: "robot", Password: marker,
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -28,7 +29,7 @@ func TestJobRegistryCredentialsRoundTrip(t *testing.T) {
 		t.Fatalf("PUT response leaked password: %s", putBody)
 	}
 
-	rec = e.do(t, http.MethodGet, "/v1/jobs/"+job+"/registry-credentials", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/jobs/"+job+"/registry-credentials", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 	}
@@ -47,7 +48,7 @@ func TestJobRegistryCredentialsRoundTrip(t *testing.T) {
 		t.Fatalf("credential = %+v", list.Credentials[0])
 	}
 
-	rec = e.do(t, http.MethodDelete, "/v1/jobs/"+job+"/registry-credentials?registry="+url.QueryEscape("https://registry.example"), nil, nil)
+	rec = e.Do(t, http.MethodDelete, "/v1/jobs/"+job+"/registry-credentials?registry="+url.QueryEscape("https://registry.example"), nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE: %d %s", rec.Code, rec.Body.String())
 	}
@@ -55,34 +56,34 @@ func TestJobRegistryCredentialsRoundTrip(t *testing.T) {
 
 func TestJobRegistryCredentialsQuotaAndIsolation(t *testing.T) {
 	e := setupRegistry(t, api.PlanHobby)
-	job := seedJob(t, e, "quota-job", "registry.example/worker:latest")
+	job := apidserver.SeedJob(t, e, "quota-job", "registry.example/worker:latest")
 	for _, host := range []string{"https://one.example", "https://two.example"} {
-		rec := e.do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
+		rec := e.Do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
 			Registry: host, Username: "robot", Password: "secret",
 		}, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PUT %s: %d %s", host, rec.Code, rec.Body.String())
 		}
 	}
-	rec := e.do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
+	rec := e.Do(t, http.MethodPut, "/v1/jobs/"+job+"/registry-credentials", api.PutJobRegistryCredentialRequest{
 		Registry: "https://three.example", Username: "robot", Password: "secret",
 	}, nil)
 	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), api.CodePlanJobRegistryCredentialQuota) {
 		t.Fatalf("quota PUT: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, http.MethodDelete, "/v1/jobs/"+job+"/registry-credentials?registry="+url.QueryEscape("https://missing.example"), nil, nil); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), api.CodeJobRegistryCredentialNotFound) {
+	if rec := e.Do(t, http.MethodDelete, "/v1/jobs/"+job+"/registry-credentials?registry="+url.QueryEscape("https://missing.example"), nil, nil); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), api.CodeJobRegistryCredentialNotFound) {
 		t.Fatalf("missing DELETE: %d %s", rec.Code, rec.Body.String())
 	}
 
-	other := seedJob(t, e, "other-job", "registry.example/worker:latest")
-	if rec := e.do(t, http.MethodGet, "/v1/jobs/"+other+"/registry-credentials", nil, nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"count":0`) {
+	other := apidserver.SeedJob(t, e, "other-job", "registry.example/worker:latest")
+	if rec := e.Do(t, http.MethodGet, "/v1/jobs/"+other+"/registry-credentials", nil, nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"count":0`) {
 		t.Fatalf("other job GET: %d %s", rec.Code, rec.Body.String())
 	}
-	storedJob, err := e.store.JobGetByName(context.Background(), e.acct.ID, job)
+	storedJob, err := (*e.Store()).JobGetByName(context.Background(), (*e.Acct()).ID, job)
 	if err != nil {
 		t.Fatalf("JobGetByName: %v", err)
 	}
-	if _, err := e.store.GetJobRegistryCredential(context.Background(), e.acct.ID, storedJob.ID, "one.example"); err != nil {
+	if _, err := (*e.Store()).GetJobRegistryCredential(context.Background(), (*e.Acct()).ID, storedJob.ID, "one.example"); err != nil {
 		t.Fatalf("store credential after API PUT: %v", err)
 	}
 }

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -126,14 +127,14 @@ func TestEdgeRuleApplySurvivesCanceledRequestContext(t *testing.T) {
 
 func TestEdgeRuleFleetRequirementDistinguishesSplitAndSingleBox(t *testing.T) {
 	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 2)}
-	srv := newServer(state.NewMemStore(), slog.Default(), "example.com", notifier)
+	srv := apidserver.NewServer(state.NewMemStore(), slog.Default(), "example.com", notifier)
 	srv.WithEdgeRuleFleetRequired(true)
-	if _, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com"); err == nil {
+	if _, err := (*srv.EdgeRules()).PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com"); err == nil {
 		t.Fatal("named fleet accepted a policy mutation with no serving gateways")
 	}
 
 	srv.WithEdgeRuleFleetRequired(false)
-	conv, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	conv, err := (*srv.EdgeRules()).PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
 	if err != nil {
 		t.Fatalf("single-box mutation without compute registry: %v", err)
 	}
@@ -143,10 +144,10 @@ func TestEdgeRuleFleetRequirementDistinguishesSplitAndSingleBox(t *testing.T) {
 func TestPrepareEdgeRuleMutationHoldsDistributedLockUntilClose(t *testing.T) {
 	store := &edgeRuleLockTestStore{Store: state.NewMemStore()}
 	notifier := &edgeRuleBarrierNotifier{events: make(chan db.Notification, 2)}
-	srv := newServer(store, slog.Default(), "example.com", notifier)
+	srv := apidserver.NewServer(store, slog.Default(), "example.com", notifier)
 	srv.WithEdgeRuleFleetRequired(false)
 
-	conv, err := srv.edgeRules.PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
+	conv, err := (*srv.EdgeRules()).PrepareEdgeRuleMutation(t.Context(), "app-1", "", "created", "api.example.com")
 	if err != nil {
 		t.Fatalf("prepare edge-rule mutation: %v", err)
 	}

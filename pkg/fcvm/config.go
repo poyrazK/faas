@@ -78,10 +78,26 @@ type BootSource struct {
 // Drive is one virtio-blk device. The two-drive scheme (spec §4.6): drive0 is the
 // shared read-only base rootfs, drive1 the per-app writable layer. Never flatten.
 type Drive struct {
-	DriveID      string `json:"drive_id"`
-	PathOnHost   string `json:"path_on_host"`
-	IsRootDevice bool   `json:"is_root_device"`
-	IsReadOnly   bool   `json:"is_read_only"`
+	DriveID      string       `json:"drive_id"`
+	PathOnHost   string       `json:"path_on_host"`
+	IsRootDevice bool         `json:"is_root_device"`
+	IsReadOnly   bool         `json:"is_read_only"`
+	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
+}
+
+// RateLimiter is Firecracker's device rate limiter: token buckets on bytes
+// and on operations.
+type RateLimiter struct {
+	Bandwidth *TokenBucket `json:"bandwidth,omitempty"`
+	Ops       *TokenBucket `json:"ops,omitempty"`
+}
+
+// TokenBucket refills Size tokens every RefillTimeMs; OneTimeBurst tokens are
+// available once on top.
+type TokenBucket struct {
+	Size         int64 `json:"size"`
+	OneTimeBurst int64 `json:"one_time_burst,omitempty"`
+	RefillTimeMs int64 `json:"refill_time"`
 }
 
 type Machine struct {

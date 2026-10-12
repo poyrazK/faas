@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,7 +24,7 @@ func TestCreateProjectEnvironmentQualificationPinsFlagsAndGatePreview(t *testing
 
 func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withFlags bool) {
 	t.Helper()
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
@@ -70,7 +71,7 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 			t.Fatal(err)
 		}
 	}
-	snapshot, problem := srv.loadProjectEnvironmentState(ctx, acct, "shop", "staging")
+	snapshot, problem := srv.LoadProjectEnvironmentState(ctx, acct, "shop", "staging")
 	if problem != nil || len(snapshot.Workloads) != 1 || snapshot.Workloads[0].WorkloadConfigHash != spec.Hash {
 		t.Fatalf("state changed deployment settings identity: %v", problem)
 	}
@@ -101,9 +102,9 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
 	req.SetPathValue("environment", "staging")
-	srv.createProjectEnvironmentQualification(rec, req, acct)
+	srv.CreateProjectEnvironmentQualification(rec, req, acct)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("qualification status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -117,9 +118,9 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 		t.Fatalf("qualification response=%+v", qualification)
 	}
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -134,7 +135,7 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 		if _, err := store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope, ExpectedVersion: flagVersion.Version, Config: flagVersion.Config, Actor: "developer"}); err != nil {
 			t.Fatal(err)
 		}
-		changed, problem := srv.buildProjectEnvironmentPromotionPlan(ctx, acct, "shop", "staging", "production", false)
+		changed, problem := srv.BuildProjectEnvironmentPromotionPlan(ctx, acct, "shop", "staging", "production", false)
 		if problem != nil || changed.Preview.CanPromote || !strings.Contains(strings.Join(changed.Preview.BlockingReasons, ";"), "feature flags") {
 			t.Fatalf("flag-only publish retained qualification: %v", problem)
 		}
@@ -143,9 +144,9 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, spec.Revision, settings); err != nil {
 		t.Fatal(err)
 	}
-	changedReq, changedRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	changedReq, changedRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	changedReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(changedRec, changedReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(changedRec, changedReq, acct)
 	var changed api.ProjectEnvironmentPromotionPreviewResponse
 	if err := json.Unmarshal(changedRec.Body.Bytes(), &changed); err != nil {
 		t.Fatal(err)
@@ -156,9 +157,9 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "staging", "TOKEN", "age1test", "value-hash-not-bound", []byte("sealed-token")); err != nil {
 		t.Fatal(err)
 	}
-	stalePreviewReq, stalePreviewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	stalePreviewReq, stalePreviewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	stalePreviewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(stalePreviewRec, stalePreviewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(stalePreviewRec, stalePreviewReq, acct)
 	if stalePreviewRec.Code != http.StatusOK {
 		t.Fatalf("stale secret preview status=%d body=%s", stalePreviewRec.Code, stalePreviewRec.Body.String())
 	}
@@ -169,27 +170,27 @@ func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withF
 	if stalePreview.CanPromote || !strings.Contains(strings.Join(stalePreview.BlockingReasons, ";"), "secret revisions changed") {
 		t.Fatalf("secret rotation did not stale qualification: %+v", stalePreview)
 	}
-	staleSecretReq, staleSecretRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
+	staleSecretReq, staleSecretRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
 	staleSecretReq.SetPathValue("environment", "staging")
-	srv.createProjectEnvironmentQualification(staleSecretRec, staleSecretReq, acct)
+	srv.CreateProjectEnvironmentQualification(staleSecretRec, staleSecretReq, acct)
 	if staleSecretRec.Code != http.StatusConflict || !strings.Contains(staleSecretRec.Body.String(), "secret revisions changed") {
 		t.Fatalf("stale secret qualification status=%d body=%s", staleSecretRec.Code, staleSecretRec.Body.String())
 	}
-	createProjectEnvironmentConfigFixture(t, store, acct.ID, project.ID, "staging", `{"region":"eu"}`)
-	staleReq, staleRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
+	apidserver.CreateProjectEnvironmentConfigFixture(t, store, acct.ID, project.ID, "staging", `{"region":"eu"}`)
+	staleReq, staleRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop", body)
 	staleReq.SetPathValue("environment", "staging")
-	srv.createProjectEnvironmentQualification(staleRec, staleReq, acct)
+	srv.CreateProjectEnvironmentQualification(staleRec, staleReq, acct)
 	if staleRec.Code != http.StatusConflict {
 		t.Fatalf("stale configuration qualification status=%d body=%s", staleRec.Code, staleRec.Body.String())
 	}
 }
 
 func TestCreateProjectEnvironmentQualificationRejectsOpenSchema(t *testing.T) {
-	srv, _, acct, _, _ := newProjectLifecycleFixture(t)
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop",
+	srv, _, acct, _, _ := apidserver.NewProjectLifecycleFixture(t)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/qualifications", "shop",
 		[]byte(`{"release_set_id":"00000000-0000-4000-8000-000000000001","checks":[],"logs":"should not persist"}`))
 	req.SetPathValue("environment", "staging")
-	srv.createProjectEnvironmentQualification(rec, req, acct)
+	srv.CreateProjectEnvironmentQualification(rec, req, acct)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field status=%d body=%s", rec.Code, rec.Body.String())
 	}

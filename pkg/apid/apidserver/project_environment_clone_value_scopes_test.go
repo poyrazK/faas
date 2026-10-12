@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestProjectEnvironmentCloneIncludesLegacyProductionValues(t *testing.T) {
-	srv, store, acct, _, app := newProjectLifecycleFixture(t)
+	srv, store, acct, _, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "default", Status: state.DeployLive}); err != nil {
 		t.Fatal(err)
@@ -24,8 +25,8 @@ func TestProjectEnvironmentCloneIncludesLegacyProductionValues(t *testing.T) {
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "default", "TOKEN", "age1-test", "1111111111111111", []byte("sealed-legacy")); err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
-	srv.createProjectEnvironment(rec, req, acct)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.CreateProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("legacy clone status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -40,7 +41,7 @@ func TestProjectEnvironmentCloneIncludesLegacyProductionValues(t *testing.T) {
 }
 
 func TestProjectEnvironmentCloneFailsClosedForLegacyManagedBinding(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "default", Key: "DATABASE_URL",
@@ -49,8 +50,8 @@ func TestProjectEnvironmentCloneFailsClosedForLegacyManagedBinding(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
-	srv.createProjectEnvironment(rec, req, acct)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.CreateProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("legacy managed resource was omitted: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -60,7 +61,7 @@ func TestProjectEnvironmentCloneFailsClosedForLegacyManagedBinding(t *testing.T)
 }
 
 func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "default", Key: "DATABASE_URL",
@@ -69,7 +70,7 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	apps, snapshot, err := srv.captureProjectEnvironmentValues(ctx, acct, project, "production")
+	apps, snapshot, err := srv.CaptureProjectEnvironmentValues(ctx, acct, project, "production")
 	if err != nil || snapshot.ValueScopes[app.ID] != "default" {
 		t.Fatalf("capture legacy values: %v, %v", snapshot.ValueScopes, err)
 	}
@@ -80,7 +81,7 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.planProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, false); !errors.Is(err, managedpostgres.ErrUnavailable) {
+	if _, err := srv.PlanProjectEnvironmentBindingClones(ctx, acct, apps, snapshot.ValueScopes, false); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("binding preparation skipped the captured legacy binding after cutover: %v", err)
 	}
 }
@@ -98,10 +99,10 @@ func (s *cloneValuesChangingStore) CloneProjectEnvironment(ctx context.Context, 
 }
 
 func TestProjectEnvironmentCloneRejectsValuesChangedAfterCapture(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
-	srv.store = &cloneValuesChangingStore{MemStore: store, appID: app.ID}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
-	srv.createProjectEnvironment(rec, req, acct)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
+	(*srv.Store()) = &cloneValuesChangingStore{MemStore: store, appID: app.ID}
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.CreateProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("changed source values were accepted: status=%d body=%s", rec.Code, rec.Body.String())
 	}

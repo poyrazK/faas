@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -84,23 +86,23 @@ func TestObjectTaggingControlEndToEndPG(t *testing.T) {
 	if _, err = f.st.CreateAPIKey(t.Context(), f.account.ID, hash, "tag-admin", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	var runtime *runtimeConfigManager
+	var runtime *apidserver.RuntimeConfigManager
 	management := func() *httptest.Server {
-		runtime = newRuntimeConfigManager(nil)
-		if err := runtime.reconcile(t.Context(), f.st); err != nil {
+		runtime = apidserver.NewRuntimeConfigManager(nil)
+		if err := runtime.Reconcile(t.Context(), f.st); err != nil {
 			t.Fatal(err)
 		}
-		s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry).WithRuntimeConfigManager(runtime)
-		srv := httptest.NewServer(s.handler())
+		s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry).WithRuntimeConfigManager(runtime)
+		srv := httptest.NewServer(s.Handler())
 		t.Cleanup(srv.Close)
 		return srv
 	}
 	setFlag := func(enabled bool) {
-		_, err := f.st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: runtimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: boolJSON(enabled), ApplyMode: state.RuntimeConfigApplyHot, Reason: "tagging test"})
+		_, err := f.st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: apidserver.RuntimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: apidserver.BoolJSON(enabled), ApplyMode: state.RuntimeConfigApplyHot, Reason: "tagging test"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := runtime.reconcile(t.Context(), f.st); err != nil {
+		if err := runtime.Reconcile(t.Context(), f.st); err != nil {
 			t.Fatal(err)
 		}
 	}

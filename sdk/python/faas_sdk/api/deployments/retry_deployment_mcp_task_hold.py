@@ -14,7 +14,6 @@ from ...types import Response
 def _get_kwargs(
     id: str,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -23,7 +22,6 @@ def _get_kwargs(
         ),
     }
 
-    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -34,11 +32,6 @@ def _parse_response(
         response_202 = DeploymentResponse.from_dict(response.json())
 
         return response_202
-
-    if response.status_code in (400, 409, 500):
-        response_400 = Problem.from_dict(response.json())
-
-        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -55,10 +48,20 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
         return response_429
+
+    if response.status_code == 500:
+        response_500 = Problem.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -82,7 +85,23 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentResponse | Problem]:
-    """Schedule recovery for an active MCP compatibility hold without bypassing activation checks."""
+    """Schedule another recovery attempt for an active MCP compatibility hold.
+
+     Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new
+    retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats
+    compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration
+    override.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[DeploymentResponse | Problem]
+    """
 
     kwargs = _get_kwargs(
         id=id,
@@ -100,7 +119,23 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentResponse | Problem | None:
-    """Schedule recovery for an active MCP compatibility hold without bypassing activation checks."""
+    """Schedule another recovery attempt for an active MCP compatibility hold.
+
+     Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new
+    retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats
+    compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration
+    override.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        DeploymentResponse | Problem
+    """
 
     return sync_detailed(
         id=id,
@@ -113,7 +148,23 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentResponse | Problem]:
-    """Schedule recovery for an active MCP compatibility hold without bypassing activation checks."""
+    """Schedule another recovery attempt for an active MCP compatibility hold.
+
+     Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new
+    retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats
+    compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration
+    override.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[DeploymentResponse | Problem]
+    """
 
     kwargs = _get_kwargs(
         id=id,
@@ -129,11 +180,27 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentResponse | Problem | None:
-    """Schedule recovery for an active MCP compatibility hold without bypassing activation checks."""
+    """Schedule another recovery attempt for an active MCP compatibility hold.
+
+     Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new
+    retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats
+    compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration
+    override.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        DeploymentResponse | Problem
+    """
 
     return (
         await asyncio_detailed(
             id=id,
             client=client,
-            )
+        )
     ).parsed

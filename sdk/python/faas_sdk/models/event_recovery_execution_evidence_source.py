@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryExecutionEvidenceSource = Literal["attempt_history", "invocation"]
+EventRecoveryExecutionEvidenceSource = Literal["attempt_history", "invocation", "workflow_run"]
 
 EVENT_RECOVERY_EXECUTION_EVIDENCE_SOURCE_VALUES: set[EventRecoveryExecutionEvidenceSource] = {
     "attempt_history",
     "invocation",
+    "workflow_run",
 }
 
 

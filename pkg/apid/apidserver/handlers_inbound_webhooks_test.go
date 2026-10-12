@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // ADR-212 acceptance tests for signature-verified, durable-before-202 inbound
 // webhook ingress and deterministic provider-retry deduplication.
@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	stripex "github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -28,9 +29,9 @@ import (
 const inboundWebhookTestSecret = "whsec_inbound_test"
 const genericInboundWebhookTestSecret = "generic_hmac_test_secret_material_32bytes_min"
 
-func mustCreateInboundWebhook(t *testing.T, e testEnv, slug string) api.InboundWebhookEndpointResponse {
+func mustCreateInboundWebhook(t *testing.T, e apidserver.TestEnv, slug string) api.InboundWebhookEndpointResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
 		Name:          "stripe-primary",
 		Provider:      "stripe",
 		SigningSecret: inboundWebhookTestSecret,
@@ -49,9 +50,9 @@ func mustCreateInboundWebhook(t *testing.T, e testEnv, slug string) api.InboundW
 	return endpoint
 }
 
-func mustCreateGenericInboundWebhook(t *testing.T, e testEnv, slug string) api.InboundWebhookEndpointResponse {
+func mustCreateGenericInboundWebhook(t *testing.T, e apidserver.TestEnv, slug string) api.InboundWebhookEndpointResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
 		Name: "generic-primary", Provider: "generic", SigningSecret: genericInboundWebhookTestSecret,
 		DeliveryPath: "/internal/generic",
 	}, nil)
@@ -68,7 +69,7 @@ func mustCreateGenericInboundWebhook(t *testing.T, e testEnv, slug string) api.I
 	return endpoint
 }
 
-func postStripeInboundWebhook(t *testing.T, e testEnv, endpointURL string, body []byte, secret string) *httptest.ResponseRecorder {
+func postStripeInboundWebhook(t *testing.T, e apidserver.TestEnv, endpointURL string, body []byte, secret string) *httptest.ResponseRecorder {
 	t.Helper()
 	u, err := url.Parse(endpointURL)
 	if err != nil {
@@ -78,7 +79,7 @@ func postStripeInboundWebhook(t *testing.T, e testEnv, endpointURL string, body 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Stripe-Signature", stripex.SignForTest(body, secret, time.Now()))
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -90,7 +91,7 @@ func genericInboundWebhookSignature(body []byte, secret, eventID, eventType stri
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func postGenericInboundWebhook(t *testing.T, e testEnv, endpointURL string, body []byte, secret, eventID, eventType string, timestamp time.Time) *httptest.ResponseRecorder {
+func postGenericInboundWebhook(t *testing.T, e apidserver.TestEnv, endpointURL string, body []byte, secret, eventID, eventType string, timestamp time.Time) *httptest.ResponseRecorder {
 	t.Helper()
 	u, err := url.Parse(endpointURL)
 	if err != nil {
@@ -103,14 +104,14 @@ func postGenericInboundWebhook(t *testing.T, e testEnv, endpointURL string, body
 	req.Header.Set(api.InboundWebhookTimestampHeader, strconv.FormatInt(timestamp.Unix(), 10))
 	req.Header.Set(api.InboundWebhookSignatureHeader, genericInboundWebhookSignature(body, secret, eventID, eventType, timestamp))
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	return rec
 }
 
 func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "inbound-generic")
-	weak := e.do(t, http.MethodPost, "/v1/apps/inbound-generic/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
+	appID := apidserver.MustSeedApp(t, e, "inbound-generic")
+	weak := e.Do(t, http.MethodPost, "/v1/apps/inbound-generic/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
 		Name: "weak-secret", Provider: "generic", SigningSecret: "too-short",
 	}, nil)
 	if weak.Code != http.StatusBadRequest {
@@ -118,7 +119,7 @@ func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T)
 	}
 	endpoint := mustCreateGenericInboundWebhook(t, e, "inbound-generic")
 	weakSecret := "too-short"
-	weakRotation := e.do(t, http.MethodPatch, "/v1/apps/inbound-generic/inbound-webhooks/"+endpoint.ID, api.UpdateInboundWebhookEndpointRequest{
+	weakRotation := e.Do(t, http.MethodPatch, "/v1/apps/inbound-generic/inbound-webhooks/"+endpoint.ID, api.UpdateInboundWebhookEndpointRequest{
 		SigningSecret: &weakSecret,
 	}, nil)
 	if weakRotation.Code != http.StatusBadRequest {
@@ -138,7 +139,7 @@ func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T)
 	if err := json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID)
+	invocation, err := (*e.Store()).InvocationByID(t.Context(), receipt.ReceiptID)
 	if err != nil || invocation.AppID != appID || !bytes.Equal(invocation.Payload, body) {
 		t.Fatalf("generic delivery not durably stored: invocation=%+v err=%v", invocation, err)
 	}
@@ -155,7 +156,7 @@ func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T)
 	if changed.Code != http.StatusConflict {
 		t.Fatalf("changed event identity=%d %s, want conflict", changed.Code, changed.Body.String())
 	}
-	stale := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_stale", "order.paid", time.Now().Add(-inboundWebhookSignatureTolerance-time.Second))
+	stale := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_stale", "order.paid", time.Now().Add(-apidserver.InboundWebhookSignatureTolerance-time.Second))
 	if stale.Code != http.StatusBadRequest {
 		t.Fatalf("stale signature=%d %s", stale.Code, stale.Body.String())
 	}
@@ -167,9 +168,9 @@ func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T)
 
 func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "inbound-stripe")
+	appID := apidserver.MustSeedApp(t, e, "inbound-stripe")
 	retryPolicy := []byte(`{"max_attempts":20,"base_seconds":2,"max_seconds":30}`)
-	if _, err := e.store.UpdateApp(t.Context(), appID, state.UpdateAppParams{RetryPolicyJSON: &retryPolicy, SetRetryPolicy: true}); err != nil {
+	if _, err := (*e.Store()).UpdateApp(t.Context(), appID, state.UpdateAppParams{RetryPolicyJSON: &retryPolicy, SetRetryPolicy: true}); err != nil {
 		t.Fatalf("set app retry policy: %v", err)
 	}
 	endpoint := mustCreateInboundWebhook(t, e, "inbound-stripe")
@@ -193,7 +194,7 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 
 	// A 202 is emitted only after EnqueueInvocation has returned its committed
 	// durable row. This lookup therefore pins the acknowledgement boundary.
-	invocation, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID)
+	invocation, err := (*e.Store()).InvocationByID(t.Context(), receipt.ReceiptID)
 	if err != nil {
 		t.Fatalf("202 returned without durable invocation: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 	if !duplicate.Duplicate || duplicate.ReceiptID != receipt.ReceiptID {
 		t.Fatalf("retry receipt = %#v, want same id marked duplicate", duplicate)
 	}
-	due, err := e.store.ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10)
+	due, err := (*e.Store()).ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10)
 	if err != nil {
 		t.Fatalf("list due invocations: %v", err)
 	}
@@ -241,22 +242,22 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 
 func TestInboundWebhookBindingSubmitsToManagedExclusiveLane(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "exclusive-inbound-stripe")
-	app, err := e.store.AppByID(t.Context(), appID)
+	appID := apidserver.MustSeedApp(t, e, "exclusive-inbound-stripe")
+	app, err := (*e.Store()).AppByID(t.Context(), appID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	endpoint := mustCreateInboundWebhook(t, e, "exclusive-inbound-stripe")
-	owners := e.store
-	if _, err := owners.UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+	owners := (*e.Store())
+	if _, err := owners.UpsertExclusiveWorkPolicy(t.Context(), (*e.Acct()).ID, exclusivework.Policy{
 		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{appID}, Contention: "queue",
 		LeaseSeconds: 5, MaxAttemptSeconds: 60,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	bindings := e.store
+	bindings := (*e.Store())
 	if _, err := bindings.UpsertExclusiveTriggerBinding(t.Context(), state.ExclusiveTriggerBinding{
-		Source: "inbound_webhook", TriggerID: endpoint.ID, AccountID: e.acct.ID,
+		Source: "inbound_webhook", TriggerID: endpoint.ID, AccountID: (*e.Acct()).ID,
 		PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`),
 	}); err != nil {
 		t.Fatal(err)
@@ -270,7 +271,7 @@ func TestInboundWebhookBindingSubmitsToManagedExclusiveLane(t *testing.T) {
 	if err := json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	operation, err := owners.ExclusiveOperationByID(t.Context(), e.acct.ID, receipt.ReceiptID)
+	operation, err := owners.ExclusiveOperationByID(t.Context(), (*e.Acct()).ID, receipt.ReceiptID)
 	if err != nil || operation.AppID != app.ID || operation.State != "pending" {
 		t.Fatalf("webhook was not durably admitted as an operation: op=%+v err=%v", operation, err)
 	}
@@ -286,14 +287,14 @@ func TestInboundWebhookBindingSubmitsToManagedExclusiveLane(t *testing.T) {
 	if second.Code != http.StatusAccepted || !duplicate.Duplicate || duplicate.ReceiptID != receipt.ReceiptID {
 		t.Fatalf("provider retry did not replay same operation receipt: status=%d receipt=%+v", second.Code, duplicate)
 	}
-	if _, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).InvocationByID(t.Context(), receipt.ReceiptID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("exclusive webhook also created a legacy invocation: %v", err)
 	}
 }
 
 func TestInboundWebhookRejectsBadSignatureWithoutDurableReceipt(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanHobby)
-	mustSeedApp(t, e, "inbound-bad-sig")
+	apidserver.MustSeedApp(t, e, "inbound-bad-sig")
 	endpoint := mustCreateInboundWebhook(t, e, "inbound-bad-sig")
 	body := []byte(`{"id":"evt_untrusted","object":"event"}`)
 
@@ -302,17 +303,17 @@ func TestInboundWebhookRejectsBadSignatureWithoutDurableReceipt(t *testing.T) {
 		t.Fatalf("bad signature status %d: %s", rec.Code, rec.Body.String())
 	}
 	receiptID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00evt_untrusted")).String()
-	if _, err := e.store.InvocationByID(t.Context(), receiptID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).InvocationByID(t.Context(), receiptID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("bad signature created durable receipt: %v", err)
 	}
 }
 
 func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	mustSeedApp(t, e, "inbound-manage")
+	apidserver.MustSeedApp(t, e, "inbound-manage")
 	endpoint := mustCreateInboundWebhook(t, e, "inbound-manage")
 
-	list := e.do(t, http.MethodGet, "/v1/apps/inbound-manage/inbound-webhooks", nil, nil)
+	list := e.Do(t, http.MethodGet, "/v1/apps/inbound-manage/inbound-webhooks", nil, nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("list status %d: %s", list.Code, list.Body.String())
 	}
@@ -326,7 +327,7 @@ func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.
 
 	newSecret := "whsec_rotated"
 	newPath := "/hooks/stripe-v2"
-	patch := e.do(t, http.MethodPatch, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, api.UpdateInboundWebhookEndpointRequest{
+	patch := e.Do(t, http.MethodPatch, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, api.UpdateInboundWebhookEndpointRequest{
 		SigningSecret: &newSecret,
 		DeliveryPath:  &newPath,
 	}, nil)
@@ -347,12 +348,12 @@ func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.
 	if err := json.Unmarshal(accepted.Body.Bytes(), &receipt); err != nil {
 		t.Fatalf("decode rotated receipt: %v", err)
 	}
-	invocation, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID)
+	invocation, err := (*e.Store()).InvocationByID(t.Context(), receipt.ReceiptID)
 	if err != nil || invocation.Path != newPath {
 		t.Fatalf("rotated delivery path = %q, %v", invocation.Path, err)
 	}
 
-	deleted := e.do(t, http.MethodDelete, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, nil, nil)
+	deleted := e.Do(t, http.MethodDelete, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, nil, nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete status %d: %s", deleted.Code, deleted.Body.String())
 	}
@@ -364,8 +365,8 @@ func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.
 
 func TestInboundWebhookCreateFreePlanGate(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanFree)
-	mustSeedApp(t, e, "inbound-free")
-	rec := e.do(t, http.MethodPost, "/v1/apps/inbound-free/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
+	apidserver.MustSeedApp(t, e, "inbound-free")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/inbound-free/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
 		Name: "stripe", Provider: "stripe", SigningSecret: inboundWebhookTestSecret,
 	}, nil)
 	if rec.Code != http.StatusPaymentRequired {
@@ -380,29 +381,29 @@ func TestInboundWebhookCreateFreePlanGate(t *testing.T) {
 // account now answers 402 (providers retry) and writes no receipt.
 func TestInboundWebhookRefusedForInactiveAccountOrDeletedApp(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "inbound-gated")
+	appID := apidserver.MustSeedApp(t, e, "inbound-gated")
 	endpoint := mustCreateInboundWebhook(t, e, "inbound-gated")
 	body := []byte(`{"id":"evt_suspended","object":"event","type":"invoice.paid"}`)
 
-	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountSuspended); err != nil {
+	if err := (*e.Store()).UpdateAccountStatus(t.Context(), (*e.Acct()).ID, state.AccountSuspended); err != nil {
 		t.Fatal(err)
 	}
 	rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("suspended account ingress = %d %s, want 402", rec.Code, rec.Body)
 	}
-	if due, err := e.store.ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10); err != nil || len(due) != 0 {
+	if due, err := (*e.Store()).ListDueInvocations(t.Context(), time.Now().Add(time.Second), 10); err != nil || len(due) != 0 {
 		t.Fatalf("suspended account got %d durable deliveries (err %v), want 0", len(due), err)
 	}
 
-	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountActive); err != nil {
+	if err := (*e.Store()).UpdateAccountStatus(t.Context(), (*e.Acct()).ID, state.AccountActive); err != nil {
 		t.Fatal(err)
 	}
 	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret); rec.Code != http.StatusAccepted {
 		t.Fatalf("provider retry after reactivation = %d %s, want 202", rec.Code, rec.Body)
 	}
 
-	if _, err := e.store.ScheduleAppDeletion(t.Context(), appID, time.Now().Add(7*24*time.Hour)); err != nil {
+	if _, err := (*e.Store()).ScheduleAppDeletion(t.Context(), appID, time.Now().Add(7*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	other := []byte(`{"id":"evt_after_delete","object":"event","type":"invoice.paid"}`)

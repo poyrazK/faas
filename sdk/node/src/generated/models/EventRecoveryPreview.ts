@@ -8,7 +8,7 @@ import type { EventRecoveryItem } from './EventRecoveryItem.js';
  */
 export type EventRecoveryPreview = {
   observed_at: string;
-  coverage: 'captured_application_recipients' | 'retained_application_executions';
+  coverage: 'captured_application_recipients' | 'retained_application_executions' | 'reviewed_workflow_runs';
   /**
    * Exact up to the job limit; a lower bound when exceeds_job_limit is true.
    */

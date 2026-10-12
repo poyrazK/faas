@@ -1,14 +1,15 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
 func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
-	workload := toPlanWorkload(reposcan.Workload{
+	workload := apidserver.ToPlanWorkload(reposcan.Workload{
 		Name:                      "web",
 		ServiceBindingPolicy:      reposcan.ServiceBindingPolicyDeclared,
 		ServiceBindingTransport:   reposcan.ServiceBindingTransportHTTPS,
@@ -33,7 +34,7 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 		t.Fatalf("preview_service_calls_policy = %q, want deny", workload.PreviewServiceCallsPolicy)
 	}
 
-	warnings := toPlanDetectionWarnings([]reposcan.DetectionWarning{{
+	warnings := apidserver.ToPlanDetectionWarnings([]reposcan.DetectionWarning{{
 		Workload: "web",
 		Detector: "procfile",
 		Marker:   "Procfile",
@@ -54,7 +55,7 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 }
 
 func TestPlanWorkloadNewProjectDefaultsDeclared(t *testing.T) {
-	workload := toPlanWorkload(reposcan.Workload{Name: "frontend"})
+	workload := apidserver.ToPlanWorkload(reposcan.Workload{Name: "frontend"})
 	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("new workload policy = %q, want declared", workload.ServiceBindingPolicy)
 	}

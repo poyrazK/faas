@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,22 +13,23 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func profileInvestigationFixture(t *testing.T) (testEnv, state.App, api.SaveProfileInvestigationRequest, *profileQueryCapture) {
+func profileInvestigationFixture(t *testing.T) (apidserver.TestEnv, state.App, api.SaveProfileInvestigationRequest, *profileQueryCapture) {
 	t.Helper()
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 	backend := &profileQueryCapture{}
-	e.s.profileBackend = backend
-	e.s.profileQuerySlots = make(chan struct{}, api.ProfileMaxConcurrentQueries)
-	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "saved-profiles", Runtime: "node24", Status: state.AppActive})
+	(*(*e.S()).ProfileBackend()) = backend
+	(*(*e.S()).ProfileQuerySlots()) = make(chan struct{}, api.ProfileMaxConcurrentQueries)
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "saved-profiles", Runtime: "node24", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindTarball, Scope: "prod"})
+	dep, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindTarball, Scope: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func profileInvestigationFixture(t *testing.T) (testEnv, state.App, api.SaveProf
 func TestCPUProfileSavedInvestigationAPIIsolationAndRevision(t *testing.T) {
 	e, app, req, backend := profileInvestigationFixture(t)
 	path := "/v1/apps/" + app.Slug + "/profiles/investigations"
-	created := e.do(t, "POST", path, req, nil)
+	created := e.Do(t, "POST", path, req, nil)
 	var out api.ProfileInvestigationResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -53,20 +54,20 @@ func TestCPUProfileSavedInvestigationAPIIsolationAndRevision(t *testing.T) {
 	if backend.queries != 0 {
 		t.Fatal("metadata save queried CPU backend")
 	}
-	get := e.do(t, "GET", path+"/"+out.Saved.ID, nil, nil)
+	get := e.Do(t, "GET", path+"/"+out.Saved.ID, nil, nil)
 	if get.Code != 200 {
 		t.Fatal(get.Code, get.Body.String())
 	}
-	list := e.do(t, "GET", path, nil, nil)
+	list := e.Do(t, "GET", path, nil, nil)
 	if list.Code != 200 || !strings.Contains(list.Body.String(), out.Saved.ID) {
 		t.Fatal(list.Code, list.Body.String())
 	}
 	readKey, hash, _ := api.GenerateAPIKey()
-	if _, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "profiles-read", []string{api.ScopeAppsRead}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "profiles-read", []string{api.ScopeAppsRead}); err != nil {
 		t.Fatal(err)
 	}
 	readHeaders := map[string]string{"Authorization": "Bearer " + readKey}
-	if rec := e.do(t, "GET", path+"/"+out.Saved.ID, nil, readHeaders); rec.Code != 200 {
+	if rec := e.Do(t, "GET", path+"/"+out.Saved.ID, nil, readHeaders); rec.Code != 200 {
 		t.Fatal("read key", rec.Code)
 	}
 	for _, method := range []string{"POST", "PUT", "DELETE"} {
@@ -74,45 +75,45 @@ func TestCPUProfileSavedInvestigationAPIIsolationAndRevision(t *testing.T) {
 		if method != "POST" {
 			target += "/" + out.Saved.ID + "?expected_revision=1"
 		}
-		if rec := e.do(t, method, target, req, readHeaders); rec.Code != 403 {
+		if rec := e.Do(t, method, target, req, readHeaders); rec.Code != 403 {
 			t.Fatal("read-only mutation", method, rec.Code)
 		}
 	}
-	other, err := e.store.CreateApp(t.Context(), state.App{AccountID: "foreign-account", Slug: "foreign-profiles", Status: state.AppActive})
+	other, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: "foreign-account", Slug: "foreign-profiles", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: other.ID})
+	foreign, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: other.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	bad := req
 	bad.Investigation.Candidate.DeploymentID = foreign.ID
-	if rec := e.do(t, "POST", path, bad, nil); rec.Code != 404 {
+	if rec := e.Do(t, "POST", path, bad, nil); rec.Code != 404 {
 		t.Fatal("foreign selection saved", rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, "GET", "/v1/apps/"+other.Slug+"/profiles/investigations/"+out.Saved.ID, nil, nil); rec.Code != 404 {
+	if rec := e.Do(t, "GET", "/v1/apps/"+other.Slug+"/profiles/investigations/"+out.Saved.ID, nil, nil); rec.Code != 404 {
 		t.Fatal("foreign app exposed metadata", rec.Code)
 	}
-	if rec := e.do(t, "PUT", path+"/"+out.Saved.ID, req, nil); rec.Code != 409 {
+	if rec := e.Do(t, "PUT", path+"/"+out.Saved.ID, req, nil); rec.Code != 409 {
 		t.Fatal("stale update", rec.Code)
 	}
 	req.ExpectedRevision = &out.Saved.Revision
 	req.Investigation.Notes = "Updated finding"
-	updated := e.do(t, "PUT", path+"/"+out.Saved.ID, req, nil)
+	updated := e.Do(t, "PUT", path+"/"+out.Saved.ID, req, nil)
 	if updated.Code != 200 {
 		t.Fatal(updated.Code, updated.Body.String())
 	}
-	if rec := e.do(t, "DELETE", path+"/"+out.Saved.ID+"?expected_revision=1", nil, nil); rec.Code != 409 {
+	if rec := e.Do(t, "DELETE", path+"/"+out.Saved.ID+"?expected_revision=1", nil, nil); rec.Code != 409 {
 		t.Fatal("stale delete", rec.Code)
 	}
-	if rec := e.do(t, "DELETE", path+"/"+out.Saved.ID+"?expected_revision=2", nil, nil); rec.Code != 204 {
+	if rec := e.Do(t, "DELETE", path+"/"+out.Saved.ID+"?expected_revision=2", nil, nil); rec.Code != 204 {
 		t.Fatal("delete", rec.Code, rec.Body.String())
 	}
-	if rec := e.do(t, "GET", path+"/"+out.Saved.ID, nil, nil); rec.Code != 404 {
+	if rec := e.Do(t, "GET", path+"/"+out.Saved.ID, nil, nil); rec.Code != 404 {
 		t.Fatal("deleted read", rec.Code)
 	}
-	if rec := e.do(t, "GET", path, nil, map[string]string{"Authorization": ""}); rec.Code != 401 {
+	if rec := e.Do(t, "GET", path, nil, map[string]string{"Authorization": ""}); rec.Code != 401 {
 		t.Fatal("unauthenticated metadata", rec.Code)
 	}
 }
@@ -123,17 +124,17 @@ func TestCPUProfileSavedInvestigationExpiryAndPlanDowngrade(t *testing.T) {
 	req.Investigation.Baseline.End = req.Investigation.Baseline.End.Add(-30 * 24 * time.Hour)
 	req.Investigation.Candidate = req.Investigation.Baseline
 	path := "/v1/apps/" + app.Slug + "/profiles/investigations"
-	if rec := e.do(t, "POST", path, req, nil); rec.Code != 400 {
+	if rec := e.Do(t, "POST", path, req, nil); rec.Code != 400 {
 		t.Fatal("new expired window accepted", rec.Code)
 	}
-	row, err := e.store.SaveProfileInvestigation(t.Context(), e.acct.ID, app.ID, "", req)
+	row, err := (*e.Store()).SaveProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, "", req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, plan := range []api.Plan{api.PlanHobby, api.PlanFree} {
-		acct := e.acct
+		acct := (*e.Acct())
 		acct.Plan = plan
-		out := e.s.profileInvestigationResponse(t.Context(), acct, app, row)
+		out := (*e.S()).ProfileInvestigationResponse(t.Context(), acct, app, row)
 		want := "expired"
 		if plan == api.PlanFree {
 			want = "plan_unavailable"
@@ -142,19 +143,19 @@ func TestCPUProfileSavedInvestigationExpiryAndPlanDowngrade(t *testing.T) {
 			t.Fatal("expiry/plan status", out)
 		}
 		reopened := httptest.NewRequest(http.MethodGet, out.URL+"&deployment_id=foreign", nil)
-		data, _, ok := e.s.savedProfilePage(httptest.NewRecorder(), reopened, acct, app)
+		data, _, ok := (*e.S()).SavedProfilePage(httptest.NewRecorder(), reopened, acct, app)
 		if !ok || data.Profile != nil || data.Compare != nil || !data.Query.Start.Equal(req.Investigation.Candidate.Start) || data.Investigations.Saved.Saved.Investigation.Notes != row.Investigation.Notes || backend.queries != 0 {
 			t.Fatal("expired comparison silently changed or queried", data)
 		}
 		req.ExpectedRevision = &row.Revision
 		req.Investigation.Notes = "Notes remain editable"
 		var problem *api.Problem
-		row, problem = e.s.saveOwnedProfileInvestigation(t.Context(), acct, app, e.store, row.ID, req)
+		row, problem = (*e.S()).SaveOwnedProfileInvestigation(t.Context(), acct, app, (*e.Store()), row.ID, req)
 		if problem != nil || row.Investigation.Notes != req.Investigation.Notes {
 			t.Fatal("commentary locked after expiry", problem)
 		}
 	}
-	got := e.do(t, "GET", path+"/"+row.ID, nil, nil)
+	got := e.Do(t, "GET", path+"/"+row.ID, nil, nil)
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"status":"expired"`) {
 		t.Fatal("expired API metadata", got.Code, got.Body.String())
 	}
@@ -166,8 +167,8 @@ func TestCPUProfileSavedInvestigationDashboardCSRFAndSelections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.sessions = mgr
-	token, err := middleware.IssueForAuthenticatedNamed(mgr, profileInvestigationCSRFAction, e.acct.ID, profileInvestigationCSRFCookie)
+	(*(*e.S()).Sessions()) = mgr
+	token, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.ProfileInvestigationCSRFAction, (*e.Acct()).ID, apidserver.ProfileInvestigationCSRFCookie)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +179,12 @@ func TestCPUProfileSavedInvestigationDashboardCSRFAndSelections(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/dashboard/apps/"+app.Slug+"/profiles/investigations", strings.NewReader(v.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.SetPathValue("slug", app.Slug)
-		r = r.WithContext(WithAccount(r.Context(), e.acct))
+		r = r.WithContext(apidserver.WithAccount(r.Context(), (*e.Acct())))
 		if cookie != "" {
-			r.AddCookie(&http.Cookie{Name: profileInvestigationCSRFCookie, Value: cookie})
+			r.AddCookie(&http.Cookie{Name: apidserver.ProfileInvestigationCSRFCookie, Value: cookie})
 		}
 		rec := httptest.NewRecorder()
-		e.s.dashboardSaveProfileInvestigation(rec, r)
+		(*e.S()).DashboardSaveProfileInvestigation(rec, r)
 		return rec
 	}
 	if rec := post(""); rec.Code != 400 {
@@ -199,13 +200,13 @@ func TestCPUProfileSavedInvestigationDashboardCSRFAndSelections(t *testing.T) {
 	}
 	id := location.Query().Get("investigation_id")
 	for range api.ProfileMaxDeploymentChoices + 1 {
-		if _, err := e.store.CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindTarball, Scope: "prod"}); err != nil {
+		if _, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindTarball, Scope: "prod"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	backend.queries = 0
 	r := httptest.NewRequest(http.MethodGet, location.String()+"&deployment_id="+uuid.NewString(), nil)
-	data, _, ok := e.s.savedProfilePage(httptest.NewRecorder(), r, e.acct, app)
+	data, _, ok := (*e.S()).SavedProfilePage(httptest.NewRecorder(), r, (*e.Acct()), app)
 	if !ok || data.Query.DeploymentID != q.DeploymentID || data.Baseline.DeploymentID != b.DeploymentID || data.Investigations.Saved.Saved.ID != id || data.Investigations.CSRF == "" || backend.queries != 2 {
 		t.Fatal("saved selection not restored", data, backend.queries)
 	}
@@ -218,7 +219,7 @@ func TestCPUProfileSavedInvestigationDashboardCSRFAndSelections(t *testing.T) {
 	if !found || len(data.Deployments) > api.ProfileMaxDeploymentChoices {
 		t.Fatal("old saved deployment fell out of the bounded selector")
 	}
-	row, err := e.store.GetProfileInvestigation(t.Context(), e.acct.ID, app.ID, id)
+	row, err := (*e.Store()).GetProfileInvestigation(t.Context(), (*e.Acct()).ID, app.ID, id)
 	if err != nil {
 		t.Fatal(err)
 	}

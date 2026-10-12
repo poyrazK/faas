@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"github.com/onebox-faas/faas/pkg/state"

@@ -10,7 +10,7 @@
 // Pattern: same as the existing validateAndDeriveEnablePresetOpts
 // tests above — table-driven, pure-helper-focused, in package
 // main so the test can reach the unexported helpers directly.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -32,14 +34,14 @@ func TestValidateAndDeriveEnablePresetOpts_ActionClosedSet(t *testing.T) {
 	for _, action := range api.AllowedAlertRuleActions {
 		action := action
 		t.Run(action, func(t *testing.T) {
-			_, _, prob := validateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &action}, 15)
+			_, _, prob := apidserver.ValidateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &action}, 15)
 			if prob != nil {
 				t.Fatalf("action %q rejected: %v", action, prob)
 			}
 		})
 	}
 	bad := "explode"
-	_, _, prob := validateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &bad}, 15)
+	_, _, prob := apidserver.ValidateAndDeriveEnablePresetOpts(api.EnableAlertPresetRequest{Action: &bad}, 15)
 	if prob == nil || prob.Code != api.CodeAlertPresetInvalid {
 		t.Fatalf("invalid action problem = %#v, want code %q", prob, api.CodeAlertPresetInvalid)
 	}
@@ -50,7 +52,7 @@ func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
 		{"login_target_pressure", "pre_auth_target_threshold"},
 		{"login_target_signal_health", "pre_auth_target_signal_gap_pct"},
 	} {
-		_, event, _, prob := buildTestAlertEvent(state.Account{ID: "a"},
+		_, event, _, prob := apidserver.BuildTestAlertEvent(state.Account{ID: "a"},
 			state.App{Slug: "login-api"}, state.AlertRule{}, state.AlertPreset{
 				Name: tc.name, Metric: tc.metric,
 				Comparison: "gt", Threshold: 5, WindowSpec: "15m",
@@ -68,14 +70,14 @@ func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
 }
 
 func TestAutomationBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
-	e := setupAlerts(t, api.PlanHobby)
-	appID := mustSeedApp(t, e, "backlog-alert")
-	e.store.SeedAlertPresetForTest(state.AlertPreset{Name: "automation_backlog", DisplayName: "Automation backlog exceeds five minutes", Category: "reliability",
+	e := apidserver.SetupAlerts(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "backlog-alert")
+	(*e.Store()).SeedAlertPresetForTest(state.AlertPreset{Name: "automation_backlog", DisplayName: "Automation backlog exceeds five minutes", Category: "reliability",
 		Metric: string(state.AlertMetricWorkflowDueAge), Comparison: "gte", Threshold: api.WorkflowBacklogAlertThresholdSeconds, WindowSpec: "5m",
 		DefaultCooldownMinutes: api.WorkflowBacklogAlertCooldownMinutes, EnabledInCatalog: true, MinimumPlan: "hobby"})
 	base := "/v1/apps/backlog-alert"
 	req := api.EnableAlertPresetRequest{WebhookURL: "https://example.com/hook", WebhookSecret: "backlog-webhook-secret"}
-	response := e.do(t, "POST", base+"/alert-presets/automation_backlog/enable", req, nil)
+	response := e.Do(t, "POST", base+"/alert-presets/automation_backlog/enable", req, nil)
 	var rule api.AlertRuleResponse
 	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &rule) != nil || rule.AppID != appID || rule.Metric != string(state.AlertMetricWorkflowDueAge) || rule.Threshold != api.WorkflowBacklogAlertThresholdSeconds || rule.CooldownMinutes != api.WorkflowBacklogAlertCooldownMinutes || rule.Action != "webhook" {
 		t.Fatalf("enable backlog preset: %d %s", response.Code, response.Body.String())
@@ -86,17 +88,17 @@ func TestAutomationBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
 	for _, action := range []string{"rollback", "demote", "promote"} {
 		bad := req
 		bad.Action = &action
-		response = e.do(t, "POST", base+"/alert-presets/automation_backlog/enable", bad, nil)
+		response = e.Do(t, "POST", base+"/alert-presets/automation_backlog/enable", bad, nil)
 		if response.Code != 400 {
 			t.Fatalf("preset accepted %s: %d %s", action, response.Code, response.Body.String())
 		}
-		custom := alertRuleReq()
+		custom := apidserver.AlertRuleReq()
 		custom.Metric, custom.Action = string(state.AlertMetricWorkflowDueAge), &action
-		response = e.do(t, "POST", base+"/alerts", custom, nil)
+		response = e.Do(t, "POST", base+"/alerts", custom, nil)
 		if response.Code != 400 {
 			t.Fatalf("custom rule accepted %s: %d %s", action, response.Code, response.Body.String())
 		}
-		response = e.do(t, "PATCH", base+"/alerts/"+rule.ID, map[string]any{"action": action}, nil)
+		response = e.Do(t, "PATCH", base+"/alerts/"+rule.ID, map[string]any{"action": action}, nil)
 		if response.Code != 400 {
 			t.Fatalf("rule update accepted %s: %d %s", action, response.Code, response.Body.String())
 		}
@@ -186,7 +188,7 @@ func TestBuildTestAlertEvent_PayloadDiscriminator(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			id, evt, _, prob := buildTestAlertEvent(acct, app, rule, c.preset)
+			id, evt, _, prob := apidserver.BuildTestAlertEvent(acct, app, rule, c.preset)
 			if prob != nil {
 				t.Fatalf("prob = %v, want nil", prob)
 			}
@@ -231,7 +233,7 @@ func TestBuildTestAlertEvent_PayloadDiscriminator(t *testing.T) {
 // field addition that breaks the test: true discriminator fails
 // this test before it fails the dashboard render.
 func TestBuildTestAlertEvent_PayloadMarshalsAsJSON(t *testing.T) {
-	_, evt, _, prob := buildTestAlertEvent(state.Account{ID: "a"}, state.App{Slug: "demo"}, state.AlertRule{}, state.AlertPreset{
+	_, evt, _, prob := apidserver.BuildTestAlertEvent(state.Account{ID: "a"}, state.App{Slug: "demo"}, state.AlertRule{}, state.AlertPreset{
 		Name: "api_down", DisplayName: "X", Comparison: "lt", Threshold: 1, WindowSpec: "5m",
 	})
 	if prob != nil {
@@ -267,13 +269,13 @@ func TestUnsealAlertRuleWebhookSecret(t *testing.T) {
 	}
 	// Wire the test identity into the unseal path. Restore the
 	// original on test exit so other tests aren't poisoned.
-	prev := hostIdentitiesForUnseal
-	t.Cleanup(func() { hostIdentitiesForUnseal = prev })
-	hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+	prev := (*apidserver.HostIdentitiesForUnseal)
+	t.Cleanup(func() { (*apidserver.HostIdentitiesForUnseal) = prev })
+	(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 		return []*age.X25519Identity{ident}
 	}
 	t.Run("correct identity unseals", func(t *testing.T) {
-		got, prob := unsealAlertRuleWebhookSecret(context.Background(), sealed)
+		got, prob := apidserver.UnsealAlertRuleWebhookSecret(context.Background(), sealed)
 		if prob != nil {
 			t.Fatalf("prob = %v, want nil", prob)
 		}
@@ -286,28 +288,28 @@ func TestUnsealAlertRuleWebhookSecret(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gen wrong identity: %v", err)
 		}
-		hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+		(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 			return []*age.X25519Identity{wrong}
 		}
-		_, prob := unsealAlertRuleWebhookSecret(context.Background(), sealed)
+		_, prob := apidserver.UnsealAlertRuleWebhookSecret(context.Background(), sealed)
 		if prob == nil {
 			t.Fatalf("prob = nil, want ErrCapacity (wrong identity must fail)")
 		}
 	})
 	t.Run("empty identity list fails cleanly", func(t *testing.T) {
-		hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+		(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 			return nil
 		}
-		_, prob := unsealAlertRuleWebhookSecret(context.Background(), sealed)
+		_, prob := apidserver.UnsealAlertRuleWebhookSecret(context.Background(), sealed)
 		if prob == nil {
 			t.Fatalf("prob = nil, want ErrCapacity (no identity loaded)")
 		}
 	})
 	t.Run("empty blob fails cleanly", func(t *testing.T) {
-		hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+		(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 			return []*age.X25519Identity{ident}
 		}
-		_, prob := unsealAlertRuleWebhookSecret(context.Background(), []byte{})
+		_, prob := apidserver.UnsealAlertRuleWebhookSecret(context.Background(), []byte{})
 		if prob == nil {
 			t.Fatalf("prob = nil, want ErrCapacity (empty blob)")
 		}
@@ -330,12 +332,12 @@ func TestUnsealAlertRuleWebhookSecret_BadPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	prev := hostIdentitiesForUnseal
-	t.Cleanup(func() { hostIdentitiesForUnseal = prev })
-	hostIdentitiesForUnseal = func(_ context.Context) []*age.X25519Identity {
+	prev := (*apidserver.HostIdentitiesForUnseal)
+	t.Cleanup(func() { (*apidserver.HostIdentitiesForUnseal) = prev })
+	(*apidserver.HostIdentitiesForUnseal) = func(_ context.Context) []*age.X25519Identity {
 		return []*age.X25519Identity{ident}
 	}
-	_, prob := unsealAlertRuleWebhookSecret(context.Background(), sealed)
+	_, prob := apidserver.UnsealAlertRuleWebhookSecret(context.Background(), sealed)
 	if prob == nil {
 		t.Fatalf("prob = nil, want ErrCapacity (empty plaintext must refuse)")
 	}

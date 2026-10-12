@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -114,7 +115,7 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil {
+		if err = (*s.Object()).ReconcileObjectLifecycle(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,7 +126,7 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_bucket_lifecycle SET next_scan_at=clock_timestamp() WHERE bucket_id=$1`, f.bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectLifecycle(ctx, nil); err != nil || deletes.Load() != 1 {
+	if err = (*s.Object()).ReconcileObjectLifecycle(ctx, nil); err != nil || deletes.Load() != 1 {
 		t.Fatal("released version not dispatched", err, deletes.Load())
 	}
 	var id string
@@ -137,11 +138,11 @@ func TestLifecycleProtectionCustomerRecoveryPG(t *testing.T) {
 	}
 	// A reconstructed daemon with new ingress and Object Lock enrollment off
 	// still settles accepted custody from exact native absence, without DELETE.
-	s = newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	s = apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectDeletions(ctx, nil); err != nil || deletes.Load() != 1 {
+	if err = (*s.Object()).ReconcileObjectDeletions(ctx, nil); err != nil || deletes.Load() != 1 {
 		t.Fatal("disabled recovery repeated delete", err, deletes.Load())
 	}
 	receipt, err := client.GetObjectDeletion(ctx, f.app.Slug, f.bucket.ID, id)

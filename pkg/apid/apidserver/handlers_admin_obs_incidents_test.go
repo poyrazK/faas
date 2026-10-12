@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,14 +8,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObsIncidents_EmptyResponseIsStable(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -35,39 +37,39 @@ func TestObsIncidents_EmptyResponseIsStable(t *testing.T) {
 }
 
 func TestObsIncidents_ComposesSourcesAndPaginates(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "incident-app", Type: state.AppTypeApp})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "incident-app", Type: state.AppTypeApp})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	old := time.Now().UTC().Add(-2 * time.Minute)
-	failed, err := e.store.CreateDeployment(ctx, state.Deployment{
+	failed, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		ID: uuid.NewString(), AppID: app.ID, Status: state.DeployFailed, CreatedAt: old, ErrorCode: api.CodeStageImageBuildOOM,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment failed: %v", err)
 	}
-	if _, err := e.store.CreateDeployment(ctx, state.Deployment{
+	if _, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		ID: uuid.NewString(), AppID: app.ID, Status: state.DeployBuilding, CreatedAt: old.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("CreateDeployment building: %v", err)
 	}
-	job, err := e.store.JobCreate(ctx, e.acct.ID, "incident-job", "app", "", nil, 128, 60, 1, 0, nil)
+	job, err := (*e.Store()).JobCreate(ctx, (*e.Acct()).ID, "incident-job", "app", "", nil, 128, 60, 1, 0, nil)
 	if err != nil {
 		t.Fatalf("JobCreate: %v", err)
 	}
-	if _, _, err := e.store.JobRunCreate(ctx, job.ID, e.acct.ID, "manual", nil, nil, nil, nil, 1); err != nil {
+	if _, _, err := (*e.Store()).JobRunCreate(ctx, job.ID, (*e.Acct()).ID, "manual", nil, nil, nil, nil, 1); err != nil {
 		t.Fatalf("JobRunCreate: %v", err)
 	}
-	if _, err := e.store.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
+	if _, err := (*e.Store()).UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
 		ID: uuid.NewString(), Name: "incident-node", Lifecycle: state.NodeLifecycleActive,
 		LastHeartbeatAt: time.Now().UTC().Add(-2 * state.DefaultHeartbeatStaleness),
 	}); err != nil {
 		t.Fatalf("UpsertComputeNodeFromOperator: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -83,7 +85,7 @@ func TestObsIncidents_ComposesSourcesAndPaginates(t *testing.T) {
 		t.Fatalf("decode next cursor: key=%+v err=%v", key, err)
 	}
 
-	rec = e.do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2&cursor="+first.NextCursor, nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2&cursor="+first.NextCursor, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second page status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -112,14 +114,14 @@ func TestObsIncidents_ComposesSourcesAndPaginates(t *testing.T) {
 }
 
 func TestObsIncidents_RejectsInvalidFiltersAndCursor(t *testing.T) {
-	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 	for _, path := range []string{
 		"/v1/admin/obs/incidents?type=unknown",
 		"/v1/admin/obs/incidents?severity=urgent",
 		"/v1/admin/obs/incidents?since=not-a-time",
 		"/v1/admin/obs/incidents?cursor=not-a-cursor",
 	} {
-		rec := e.do(t, http.MethodGet, path, nil, nil)
+		rec := e.Do(t, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s status = %d, want 400; body=%s", path, rec.Code, rec.Body.String())
 		}
@@ -127,8 +129,8 @@ func TestObsIncidents_RejectsInvalidFiltersAndCursor(t *testing.T) {
 }
 
 func TestObsIncidents_RequiresAdminScope(t *testing.T) {
-	e := newObsEnv(t, []string{api.ScopeAppsRead}, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
+	e := apidserver.NewObsEnv(t, []string{api.ScopeAppsRead}, "ops@faas.dev", "ops@faas.dev")
+	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}

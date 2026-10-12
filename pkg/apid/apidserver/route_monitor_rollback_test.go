@@ -1,26 +1,28 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRelease time.Duration) (testEnv, state.App, state.Deployment, state.Deployment, string) {
+func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRelease time.Duration) (apidserver.TestEnv, state.App, state.Deployment, state.Deployment, string) {
 	t.Helper()
-	e, app, target, current := checkedRollbackAPIFixture(t)
+	e, app, target, current := apidserver.CheckedRollbackAPIFixture(t)
 	zero, budget := int64(0), int64(100)
-	if _, err := e.store.SetRouteMonitor(t.Context(), e.acct.ID, app.ID, api.SetRouteMonitorRequest{
+	if _, err := (*e.Store()).SetRouteMonitor(t.Context(), (*e.Acct()).ID, app.ID, api.SetRouteMonitorRequest{
 		Enabled: true, OnViolation: onViolation, ExpectedRevision: &zero,
 		Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	current, err := e.store.DeploymentByID(t.Context(), current.ID)
+	current, err := (*e.Store()).DeploymentByID(t.Context(), current.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRe
 			Route: api.RouteMonitorRoute{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget}, Status: "violated", ErrorStatus: "violated",
 		}}},
 	}
-	e.store.SeedRouteMonitorIncidentForTest(app.ID, incident)
+	(*e.Store()).SeedRouteMonitorIncidentForTest(app.ID, incident)
 	return e, app, target, current, incident.ID
 }
 
@@ -40,10 +42,10 @@ func routeMonitorRollbackFixture(t *testing.T, onViolation string, openedAfterRe
 func TestRouteMonitorRollbackRequestsCheckedRollbackOnce(t *testing.T) {
 	e, app, target, current, incidentID := routeMonitorRollbackFixture(t, "rollback", time.Minute)
 	ctx := t.Context()
-	monitor := state.RouteMonitorTarget{AccountID: e.acct.ID, AppID: app.ID}
-	e.s.applyRouteMonitorRollback(ctx, monitor)
+	monitor := state.RouteMonitorTarget{AccountID: (*e.Acct()).ID, AppID: app.ID}
+	(*e.S()).ApplyRouteMonitorRollback(ctx, monitor)
 
-	incident, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
+	incident, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +53,12 @@ func TestRouteMonitorRollbackRequestsCheckedRollbackOnce(t *testing.T) {
 	if rb == nil || rb.Status != "requested" || rb.OperationID == "" || rb.TargetDeploymentID != target.ID || rb.Route != "POST /checkout" {
 		t.Fatalf("incident rollback = %+v, want requested to %s", rb, target.ID)
 	}
-	operation, err := e.store.GetCheckedRollback(ctx, e.acct.ID, app.ID, rb.OperationID)
+	operation, err := (*e.Store()).GetCheckedRollback(ctx, (*e.Acct()).ID, app.ID, rb.OperationID)
 	if err != nil || operation.TargetDeploymentID != target.ID || operation.CurrentDeploymentID != current.ID || operation.Status != "preparing" {
 		t.Fatalf("checked rollback = %+v, %v", operation, err)
 	}
-
-	e.s.applyRouteMonitorRollback(ctx, monitor)
-	again, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
+	(*e.S()).ApplyRouteMonitorRollback(ctx, monitor)
+	again, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
 	if err != nil || again.Rollback == nil || again.Rollback.OperationID != rb.OperationID {
 		t.Fatalf("second pass changed the decision: %+v %v", again.Rollback, err)
 	}
@@ -68,8 +69,8 @@ func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
 	t.Run("incident outside the post-release window", func(t *testing.T) {
 		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "rollback", api.RouteMonitorRollbackWindow+time.Minute)
 		ctx := t.Context()
-		e.s.applyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: e.acct.ID, AppID: app.ID})
-		incident, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
+		(*e.S()).ApplyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: (*e.Acct()).ID, AppID: app.ID})
+		incident, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
 		if err != nil || incident.Rollback == nil || incident.Rollback.Status != "skipped" || incident.Rollback.Reason != routemonitor.RollbackSkipOutsideWindow {
 			t.Fatalf("late incident rollback = %+v, %v", incident.Rollback, err)
 		}
@@ -77,8 +78,8 @@ func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
 	t.Run("report mode", func(t *testing.T) {
 		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "", time.Minute)
 		ctx := t.Context()
-		e.s.applyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: e.acct.ID, AppID: app.ID})
-		incident, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
+		(*e.S()).ApplyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: (*e.Acct()).ID, AppID: app.ID})
+		incident, err := (*e.Store()).GetRouteMonitorIncident(ctx, (*e.Acct()).ID, app.ID, incidentID)
 		if err != nil || incident.Rollback != nil {
 			t.Fatalf("report-mode incident rollback = %+v, %v", incident.Rollback, err)
 		}

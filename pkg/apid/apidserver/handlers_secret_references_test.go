@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -61,14 +62,14 @@ func ownPublicSecretReference(t *testing.T, store *state.MemStore, acct state.Ac
 }
 
 func TestSecretReferenceHTTPNamesOnlyAndSourcePreservation(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	_, app := seedPublicSecretReferences(t, e.store, e.acct)
+	e := apidserver.Setup(t, api.PlanPro)
+	_, app := seedPublicSecretReferences(t, (*e.Store()), (*e.Acct()))
 	path := "/v1/apps/shop-api/secret-references"
-	set := e.do(t, http.MethodPut, path+"/DATABASE_URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
+	set := e.Do(t, http.MethodPut, path+"/DATABASE_URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
 	if set.Code != http.StatusOK {
 		t.Fatalf("set: %d %s", set.Code, set.Body.String())
 	}
-	list := e.do(t, http.MethodGet, path+"?environment=production", nil, nil)
+	list := e.Do(t, http.MethodGet, path+"?environment=production", nil, nil)
 	var response api.AppSecretReferenceListResponse
 	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil || list.Code != http.StatusOK || response.EnvironmentID == "" || response.References["DATABASE_URL"] != "secret:DATABASE" || response.Count != 1 {
 		t.Fatalf("list: %d %+v %v", list.Code, response, err)
@@ -77,31 +78,31 @@ func TestSecretReferenceHTTPNamesOnlyAndSourcePreservation(t *testing.T) {
 		t.Fatal("reference read exposed sealed values")
 	}
 	for i := 0; i < 2; i++ {
-		removed := e.do(t, http.MethodDelete, path+"/DATABASE_URL?environment=production", nil, nil)
+		removed := e.Do(t, http.MethodDelete, path+"/DATABASE_URL?environment=production", nil, nil)
 		if removed.Code != http.StatusNoContent {
 			t.Fatalf("delete: %d %s", removed.Code, removed.Body.String())
 		}
 	}
-	list = e.do(t, http.MethodGet, path+"?environment=production", nil, nil)
+	list = e.Do(t, http.MethodGet, path+"?environment=production", nil, nil)
 	response = api.AppSecretReferenceListResponse{}
 	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil || len(response.References) != 0 || len(response.SuppressedKeys) != 1 || response.SuppressedKeys[0] != "DATABASE_URL" || response.Count != 0 {
 		t.Fatalf("removed key absent from public suppression list: %+v %v", response, err)
 	}
-	set = e.do(t, http.MethodPut, path+"/DATABASE_URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
-	list = e.do(t, http.MethodGet, path+"?environment=production", nil, nil)
+	set = e.Do(t, http.MethodPut, path+"/DATABASE_URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
+	list = e.Do(t, http.MethodGet, path+"?environment=production", nil, nil)
 	response = api.AppSecretReferenceListResponse{}
 	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil || set.Code != http.StatusOK || len(response.SuppressedKeys) != 0 || response.References["DATABASE_URL"] != "secret:DATABASE" {
 		t.Fatalf("public reenable: %+v %v", response, err)
 	}
-	secret, err := e.store.GetAppSecretInScope(t.Context(), e.acct.ID, app.ID, "production", "DATABASE")
+	secret, err := (*e.Store()).GetAppSecretInScope(t.Context(), (*e.Acct()).ID, app.ID, "production", "DATABASE")
 	if err != nil || !bytes.Equal(secret.Ciphertext, []byte("sealed-production")) {
 		t.Fatalf("delete changed source: %+v %v", secret, err)
 	}
 }
 
 func TestSecretReferenceHTTPValidationQuotaAndAuthority(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	project, app := seedPublicSecretReferences(t, e.store, e.acct)
+	e := apidserver.Setup(t, api.PlanFree)
+	project, app := seedPublicSecretReferences(t, (*e.Store()), (*e.Acct()))
 	path := "/v1/apps/shop-api/secret-references"
 	for _, tc := range []struct {
 		suffix, reference, code string
@@ -116,47 +117,47 @@ func TestSecretReferenceHTTPValidationQuotaAndAuthority(t *testing.T) {
 		{"/bad-key?environment=production", "secret:DATABASE", "env_var_invalid_key", 400},
 	} {
 		t.Run(tc.suffix+tc.reference, func(t *testing.T) {
-			rec := e.do(t, http.MethodPut, path+tc.suffix, api.PutAppSecretReferenceRequest{Reference: tc.reference}, nil)
+			rec := e.Do(t, http.MethodPut, path+tc.suffix, api.PutAppSecretReferenceRequest{Reference: tc.reference}, nil)
 			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), `"code":"`+tc.code+`"`) {
 				t.Fatalf("validation: %d %s", rec.Code, rec.Body.String())
 			}
 		})
 	}
-	if err := e.store.UpsertAppEnvInScope(t.Context(), e.acct.ID, app.ID, "production", "PLAIN", "value"); err != nil {
+	if err := (*e.Store()).UpsertAppEnvInScope(t.Context(), (*e.Acct()).ID, app.ID, "production", "PLAIN", "value"); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do(t, http.MethodPut, path+"/PLAIN?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 409 {
+	if rec := e.Do(t, http.MethodPut, path+"/PLAIN?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 409 {
 		t.Fatalf("shadow: %d %s", rec.Code, rec.Body.String())
 	}
-	limits := api.MustLimitsFor(e.acct.Plan)
+	limits := api.MustLimitsFor((*e.Acct()).Plan)
 	for i := 1; i < limits.EnvVarsMax; i++ {
-		if err := e.store.UpsertAppEnvInScope(t.Context(), e.acct.ID, app.ID, "default", fmt.Sprintf("KEY_%d", i), "value"); err != nil {
+		if err := (*e.Store()).UpsertAppEnvInScope(t.Context(), (*e.Acct()).ID, app.ID, "default", fmt.Sprintf("KEY_%d", i), "value"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if rec := e.do(t, http.MethodPut, path+"/URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 403 || !strings.Contains(rec.Body.String(), `"observed":`) {
+	if rec := e.Do(t, http.MethodPut, path+"/URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 403 || !strings.Contains(rec.Body.String(), `"observed":`) {
 		t.Fatalf("shared quota: %d %s", rec.Code, rec.Body.String())
 	}
 	// A separate app avoids quota hiding the ownership result.
-	owned, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "owned-api", Status: state.AppActive})
+	owned, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "owned-api", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpsertAppSecretInScope(t.Context(), e.acct.ID, owned.ID, "production", "DATABASE", []byte("sealed")); err != nil {
+	if err := (*e.Store()).UpsertAppSecretInScope(t.Context(), (*e.Acct()).ID, owned.ID, "production", "DATABASE", []byte("sealed")); err != nil {
 		t.Fatal(err)
 	}
-	source := ownPublicSecretReference(t, e.store, e.acct, project, owned)
+	source := ownPublicSecretReference(t, (*e.Store()), (*e.Acct()), project, owned)
 	ownedPath := "/v1/apps/owned-api/secret-references/DATABASE_URL?environment=production"
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
-		rec := e.do(t, method, ownedPath, api.PutAppSecretReferenceRequest{Reference: "secret:ABSENT"}, nil)
+		rec := e.Do(t, method, ownedPath, api.PutAppSecretReferenceRequest{Reference: "secret:ABSENT"}, nil)
 		if rec.Code != 409 || !strings.Contains(rec.Body.String(), "environment_field_git_managed") {
 			t.Fatalf("owned %s: %d %s", method, rec.Code, rec.Body.String())
 		}
 	}
-	if err := e.store.SetEnvironmentGitOpsOverride(t.Context(), e.acct.ID, source.ID, state.EnvironmentGitOpsOverrideRequest{Resource: "workload/api", Path: "secret_refs/DATABASE_URL", Reason: "database incident", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if err := (*e.Store()).SetEnvironmentGitOpsOverride(t.Context(), (*e.Acct()).ID, source.ID, state.EnvironmentGitOpsOverrideRequest{Resource: "workload/api", Path: "secret_refs/DATABASE_URL", Reason: "database incident", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do(t, http.MethodPut, ownedPath, api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 200 {
+	if rec := e.Do(t, http.MethodPut, ownedPath, api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 200 {
 		t.Fatalf("override: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -182,13 +183,13 @@ func (s replaceSecretReferenceCatalogStore) ReadAppEnvironmentSecretReferences(c
 func TestSecretReferenceHTTPRejectsReplacementDuringWrite(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			project, _ := seedPublicSecretReferences(t, e.store, e.acct)
-			if _, err := e.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+			e := apidserver.Setup(t, api.PlanPro)
+			project, _ := seedPublicSecretReferences(t, (*e.Store()), (*e.Acct()))
+			if _, err := (*e.Store()).CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 				t.Fatal(err)
 			}
-			e.s.store = replaceSecretReferenceCatalogStore{e.store, e.store, project}
-			rec := e.do(t, method, "/v1/apps/shop-api/secret-references/URL?environment=staging", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
+			(*(*e.S()).Store()) = replaceSecretReferenceCatalogStore{(*e.Store()), (*e.Store()), project}
+			rec := e.Do(t, method, "/v1/apps/shop-api/secret-references/URL?environment=staging", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
 			if rec.Code != 409 || !strings.Contains(rec.Body.String(), "secret_reference_conflict") {
 				t.Fatalf("replacement: %d %s", rec.Code, rec.Body.String())
 			}
@@ -197,25 +198,25 @@ func TestSecretReferenceHTTPRejectsReplacementDuringWrite(t *testing.T) {
 }
 
 func TestSecretReferenceHTTPPermissionsAndMFA(t *testing.T) {
-	e := setupWithScopes(t, []string{api.ScopeAppsRead})
-	_, _ = seedPublicSecretReferences(t, e.store, e.acct)
+	e := apidserver.SetupWithScopes(t, []string{api.ScopeAppsRead})
+	_, _ = seedPublicSecretReferences(t, (*e.Store()), (*e.Acct()))
 	path := "/v1/apps/shop-api/secret-references?environment=production"
-	if rec := e.do(t, http.MethodGet, path, nil, nil); rec.Code != 200 {
+	if rec := e.Do(t, http.MethodGet, path, nil, nil); rec.Code != 200 {
 		t.Fatalf("read scope: %d %s", rec.Code, rec.Body.String())
 	}
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
-		if rec := e.do(t, method, "/v1/apps/shop-api/secret-references/URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 403 {
+		if rec := e.Do(t, method, "/v1/apps/shop-api/secret-references/URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil); rec.Code != 403 {
 			t.Fatalf("read-only %s: %d", method, rec.Code)
 		}
 	}
-	h, acct, mgr, sid := setupMW(t, api.PlanPro, true)
-	cookie := reissueWithMFAFlag(t, mgr, sid, acct.ID, true)
+	h, acct, mgr, sid := apidserver.SetupMW(t, api.PlanPro, true)
+	cookie := apidserver.ReissueWithMFAFlag(t, mgr, sid, acct.ID, true)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 		requestPath := "/v1/apps/shop-api/secret-references/URL?environment=production"
 		if method == http.MethodGet {
 			requestPath = path
 		}
-		rec := cookieDo(t, h, cookie, method, requestPath, api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"})
+		rec := apidserver.CookieDo(t, h, cookie, method, requestPath, api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"})
 		if rec.Code != 403 || !strings.Contains(rec.Body.String(), api.CodeMFARequired) {
 			t.Fatalf("pending MFA %s: %d %s", method, rec.Code, rec.Body.String())
 		}

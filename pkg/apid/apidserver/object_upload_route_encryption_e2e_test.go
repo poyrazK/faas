@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,23 +23,23 @@ import (
 func TestEncryptedUploadRouteE2EMem(t *testing.T) {
 	for _, mode := range []string{"confirmed", "lost", "wrong-key"} {
 		t.Run(mode, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			encryptedUploadRouteE2E(t, e.s, e.store, e.acct, mode, nil)
+			e := apidserver.Setup(t, api.PlanPro)
+			encryptedUploadRouteE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), mode, nil)
 		})
 	}
 }
 func TestEncryptedUploadRouteE2EPG(t *testing.T) {
 	for _, mode := range []string{"confirmed", "lost", "wrong-key"} {
 		t.Run(mode, func(t *testing.T) {
-			e := setupPGHandler(t, api.PlanPro)
-			encryptedUploadRouteE2E(t, e.s, e.store, e.acct, mode, e.pool)
+			e := apidserver.SetupPGHandler(t, api.PlanPro)
+			encryptedUploadRouteE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), mode, (*e.Pool()))
 		})
 	}
 }
 
-func encryptedUploadRouteE2E(t *testing.T, s *server, st state.Store, acct state.Account, mode string, pool *pgxpool.Pool) {
+func encryptedUploadRouteE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, mode string, pool *pgxpool.Pool) {
 	t.Helper()
-	_, teardown := withTestIdentities(t)
+	_, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	ctx := t.Context()
 	native := &signedURLNative{lost: mode == "lost"}
@@ -54,10 +55,10 @@ func encryptedUploadRouteE2E(t *testing.T, s *server, st state.Store, acct state
 	}))
 	defer upstream.Close()
 	registry, b, backend, _ := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	management := httptest.NewServer(s.handler())
+	management := httptest.NewServer(s.Handler())
 	defer management.Close()
 	token, hash, err := api.GenerateAPIKey()
 	if err != nil {
@@ -192,8 +193,8 @@ func encryptedUploadRouteE2E(t *testing.T, s *server, st state.Store, acct state
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.object.ReconcileObjectUploads(ctx, nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(registry())
+	if err = (*fresh.Object()).ReconcileObjectUploads(ctx, nil); err != nil {
 		t.Fatal("restart recovery", err)
 	}
 	edge.Close()

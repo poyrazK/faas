@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"io"
@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -125,10 +126,10 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 				t.Fatal(c)
 			}
 			restarted := state.NewPgStore(f.pool)
-			e := setup(t, api.PlanHobby)
-			e.s.store = restarted
-			e.s.WithObjectStorage(f.registry)
-			setS3Flag(t, e, false)
+			e := apidserver.Setup(t, api.PlanHobby)
+			(*(*e.S()).Store()) = restarted
+			(*e.S()).WithObjectStorage(f.registry)
+			apidserver.SetS3Flag(t, e, false)
 			f.report.ObservedAt = time.Now()
 			f.report.CostMillicents = f.policy.MaxMonthlyCostMillicents
 			if err = restarted.RecordObjectUsageReport(ctx, f.report); err != nil {
@@ -152,7 +153,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 				t.Fatal(err)
 			}
 			operations := []string{}
-			if err = e.s.object.ReconcileObjectUploads(ctx, func(operation, outcome string) { operations = append(operations, operation+"/"+outcome) }); err != nil {
+			if err = (*(*e.S()).Object()).ReconcileObjectUploads(ctx, func(operation, outcome string) { operations = append(operations, operation+"/"+outcome) }); err != nil {
 				t.Fatal(err)
 			}
 			c, err = restarted.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, id)
@@ -175,7 +176,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = e.s.object.ReconcileObjectCapacity(ctx, nil); err != nil {
+			if err = (*(*e.S()).Object()).ReconcileObjectCapacity(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 			j, err = restarted.GetObjectCapacityReconciliation(ctx, f.account.ID, f.bucket.ID, j.ID)

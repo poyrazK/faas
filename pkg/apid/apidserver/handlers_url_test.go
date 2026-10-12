@@ -19,7 +19,7 @@
 //     handler still returns 200 with Alive=false (NOT 404) so
 //     dashboards render the closed-state copy consistently
 //     across environments.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -41,17 +42,17 @@ import (
 //	expect: Alive=true.
 //	expect: DeploymentID + AppID echoed on the response.
 func TestGetDeploymentURL_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "url-happy")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "url-happy")
 	// mustSeedDeployment stamps status='building'. Flip to 'live'
 	// so the happy path exercises the production wire (the
 	// certissuer mints for live and in-flight alike, but the
 	// most common read is post-success).
-	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployLive, ""); err != nil {
+	if err := (*e.Store()).UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployLive, ""); err != nil {
 		t.Fatalf("UpdateDeploymentStatus → live: %v", err)
 	}
 	dep.Status = state.DeployLive
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
+	rec := e.Do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -85,14 +86,14 @@ func TestGetDeploymentURL_HappyPath(t *testing.T) {
 // functioning preview URL: the cert issuer mints for live and
 // in-flight deployments alike, so the read seam must agree.
 func TestGetDeploymentURL_BuildingStatusIsAlive(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "url-building")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "url-building")
 	// Flip status manually so the test exercises the building →
 	// alive path (the seed path is 'live' only).
-	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployBuilding, "test flip"); err != nil {
+	if err := (*e.Store()).UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployBuilding, "test flip"); err != nil {
 		t.Fatalf("UpdateDeploymentStatus: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
+	rec := e.Do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -113,12 +114,12 @@ func TestGetDeploymentURL_BuildingStatusIsAlive(t *testing.T) {
 // load-bearing: the dashboard renders a "preview closed" chip
 // without re-fetching the deployment row.
 func TestGetDeploymentURL_FailedReturnsAliveFalse(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "url-failed")
-	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployFailed, "test-failure"); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "url-failed")
+	if err := (*e.Store()).UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployFailed, "test-failure"); err != nil {
 		t.Fatalf("UpdateDeploymentStatus: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
+	rec := e.Do(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -139,9 +140,9 @@ func TestGetDeploymentURL_FailedReturnsAliveFalse(t *testing.T) {
 // branch (deployment id format is valid hex but no such row).
 // Same posture as getDeploymentScan / getDeploymentStages.
 func TestGetDeploymentURL_UnknownReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/deployments/deadbeefdeadbeefdeadbeefdeadbeef/url", nil, nil)
-	assertProblem(t, rec, 404, api.CodeNotFound)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/deployments/deadbeefdeadbeefdeadbeefdeadbeef/url", nil, nil)
+	apidserver.AssertProblem(t, rec, 404, api.CodeNotFound)
 }
 
 // TestGetDeploymentURL_CrossAccountReturns404 locks the IDOR
@@ -151,10 +152,10 @@ func TestGetDeploymentURL_UnknownReturns404(t *testing.T) {
 // Same posture as getDeployment (handlers_ext.go:1136) and
 // getDeploymentStages (handlers_stages.go:49).
 func TestGetDeploymentURL_CrossAccountReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "url-cross")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "url-cross")
 
-	store := e.store
+	store := (*e.Store())
 	foreignAcct, err := store.CreateAccount(context.Background(), "intruder-url@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount foreign: %v", err)
@@ -163,7 +164,7 @@ func TestGetDeploymentURL_CrossAccountReturns404(t *testing.T) {
 	if _, err := store.CreateAPIKey(context.Background(), foreignAcct.ID, hash, "intruder", api.ScopesAdminOnly); err != nil {
 		t.Fatalf("CreateAPIKey foreign: %v", err)
 	}
-	rec := e.doAs(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil, pt)
+	rec := e.DoAs(t, "GET", "/v1/deployments/"+dep.ID+"/url", nil, nil, pt)
 	if rec.Code != 404 {
 		t.Fatalf("cross-account GET /url: status %d, want 404 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -183,9 +184,9 @@ func TestGetDeploymentURL_CrossAccountReturns404(t *testing.T) {
 // the ordinal counter is per-app, so we need both rows under one
 // app.
 func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID,
+	e := apidserver.Setup(t, api.PlanPro)
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID,
 		Slug:      "url-ord",
 		Type:      state.AppTypeApp,
 		Status:    state.AppActive,
@@ -193,7 +194,7 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	first, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	first, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:ord1",
 		Kind:        state.DeploymentKindImage,
@@ -203,7 +204,7 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed first deployment: %v", err)
 	}
-	second, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	second, err := (*e.Store()).CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:ord2",
 		Kind:        state.DeploymentKindImage,
@@ -213,7 +214,7 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed second deployment: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/deployments/"+second.ID+"/url", nil, nil)
+	rec := e.Do(t, "GET", "/v1/deployments/"+second.ID+"/url", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -223,7 +224,7 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 		t.Errorf("Host = %q, want deploy-2-url-ord.gregale.dev (second deployment must mint ordinal 2)", got.Host)
 	}
 	// Sanity: the first deployment still resolves to ordinal 1.
-	rec1 := e.do(t, "GET", "/v1/deployments/"+first.ID+"/url", nil, nil)
+	rec1 := e.Do(t, "GET", "/v1/deployments/"+first.ID+"/url", nil, nil)
 	if rec1.Code != 200 {
 		t.Fatalf("first status %d: %s", rec1.Code, rec1.Body.String())
 	}

@@ -1,10 +1,11 @@
 // adr: 576
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,13 +17,13 @@ func TestPublicListenersRefuseInternalPorts(t *testing.T) {
 		{Port: 5353, Protocol: api.WorkloadPortUDP, Internal: true},
 		{Port: 9100, Protocol: api.WorkloadPortTCP},
 	}}}
-	if appDeclaresTCPListener(app, "tcp-6379", 6379) {
+	if apidserver.AppDeclaresTCPListener(app, "tcp-6379", 6379) {
 		t.Fatal("internal TCP listener accepted for public raw TCP")
 	}
-	if appDeclaresUDPListener(app, "udp-5353", 5353) {
+	if apidserver.AppDeclaresUDPListener(app, "udp-5353", 5353) {
 		t.Fatal("internal UDP listener accepted for public UDP")
 	}
-	if !appDeclaresTCPListener(app, "tcp-9100", 9100) {
+	if !apidserver.AppDeclaresTCPListener(app, "tcp-9100", 9100) {
 		t.Fatal("public TCP listener refused")
 	}
 }
