@@ -29,7 +29,8 @@ func IsSyncInvokeRequest(r *http.Request) bool {
 // several times before it records the deployment; on production-us that
 // regularly outran the 5 s apid default, and every server-side deploy
 // failure in three days was its deadline firing mid-request (hunt #9,
-// H9-157). "*" matches one non-empty path segment.
+// H9-157; ADR-093 amendment). Project apply runs under its own timeout.
+// "*" matches one non-empty path segment.
 var deploySubmissionRoutes = []struct{ method, path string }{
 	{http.MethodPatch, "/v1/uploads/*"},
 	{http.MethodPost, "/v1/uploads/*/commit"},
@@ -38,7 +39,6 @@ var deploySubmissionRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/apps/*/deployments/source-ref"},
 	{http.MethodPost, "/v1/apps/*/rollback"},
 	{http.MethodPost, "/v1/deployments/*/retry"},
-	{http.MethodPost, "/v1/projects"},
 }
 
 // IsDeploySubmissionRequest identifies a request that uploads deploy source

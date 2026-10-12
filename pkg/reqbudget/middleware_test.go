@@ -345,7 +345,6 @@ func TestIsDeploySubmissionRequest(t *testing.T) {
 		{http.MethodPost, "/v1/apps/demo/deployments/source-ref", true},
 		{http.MethodPost, "/v1/apps/demo/rollback", true},
 		{http.MethodPost, "/v1/deployments/d9d1c1b4/retry", true},
-		{http.MethodPost, "/v1/projects", true},
 		{http.MethodPost, "/v1/uploads", false},
 		{http.MethodGet, "/v1/uploads/abc", false},
 		{http.MethodGet, "/v1/apps/demo/deployments", false},
@@ -353,7 +352,7 @@ func TestIsDeploySubmissionRequest(t *testing.T) {
 		{http.MethodPost, "/v1/uploads//commit", false},
 		{http.MethodPost, "/v1/apps/demo/deployments/abc/cancel", false},
 		{http.MethodPost, "/v1/apps/demo/invoke", false},
-		{http.MethodPost, "/v1/projects/demo", false},
+		{http.MethodPost, "/v1/projects", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
