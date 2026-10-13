@@ -7,6 +7,28 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Disposable Runs on real VMs — 2026-10-13
+
+`TestMetalDisposableRunsColdRestoreAndIsolation` passes on `gregale-internal-test-1`
+(n2, nested KVM, Firecracker 1.7.0) with no new leakcheck entries. It boots
+a python312 Run cold, enforces a 1.5 s deadline, captures a payload-free runtime
+snapshot, and restores two Runs from it. Each Run sees only loopback, cannot dial
+out, runs as non-root, and has a stepped clock. The two restores report distinct
+kernel UUIDs and `os.urandom` output. Measured on this node: cold boot to
+ready 0.32–0.67 s, restore to ready 0.71–0.88 s. Restore copies the 256 MiB
+memory file onto ext4 here; production's XFS reflink path is the comparison
+still to take. The run found and fixed three boot blockers that had kept every
+Run from starting on real hardware:
+
+- networkless jails raced the cgroup fence and had no usable `/dev/kvm`;
+- Firecracker rejected `"network-interfaces": null`;
+- Run guests did not advertise the ADR-687 reseed capability, so restores were refused.
+
+Billing, receipt retention, storage-derived artifacts, snapshot capture
+and longer deadlines are in [ADR-986](adr/986-runs-billing-retention-snapshots-artifacts.md)
+and [ADR-996](adr/996-longer-run-deadlines.md). Runs stay disabled in production
+until `faas_runs_enabled` is set.
+
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
 [ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider

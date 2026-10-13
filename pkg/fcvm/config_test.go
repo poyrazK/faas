@@ -45,6 +45,15 @@ func TestColdBootConfigNetworklessOmitsInterfaces(t *testing.T) {
 	if len(cfg.NetworkInterfaces) != 0 {
 		t.Fatalf("networkless config interfaces = %#v, want none", cfg.NetworkInterfaces)
 	}
+	// Firecracker rejects "network-interfaces": null when it parses the config
+	// file; the networkless config must carry an empty sequence.
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal networkless config: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"network-interfaces":[]`) {
+		t.Fatalf("networkless config JSON = %s, want an empty network-interfaces sequence", encoded)
+	}
 	if cfg.VsockDevice == nil {
 		t.Fatal("networkless execution config must retain vsock")
 	}

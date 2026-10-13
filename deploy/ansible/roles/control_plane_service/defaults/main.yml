@@ -1,5 +1,8 @@
 ---
 faas_dev_bridge_enabled: false
+# Disposable Runs: one switch for apid admission and schedd dispatch.
+faas_runs_enabled: false
+faas_runs_dispatch_concurrency: 1
 faas_dev_bridge_gateway_url: http://127.0.0.1:8080
 faas_dev_bridge_database_url: postgres:///faas?host=/run/postgresql&user=faas
 # Managed meterd configuration is enabled by the manifest-generated

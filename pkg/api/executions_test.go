@@ -13,7 +13,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanHobby: {
 			Allowed: true, MaxConcurrent: 1, MaxSourceBytes: 64 << 10, MaxInputBytes: 64 << 10,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 1 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 10_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 60_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 256,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 512, PIDsMax: 64,
@@ -21,7 +21,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanPro: {
 			Allowed: true, MaxConcurrent: 5, MaxSourceBytes: 256 << 10, MaxInputBytes: 256 << 10,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 4 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 30_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 300_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 512,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 1024, PIDsMax: 64,
@@ -29,7 +29,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanScale: {
 			Allowed: true, MaxConcurrent: 20, MaxSourceBytes: 1 << 20, MaxInputBytes: 1 << 20,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 16 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 30_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 900_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 1024,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 2048, PIDsMax: 64,
@@ -254,7 +254,7 @@ func TestCreateExecutionRequestResolveRejectsInvalidRequests(t *testing.T) {
 		}(), wantCode: CodeExecutionNetworkInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "negative", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: -1}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "timeout minimum", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 99}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
-		{name: "timeout plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 10_001}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
+		{name: "timeout plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 60_001}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
 		{name: "memory shape", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: 192}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "memory plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: 512}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
 		{name: "cpu shape", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{CPUMillicores: 750}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},

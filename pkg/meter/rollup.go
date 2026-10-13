@@ -65,6 +65,8 @@ type RollupObserver interface {
 // usage_daily. Mirrors the column set declared in
 // migrations/00067_extend_metering_telemetry.sql plus the job identity
 // widening in migrations/20260917131722793_usage_daily_job_meter_kind.sql.
+// Disposable Runs (meter_kind 'run') have neither app nor job, so they roll up
+// into one row per account and day keyed by the account ID.
 // The on-conflict
 // clause uses OVERWRITE (col = EXCLUDED.col) — re-running for the
 // same window converges to the same day total, which is the right
@@ -80,7 +82,7 @@ INSERT INTO public.usage_daily (
 )
 SELECT
     account_id,
-    COALESCE(app_id, job_id) AS app_id,
+    COALESCE(app_id, job_id, account_id) AS app_id,
     meter_kind,
     CASE WHEN meter_kind = 'job' THEN job_id ELSE NULL END AS job_id,
     date_trunc('day', minute AT TIME ZONE 'UTC')::date AS day,

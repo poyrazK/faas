@@ -205,6 +205,10 @@ type runDeps struct {
 	// executionArtifacts resolves platform-owned runtime release metadata.
 	// It is consulted only when FAAS_EXECUTION_DISPATCH=1.
 	executionArtifacts func(context.Context, api.ExecutionRuntime, api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error)
+	// executionArtifactsFromStorage derives the artifacts from the staged
+	// kernel, base digest sidecars, and execution layers instead of
+	// executionArtifacts; explicit FAAS_EXECUTION_<RUNTIME>_* env still wins.
+	executionArtifactsFromStorage bool
 	// executionPayloadDecoder is the authenticated host-side payload decoder.
 	// Production must inject it before enabling execution; nil is fail-closed.
 	executionPayloadDecoder any
@@ -221,8 +225,9 @@ func defaultDeps() runDeps {
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
 		},
-		listen:             wire.ListenAs,
-		executionArtifacts: executionRuntimeArtifactsFromEnv,
+		listen:                        wire.ListenAs,
+		executionArtifacts:            executionRuntimeArtifactsFromEnv,
+		executionArtifactsFromStorage: true,
 		// Production wires db.Subscribe. Tests inject a fake channel
 		// so the subscriber's Park path is exercised end-to-end
 		// without standing up Postgres.
@@ -2140,6 +2145,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fail-closed until a storage-backed verifier is supplied, so an indexed
 	// entry without verification becomes a same-identity cold boot.
 	var executionCoordinator *sched.ExecutionCoordinator
+	var runtimeSnapshotCapturer *sched.RuntimeSnapshotCapturer
 	if executionEnabled {
 		executionNodeID := ownerNodeID
 		if executionNodeID == "" && len(nodes) == 1 {
@@ -2148,14 +2154,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(executionNodeID) == "" {
 			return errors.New("schedd: execution dispatch enabled but no compute node is available")
 		}
-		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(storageBackend)
+		// Catalog entries are immutable, so a verified pair is not re-hashed on
+		// every claim.
+		catalogVerifier := sched.NewCachingRuntimeSnapshotVerifier(sched.NewStorageRuntimeSnapshotVerifier(storageBackend))
 		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), catalogVerifier)
+		// A catalog miss cold-boots the Run and queues a payload-free capture
+		// so later Runs of the same machine restore from a snapshot.
+		runtimeSnapshotCapturer = sched.NewRuntimeSnapshotCapturer(vmmRouter, sched.NewRuntimeSnapshotPublisher(store, storageBackend), log)
 		resolver := sched.NewExecutionClaimResolver(
 			store,
 			catalog,
-			sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts),
+			executionArtifactsResolver(deps, storageBackend, fcVersion),
 			executionNodeID,
-		)
+		).WithSnapshotCapturer(runtimeSnapshotCapturer)
 		decoder, ok := deps.executionPayloadDecoder.(sched.ExecutionPayloadDecoderV2)
 		if !ok || decoder == nil {
 			return errors.New("schedd: execution payload decoder is not bundle-capable")
@@ -2224,6 +2235,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go func() {
 			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("schedd: execution coordinator exited", "err", err)
+			}
+		}()
+		go runtimeSnapshotCapturer.Run(ctx)
+	} else {
+		// Dispatch is off, but receipts from an earlier enabled period must
+		// still expire (api.ExecutionReceiptRetention).
+		retention := sched.NewExecutionCoordinator(store, nil, sched.ExecutionCoordinatorConfig{}, log)
+		go func() {
+			if err := retention.RunRetention(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: execution receipt retention exited", "err", err)
 			}
 		}()
 	}

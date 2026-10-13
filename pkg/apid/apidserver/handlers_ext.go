@@ -4775,6 +4775,7 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 	for _, u := range rows {
 		out = append(out, api.UsageResponse{
 			AppID:           u.AppID,
+			Kind:            u.MeterKind,
 			MBSeconds:       u.MBSeconds,
 			Requests:        u.Requests,
 			IncludedGBHours: int64(limits.IncludedGBHours),
@@ -6813,6 +6814,7 @@ func (s *server) usageDaily(w http.ResponseWriter, r *http.Request, acct state.A
 	for _, u := range rows {
 		resp.Items = append(resp.Items, api.DailyUsageResponse{
 			AppID:          u.AppID,
+			Kind:           u.MeterKind,
 			Day:            u.Day.UTC().Format("2006-01-02"),
 			MBSeconds:      u.MBSeconds,
 			Requests:       u.Requests,

@@ -602,6 +602,85 @@ func (m *MemStore) recordExecutionUsageLocked(row Execution) {
 		FinishedAt:   derefTime(row.FinishedAt),
 		CreatedAt:    row.CreatedAt,
 	}
+	m.recordExecutionComputeUsageLocked(row)
+}
+
+// recordExecutionComputeUsageLocked mirrors ExecutionComputeUsageRecord: a
+// Run that reached running is billed (memory + overhead) MB for each started
+// second, as one usage minute keyed by the execution ID.
+func (m *MemStore) recordExecutionComputeUsageLocked(row Execution) {
+	if row.StartedAt == nil || row.FinishedAt == nil {
+		return
+	}
+	minute := row.FinishedAt.UTC().Truncate(time.Minute)
+	for _, existing := range m.usage {
+		if existing.InstanceID == row.ID && existing.Minute.Equal(minute) {
+			return
+		}
+	}
+	m.usage = append(m.usage, usageMinute{
+		AccountID: row.AccountID, AppID: row.AccountID, MeterKind: "run",
+		InstanceID: row.ID, Minute: minute,
+		MBSeconds: int64(row.Limits.MemoryMB+api.PerVMOverheadMB) * executionBilledSeconds(*row.StartedAt, *row.FinishedAt),
+		CPUUsec:   row.Usage.CPUTimeMS * 1000,
+	})
+	m.recomputeMonthLocked(row.AccountID, row.AccountID, minute)
+	m.retainFinancialUsageLocked(usageMinute{}, m.usage[len(m.usage)-1])
+}
+
+// executionBilledSeconds rounds running time up to whole seconds, minimum one.
+func executionBilledSeconds(startedAt, finishedAt time.Time) int64 {
+	elapsed := finishedAt.Sub(startedAt)
+	seconds := int64(elapsed / time.Second)
+	if elapsed%time.Second != 0 {
+		seconds++
+	}
+	return max(seconds, 1)
+}
+
+// PurgeExpiredExecutions mirrors the PgStore receipt-retention delete,
+// including its cascades and its ledger/active-workflow guards.
+func (m *MemStore) PurgeExpiredExecutions(_ context.Context, finishedBefore time.Time, limit int) (int, error) {
+	if finishedBefore.IsZero() {
+		return 0, ErrExecutionInvalid
+	}
+	limit = min(max(limit, 1), 1000)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := executionCandidateIDs(m.executions, limit, func(row Execution) (time.Time, bool) {
+		if !row.Status.Terminal() || row.FinishedAt == nil || !row.FinishedAt.Before(finishedBefore) {
+			return time.Time{}, false
+		}
+		if _, recorded := m.executionUsageLedger[row.ID]; !recorded {
+			return time.Time{}, false
+		}
+		return *row.FinishedAt, !m.executionWorkflowActiveLocked(row.AccountID, row.WorkflowID)
+	})
+	for _, id := range ids {
+		delete(m.executions, id)
+		delete(m.executionPayloads, id)
+		delete(m.executionEvents, id)
+		delete(m.executionOutboundIntegrationIDs, id)
+		for grantID, grant := range m.executionArtifactGrants {
+			if grant.SourceExecutionID == id {
+				delete(m.executionArtifactGrants, grantID)
+			}
+		}
+	}
+	return len(ids), nil
+}
+
+func (m *MemStore) executionWorkflowActiveLocked(accountID, workflowID string) bool {
+	if workflowID == "" {
+		return false
+	}
+	for _, job := range m.executionWorkflowJobs {
+		if job.AccountID == accountID && job.WorkflowID == workflowID &&
+			(job.Status == api.ManagedExecutionWorkflowQueued || job.Status == api.ManagedExecutionWorkflowRunning) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecutionUsageByAccount returns a month-scoped aggregate over the durable

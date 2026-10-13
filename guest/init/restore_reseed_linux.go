@@ -65,9 +65,9 @@ func reseedRestoredWorkloads() error {
 // restoreReseedContractHolds reports whether this guest may advertise the
 // ADR-687 capability after a successful resume. An app guest holds it only
 // when its barrier started (otherwise its Node and Python processes carry
-// no preload). A warm builder holds it trivially: it runs no workload
-// process across the snapshot, and each build's processes start after the
-// restore with fresh state.
+// no preload). A warm builder and a disposable Run guest hold it trivially:
+// neither runs a workload process across the snapshot, and each build's or
+// Run's processes start after the restore with fresh state.
 func restoreReseedContractHolds() bool {
-	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load()
+	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || executionGuestEnabled.Load()
 }

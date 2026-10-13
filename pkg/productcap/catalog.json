@@ -159,7 +159,7 @@
       ],
       "docs_url": "https://gregale.dev/docs/executions",
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+      "acceptance_test": "pkg/fcvm/execution_runs_metal_test.go::TestMetalDisposableRunsColdRestoreAndIsolation"
     },
     {
       "id": "durable-inbound-webhooks",

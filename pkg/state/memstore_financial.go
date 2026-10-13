@@ -86,6 +86,9 @@ func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
 		a.AppID = ""
 		a.JobID = current.JobID
 		a.Name = m.jobs[current.JobID].Name
+	} else if current.MeterKind == "run" {
+		a.AppID = ""
+		a.Name = "runs"
 	} else {
 		app := m.apps[current.AppID]
 		a.Name = app.Slug

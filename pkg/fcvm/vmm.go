@@ -1073,6 +1073,10 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		if _, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
+	} else if l.Networkless {
+		if err = v.prepareNetworklessJail(ctx, root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
 	}
 	boundTunAt := time.Now()
 	var coldBootCPU startupCPUProfile
@@ -2036,6 +2040,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		if tunTimings, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
+	} else if err = v.prepareNetworklessJail(ctx, root, l.Instance, l.UID, l.GID); err != nil {
+		return err
 	}
 	tTunReady := time.Now()
 	var restoreCPU startupCPUProfile
@@ -5811,29 +5817,18 @@ func (v *JailerVMM) bindTunDeviceInJailerForOwner(ctx context.Context, owner nat
 	return v.bindTunDeviceInJailerLegacy(ctx, root, instance, uid, gid)
 }
 
-func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
-	var timings bindTunTimings
-	if instance == "" {
-		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
-	}
-	const source = "/dev/net/tun"
-	fi, err := os.Stat(source)
-	if err != nil {
-		return timings, fmt.Errorf("vmm: stat TUN device: %w", err)
-	}
-	if fi.Mode()&os.ModeCharDevice == 0 {
-		return timings, fmt.Errorf("vmm: TUN path %s is not a character device", source)
-	}
-	if fi.Mode().Perm()&0o006 != 0o006 {
-		return timings, fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
-	}
+// awaitJailerChroot waits until the jailer has entered its private mount
+// namespace and finished the chroot (the mount helper and /dev are visible
+// through /proc/<pid>/root). Jailer creates the per-instance cgroup before
+// either, so returning also orders the pre-boot cgroup fence after it.
+func (v *JailerVMM) awaitJailerChroot(ctx context.Context, instance string, timings *bindTunTimings) (int, error) {
 	pid, ok := v.InstancePID(instance)
 	if !ok {
-		return timings, fmt.Errorf("vmm: bind TUN device: jailer process is not alive")
+		return 0, fmt.Errorf("vmm: bind TUN device: jailer process is not alive")
 	}
 	selfNS, err := os.Readlink("/proc/self/ns/mnt")
 	if err != nil {
-		return timings, fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
+		return 0, fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
 	}
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
@@ -5845,9 +5840,9 @@ func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, insta
 		}
 		select {
 		case <-ctx.Done():
-			return timings, ctx.Err()
+			return 0, ctx.Err()
 		case <-deadline.C:
-			return timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
+			return 0, fmt.Errorf("vmm: jailer did not create a private mount namespace")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
@@ -5868,13 +5863,61 @@ func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, insta
 		}
 		select {
 		case <-ctx.Done():
-			return timings, ctx.Err()
+			return 0, ctx.Err()
 		case <-deadline.C:
-			return timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
+			return 0, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
 	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
+	return pid, nil
+}
+
+// prepareNetworklessJail gives a networkless execution jail a device-capable
+// /dev holding only /dev/kvm. Jailer creates /dev on the chroot's nodev
+// filesystem, and the TUN setup that replaces it for networked VMs does not
+// run for a guest without a network interface, so without this Firecracker
+// cannot open /dev/kvm. Waiting for the chroot also orders the cgroup fence
+// after jailer has created the per-instance scope.
+func (v *JailerVMM) prepareNetworklessJail(ctx context.Context, root, instance string, uid, gid int) error {
+	if instance == "" {
+		return fmt.Errorf("vmm: prepare networkless jail: empty instance")
+	}
+	if v.nativeRecovery != nil {
+		return errors.New("vmm: networkless execution VMs are not supported with native process recovery yet")
+	}
+	var timings bindTunTimings
+	pid, err := v.awaitJailerChroot(ctx, instance, &timings)
+	if err != nil {
+		return err
+	}
+	if out, err := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail-kvm", "/dev", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); err != nil {
+		return fmt.Errorf("vmm: prepare networkless jail devices: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	_ = os.Remove(filepath.Join(root, "faas-mount-helper"))
+	return nil
+}
+
+func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
+	var timings bindTunTimings
+	if instance == "" {
+		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
+	}
+	const source = "/dev/net/tun"
+	fi, err := os.Stat(source)
+	if err != nil {
+		return timings, fmt.Errorf("vmm: stat TUN device: %w", err)
+	}
+	if fi.Mode()&os.ModeCharDevice == 0 {
+		return timings, fmt.Errorf("vmm: TUN path %s is not a character device", source)
+	}
+	if fi.Mode().Perm()&0o006 != 0o006 {
+		return timings, fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
+	}
+	pid, err := v.awaitJailerChroot(ctx, instance, &timings)
+	if err != nil {
+		return timings, err
+	}
 	tSetupJailStart := time.Now()
 	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
 	if setupOut, err := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); err != nil {

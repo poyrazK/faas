@@ -918,6 +918,11 @@ type Querier interface {
 	ExclusiveWorkTenantScope(ctx context.Context, db DBTX, arg ExclusiveWorkTenantScopeParams) (ExclusiveWorkTenantScopeRow, error)
 	ExecutionClaimNext(ctx context.Context, db DBTX, arg ExecutionClaimNextParams) (Execution, error)
 	ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg ExecutionClaimNextForAccountParams) (Execution, error)
+	// Billable Run compute: (admitted memory + per-VM overhead) MB for every
+	// started second between running and terminal, host-observed. A Run that
+	// never reached running (restore failure, queued cancel) is not charged.
+	// The execution ID is the usage instance ID, so retries cannot double-count.
+	ExecutionComputeUsageRecord(ctx context.Context, db DBTX, arg ExecutionComputeUsageRecordParams) error
 	ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	ExecutionExpireQueued(ctx context.Context, db DBTX, arg ExecutionExpireQueuedParams) ([]Execution, error)
 	ExecutionFinishExpiredRestores(ctx context.Context, db DBTX, arg ExecutionFinishExpiredRestoresParams) ([]Execution, error)
@@ -940,6 +945,11 @@ type Querier interface {
 	ExecutionPayloadForLease(ctx context.Context, db DBTX, arg ExecutionPayloadForLeaseParams) (ExecutionPayload, error)
 	ExecutionPayloadInsert(ctx context.Context, db DBTX, arg ExecutionPayloadInsertParams) error
 	ExecutionPinRuntime(ctx context.Context, db DBTX, arg ExecutionPinRuntimeParams) (Execution, error)
+	// Receipt retention. Deleting the execution cascades to its payload, replay
+	// events, integration grants, and artifact grants; the usage ledger has no
+	// FK to executions and is kept. A receipt is deleted only after its usage is
+	// recorded, and never while its managed workflow can still read it.
+	ExecutionPurgeExpiredReceipts(ctx context.Context, db DBTX, arg ExecutionPurgeExpiredReceiptsParams) (int64, error)
 	ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error)
 	ExecutionQueueStats(ctx context.Context, db DBTX, at pgtype.Timestamptz) (ExecutionQueueStatsRow, error)
 	ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error)

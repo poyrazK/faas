@@ -73,24 +73,30 @@ func TestResumeCapabilityAdvertisement(t *testing.T) {
 		name        string
 		barrier     bool
 		warmBuilder bool
+		execution   bool
 		want        bool
 	}{
 		{name: "app guest with barrier", barrier: true, want: true},
 		{name: "app guest whose barrier never started", want: false},
 		{name: "warm builder", warmBuilder: true, want: true},
+		// adr: 986 — a Run guest starts its interpreter after the restore.
+		{name: "disposable Run guest", execution: true, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			origBuilder := warmBuilderEnabled.Load()
+			origExecution := executionGuestEnabled.Load()
 			t.Cleanup(func() {
 				activeRestoreReseedBarrier.Store(nil)
 				warmBuilderEnabled.Store(origBuilder)
+				executionGuestEnabled.Store(origExecution)
 			})
 			activeRestoreReseedBarrier.Store(nil)
 			if tc.barrier {
 				activeRestoreReseedBarrier.Store(newRestoreReseedBarrier(nil))
 			}
 			warmBuilderEnabled.Store(tc.warmBuilder)
+			executionGuestEnabled.Store(tc.execution)
 			if got := restoreReseedContractHolds(); got != tc.want {
 				t.Fatalf("restoreReseedContractHolds() = %v, want %v", got, tc.want)
 			}

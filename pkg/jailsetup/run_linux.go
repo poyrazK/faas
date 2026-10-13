@@ -86,6 +86,36 @@ func Run(args []string) bool {
 		}
 		fmt.Printf("%s%d\n", SetupJailTimingPrefix, time.Since(started).Microseconds())
 		return true
+	case "--setup-jail-kvm":
+		// Networkless execution jails (ADR-171) get a device-capable /dev
+		// holding only /dev/kvm: no TUN node, because the guest has no network
+		// interface and Firecracker runs outside any tenant netns.
+		started := time.Now()
+		if len(args) != 6 {
+			fmt.Fprintln(os.Stderr, "vmmd: --setup-jail-kvm requires devTarget kvmPath uid gid")
+			os.Exit(2)
+		}
+		devTarget, kvmPath := args[2], args[3]
+		uid, uidErr := strconv.Atoi(args[4])
+		gid, gidErr := strconv.Atoi(args[5])
+		if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
+			fmt.Fprintln(os.Stderr, "vmmd: --setup-jail-kvm uid/gid must be non-negative integers")
+			os.Exit(2)
+		}
+		if err := syscall.Mount("tmpfs", devTarget, "tmpfs", 0, "mode=0755"); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: mount device tmpfs: %v\n", err)
+			os.Exit(1)
+		}
+		if err := unix.Mknod(kvmPath, unix.S_IFCHR|0660, int(unix.Mkdev(10, 232))); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: mknod kvm: %v\n", err)
+			os.Exit(1)
+		}
+		if err := unix.Chown(kvmPath, uid, gid); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: chown kvm: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s%d\n", SetupJailTimingPrefix, time.Since(started).Microseconds())
+		return true
 	case "--mount-dev":
 		if len(args) != 3 {
 			fmt.Fprintln(os.Stderr, "vmmd: --mount-dev requires a target")

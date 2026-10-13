@@ -6,6 +6,9 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.daily_usage_response_kind import DailyUsageResponseKind, check_daily_usage_response_kind
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="DailyUsageResponse")
 
 
@@ -34,6 +37,8 @@ class DailyUsageResponse:
     """Per-day WAKE_RESTORE→WAKE_COLD_BOOT transition count (informational; not billed). ADR-048."""
     builder_seconds: int
     """Builder VM seconds burned by this app on this day (informational; not billed). ADR-048."""
+    kind: DailyUsageResponseKind | Unset = UNSET
+    """Workload meter. All disposable Runs of an account share one row per day whose app_id is the account ID."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +62,10 @@ class DailyUsageResponse:
 
         builder_seconds = self.builder_seconds
 
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +82,8 @@ class DailyUsageResponse:
                 "builder_seconds": builder_seconds,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
 
         return field_dict
 
@@ -99,6 +110,13 @@ class DailyUsageResponse:
 
         builder_seconds = d.pop("builder_seconds")
 
+        _kind = d.pop("kind", UNSET)
+        kind: DailyUsageResponseKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_daily_usage_response_kind(_kind)
+
         daily_usage_response = cls(
             app_id=app_id,
             day=day,
@@ -110,6 +128,7 @@ class DailyUsageResponse:
             net_rx_bytes=net_rx_bytes,
             cold_boots=cold_boots,
             builder_seconds=builder_seconds,
+            kind=kind,
         )
 
         daily_usage_response.additional_properties = d

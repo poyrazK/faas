@@ -433,7 +433,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
 	if s.Networkless {
-		network = nil
+		// Firecracker's config-file parser requires a sequence here; a nil
+		// slice marshals as null and FC refuses to build the microVM.
+		network = []NetIface{}
 	}
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {

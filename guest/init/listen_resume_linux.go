@@ -100,6 +100,11 @@ type extensionHookRequest struct {
 // builder's wait loop.
 var warmBuilderResume = make(chan struct{}, 1)
 var warmBuilderEnabled atomic.Bool
+
+// executionGuestEnabled marks a disposable Run guest (ADR-171, ADR-986). Like a
+// warm builder, it runs no workload process across a runtime snapshot: the
+// interpreter for each Run starts after the restore, from fresh state.
+var executionGuestEnabled atomic.Bool
 var beforeCheckpoint atomic.Pointer[beforeCheckpointRuntime]
 
 func enableWarmBuilderResume() {

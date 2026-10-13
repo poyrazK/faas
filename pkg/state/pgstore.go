@@ -20897,7 +20897,8 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 	// so the API surface stays byte-stable for callers that format
 	// the value. (memory: pkg-state-usage-monthly-tz-compare)
 	rows, err := s.pool.Query(ctx,
-		`select account_id, coalesce(app_id, job_id) as app_id,
+		`select account_id, coalesce(app_id, job_id, account_id) as app_id,
+		        max(meter_kind) as meter_kind,
 		        $2::timestamptz as month,
 		        sum(mb_seconds)::bigint     as mb_seconds,
 		        sum(cpu_usec)::bigint       as cpu_usec,
@@ -20910,8 +20911,8 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 		  where account_id = $1
 		    and minute >= $2
 		    and minute <  $3
-		  group by account_id, coalesce(app_id, job_id)
-		  order by coalesce(app_id, job_id)`,
+		  group by account_id, coalesce(app_id, job_id, account_id)
+		  order by coalesce(app_id, job_id, account_id)`,
 		accountID, monthStart, monthEnd)
 	if err != nil {
 		return nil, err
@@ -20920,7 +20921,7 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 	var out []Usage
 	for rows.Next() {
 		u := Usage{}
-		if err := rows.Scan(&u.AccountID, &u.AppID, &u.Month, &u.MBSeconds, &u.CPUUsec, &u.Requests, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount); err != nil {
+		if err := rows.Scan(&u.AccountID, &u.AppID, &u.MeterKind, &u.Month, &u.MBSeconds, &u.CPUUsec, &u.Requests, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -21748,7 +21749,7 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 // per-hour egress dashboards feed off this without a re-roll.
 func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, coalesce(app_id, job_id) as app_id,
+		`select account_id, coalesce(app_id, job_id, account_id) as app_id,
 		        date_trunc('hour', minute AT TIME ZONE 'UTC') as hour,
 		        sum(mb_seconds)::bigint      as mb_seconds,
 		        sum(cpu_usec)::bigint        as cpu_usec,
@@ -21759,8 +21760,8 @@ func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end 
 		        sum(cold_boot_count)::bigint as cold_boot_count
 		 from usage_minutes
 		 where account_id = $1 and minute >= $2 and minute < $3
-		 group by account_id, coalesce(app_id, job_id), hour
-		 order by coalesce(app_id, job_id)`,
+		 group by account_id, coalesce(app_id, job_id, account_id), hour
+		 order by coalesce(app_id, job_id, account_id)`,
 		accountID, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
@@ -21954,7 +21955,7 @@ func (s *PgStore) RecordBillingMeterUsageDelivery(ctx context.Context, provider,
 // specifically so the cron cadence is observable.
 func (s *PgStore) UsageDaily(ctx context.Context, accountID string, day time.Time) ([]DailyUsage, error) {
 	rows, err := s.pool.Query(ctx,
-		`select app_id, day, mb_seconds, requests, cpu_usec,
+		`select app_id, meter_kind, day, mb_seconds, requests, cpu_usec,
 		        tx_bytes, net_tx_bytes, net_rx_bytes,
 		        cold_boot_count, builder_seconds, tail_seconds
 		   from usage_daily
@@ -21969,7 +21970,7 @@ func (s *PgStore) UsageDaily(ctx context.Context, accountID string, day time.Tim
 	var out []DailyUsage
 	for rows.Next() {
 		u := DailyUsage{AccountID: accountID}
-		if err := rows.Scan(&u.AppID, &u.Day, &u.MBSeconds, &u.Requests, &u.CPUUsec, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount, &u.BuilderSeconds, &u.TailSeconds); err != nil {
+		if err := rows.Scan(&u.AppID, &u.MeterKind, &u.Day, &u.MBSeconds, &u.Requests, &u.CPUUsec, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount, &u.BuilderSeconds, &u.TailSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -21983,7 +21984,7 @@ func (s *PgStore) UsageDaily(ctx context.Context, accountID string, day time.Tim
 // never loses the boundary day. ADR-048 / issue #308.
 func (s *PgStore) UsageDailyForAccount(ctx context.Context, accountID string) ([]DailyUsage, error) {
 	rows, err := s.pool.Query(ctx,
-		`select app_id, day, mb_seconds, requests, cpu_usec,
+		`select app_id, meter_kind, day, mb_seconds, requests, cpu_usec,
 		        tx_bytes, net_tx_bytes, net_rx_bytes,
 		        cold_boot_count, builder_seconds, tail_seconds
 		   from usage_daily
@@ -21999,7 +22000,7 @@ func (s *PgStore) UsageDailyForAccount(ctx context.Context, accountID string) ([
 	var out []DailyUsage
 	for rows.Next() {
 		u := DailyUsage{AccountID: accountID}
-		if err := rows.Scan(&u.AppID, &u.Day, &u.MBSeconds, &u.Requests, &u.CPUUsec, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount, &u.BuilderSeconds, &u.TailSeconds); err != nil {
+		if err := rows.Scan(&u.AppID, &u.MeterKind, &u.Day, &u.MBSeconds, &u.Requests, &u.CPUUsec, &u.TXBytes, &u.NetTxBytes, &u.NetRxBytes, &u.ColdBootCount, &u.BuilderSeconds, &u.TailSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -26817,20 +26818,20 @@ func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since ti
 	var err error
 	if since.IsZero() {
 		rows, err = s.pool.Query(ctx,
-			`select account_id, coalesce(app_id, job_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
+			`select account_id, coalesce(app_id, job_id, account_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
 			        sum(mb_seconds)::bigint, sum(requests)::bigint
 			 from usage_minutes
 			 where account_id = $1
-			 group by account_id, coalesce(app_id, job_id), month
-			 order by coalesce(app_id, job_id), month`, accountID)
+			 group by account_id, coalesce(app_id, job_id, account_id), month
+			 order by coalesce(app_id, job_id, account_id), month`, accountID)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`select account_id, coalesce(app_id, job_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
+			`select account_id, coalesce(app_id, job_id, account_id) as app_id, date_trunc('month', minute AT TIME ZONE 'UTC') as month,
 			        sum(mb_seconds)::bigint, sum(requests)::bigint
 			 from usage_minutes
 			 where account_id = $1 and minute >= $2
-			 group by account_id, coalesce(app_id, job_id), month
-			 order by coalesce(app_id, job_id), month`, accountID, since.UTC())
+			 group by account_id, coalesce(app_id, job_id, account_id), month
+			 order by coalesce(app_id, job_id, account_id), month`, accountID, since.UTC())
 	}
 	if err != nil {
 		return nil, err

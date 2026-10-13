@@ -5820,7 +5820,12 @@ const AuditLogKindAccountDeleted = "account.deleted"
 // production; for tests we seed rows directly.
 type Usage struct {
 	AccountID string
-	AppID     string
+	// AppID is the workload key: the app ID, the job ID, or for disposable
+	// Runs the account ID (all of an account's Runs share one row).
+	AppID string
+	// MeterKind is "app", "job", or "run". UsageByMonth fills it; other
+	// readers may leave it empty.
+	MeterKind string
 	Month     time.Time // truncated to month
 	MBSeconds int64
 	// CPUUsec is the cumulative host cgroup CPU-µs consumed by
@@ -5893,8 +5898,11 @@ type BillingMeterWindow struct {
 // Day is a UTC midnight date; PK is (account_id, app_id, day).
 // Informational — not billed.
 type DailyUsage struct {
-	AccountID      string
-	AppID          string
+	AccountID string
+	AppID     string
+	// MeterKind is "app", "job", or "run" (one Runs row per account and day,
+	// keyed by the account ID).
+	MeterKind      string
 	Day            time.Time
 	MBSeconds      int64
 	Requests       int64

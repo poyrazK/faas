@@ -269,6 +269,30 @@ func JobLayerAttemptKey(jobID, artifactID string) string {
 	return "jobs/" + jobID + "__" + artifactID + ".ext4"
 }
 
+// ExecutionLayerKeyForArch returns the storage key of the payload-free drive1
+// layer for disposable Runs of one dependency profile. The layer carries only
+// the platform marker /etc/faas/execution.json under upper/; imaged stages it
+// and schedd's artifact resolver selects it.
+func ExecutionLayerKeyForArch(profile, arch string) string {
+	return "execution/layer-v1-" + profile + "-" + arch + ".ext4"
+}
+
+// ExecutionLayerDigestKeyForArch is the sidecar recording the marker digest
+// the layer at ExecutionLayerKeyForArch was built from.
+func ExecutionLayerDigestKeyForArch(profile, arch string) string {
+	return ExecutionLayerKeyForArch(profile, arch) + ".digest"
+}
+
+// ExecutionBaseRuntimeForProfile returns the base-image runtime key for a
+// Run: a dependency profile has its own base, the standard profile uses the
+// runtime's ordinary runner base.
+func ExecutionBaseRuntimeForProfile(runtime, profile string) string {
+	if profile == "" || profile == "standard" {
+		return runtime
+	}
+	return profile
+}
+
 // KernelKey returns the storage key for a firecracker kernel artifact
 // pinned to a firecracker version. vmmd fetches this on first boot of
 // the version.

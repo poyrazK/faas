@@ -1,6 +1,6 @@
 # ADR-171 · Disposable one-shot executions from sanitized runtime snapshots
 
-- **Status:** proposed
+- **Status:** accepted — billing and retention settled, and runtime snapshot capture added, by [ADR-986](986-runs-billing-retention-snapshots-artifacts.md)
 - **Date:** 2026-09-09
 - **Decision:** Add a first-class `execution` resource for authenticated, caller-supplied Node.js or Python source. `POST /v1/executions` admits a closed request envelope (`runtime`, single-file `source`, JSON `input`, resource `limits`, and `network.mode=none`), persists encrypted execution intent, and returns a durable execution id. The caller may wait for a terminal response or poll `GET /v1/executions/{id}`; disconnecting does not extend or cancel the admitted deadline. `DELETE /v1/executions/{id}` requests cancellation. The public routes remain disabled until the restore-execute-destroy path and metal isolation suite land.
 - **Language contract:** `node22` and `node24` source is an ES module whose default export is `async function main(input, context)`. `python312` and `python313` source defines `def main(input, context)` (an `async def` is also accepted). `input` may be any JSON value and the return value must be JSON-serializable. The initial contract has no dependency install, tenant secrets, environment injection, or multi-file bundle. Go and other compiled languages require the existing builder isolation boundary and are deferred.

@@ -54732,6 +54732,11 @@ components:
       required: [app_id, day, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boots, builder_seconds]
       properties:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        kind:
+          type: string
+          enum: [app, job, run]
+          description: "Workload meter. All disposable Runs of an account share one row per day whose app_id is the account ID."
+          x-since: "2026-10"
         day: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', example: "2026-07-29" }
         mb_seconds:
           type: integer
@@ -73292,6 +73297,11 @@ components:
       required: [app_id, mb_seconds, requests, included_gb_hours]
       properties:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        kind:
+          type: string
+          enum: [app, job, run]
+          description: "Workload meter. All disposable Runs of an account share one row whose app_id is the account ID."
+          x-since: "2026-10"
         mb_seconds: { type: integer, format: int64 }
         requests: { type: integer, format: int64 }
         included_gb_hours: { type: integer, format: int64 }
@@ -76429,7 +76439,7 @@ components:
       type: object
       additionalProperties: false
       properties:
-        timeout_ms: { type: integer, minimum: 0, maximum: 30000, description: "Zero uses the plan default." }
+        timeout_ms: { type: integer, minimum: 0, maximum: 900000, description: "Admission-to-result deadline. Zero uses the plan default (5 s); plan maxima are 60 s (Hobby), 300 s (Pro) and 900 s (Scale)." }
         memory_mb: { type: integer, enum: [0, 128, 256, 512, 1024] }
         cpu_millicores: { type: integer, enum: [0, 250, 500, 1000] }
         ephemeral_disk_mb: { type: integer, enum: [0, 64, 128, 256, 512, 1024, 2048] }

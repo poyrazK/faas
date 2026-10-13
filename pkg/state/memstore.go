@@ -18919,7 +18919,7 @@ func (m *MemStore) UsageDaily(_ context.Context, accountID string, day time.Time
 		}
 		row := byApp[minute.AppID]
 		if row == nil {
-			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, Day: day}
+			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, MeterKind: minute.MeterKind, Day: day}
 			byApp[minute.AppID] = row
 		}
 		row.MBSeconds += minute.MBSeconds
@@ -18976,7 +18976,7 @@ func (m *MemStore) UsageDailyForAccount(_ context.Context, accountID string) ([]
 		key := minute.AppID + "\x00" + day.Format("2006-01-02")
 		row := byKey[key]
 		if row == nil {
-			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, Day: day}
+			row = &DailyUsage{AccountID: accountID, AppID: minute.AppID, MeterKind: minute.MeterKind, Day: day}
 			byKey[key] = row
 		}
 		row.MBSeconds += minute.MBSeconds
@@ -19413,6 +19413,7 @@ func (m *MemStore) recomputeMonthLocked(accountID, appID string, minute time.Tim
 	month := time.Date(minute.Year(), minute.Month(), 1, 0, 0, 0, 0, time.UTC)
 	var mbSec, req, cpuUsec, txBytes, netTxBytes, netRxBytes int64
 	var coldBoots int32
+	meterKind := ""
 	for _, u := range m.usage {
 		if u.AccountID != accountID || u.AppID != appID {
 			continue
@@ -19420,6 +19421,7 @@ func (m *MemStore) recomputeMonthLocked(accountID, appID string, minute time.Tim
 		if u.Minute.Year() != month.Year() || u.Minute.Month() != month.Month() {
 			continue
 		}
+		meterKind = u.MeterKind
 		mbSec += u.MBSeconds
 		req += u.Requests
 		cpuUsec += u.CPUUsec
@@ -19438,7 +19440,7 @@ func (m *MemStore) recomputeMonthLocked(accountID, appID string, minute time.Tim
 		}
 	}
 	m.usageByMonth = append(m.usageByMonth, Usage{
-		AccountID: accountID, AppID: appID, Month: month,
+		AccountID: accountID, AppID: appID, MeterKind: meterKind, Month: month,
 		MBSeconds: mbSec, Requests: req, CPUUsec: cpuUsec,
 		TXBytes: txBytes, NetTxBytes: netTxBytes,
 		NetRxBytes: netRxBytes, ColdBootCount: int64(coldBoots),
