@@ -18,6 +18,14 @@
     rule that only signed stop proof releases quota;
   - static stability of the data plane;
   - a zero-downtime contract for planned operations.
+
+  **Owner decisions (2026-10-13):**
+  - US East, where production runs today, is the first cell and the
+    directory's home. An EU cell follows after launch.
+  - etcd is co-located on the control nodes.
+  - Major Postgres upgrades use logical blue/green.
+  - Order: single-region HA first; the regional branch lands dark in
+    parallel; multi-region is activated after launch.
 - **Why:** owner goal for public release (2026-10-13): partition tolerance,
   zero downtime and acceptable scaling across regions and zones, with
   Postgres run by us. Today a single host (fsn-1) holds every
@@ -225,9 +233,18 @@ specifies what runs inside it:
   - It requires healthy hosts in at least two zones.
 
 **The directory is HA too.**
-- It runs as a three-zone deployment of the same shape in a home region:
-  Patroni + etcd, N directory apid replicas, and a `standby_cluster` in a
-  second region.
+- Its home region is US East. It runs as a three-zone deployment of the
+  same shape: Patroni + etcd, N directory apid replicas, and a
+  `standby_cluster` in the US DR region.
+- **Initial placement.** The directory may start as a separate, unbound
+  database on the US East cell's Patroni cluster, which the branch's
+  identity checks allow.
+  - **Gain:** saves three nodes.
+  - **Cost:** losing the US East cluster then also stops directory writes
+    and global-ingress refresh. The EU cell's regional apps keep serving
+    (730).
+  - The directory moves to its own cluster before an EU cell serves
+    global apps.
 - Its singleton workers run under §4 leases: the ingress publication
   journal (786), the quota delivery worker (772/775) and provisioning
   reconciliation (797).
@@ -258,6 +275,12 @@ two reasons:
 - Each cell's Patroni cluster streams asynchronously to a
   `standby_cluster` in a paired region, and pgBackRest keeps a second
   repository there.
+- **Pairing:**
+  - US East pairs with a second US region, so US data stays in the US.
+    This is an assumption the owner should confirm.
+  - The EU cell pairs with a second EU region, so EU data stays in the EU.
+- A standby cluster can start as a single node and grows to three when
+  promoted.
 - Snapshots are a cache and cold boot always works (ADR-005). To evacuate
   a region: promote the standby cluster, re-point the cell's edge pool,
   and let apps cold-boot.
@@ -268,6 +291,15 @@ two reasons:
 
 - **Members:** three Postgres 16 members, one per zone, managed by
   Patroni. etcd is the configuration store, one member per zone.
+- **etcd placement** (owner decision): one member on each control node,
+  next to its Postgres member.
+  - etcd gets its own disk or partition and I/O priority above Postgres,
+    so a slow Postgres fsync cannot delay etcd heartbeats and cause
+    needless failovers.
+  - Losing a control node loses one Postgres member and one etcd member
+    together; quorum survives at 2 of 3.
+  - etcd fsync latency is alerted on. If it alerts, or a cell grows past
+    20 compute nodes, etcd moves to dedicated nodes in a follow-up.
 - **Settings:** `synchronous_mode: true` and `synchronous_node_count: 1`,
   so losing any one member or zone loses no committed data.
   `use_pg_rewind: true`. The Linux softdog watchdog is required.
@@ -289,8 +321,16 @@ two reasons:
 - **Upgrades:**
   - Minor upgrades roll replicas first, then switch over (write pause
     under 5 s).
-  - Major upgrades use logical-replication blue/green, or `pg_upgrade
-    --link` with a declared write pause.
+  - Major upgrades use logical-replication blue/green (owner decision):
+    - build a new-version cluster, replicate logically, freeze
+      migrations, then cut over with a write pause of seconds;
+    - parked apps can still wake, which an in-place `pg_upgrade` write
+      pause of minutes would not allow.
+  - **Timing.** The tooling is built before the first major upgrade.
+    Postgres 16 is supported until November 2028.
+  - **CI check, starting now:** every table must have a primary key or an
+    explicit replica identity, so the requirement cannot regress before
+    the tooling exists.
   - The data plane keeps serving warm traffic throughout (§5).
 - **Ownership:** a new `postgres_ha` Ansible role replaces the `postgres`
   role, with runbooks for failover, switchover, member rebuild, etcd
@@ -446,22 +486,30 @@ Required mechanisms:
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
 | R · Land the regional branch | Renumber its ADRs past 1152 on the branch, then land it in dark, dependency-ordered PRs. Order: regions, builds, cell identity and directory, image releases, quota protocol, vmmd/sched/fcvm runtime, ingress, provisioning, billing. New apid code goes in `pkg/apid/<domain>` (ADR-982). | Each PR default-off with CI green; no behaviour change while dark |
-| P6 · Activate multi-region | Directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: RPO ≤ 60 s, RTO ≤ 30 min, other cells unaffected; global app keeps serving from the surviving region |
+| P6 · Activate multi-region (EU cell after launch) | EU cell with its own EU DR pair; directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: RPO ≤ 60 s, RTO ≤ 30 min, other cells unaffected; global app keeps serving from the surviving region |
+
+**Order** (owner decision):
+- P1 → P2 → P3 → P4 in the US East cell.
+- R runs in parallel as dark PRs, which stops the regional branch from
+  drifting further.
+- P6 activates multi-region after launch.
 
 **Public-release gate:**
-- P0, P1 and P2, plus P4's lossless drain.
+- P0, P1 and P2, plus P4's lossless drain, in US East with its
+  second-US-region standby.
 - P3 must land before jobs, cron, services or realtime are marketed as
   generally available.
-- R can run in parallel, because it is dark.
-- P6 may follow launch.
 
 ## Consequences
 
 - **Footprint:**
-  - Per cell: 3 control nodes and at least 6 compute nodes (3 zones ×
-    N+1). Today the fleet is 1 + 2.
-  - The directory adds 3 nodes in its home region and a standby cluster
-    in a second region.
+  - At launch, US East has 3 control nodes and at least 6 compute nodes
+    (3 zones × N+1), plus a 1-node standby cluster in the US DR region.
+    Today the fleet is 1 + 2.
+  - At P6:
+    - the EU cell adds the same shape plus its EU standby;
+    - the directory starts inside the US East cluster, and later moves to
+      3 nodes of its own plus a standby.
   - The financial-model addendum (CLAUDE.md, source of truth 3) must
     price this before P2 hardware.
 - **Operations:**
@@ -503,6 +551,15 @@ Required mechanisms:
   availability gain inside a region over Patroni.
 - **etcd or Consul for application leases.** The fencing check must
   commit with the fenced write. etcd stays private to Patroni.
+- **Dedicated etcd nodes from day one.** They give cleaner isolation, but
+  add three machines per deployment. Co-location with a separate disk and
+  I/O priority covers launch, with a size and latency trigger for moving
+  later.
+- **`pg_upgrade --link` for major upgrades.** A write pause of minutes
+  means parked apps cannot wake. On a scale-to-zero platform most apps
+  are parked, so this breaks the zero-downtime contract.
+- **Multi-region before launch.** It is the longest path to launch, and
+  it puts the least-qualified surface live on day one.
 - **Releasing quota on lease expiry.** It would break the branch's
   guarantee that capacity is released only by proof of absence.
   Conservative charging during partitions is the accepted cost.
@@ -514,13 +571,14 @@ Required mechanisms:
   regional branch already decides them. This ADR only adds availability
   properties.
 
-## Open decisions for the owner
+## Owner decisions (2026-10-13)
 
-1. **The directory's home region**, and the second region used for
-   standby clusters.
-2. **etcd placement:** co-located on control nodes (proposed) or on three
-   small dedicated nodes.
-3. **Major Postgres upgrades:** logical-replication blue/green, or
-   `pg_upgrade --link` with a declared write pause.
-4. **Order of work:** P1–P4 in a single region before landing the
-   regional branch (proposed), or interleaved.
+| Question | Decision |
+|---|---|
+| Regions | US East first (production today), and it is the directory's home. EU cell after launch. |
+| etcd placement | Co-located on the control nodes, on its own disk and with I/O priority. Moves to dedicated nodes on a size or latency trigger. |
+| Major Postgres upgrades | Logical-replication blue/green, built before the first major upgrade. The replica-identity CI check starts now. |
+| Order of work | Single-region HA (P1–P4) first, the regional branch dark in parallel (R), multi-region activation (P6) after launch. |
+
+**To confirm:** the US DR region for US East's standby clusters. The
+assumption is a second US region.
