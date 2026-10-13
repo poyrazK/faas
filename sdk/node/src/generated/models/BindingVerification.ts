@@ -4,9 +4,13 @@
 /* eslint-disable */
 import type { BindingVerificationCheck } from './BindingVerificationCheck.js';
 /**
- * Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification checks bucket-list read access only; resident application adoption is not checked.
+ * Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
  */
 export type BindingVerification = {
+  /**
+   * Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.
+   */
+  object_storage_mode?: 'read' | 'write' | 'read_write';
   /**
    * Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.
    */

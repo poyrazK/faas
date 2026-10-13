@@ -32,6 +32,27 @@ type completeMultipartPart struct {
 	ETag       string `xml:"ETag"`
 }
 
+// supportedMultipartChecksumHeader admits x-amz-checksum-algorithm on
+// CreateMultipartUpload. botocore (boto3, the AWS CLI) sends it on every
+// multipart upload since 1.36, so refusing it failed all of them with 501
+// (hunt #9). Each part's x-amz-checksum-* value is still verified when the
+// part is uploaded; Gregale does not store a composite object checksum.
+func supportedMultipartChecksumHeader(r *http.Request, name string) bool {
+	if !strings.EqualFold(name, "x-amz-checksum-algorithm") || r.Method != http.MethodPost || len(r.Header.Values(name)) != 1 {
+		return false
+	}
+	query := operationQuery(r.URL.Query())
+	if !queryKeysOnly(query, "uploads") || len(query["uploads"]) != 1 || query.Get("uploads") != "" {
+		return false
+	}
+	switch strings.ToUpper(r.Header.Get(name)) {
+	case "CRC32", "CRC32C", "CRC64NVME", "SHA1", "SHA256":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) publicMultipartStore(w http.ResponseWriter, r *http.Request, req requestContext) (state.ObjectMultipartUploadStore, bool) {
 	if h.multipartStore == nil {
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale multipart storage is unavailable.", r.URL.Path, req.requestID)

@@ -163,12 +163,21 @@ func recordEnvironmentGitOpsQueueServingAcknowledgementTx(ctx context.Context, t
 			AND (graph_member.value->>'candidate_deployment_id'=$5::text OR
 				(nullif(graph_member.value->>'candidate_deployment_id','') IS NULL AND
 				 coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? $5::text))
+			AND environment_workload_graph_serving_supported(graph.id)
+			AND environment_workload_queue_serving_ack_authorized(graph.id,binding.id,$7,queue_trigger.id,
+				binding.app_id,$5::uuid,$6::uuid)
 		ON CONFLICT (graph_id,binding_id) DO UPDATE
 			SET acknowledged_at=environment_workload_serving_queue_acks.acknowledged_at
 			WHERE environment_workload_serving_queue_acks.app_id=EXCLUDED.app_id
 				AND environment_workload_serving_queue_acks.mode=EXCLUDED.mode
 				AND environment_workload_serving_queue_acks.trigger_id IS NOT DISTINCT FROM EXCLUDED.trigger_id
 				AND environment_workload_serving_queue_acks.deployment_id=EXCLUDED.deployment_id
+				AND environment_workload_graph_serving_supported(environment_workload_serving_queue_acks.graph_id)
+				AND environment_workload_queue_serving_ack_authorized(
+					environment_workload_serving_queue_acks.graph_id,environment_workload_serving_queue_acks.binding_id,
+					environment_workload_serving_queue_acks.mode,environment_workload_serving_queue_acks.trigger_id,
+					environment_workload_serving_queue_acks.app_id,environment_workload_serving_queue_acks.deployment_id,
+					environment_workload_serving_queue_acks.invocation_id)
 		RETURNING graph_id`, acknowledgement.AppID, acknowledgement.Scope, acknowledgement.BindingID,
 		acknowledgement.TriggerID, acknowledgement.DeploymentID, acknowledgement.InvocationID, acknowledgement.Mode).Scan(&graphID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -253,6 +262,9 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 	}
 	slices.SortFunc(routes, func(a, b EnvironmentWorkloadServingRoute) int { return strings.Compare(a.AppID, b.AppID) })
 	q := sqlc.New()
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
 	if _, err := q.SetEnvironmentGitOpsServingContext(ctx, tx, lease.LeaseToken); err != nil {
 		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 	}
@@ -285,9 +297,11 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 			exists = false // replace the route generations below
 		}
 	} else {
+		// Apply may advance intent under the same lease; the receipt must bind
+		// the validated graph, not the lease's earlier source snapshot.
 		if _, err := q.InsertEnvironmentWorkloadServingReceipt(ctx, tx, sqlc.InsertEnvironmentWorkloadServingReceiptParams{
 			GraphID: graphID, SourceID: mustPgUUID(lease.Source.ID), ReleaseSetID: mustPgUUID(release.ID),
-			SourceGeneration: lease.Source.Generation, IntentVersion: lease.Source.IntentVersion,
+			SourceGeneration: graph.Generation, IntentVersion: graph.IntentVersion,
 			RevisionID: mustPgUUID(lease.Revision.ID), PlanHash: reviewed.Hash, ExpectedGateways: receiptGateways,
 		}); err != nil {
 			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
@@ -380,6 +394,9 @@ func (s *PgStore) AcknowledgeEnvironmentGitOpsWorkloadServing(ctx context.Contex
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
 	if _, err := q.SetEnvironmentGitOpsServingContext(ctx, tx, lease.LeaseToken); err != nil {
 		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
 	}
@@ -494,6 +511,36 @@ func loadEnvironmentWorkloadServingReceipt(ctx context.Context, tx sqlc.DBTX, gr
 		return EnvironmentWorkloadServingReceipt{}, false, ErrConflict
 	}
 	graph := EnvironmentWorkloadGraph{Members: members}
+	// Rebuild the private expected consumer set from the release recorded on
+	// this receipt. Status reads may encounter a stale receipt after a newer
+	// release is activated, so the active release cannot be used here.
+	memberRows, err := tx.Query(ctx, `SELECT app_id::text,deployment_id::text FROM project_release_members WHERE release_id=$1::uuid`, receipt.ReleaseSetID)
+	if err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	releaseDeployments := make(map[string]string)
+	for memberRows.Next() {
+		var appID, deploymentID string
+		if err := memberRows.Scan(&appID, &deploymentID); err != nil {
+			memberRows.Close()
+			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+		}
+		releaseDeployments[appID] = deploymentID
+	}
+	if err := memberRows.Err(); err != nil {
+		memberRows.Close()
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	memberRows.Close()
+	targets := make(map[string]string, len(members))
+	for _, member := range members {
+		if deploymentID := releaseDeployments[member.AppID]; deploymentID != "" {
+			targets[member.Resource] = deploymentID
+		}
+	}
+	if consumers, ok := environmentGraphServingQueueConsumers(graph, targets); ok {
+		receipt.ExpectedQueueConsumers = consumers
+	}
 	receipt.ExpectedScheduledJobs = environmentGitOpsScheduledJobMembers(graph)
 	receipt.ScheduledJobAcks, err = environmentGitOpsScheduledJobAcksTx(ctx, tx, receipt.GraphID, receipt.ReleaseSetID)
 	if err != nil {

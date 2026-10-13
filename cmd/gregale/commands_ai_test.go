@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,6 +83,12 @@ func TestCmdAIJSONOutput(t *testing.T) {
 				Items: []api.OutboundAIUsageItem{{Caller: "runs", Model: "gpt-4o", Requests: 1, InputTokens: 30, OutputTokens: 12}}})
 		case "/v1/outbound/integrations/int-1/ai-alerts":
 			_ = json.NewEncoder(w).Encode(api.OutboundAIBudgetAlertList{Items: []api.OutboundAIBudgetAlert{{ID: "a1", Budget: "daily_cost", ThresholdPercent: 80}}})
+		case "/v1/outbound/ai-price-catalog":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIPriceCatalogResponse{AIProvider: "openai", USDPerEUR: "1.1206",
+				Entries: []api.OutboundAIPriceEntry{{ModelPrefix: "gpt-4o", InputMillicentsPerMTok: 223_096, OutputMillicentsPerMTok: 892_380}}})
+		case "/v1/outbound/integrations/int-1/ai-usage/users":
+			_ = json.NewEncoder(w).Encode(api.OutboundAIUserUsageResponse{UsageDate: "2026-10-12", TrackedUsers: 1,
+				Items: []api.OutboundAIUserUsageItem{{EndUser: "user-1", Requests: 2, Tokens: 30, CostMillicents: 5}}})
 		case "/v1/outbound/integrations/int-1/credential-keys":
 			_ = json.NewEncoder(w).Encode(api.OutboundCredentialKeyList{Items: []api.OutboundCredentialKey{{ID: "k1", Label: "second"}}})
 		default:
@@ -97,7 +104,7 @@ func TestCmdAIJSONOutput(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	for _, args := range [][]string{{"usage", "int-1"}, {"alerts", "int-1"}, {"keys", "list", "int-1"}} {
+	for _, args := range [][]string{{"usage", "int-1"}, {"alerts", "int-1"}, {"keys", "list", "int-1"}, {"catalog", "openai"}, {"users", "int-1"}} {
 		buf.Reset()
 		if code := cmdAI(args); code != 0 {
 			t.Fatalf("gregale ai %v --json = %d", args, code)
@@ -106,6 +113,37 @@ func TestCmdAIJSONOutput(t *testing.T) {
 		if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 			t.Fatalf("gregale ai %v --json is not JSON: %v\n%s", args, err, buf.String())
 		}
+	}
+}
+
+// adr: 995 — `gregale ai users export` writes the server's CSV unchanged
+// and asks for the requested range.
+func TestCmdAIUsersExport(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/outbound/integrations/int-1/ai-usage/users/export" {
+			http.NotFound(w, r)
+			return
+		}
+		query = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/csv")
+		_, _ = io.WriteString(w, "usage_date,end_user\n2026-10-12,user-1\n")
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdAI([]string{"users", "export", "int-1", "--from", "2026-10-01"}); code != 0 {
+		t.Fatalf("export exit = %d", code)
+	}
+	if buf.String() != "usage_date,end_user\n2026-10-12,user-1\n" || query != "format=csv&from=2026-10-01" {
+		t.Fatalf("export output %q, query %q", buf.String(), query)
+	}
+	if code := cmdAI([]string{"users", "export", "int-1", "--format", "xml"}); code == 0 {
+		t.Fatal("an unknown export format was accepted")
 	}
 }
 

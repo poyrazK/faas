@@ -38,6 +38,24 @@ func (q *Queries) EventRecoveryApp(ctx context.Context, db DBTX, arg EventRecove
 	return id, err
 }
 
+const eventRecoveryByRequest = `-- name: EventRecoveryByRequest :one
+SELECT j.id FROM event_recovery_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid AND j.request_id=$3::uuid
+`
+
+type EventRecoveryByRequestParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+func (q *Queries) EventRecoveryByRequest(ctx context.Context, db DBTX, arg EventRecoveryByRequestParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventRecoveryByRequest, arg.AccountID, arg.AppID, arg.RequestID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const eventRecoveryCancelItems = `-- name: EventRecoveryCancelItems :exec
 UPDATE event_recovery_items SET state='cancelled',reason=$1::text WHERE job_id=$2::uuid AND state='pending'
 `
@@ -172,8 +190,8 @@ func (q *Queries) EventRecoveryCaptureExecutionNotification(ctx context.Context,
 
 const eventRecoveryClaimExecutionNotification = `-- name: EventRecoveryClaimExecutionNotification :one
 SELECT j.id,j.account_id FROM event_recovery_jobs j
-WHERE NOT j.execution_notification_captured AND j.selection->>'mode'='execution'
- AND j.state IN ('completed','cancelled') AND j.completed_at<=$1::timestamptz
+WHERE NOT j.execution_notification_captured AND j.selection->>'mode' IN ('execution','workflow')
+ AND (j.state IN ('completed','cancelled') OR j.selection->>'mode'='workflow' AND j.state='expired') AND j.completed_at<=$1::timestamptz
  AND j.execution_notification_next_at<=$1::timestamptz
 ORDER BY j.execution_notification_next_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED
 `
@@ -271,19 +289,22 @@ func (q *Queries) EventRecoveryEnqueueNotification(ctx context.Context, db DBTX,
 }
 
 const eventRecoveryExecutionHealthJobs = `-- name: EventRecoveryExecutionHealthJobs :many
-SELECT j.id, j.completed_at, j.selection, j.state, j.execution_notification_captured,
+SELECT j.id,coalesce(j.completed_at,j.created_at)::timestamptz AS completed_at,j.selection,j.state,j.execution_notification_captured,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued') AS queued_count
 FROM event_recovery_jobs j
 WHERE j.account_id=$1 AND j.app_id=$2
- AND j.state IN ('completed','cancelled') AND j.selection->>'mode'='execution'
- AND j.completed_at<=$3 AND j.execution_finished_at IS NULL
+ AND (j.selection->>'mode'='workflow' OR j.state IN ('completed','cancelled') AND j.selection->>'mode'='execution')
+ AND coalesce(j.completed_at,j.created_at)<=$3 AND j.execution_finished_at IS NULL
  AND EXISTS (
  SELECT 1 FROM event_recovery_items i
  LEFT JOIN event_recovery_execution_results r ON r.job_id=i.job_id AND r.position=i.position
  AND r.replay_invocation_id=i.replay_invocation_id AND r.replay_generation=i.replay_generation
  AND r.replay_created_at=i.replay_created_at AND r.recorded_at<=$3
- WHERE i.job_id=j.id AND i.state='queued' AND r.job_id IS NULL)
-ORDER BY j.completed_at,j.id LIMIT $4
+ LEFT JOIN event_recovery_workflow_results wr ON wr.job_id=i.job_id AND wr.position=i.position
+ AND wr.run_id=(i.expected_progress->>'run_id')::uuid
+ AND wr.resume_number=(i.expected_progress->>'expected_resume_count')::integer+1 AND wr.recorded_at<=$3
+ WHERE i.job_id=j.id AND i.state='queued' AND (j.selection->>'mode'='execution' AND r.job_id IS NULL OR j.selection->>'mode'='workflow' AND wr.job_id IS NULL))
+ORDER BY coalesce(j.completed_at,j.created_at),j.id LIMIT $4
 `
 
 type EventRecoveryExecutionHealthJobsParams struct {
@@ -436,7 +457,7 @@ func (q *Queries) EventRecoveryExecutionObservations(ctx context.Context, db DBT
 }
 
 const eventRecoveryGet = `-- name: EventRecoveryGet :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, j.execution_attention_next_at,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -477,6 +498,7 @@ type EventRecoveryGetRow struct {
 	RequestID                     pgtype.UUID
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
+	ExecutionAttentionNextAt      pgtype.Timestamptz
 	SelectedCount                 int64
 	PendingCount                  int64
 	QueuedCount                   int64
@@ -513,6 +535,7 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 		&i.RequestID,
 		&i.NotificationReceipts,
 		&i.NotificationRetryReceipts,
+		&i.ExecutionAttentionNextAt,
 		&i.SelectedCount,
 		&i.PendingCount,
 		&i.QueuedCount,
@@ -523,7 +546,7 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 }
 
 const eventRecoveryHealth = `-- name: EventRecoveryHealth :many
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, j.execution_attention_next_at, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
 FROM event_recovery_jobs j WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid AND j.state IN ('running','paused')
 ORDER BY j.created_at,j.id
 `
@@ -559,6 +582,7 @@ type EventRecoveryHealthRow struct {
 	RequestID                     pgtype.UUID
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
+	ExecutionAttentionNextAt      pgtype.Timestamptz
 	PendingCount                  int64
 }
 
@@ -597,6 +621,7 @@ func (q *Queries) EventRecoveryHealth(ctx context.Context, db DBTX, arg EventRec
 			&i.RequestID,
 			&i.NotificationReceipts,
 			&i.NotificationRetryReceipts,
+			&i.ExecutionAttentionNextAt,
 			&i.PendingCount,
 		); err != nil {
 			return nil, err
@@ -668,7 +693,7 @@ func (q *Queries) EventRecoveryHistoryInsert(ctx context.Context, db DBTX, arg E
 }
 
 const eventRecoveryHistoryList = `-- name: EventRecoveryHistoryList :many
-SELECT h.id, h.job_id, h.occurred_at, h.action, h.actor_kind, h.actor_id, h.reason, h.previous_state, h.state, h.previous_rate, h.rate FROM event_recovery_history h JOIN event_recovery_jobs j ON j.id=h.job_id
+SELECT h.id, h.job_id, h.occurred_at, h.action, h.actor_kind, h.actor_id, h.reason, h.previous_state, h.state, h.previous_rate, h.rate, h.target_position, h.target_run_id, h.target_resume_count FROM event_recovery_history h JOIN event_recovery_jobs j ON j.id=h.job_id
 WHERE j.id=$1::uuid AND j.account_id=$2::uuid AND h.id>$3::bigint
 ORDER BY h.id LIMIT $4::integer
 `
@@ -706,6 +731,9 @@ func (q *Queries) EventRecoveryHistoryList(ctx context.Context, db DBTX, arg Eve
 			&i.State,
 			&i.PreviousRate,
 			&i.Rate,
+			&i.TargetPosition,
+			&i.TargetRunID,
+			&i.TargetResumeCount,
 		); err != nil {
 			return nil, err
 		}
@@ -719,7 +747,7 @@ func (q *Queries) EventRecoveryHistoryList(ctx context.Context, db DBTX, arg Eve
 
 const eventRecoveryInsertItem = `-- name: EventRecoveryInsertItem :exec
 INSERT INTO event_recovery_items(job_id,position,outbox_id,subscription_id,event_source,event_id,event_type,failed_at,failure_code,retryable,expected_progress)
-VALUES ($1::uuid,$2::bigint,$3::bigint,$4::text,$5::text,$6::text,$7::text,$8::timestamptz,$9::text,$10::boolean,$11::jsonb)
+VALUES ($1::uuid,$2::bigint,nullif($3::bigint,0),$4::text,$5::text,$6::text,$7::text,$8::timestamptz,$9::text,$10::boolean,$11::jsonb)
 `
 
 type EventRecoveryInsertItemParams struct {
@@ -802,7 +830,7 @@ func (q *Queries) EventRecoveryItems(ctx context.Context, db DBTX, arg EventReco
 
 const eventRecoveryList = `-- name: EventRecoveryList :many
 WITH page AS MATERIALIZED (
- SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts FROM event_recovery_jobs j
+ SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, j.execution_attention_next_at FROM event_recovery_jobs j
  WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid
  AND ($3::text='' OR j.state=$3::text)
  AND ($4::text='' OR coalesce(nullif(j.selection->>'mode',''),'routing')=$4::text)
@@ -812,7 +840,7 @@ WITH page AS MATERIALIZED (
  AND (NOT $8::boolean OR (j.created_at,j.id)<($9::timestamptz,$10::uuid))
 ORDER BY j.created_at DESC,j.id DESC LIMIT $11::integer
 )
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, j.execution_attention_next_at,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -861,6 +889,7 @@ type EventRecoveryListRow struct {
 	RequestID                     pgtype.UUID
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
+	ExecutionAttentionNextAt      pgtype.Timestamptz
 	SelectedCount                 int64
 	PendingCount                  int64
 	QueuedCount                   int64
@@ -915,6 +944,7 @@ func (q *Queries) EventRecoveryList(ctx context.Context, db DBTX, arg EventRecov
 			&i.RequestID,
 			&i.NotificationReceipts,
 			&i.NotificationRetryReceipts,
+			&i.ExecutionAttentionNextAt,
 			&i.SelectedCount,
 			&i.PendingCount,
 			&i.QueuedCount,
@@ -948,7 +978,7 @@ func (q *Queries) EventRecoveryListApp(ctx context.Context, db DBTX, arg EventRe
 }
 
 const eventRecoveryLock = `-- name: EventRecoveryLock :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, j.request_id, j.notification_receipts, j.notification_retry_receipts, j.execution_attention_next_at FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
 `
 
 type EventRecoveryLockParams struct {
@@ -985,6 +1015,7 @@ func (q *Queries) EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecov
 		&i.RequestID,
 		&i.NotificationReceipts,
 		&i.NotificationRetryReceipts,
+		&i.ExecutionAttentionNextAt,
 	)
 	return i, err
 }
@@ -1018,7 +1049,7 @@ func (q *Queries) EventRecoveryNextItem(ctx context.Context, db DBTX, jobID pgty
 }
 
 const eventRecoveryNextJob = `-- name: EventRecoveryNextJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id, notification_receipts, notification_retry_receipts FROM event_recovery_jobs WHERE state IN ('running','paused')
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id, notification_receipts, notification_retry_receipts, execution_attention_next_at FROM event_recovery_jobs WHERE state IN ('running','paused')
  AND (expires_at<=$1::timestamptz OR (state='running' AND next_attempt_at<=$1::timestamptz
  AND (window_started_at+interval '1 second'<=$1::timestamptz OR window_count<rate_per_second)))
 ORDER BY CASE WHEN expires_at<=$1::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -1053,6 +1084,7 @@ func (q *Queries) EventRecoveryNextJob(ctx context.Context, db DBTX, nowAt pgtyp
 		&i.RequestID,
 		&i.NotificationReceipts,
 		&i.NotificationRetryReceipts,
+		&i.ExecutionAttentionNextAt,
 	)
 	return i, err
 }
@@ -1219,7 +1251,7 @@ func (q *Queries) EventRecoveryNotificationJob(ctx context.Context, db DBTX, job
 const eventRecoveryNotificationOutbox = `-- name: EventRecoveryNotificationOutbox :many
 SELECT id,event,created_at,recipient_webhook_ids FROM app_webhook_event_outbox
 WHERE source_id=$1::uuid AND account_id=$2::uuid AND app_id=$3::uuid
- AND event IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired','event_recovery.execution_finished')
+ AND event IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired','event_recovery.execution_finished','event_recovery.execution_attention')
 `
 
 type EventRecoveryNotificationOutboxParams struct {
@@ -1789,7 +1821,7 @@ func (q *Queries) EventRecoveryPreflight(ctx context.Context, db DBTX, arg Event
 }
 
 const eventRecoveryPreflightJob = `-- name: EventRecoveryPreflightJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id, notification_receipts, notification_retry_receipts FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at, request_id, notification_receipts, notification_retry_receipts, execution_attention_next_at FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
 `
 
 type EventRecoveryPreflightJobParams struct {
@@ -1826,6 +1858,7 @@ func (q *Queries) EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg Ev
 		&i.RequestID,
 		&i.NotificationReceipts,
 		&i.NotificationRetryReceipts,
+		&i.ExecutionAttentionNextAt,
 	)
 	return i, err
 }
@@ -1909,7 +1942,7 @@ func (q *Queries) EventRecoveryResume(ctx context.Context, db DBTX, arg EventRec
 }
 
 const eventRecoveryRetryCandidates = `-- name: EventRecoveryRetryCandidates :many
-SELECT item.outbox_id,item.event_source,item.event_id,item.event_type,item.subscription_id,
+SELECT coalesce(item.outbox_id,0)::bigint AS outbox_id,item.event_source,item.event_id,item.event_type,item.subscription_id,
  coalesce(result.completed_at,result.recorded_at)::timestamptz AS failed_at,
  (CASE result.state WHEN 'dead_lettered' THEN 'dead_letter' ELSE result.state END)::text AS failure_code,
  true::boolean AS retryable,
@@ -2197,4 +2230,2250 @@ func (q *Queries) EventRecoveryWait(ctx context.Context, db DBTX, arg EventRecov
 		arg.JobID,
 	)
 	return err
+}
+
+const workflowFailureEligibilityNext = `-- name: WorkflowFailureEligibilityNext :one
+SELECT e.id, e.sequence, e.app_id, e.run_id, e.workflow, e.resume_count, e.failure_status, e.observed_at, e.completed_at, e.eligibility_observed_at, e.eligibility,a.account_id FROM workflow_recovery_failure_evidence e JOIN apps a ON a.id=e.app_id AND a.status<>'deleted'
+WHERE e.observed_at>$1::timestamptz AND e.observed_at<=$2::timestamptz
+ AND (e.eligibility_observed_at IS NULL OR e.eligibility_observed_at<=$3::timestamptz)
+ORDER BY e.eligibility_observed_at NULLS FIRST,e.observed_at,e.id
+LIMIT 1 FOR UPDATE OF e SKIP LOCKED
+`
+
+type WorkflowFailureEligibilityNextParams struct {
+	RetainedAfter pgtype.Timestamptz
+	NowAt         pgtype.Timestamptz
+	RefreshBefore pgtype.Timestamptz
+}
+
+type WorkflowFailureEligibilityNextRow struct {
+	ID                    pgtype.UUID
+	Sequence              int64
+	AppID                 pgtype.UUID
+	RunID                 pgtype.UUID
+	Workflow              string
+	ResumeCount           int32
+	FailureStatus         string
+	ObservedAt            pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+	EligibilityObservedAt pgtype.Timestamptz
+	Eligibility           []byte
+	AccountID             pgtype.UUID
+}
+
+func (q *Queries) WorkflowFailureEligibilityNext(ctx context.Context, db DBTX, arg WorkflowFailureEligibilityNextParams) (WorkflowFailureEligibilityNextRow, error) {
+	row := db.QueryRow(ctx, workflowFailureEligibilityNext, arg.RetainedAfter, arg.NowAt, arg.RefreshBefore)
+	var i WorkflowFailureEligibilityNextRow
+	err := row.Scan(
+		&i.ID,
+		&i.Sequence,
+		&i.AppID,
+		&i.RunID,
+		&i.Workflow,
+		&i.ResumeCount,
+		&i.FailureStatus,
+		&i.ObservedAt,
+		&i.CompletedAt,
+		&i.EligibilityObservedAt,
+		&i.Eligibility,
+		&i.AccountID,
+	)
+	return i, err
+}
+
+const workflowFailureEligibilityParent = `-- name: WorkflowFailureEligibilityParent :one
+SELECT j.id,i.position FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id
+JOIN event_recovery_workflow_results r ON r.job_id=i.job_id AND r.position=i.position
+WHERE j.app_id=$1::uuid AND j.account_id=$2::uuid
+ AND j.selection->>'mode'='workflow' AND j.selection->'workflow_runs'->>'name'=$3::text
+ AND j.state IN ('completed','cancelled','expired') AND j.created_at<=$4::timestamptz
+ AND i.state='queued' AND r.run_id=$5::uuid AND r.resume_number=$6::integer
+ AND (i.expected_progress->>'run_id')::uuid=r.run_id
+ AND (i.expected_progress->>'expected_resume_count')::integer+1=r.resume_number
+ AND r.state='failed' AND r.recorded_at<=$4::timestamptz
+ORDER BY j.created_at DESC,j.id DESC,i.position LIMIT 1
+`
+
+type WorkflowFailureEligibilityParentParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	Workflow    string
+	NowAt       pgtype.Timestamptz
+	RunID       pgtype.UUID
+	ResumeCount int32
+}
+
+type WorkflowFailureEligibilityParentRow struct {
+	ID       pgtype.UUID
+	Position int64
+}
+
+func (q *Queries) WorkflowFailureEligibilityParent(ctx context.Context, db DBTX, arg WorkflowFailureEligibilityParentParams) (WorkflowFailureEligibilityParentRow, error) {
+	row := db.QueryRow(ctx, workflowFailureEligibilityParent,
+		arg.AppID,
+		arg.AccountID,
+		arg.Workflow,
+		arg.NowAt,
+		arg.RunID,
+		arg.ResumeCount,
+	)
+	var i WorkflowFailureEligibilityParentRow
+	err := row.Scan(&i.ID, &i.Position)
+	return i, err
+}
+
+const workflowFailureEligibilitySave = `-- name: WorkflowFailureEligibilitySave :exec
+UPDATE workflow_recovery_failure_evidence SET eligibility=$1::jsonb,
+ eligibility_observed_at=$2::timestamptz WHERE id=$3::uuid
+`
+
+type WorkflowFailureEligibilitySaveParams struct {
+	Eligibility []byte
+	ObservedAt  pgtype.Timestamptz
+	ID          pgtype.UUID
+}
+
+func (q *Queries) WorkflowFailureEligibilitySave(ctx context.Context, db DBTX, arg WorkflowFailureEligibilitySaveParams) error {
+	_, err := db.Exec(ctx, workflowFailureEligibilitySave, arg.Eligibility, arg.ObservedAt, arg.ID)
+	return err
+}
+
+const workflowRecoveryActionReceiptCount = `-- name: WorkflowRecoveryActionReceiptCount :one
+SELECT count(*) FROM workflow_recovery_action_receipts WHERE job_id=$1::uuid
+`
+
+func (q *Queries) WorkflowRecoveryActionReceiptCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, workflowRecoveryActionReceiptCount, jobID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const workflowRecoveryActionReceiptGet = `-- name: WorkflowRecoveryActionReceiptGet :one
+SELECT r.job_id, r.request_id, r.request, r.response, r.captured_at, r.actor_kind, r.actor_id FROM workflow_recovery_action_receipts r
+JOIN event_recovery_jobs j ON j.id=r.job_id
+WHERE j.account_id=$1::uuid AND r.job_id=$2::uuid AND r.request_id=$3::uuid
+`
+
+type WorkflowRecoveryActionReceiptGetParams struct {
+	AccountID pgtype.UUID
+	JobID     pgtype.UUID
+	RequestID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryActionReceiptGet(ctx context.Context, db DBTX, arg WorkflowRecoveryActionReceiptGetParams) (WorkflowRecoveryActionReceipt, error) {
+	row := db.QueryRow(ctx, workflowRecoveryActionReceiptGet, arg.AccountID, arg.JobID, arg.RequestID)
+	var i WorkflowRecoveryActionReceipt
+	err := row.Scan(
+		&i.JobID,
+		&i.RequestID,
+		&i.Request,
+		&i.Response,
+		&i.CapturedAt,
+		&i.ActorKind,
+		&i.ActorID,
+	)
+	return i, err
+}
+
+const workflowRecoveryActionReceiptInsert = `-- name: WorkflowRecoveryActionReceiptInsert :exec
+INSERT INTO workflow_recovery_action_receipts(job_id,request_id,request,response,captured_at,actor_kind,actor_id)
+VALUES($1::uuid,$2::uuid,$3::jsonb,$4::jsonb,$5::timestamptz,$6::text,$7::text)
+`
+
+type WorkflowRecoveryActionReceiptInsertParams struct {
+	JobID      pgtype.UUID
+	RequestID  pgtype.UUID
+	Request    []byte
+	Response   []byte
+	CapturedAt pgtype.Timestamptz
+	ActorKind  string
+	ActorID    string
+}
+
+func (q *Queries) WorkflowRecoveryActionReceiptInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryActionReceiptInsertParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryActionReceiptInsert,
+		arg.JobID,
+		arg.RequestID,
+		arg.Request,
+		arg.Response,
+		arg.CapturedAt,
+		arg.ActorKind,
+		arg.ActorID,
+	)
+	return err
+}
+
+const workflowRecoveryAutomaticApply = `-- name: WorkflowRecoveryAutomaticApply :exec
+WITH applied AS (UPDATE workflow_recovery_policy_executions SET status='applied',reason='child_created',child_job_id=$1::uuid,applied_at=$2::timestamptz WHERE action_id=$3::uuid AND status='pending' RETURNING action_id,app_id,applied_at)
+INSERT INTO workflow_recovery_policy_execution_charges(action_id,app_id,applied_at) SELECT action_id,app_id,applied_at FROM applied ON CONFLICT DO NOTHING
+`
+
+type WorkflowRecoveryAutomaticApplyParams struct {
+	ChildJobID pgtype.UUID
+	NowAt      pgtype.Timestamptz
+	ActionID   pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticApply(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticApplyParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticApply, arg.ChildJobID, arg.NowAt, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticBlockedCapture = `-- name: WorkflowRecoveryAutomaticBlockedCapture :exec
+UPDATE workflow_recovery_policy_executions SET blocked_notification=$1::jsonb WHERE action_id=$2::uuid AND blocked_notification IS NULL
+`
+
+type WorkflowRecoveryAutomaticBlockedCaptureParams struct {
+	Receipt  []byte
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticBlockedCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBlockedCaptureParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticBlockedCapture, arg.Receipt, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticBlockedDefer = `-- name: WorkflowRecoveryAutomaticBlockedDefer :exec
+UPDATE workflow_recovery_policy_executions SET next_blocked_at=$1::timestamptz WHERE action_id=$2::uuid AND blocked_notification IS NULL
+`
+
+type WorkflowRecoveryAutomaticBlockedDeferParams struct {
+	NextAt   pgtype.Timestamptz
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticBlockedDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBlockedDeferParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticBlockedDefer, arg.NextAt, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticBlockedNext = `-- name: WorkflowRecoveryAutomaticBlockedNext :one
+SELECT e.action_id,e.app_id,a.account_id,e.review_id FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policies p ON p.app_id=e.app_id JOIN apps a ON a.id=e.app_id
+WHERE p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND e.blocked_notification IS NULL AND e.next_blocked_at<=$1::timestamptz
+AND ((e.status='pending' AND e.reason='evidence_unknown' AND e.policy_version=p.version) OR (e.status='applied' AND e.result IS NULL)) ORDER BY e.next_blocked_at,e.app_id,e.action_id LIMIT 1
+`
+
+type WorkflowRecoveryAutomaticBlockedNextRow struct {
+	ActionID  pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	ReviewID  pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticBlockedNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticBlockedNextRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticBlockedNext, nowAt)
+	var i WorkflowRecoveryAutomaticBlockedNextRow
+	err := row.Scan(
+		&i.ActionID,
+		&i.AppID,
+		&i.AccountID,
+		&i.ReviewID,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticBudget = `-- name: WorkflowRecoveryAutomaticBudget :one
+SELECT count(*) FILTER(WHERE applied_at>$1::timestamptz)::bigint AS hourly_executions,max(applied_at)::timestamptz AS last_execution_at FROM workflow_recovery_policy_execution_charges WHERE app_id=$2::uuid
+`
+
+type WorkflowRecoveryAutomaticBudgetParams struct {
+	SinceAt pgtype.Timestamptz
+	AppID   pgtype.UUID
+}
+
+type WorkflowRecoveryAutomaticBudgetRow struct {
+	HourlyExecutions int64
+	LastExecutionAt  pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticBudgetParams) (WorkflowRecoveryAutomaticBudgetRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticBudget, arg.SinceAt, arg.AppID)
+	var i WorkflowRecoveryAutomaticBudgetRow
+	err := row.Scan(&i.HourlyExecutions, &i.LastExecutionAt)
+	return i, err
+}
+
+const workflowRecoveryAutomaticChargesPrune = `-- name: WorkflowRecoveryAutomaticChargesPrune :exec
+DELETE FROM workflow_recovery_policy_execution_charges WHERE app_id=$1::uuid AND applied_at<=$2::timestamptz
+`
+
+type WorkflowRecoveryAutomaticChargesPruneParams struct {
+	AppID    pgtype.UUID
+	BeforeAt pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticChargesPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticChargesPruneParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticChargesPrune, arg.AppID, arg.BeforeAt)
+	return err
+}
+
+const workflowRecoveryAutomaticDefer = `-- name: WorkflowRecoveryAutomaticDefer :exec
+UPDATE workflow_recovery_policy_executions SET reason=$1::text WHERE action_id=$2::uuid AND status='pending'
+`
+
+type WorkflowRecoveryAutomaticDeferParams struct {
+	Reason   string
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticDeferParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticDefer, arg.Reason, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticEvaluate = `-- name: WorkflowRecoveryAutomaticEvaluate :exec
+UPDATE workflow_recovery_policy_executions SET last_evaluation=$1::jsonb WHERE action_id=$2::uuid
+`
+
+type WorkflowRecoveryAutomaticEvaluateParams struct {
+	Evaluation []byte
+	ActionID   pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticEvaluate(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticEvaluateParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticEvaluate, arg.Evaluation, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticExecutionInsert = `-- name: WorkflowRecoveryAutomaticExecutionInsert :exec
+INSERT INTO workflow_recovery_policy_executions(action_id,app_id,review_id,policy_version,position,reason) VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,$5::bigint,'awaiting_execution') ON CONFLICT DO NOTHING
+`
+
+type WorkflowRecoveryAutomaticExecutionInsertParams struct {
+	ActionID      pgtype.UUID
+	AppID         pgtype.UUID
+	ReviewID      pgtype.UUID
+	PolicyVersion int64
+	Position      int64
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticExecutionInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticExecutionInsertParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticExecutionInsert,
+		arg.ActionID,
+		arg.AppID,
+		arg.ReviewID,
+		arg.PolicyVersion,
+		arg.Position,
+	)
+	return err
+}
+
+const workflowRecoveryAutomaticObsolete = `-- name: WorkflowRecoveryAutomaticObsolete :exec
+UPDATE workflow_recovery_policy_executions SET status='suppressed',reason='policy_changed' WHERE app_id=$1::uuid AND status='pending' AND policy_version<>$2::bigint
+`
+
+type WorkflowRecoveryAutomaticObsoleteParams struct {
+	AppID         pgtype.UUID
+	PolicyVersion int64
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticObsolete(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticObsoleteParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticObsolete, arg.AppID, arg.PolicyVersion)
+	return err
+}
+
+const workflowRecoveryAutomaticOperatorAction = `-- name: WorkflowRecoveryAutomaticOperatorAction :one
+SELECT action_id, app_id, review_id, policy_version, position, status, reason, child_job_id, applied_at, result, suppression, blocked_notification, next_blocked_at, last_evaluation FROM workflow_recovery_policy_executions WHERE app_id=$1::uuid AND review_id=$2::uuid AND action_id=$3::uuid FOR UPDATE
+`
+
+type WorkflowRecoveryAutomaticOperatorActionParams struct {
+	AppID    pgtype.UUID
+	ReviewID pgtype.UUID
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticOperatorAction(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorActionParams) (WorkflowRecoveryPolicyExecution, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticOperatorAction, arg.AppID, arg.ReviewID, arg.ActionID)
+	var i WorkflowRecoveryPolicyExecution
+	err := row.Scan(
+		&i.ActionID,
+		&i.AppID,
+		&i.ReviewID,
+		&i.PolicyVersion,
+		&i.Position,
+		&i.Status,
+		&i.Reason,
+		&i.ChildJobID,
+		&i.AppliedAt,
+		&i.Result,
+		&i.Suppression,
+		&i.BlockedNotification,
+		&i.NextBlockedAt,
+		&i.LastEvaluation,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticOperatorPolicy = `-- name: WorkflowRecoveryAutomaticOperatorPolicy :one
+SELECT p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at,a.slug,a.account_id FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.app_id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted' FOR UPDATE OF p
+`
+
+type WorkflowRecoveryAutomaticOperatorPolicyParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type WorkflowRecoveryAutomaticOperatorPolicyRow struct {
+	AppID                pgtype.UUID
+	Version              int64
+	Enabled              bool
+	Policy               []byte
+	UpdatedAt            pgtype.Timestamptz
+	ActorKind            string
+	ActorID              string
+	NextEvaluateAt       pgtype.Timestamptz
+	LastEvaluatedAt      pgtype.Timestamptz
+	JobCursor            pgtype.UUID
+	Status               string
+	NextExecuteAt        pgtype.Timestamptz
+	AutomaticFailures    int32
+	AutomaticPausedAt    pgtype.Timestamptz
+	AutomaticPauseReason string
+	NextHealthAt         pgtype.Timestamptz
+	Slug                 string
+	AccountID            pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticOperatorPolicy(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorPolicyParams) (WorkflowRecoveryAutomaticOperatorPolicyRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticOperatorPolicy, arg.AppID, arg.AccountID)
+	var i WorkflowRecoveryAutomaticOperatorPolicyRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+		&i.Slug,
+		&i.AccountID,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticOperatorSuppress = `-- name: WorkflowRecoveryAutomaticOperatorSuppress :exec
+UPDATE workflow_recovery_policy_executions SET status='suppressed',reason='operator_suppressed',suppression=$1::jsonb WHERE action_id=$2::uuid AND status='pending'
+`
+
+type WorkflowRecoveryAutomaticOperatorSuppressParams struct {
+	Suppression []byte
+	ActionID    pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticOperatorSuppress(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticOperatorSuppressParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticOperatorSuppress, arg.Suppression, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticOutstanding = `-- name: WorkflowRecoveryAutomaticOutstanding :one
+SELECT e.action_id, e.app_id, e.review_id, e.policy_version, e.position, e.status, e.reason, e.child_job_id, e.applied_at, e.result, e.suppression, e.blocked_notification, e.next_blocked_at, e.last_evaluation,r.review FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id WHERE e.app_id=$1::uuid AND e.status='applied' AND e.result IS NULL ORDER BY e.applied_at,e.action_id LIMIT 1
+`
+
+type WorkflowRecoveryAutomaticOutstandingRow struct {
+	ActionID            pgtype.UUID
+	AppID               pgtype.UUID
+	ReviewID            pgtype.UUID
+	PolicyVersion       int64
+	Position            int64
+	Status              string
+	Reason              string
+	ChildJobID          pgtype.UUID
+	AppliedAt           pgtype.Timestamptz
+	Result              []byte
+	Suppression         []byte
+	BlockedNotification []byte
+	NextBlockedAt       pgtype.Timestamptz
+	LastEvaluation      []byte
+	Review              []byte
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticOutstanding(ctx context.Context, db DBTX, appID pgtype.UUID) (WorkflowRecoveryAutomaticOutstandingRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticOutstanding, appID)
+	var i WorkflowRecoveryAutomaticOutstandingRow
+	err := row.Scan(
+		&i.ActionID,
+		&i.AppID,
+		&i.ReviewID,
+		&i.PolicyVersion,
+		&i.Position,
+		&i.Status,
+		&i.Reason,
+		&i.ChildJobID,
+		&i.AppliedAt,
+		&i.Result,
+		&i.Suppression,
+		&i.BlockedNotification,
+		&i.NextBlockedAt,
+		&i.LastEvaluation,
+		&i.Review,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticPending = `-- name: WorkflowRecoveryAutomaticPending :one
+SELECT e.action_id, e.app_id, e.review_id, e.policy_version, e.position, e.status, e.reason, e.child_job_id, e.applied_at, e.result, e.suppression, e.blocked_notification, e.next_blocked_at, e.last_evaluation, (r.review || CASE WHEN r.review_decision IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('review_decision',r.review_decision) END)::jsonb AS review FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id WHERE e.app_id=$1::uuid AND e.policy_version=$2::bigint AND e.status='pending' ORDER BY r.observed_at,e.review_id,e.position LIMIT 1 FOR UPDATE OF r,e
+`
+
+type WorkflowRecoveryAutomaticPendingParams struct {
+	AppID         pgtype.UUID
+	PolicyVersion int64
+}
+
+type WorkflowRecoveryAutomaticPendingRow struct {
+	ActionID            pgtype.UUID
+	AppID               pgtype.UUID
+	ReviewID            pgtype.UUID
+	PolicyVersion       int64
+	Position            int64
+	Status              string
+	Reason              string
+	ChildJobID          pgtype.UUID
+	AppliedAt           pgtype.Timestamptz
+	Result              []byte
+	Suppression         []byte
+	BlockedNotification []byte
+	NextBlockedAt       pgtype.Timestamptz
+	LastEvaluation      []byte
+	Review              []byte
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticPending(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPendingParams) (WorkflowRecoveryAutomaticPendingRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticPending, arg.AppID, arg.PolicyVersion)
+	var i WorkflowRecoveryAutomaticPendingRow
+	err := row.Scan(
+		&i.ActionID,
+		&i.AppID,
+		&i.ReviewID,
+		&i.PolicyVersion,
+		&i.Position,
+		&i.Status,
+		&i.Reason,
+		&i.ChildJobID,
+		&i.AppliedAt,
+		&i.Result,
+		&i.Suppression,
+		&i.BlockedNotification,
+		&i.NextBlockedAt,
+		&i.LastEvaluation,
+		&i.Review,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticPolicyAdvance = `-- name: WorkflowRecoveryAutomaticPolicyAdvance :exec
+UPDATE workflow_recovery_policies SET next_execute_at=$1::timestamptz,automatic_failures=$2::integer,automatic_paused_at=$3::timestamptz,automatic_pause_reason=$4::text,status=CASE WHEN $3::timestamptz IS NOT NULL THEN 'paused' ELSE status END WHERE app_id=$5::uuid
+`
+
+type WorkflowRecoveryAutomaticPolicyAdvanceParams struct {
+	NextAt      pgtype.Timestamptz
+	Failures    int32
+	PausedAt    pgtype.Timestamptz
+	PauseReason string
+	AppID       pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyAdvanceParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticPolicyAdvance,
+		arg.NextAt,
+		arg.Failures,
+		arg.PausedAt,
+		arg.PauseReason,
+		arg.AppID,
+	)
+	return err
+}
+
+const workflowRecoveryAutomaticPolicyClaim = `-- name: WorkflowRecoveryAutomaticPolicyClaim :one
+SELECT p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at,a.account_id,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.app_id=$1::uuid AND p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=$2::timestamptz FOR UPDATE OF p SKIP LOCKED
+`
+
+type WorkflowRecoveryAutomaticPolicyClaimParams struct {
+	AppID pgtype.UUID
+	NowAt pgtype.Timestamptz
+}
+
+type WorkflowRecoveryAutomaticPolicyClaimRow struct {
+	AppID                pgtype.UUID
+	Version              int64
+	Enabled              bool
+	Policy               []byte
+	UpdatedAt            pgtype.Timestamptz
+	ActorKind            string
+	ActorID              string
+	NextEvaluateAt       pgtype.Timestamptz
+	LastEvaluatedAt      pgtype.Timestamptz
+	JobCursor            pgtype.UUID
+	Status               string
+	NextExecuteAt        pgtype.Timestamptz
+	AutomaticFailures    int32
+	AutomaticPausedAt    pgtype.Timestamptz
+	AutomaticPauseReason string
+	NextHealthAt         pgtype.Timestamptz
+	AccountID            pgtype.UUID
+	Slug                 string
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticPolicyClaim(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyClaimParams) (WorkflowRecoveryAutomaticPolicyClaimRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticPolicyClaim, arg.AppID, arg.NowAt)
+	var i WorkflowRecoveryAutomaticPolicyClaimRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+		&i.AccountID,
+		&i.Slug,
+	)
+	return i, err
+}
+
+const workflowRecoveryAutomaticPolicyNext = `-- name: WorkflowRecoveryAutomaticPolicyNext :one
+SELECT p.app_id,a.account_id FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=$1::timestamptz ORDER BY p.next_execute_at,p.app_id LIMIT 1
+`
+
+type WorkflowRecoveryAutomaticPolicyNextRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticPolicyNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticPolicyNextRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticPolicyNext, nowAt)
+	var i WorkflowRecoveryAutomaticPolicyNextRow
+	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
+}
+
+const workflowRecoveryAutomaticQueue = `-- name: WorkflowRecoveryAutomaticQueue :one
+SELECT jsonb_build_object(
+ 'pending',(SELECT count(*) FROM workflow_recovery_policy_executions e WHERE e.app_id=$1::uuid AND e.status='pending' AND ($2::boolean OR e.policy_version=$3::bigint)),
+ 'outstanding',(SELECT count(*) FROM workflow_recovery_policy_executions e WHERE e.app_id=$1::uuid AND e.status='applied' AND e.result IS NULL),
+ 'hourly_executions',(SELECT count(*) FROM workflow_recovery_policy_execution_charges c WHERE c.app_id=$1::uuid AND c.applied_at>$4::timestamptz),
+ 'last_execution_at',(SELECT max(applied_at) FROM workflow_recovery_policy_execution_charges c WHERE c.app_id=$1::uuid),
+ 'entries',COALESCE((SELECT jsonb_agg(entry ORDER BY observed_at,review_id,position) FROM
+ (SELECT r.observed_at,e.review_id,e.position,jsonb_build_object('queued_at',r.observed_at,'review_id',e.review_id,'policy_version',e.policy_version,'action',jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation))) AS entry
+ FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id
+ WHERE e.app_id=$1::uuid AND ((e.status='pending' AND ($2::boolean OR e.policy_version=$3::bigint)) OR (e.status='applied' AND e.result IS NULL))
+ ORDER BY r.observed_at,e.review_id,e.position LIMIT $5::integer) queue),'[]'::jsonb))::jsonb AS snapshot
+`
+
+type WorkflowRecoveryAutomaticQueueParams struct {
+	AppID         pgtype.UUID
+	AllPending    bool
+	PolicyVersion int64
+	SinceAt       pgtype.Timestamptz
+	MaxEntries    int32
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticQueue(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueParams) ([]byte, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticQueue,
+		arg.AppID,
+		arg.AllPending,
+		arg.PolicyVersion,
+		arg.SinceAt,
+		arg.MaxEntries,
+	)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const workflowRecoveryAutomaticQueueApp = `-- name: WorkflowRecoveryAutomaticQueueApp :one
+SELECT id FROM apps WHERE id=$1::uuid AND account_id=$2::uuid AND status<>'deleted'
+`
+
+type WorkflowRecoveryAutomaticQueueAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticQueueApp(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, workflowRecoveryAutomaticQueueApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const workflowRecoveryAutomaticResult = `-- name: WorkflowRecoveryAutomaticResult :exec
+UPDATE workflow_recovery_policy_executions SET result=$1::jsonb WHERE action_id=$2::uuid AND status='applied' AND result IS NULL
+`
+
+type WorkflowRecoveryAutomaticResultParams struct {
+	Result   []byte
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticResult(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticResultParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticResult, arg.Result, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryAutomaticSuppress = `-- name: WorkflowRecoveryAutomaticSuppress :exec
+UPDATE workflow_recovery_policy_executions SET status='suppressed',reason=$1::text WHERE action_id=$2::uuid AND status='pending'
+`
+
+type WorkflowRecoveryAutomaticSuppressParams struct {
+	Reason   string
+	ActionID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryAutomaticSuppress(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticSuppressParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryAutomaticSuppress, arg.Reason, arg.ActionID)
+	return err
+}
+
+const workflowRecoveryCancellationHistory = `-- name: WorkflowRecoveryCancellationHistory :exec
+INSERT INTO event_recovery_history(job_id,occurred_at,action,actor_kind,actor_id,reason,previous_state,state,previous_rate,rate,target_position,target_run_id,target_resume_count)
+SELECT id,$1::timestamptz,'workflow_cancelled',$2::text,$3::text,$4::text,state,state,rate_per_second,rate_per_second,$5::bigint,$6::uuid,$7::integer
+FROM event_recovery_jobs WHERE id=$8::uuid
+`
+
+type WorkflowRecoveryCancellationHistoryParams struct {
+	NowAt       pgtype.Timestamptz
+	ActorKind   string
+	ActorID     string
+	Reason      string
+	Position    int64
+	RunID       pgtype.UUID
+	ResumeCount int32
+	JobID       pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryCancellationHistory(ctx context.Context, db DBTX, arg WorkflowRecoveryCancellationHistoryParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryCancellationHistory,
+		arg.NowAt,
+		arg.ActorKind,
+		arg.ActorID,
+		arg.Reason,
+		arg.Position,
+		arg.RunID,
+		arg.ResumeCount,
+		arg.JobID,
+	)
+	return err
+}
+
+const workflowRecoveryClaimExecutionAttention = `-- name: WorkflowRecoveryClaimExecutionAttention :one
+SELECT id,account_id FROM event_recovery_jobs
+WHERE selection->>'mode'='workflow' AND execution_finished_at IS NULL
+ AND EXISTS (SELECT 1 FROM event_recovery_items i WHERE i.job_id=event_recovery_jobs.id AND i.state='queued')
+ AND NOT notification_receipts ? 'event_recovery.execution_attention'
+ AND execution_attention_next_at<=$1::timestamptz
+ORDER BY execution_attention_next_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
+`
+
+type WorkflowRecoveryClaimExecutionAttentionRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryClaimExecutionAttention(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryClaimExecutionAttentionRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryClaimExecutionAttention, nowAt)
+	var i WorkflowRecoveryClaimExecutionAttentionRow
+	err := row.Scan(&i.ID, &i.AccountID)
+	return i, err
+}
+
+const workflowRecoveryDeferExecutionAttention = `-- name: WorkflowRecoveryDeferExecutionAttention :exec
+UPDATE event_recovery_jobs SET execution_attention_next_at=$1::timestamptz WHERE id=$2::uuid
+`
+
+type WorkflowRecoveryDeferExecutionAttentionParams struct {
+	NextAt pgtype.Timestamptz
+	JobID  pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryDeferExecutionAttention(ctx context.Context, db DBTX, arg WorkflowRecoveryDeferExecutionAttentionParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryDeferExecutionAttention, arg.NextAt, arg.JobID)
+	return err
+}
+
+const workflowRecoveryEnqueueExecutionAttention = `-- name: WorkflowRecoveryEnqueueExecutionAttention :exec
+WITH recipients AS (
+ SELECT coalesce(array_agg(h.id ORDER BY h.id),'{}'::uuid[]) AS ids FROM app_webhooks h
+ JOIN event_recovery_jobs j ON j.id=$4::uuid AND h.account_id=j.account_id AND h.app_id=j.app_id
+ WHERE h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR 'event_recovery.execution_attention'=ANY(h.event_filter))
+), captured AS (
+ UPDATE event_recovery_jobs j SET notification_receipts=j.notification_receipts||jsonb_build_object('event_recovery.execution_attention',
+ jsonb_build_object('event_id',$1::uuid,'captured_at',$3::timestamptz,'recipient_webhook_ids',to_jsonb(r.ids)))
+ FROM recipients r WHERE j.id=$4::uuid AND NOT j.notification_receipts ? 'event_recovery.execution_attention'
+ RETURNING j.id,j.account_id,j.app_id,r.ids
+)
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
+SELECT $1::uuid,j.account_id,j.app_id,'event_recovery.execution_attention',j.id,$2::jsonb,j.ids,$3::timestamptz
+FROM captured j WHERE cardinality(j.ids)>0 ON CONFLICT (event,source_id) DO NOTHING
+`
+
+type WorkflowRecoveryEnqueueExecutionAttentionParams struct {
+	EventID pgtype.UUID
+	Payload []byte
+	NowAt   pgtype.Timestamptz
+	JobID   pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryEnqueueExecutionAttention(ctx context.Context, db DBTX, arg WorkflowRecoveryEnqueueExecutionAttentionParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryEnqueueExecutionAttention,
+		arg.EventID,
+		arg.Payload,
+		arg.NowAt,
+		arg.JobID,
+	)
+	return err
+}
+
+const workflowRecoveryExecutionObservations = `-- name: WorkflowRecoveryExecutionObservations :many
+SELECT item.position,
+ (item.expected_progress->>'expected_resume_count')::integer AS expected_resume_count,
+ coalesce(run.status,'')::text AS run_status,coalesce(run.resume_count,-1)::integer AS resume_count,
+ run.updated_at AS run_updated_at,run.finished_at,
+ coalesce(run.cancelled_at IS NOT NULL OR run.last_error='cancelled by operator',false)::boolean AS cancelled,
+ admitted.created_at AS admitted_at,coalesce(result.state,'')::text AS result_state,
+ result.completed_at AS result_completed_at,result.recorded_at AS result_recorded_at
+FROM event_recovery_items item
+JOIN event_recovery_jobs job ON job.id=item.job_id
+JOIN apps app ON app.id=job.app_id AND app.account_id=job.account_id
+LEFT JOIN workflow_runs run ON run.id=nullif(item.expected_progress->>'run_id','')::uuid
+ AND run.app_id=job.app_id AND run.workflow_name=job.selection->'workflow_runs'->>'name'
+LEFT JOIN workflow_run_resumes admitted ON admitted.run_id=run.id AND admitted.account_id=job.account_id
+ AND admitted.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+ AND admitted.created_at>=job.created_at AND admitted.created_at<=$1::timestamptz
+LEFT JOIN event_recovery_workflow_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.run_id=(item.expected_progress->>'run_id')::uuid
+ AND result.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+ AND result.recorded_at<=$1::timestamptz
+WHERE job.id=$2::uuid AND job.account_id=$3::uuid
+ AND job.selection->>'mode'='workflow' AND item.state='queued'
+ AND item.position>$4::bigint AND item.position<=$5::bigint
+ORDER BY item.position
+`
+
+type WorkflowRecoveryExecutionObservationsParams struct {
+	NowAt           pgtype.Timestamptz
+	JobID           pgtype.UUID
+	AccountID       pgtype.UUID
+	AfterPosition   int64
+	ThroughPosition int64
+}
+
+type WorkflowRecoveryExecutionObservationsRow struct {
+	Position            int64
+	ExpectedResumeCount int32
+	RunStatus           string
+	ResumeCount         int32
+	RunUpdatedAt        pgtype.Timestamptz
+	FinishedAt          pgtype.Timestamptz
+	Cancelled           bool
+	AdmittedAt          pgtype.Timestamptz
+	ResultState         string
+	ResultCompletedAt   pgtype.Timestamptz
+	ResultRecordedAt    pgtype.Timestamptz
+}
+
+// Native recovery observes only the generation admitted by the owning job.
+func (q *Queries) WorkflowRecoveryExecutionObservations(ctx context.Context, db DBTX, arg WorkflowRecoveryExecutionObservationsParams) ([]WorkflowRecoveryExecutionObservationsRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryExecutionObservations,
+		arg.NowAt,
+		arg.JobID,
+		arg.AccountID,
+		arg.AfterPosition,
+		arg.ThroughPosition,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryExecutionObservationsRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryExecutionObservationsRow
+		if err := rows.Scan(
+			&i.Position,
+			&i.ExpectedResumeCount,
+			&i.RunStatus,
+			&i.ResumeCount,
+			&i.RunUpdatedAt,
+			&i.FinishedAt,
+			&i.Cancelled,
+			&i.AdmittedAt,
+			&i.ResultState,
+			&i.ResultCompletedAt,
+			&i.ResultRecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryFailureCaptureStart = `-- name: WorkflowRecoveryFailureCaptureStart :one
+SELECT started_at FROM workflow_recovery_failure_capture WHERE singleton
+`
+
+func (q *Queries) WorkflowRecoveryFailureCaptureStart(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, workflowRecoveryFailureCaptureStart)
+	var started_at pgtype.Timestamptz
+	err := row.Scan(&started_at)
+	return started_at, err
+}
+
+const workflowRecoveryFailureEvaluation = `-- name: WorkflowRecoveryFailureEvaluation :many
+SELECT id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at,eligibility
+FROM workflow_recovery_failure_evidence
+WHERE app_id=$1::uuid AND observed_at>=$2::timestamptz AND observed_at<=$3::timestamptz
+ AND observed_at>$4::timestamptz AND observed_at<=$5::timestamptz
+ AND ($6::text='' OR workflow=$6::text)
+ORDER BY observed_at,id LIMIT $7::integer
+`
+
+type WorkflowRecoveryFailureEvaluationParams struct {
+	AppID         pgtype.UUID
+	StartAt       pgtype.Timestamptz
+	EndAt         pgtype.Timestamptz
+	RetainedAfter pgtype.Timestamptz
+	ObservedAt    pgtype.Timestamptz
+	Workflow      string
+	PageLimit     int32
+}
+
+type WorkflowRecoveryFailureEvaluationRow struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	RunID         pgtype.UUID
+	Workflow      string
+	ResumeCount   int32
+	FailureStatus string
+	ObservedAt    pgtype.Timestamptz
+	CompletedAt   pgtype.Timestamptz
+	Eligibility   []byte
+}
+
+func (q *Queries) WorkflowRecoveryFailureEvaluation(ctx context.Context, db DBTX, arg WorkflowRecoveryFailureEvaluationParams) ([]WorkflowRecoveryFailureEvaluationRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryFailureEvaluation,
+		arg.AppID,
+		arg.StartAt,
+		arg.EndAt,
+		arg.RetainedAfter,
+		arg.ObservedAt,
+		arg.Workflow,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryFailureEvaluationRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryFailureEvaluationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.RunID,
+			&i.Workflow,
+			&i.ResumeCount,
+			&i.FailureStatus,
+			&i.ObservedAt,
+			&i.CompletedAt,
+			&i.Eligibility,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryFailureExpire = `-- name: WorkflowRecoveryFailureExpire :execrows
+WITH expired AS (
+ SELECT id FROM workflow_recovery_failure_evidence WHERE observed_at<=$1::timestamptz
+ ORDER BY observed_at,id FOR UPDATE SKIP LOCKED LIMIT $2::integer
+)
+DELETE FROM workflow_recovery_failure_evidence e USING expired WHERE e.id=expired.id
+`
+
+type WorkflowRecoveryFailureExpireParams struct {
+	BeforeAt   pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) WorkflowRecoveryFailureExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryFailureExpireParams) (int64, error) {
+	result, err := db.Exec(ctx, workflowRecoveryFailureExpire, arg.BeforeAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const workflowRecoveryHealthAdvance = `-- name: WorkflowRecoveryHealthAdvance :exec
+UPDATE workflow_recovery_policies SET next_health_at=$1::timestamptz WHERE app_id=$2::uuid
+`
+
+type WorkflowRecoveryHealthAdvanceParams struct {
+	NextAt pgtype.Timestamptz
+	AppID  pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryHealthAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryHealthAdvanceParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryHealthAdvance, arg.NextAt, arg.AppID)
+	return err
+}
+
+const workflowRecoveryHealthClaim = `-- name: WorkflowRecoveryHealthClaim :one
+SELECT p.app_id,a.account_id,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id LEFT JOIN workflow_recovery_health_incidents h ON h.app_id=p.app_id
+WHERE a.status<>'deleted' AND p.next_health_at<=$1::timestamptz
+AND (p.policy->'health_alerts'->>'enabled'='true' OR (h.app_id IS NOT NULL AND NOT h.incident ? 'closed_at'))
+ORDER BY p.next_health_at,p.app_id LIMIT 1 FOR UPDATE OF p SKIP LOCKED
+`
+
+type WorkflowRecoveryHealthClaimRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) WorkflowRecoveryHealthClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryHealthClaimRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryHealthClaim, nowAt)
+	var i WorkflowRecoveryHealthClaimRow
+	err := row.Scan(&i.AppID, &i.AccountID, &i.Slug)
+	return i, err
+}
+
+const workflowRecoveryHealthIncidentGet = `-- name: WorkflowRecoveryHealthIncidentGet :one
+SELECT incident FROM workflow_recovery_health_incidents WHERE app_id=$1::uuid
+`
+
+func (q *Queries) WorkflowRecoveryHealthIncidentGet(ctx context.Context, db DBTX, appID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, workflowRecoveryHealthIncidentGet, appID)
+	var incident []byte
+	err := row.Scan(&incident)
+	return incident, err
+}
+
+const workflowRecoveryHealthIncidentSet = `-- name: WorkflowRecoveryHealthIncidentSet :exec
+INSERT INTO workflow_recovery_health_incidents(app_id,incident) VALUES($1::uuid,$2::jsonb)
+ON CONFLICT(app_id) DO UPDATE SET incident=excluded.incident
+`
+
+type WorkflowRecoveryHealthIncidentSetParams struct {
+	AppID    pgtype.UUID
+	Incident []byte
+}
+
+func (q *Queries) WorkflowRecoveryHealthIncidentSet(ctx context.Context, db DBTX, arg WorkflowRecoveryHealthIncidentSetParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryHealthIncidentSet, arg.AppID, arg.Incident)
+	return err
+}
+
+const workflowRecoveryHistory = `-- name: WorkflowRecoveryHistory :many
+WITH entries(event_key,occurred_at,kind,outcome,reason,policy_version,workflow,run_id,review_id,action_id,job_id,child_job_id,actor_kind,actor_id) AS (
+SELECT 'policy:'||p.version::text,p.updated_at,'policy_observation',p.status,COALESCE(p.policy->>'reason',''),p.version,''::text,''::text,''::text,''::text,''::text,''::text,p.actor_kind,p.actor_id FROM workflow_recovery_policies p WHERE p.app_id=$9::uuid
+UNION ALL
+SELECT 'control:'||h.id::text,h.controlled_at,'policy_control',h.operation,h.reason,h.policy_version,''::text,''::text,''::text,''::text,''::text,''::text,h.actor_kind,h.actor_id FROM workflow_recovery_policy_controls h WHERE h.app_id=$9::uuid
+UNION ALL
+SELECT 'review:'||r.id::text||':'||(d->>'position'),r.observed_at,'review_outcome',COALESCE(d->>'outcome',''),COALESCE(d->>'trigger',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,''::text,r.job_id::text,''::text,''::text,''::text FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d WHERE r.app_id=$9::uuid
+UNION ALL
+SELECT 'resolution:'||r.id::text||':'||(d->>'position'),(r.review_decision->>'decided_at')::timestamptz,'review_resolution',COALESCE(r.review_decision->>'decision',''),COALESCE(r.review_decision->>'reason',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,''::text,r.job_id::text,''::text,COALESCE(r.review_decision->>'actor_kind',''),COALESCE(r.review_decision->>'actor_id','') FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d WHERE r.app_id=$9::uuid AND r.review_decision IS NOT NULL
+UNION ALL
+SELECT 'retry_applied:'||e.action_id::text,e.applied_at,'retry_applied','applied','',(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,e.action_id::text,r.job_id::text,COALESCE(e.child_job_id::text,''),'','' FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.position=(d->>'position')::bigint WHERE r.app_id=$9::uuid AND e.applied_at IS NOT NULL
+UNION ALL
+SELECT 'retry_suppressed:'||e.action_id::text,(e.suppression->>'suppressed_at')::timestamptz,'retry_suppressed','suppressed',COALESCE(e.suppression->>'reason',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,e.action_id::text,r.job_id::text,COALESCE(e.child_job_id::text,''),COALESCE(e.suppression->>'actor_kind',''),COALESCE(e.suppression->>'actor_id','') FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.position=(d->>'position')::bigint WHERE r.app_id=$9::uuid AND e.suppression IS NOT NULL
+UNION ALL
+SELECT 'retry_evaluation:'||e.action_id::text,(e.last_evaluation->>'evaluated_at')::timestamptz,'retry_evaluation',e.status,COALESCE(e.last_evaluation->>'reason',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,e.action_id::text,r.job_id::text,COALESCE(e.child_job_id::text,''),'','' FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.position=(d->>'position')::bigint WHERE r.app_id=$9::uuid AND e.last_evaluation IS NOT NULL
+UNION ALL
+SELECT 'retry_result:'||e.action_id::text,(e.result->>'recorded_at')::timestamptz,'retry_result',COALESCE(e.result->>'outcome',''),COALESCE(e.result->>'outcome_reason',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,e.action_id::text,r.job_id::text,COALESCE(e.child_job_id::text,''),'','' FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.position=(d->>'position')::bigint WHERE r.app_id=$9::uuid AND e.result->>'recorded_at' IS NOT NULL
+UNION ALL
+SELECT 'retry_blocked_notification:'||e.action_id::text,(e.blocked_notification->>'captured_at')::timestamptz,'retry_blocked_notification',COALESCE(e.blocked_notification->>'status',''),COALESCE(e.blocked_notification->>'reason',''),(r.review->>'policy_version')::bigint,COALESCE(j.selection->'workflow_runs'->>'name',''),COALESCE(d->>'run_id',''),r.id::text,e.action_id::text,r.job_id::text,COALESCE(e.child_job_id::text,''),'','' FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.position=(d->>'position')::bigint WHERE r.app_id=$9::uuid AND e.blocked_notification IS NOT NULL
+UNION ALL
+SELECT 'health:'||(h.incident->>'episode_id'),(h.incident->>'observed_at')::timestamptz,'health_observation',h.incident->>'status',h.incident->>'reason',0::bigint,''::text,''::text,''::text,''::text,''::text,''::text,''::text,''::text FROM workflow_recovery_health_incidents h WHERE h.app_id=$9::uuid
+UNION ALL
+SELECT 'health_alert:'||(h.incident->'alert_notification'->>'event_id'),(h.incident->'alert_notification'->>'captured_at')::timestamptz,'health_alert',h.incident->'alert_notification'->>'status',''::text,0::bigint,''::text,''::text,''::text,''::text,''::text,''::text,''::text,''::text FROM workflow_recovery_health_incidents h WHERE h.app_id=$9::uuid AND h.incident ? 'alert_notification'
+UNION ALL
+SELECT 'health_recovered:'||(h.incident->'recovery_notification'->>'event_id'),(h.incident->'recovery_notification'->>'captured_at')::timestamptz,'health_recovered',h.incident->'recovery_notification'->>'status',''::text,0::bigint,''::text,''::text,''::text,''::text,''::text,''::text,''::text,''::text FROM workflow_recovery_health_incidents h WHERE h.app_id=$9::uuid AND h.incident ? 'recovery_notification'
+), all_entries AS (
+SELECT jsonb_build_object('id',event_key,'occurred_at',occurred_at,'kind',kind,'outcome',outcome,'reason',reason,'policy_version',policy_version,'workflow',workflow,'run_id',run_id,'review_id',review_id,'action_id',action_id,'job_id',job_id,'child_job_id',child_job_id,'actor_kind',actor_kind,'actor_id',actor_id)::jsonb AS entry,event_key,occurred_at,workflow,run_id,policy_version FROM entries
+UNION ALL
+SELECT h.entry,h.entry->>'id',h.occurred_at,COALESCE(h.entry->>'workflow',''),COALESCE(h.entry->>'run_id',''),COALESCE((h.entry->>'policy_version')::bigint,0)
+FROM workflow_recovery_history_events h WHERE h.app_id=$9::uuid
+AND h.sequence<=$10::bigint
+AND h.recorded_at<=$11::timestamptz AND h.recorded_at>$12::timestamptz
+)
+SELECT entry FROM all_entries WHERE occurred_at>=$1::timestamptz AND occurred_at<=$2::timestamptz
+AND ($3::text='' OR workflow=$3::text)
+AND ($4::text='' OR run_id=$4::text)
+AND ($5::bigint=0 OR policy_version=$5::bigint)
+AND ($6::text='' OR (occurred_at,event_key COLLATE "C")<($7::timestamptz,$6::text COLLATE "C"))
+ORDER BY occurred_at DESC,event_key COLLATE "C" DESC LIMIT $8::integer
+`
+
+type WorkflowRecoveryHistoryParams struct {
+	StartAt       pgtype.Timestamptz
+	EndAt         pgtype.Timestamptz
+	Workflow      string
+	RunID         string
+	PolicyVersion int64
+	AfterKey      string
+	AfterAt       pgtype.Timestamptz
+	PageLimit     int32
+	AppID         pgtype.UUID
+	MaxSequence   int64
+	ObservedAt    pgtype.Timestamptz
+	RetainedAfter pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryHistory(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, workflowRecoveryHistory,
+		arg.StartAt,
+		arg.EndAt,
+		arg.Workflow,
+		arg.RunID,
+		arg.PolicyVersion,
+		arg.AfterKey,
+		arg.AfterAt,
+		arg.PageLimit,
+		arg.AppID,
+		arg.MaxSequence,
+		arg.ObservedAt,
+		arg.RetainedAfter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryHistoryAction = `-- name: WorkflowRecoveryHistoryAction :one
+SELECT e.app_id,jsonb_build_object('outcome',e.status,'reason',e.reason,'policy_version',e.policy_version,'workflow',COALESCE(j.selection->'workflow_runs'->>'name',''),'run_id',COALESCE(d->>'run_id',''),'review_id',r.id,'job_id',r.job_id,'action_id',e.action_id,'child_job_id',COALESCE(e.child_job_id::text,''))::jsonb AS entry
+FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id AND r.app_id=e.app_id
+JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id
+CROSS JOIN LATERAL jsonb_array_elements(r.review->'decisions') d
+WHERE e.action_id=$1::uuid AND (d->>'position')::bigint=e.position
+`
+
+type WorkflowRecoveryHistoryActionRow struct {
+	AppID pgtype.UUID
+	Entry []byte
+}
+
+func (q *Queries) WorkflowRecoveryHistoryAction(ctx context.Context, db DBTX, actionID pgtype.UUID) (WorkflowRecoveryHistoryActionRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryHistoryAction, actionID)
+	var i WorkflowRecoveryHistoryActionRow
+	err := row.Scan(&i.AppID, &i.Entry)
+	return i, err
+}
+
+const workflowRecoveryHistoryAppend = `-- name: WorkflowRecoveryHistoryAppend :exec
+INSERT INTO workflow_recovery_history_events(id,app_id,occurred_at,recorded_at,entry)
+VALUES($1::uuid,$2::uuid,$3::timestamptz,$4::timestamptz,$5::jsonb)
+`
+
+type WorkflowRecoveryHistoryAppendParams struct {
+	ID         pgtype.UUID
+	AppID      pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+	Entry      []byte
+}
+
+func (q *Queries) WorkflowRecoveryHistoryAppend(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryAppendParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryHistoryAppend,
+		arg.ID,
+		arg.AppID,
+		arg.OccurredAt,
+		arg.RecordedAt,
+		arg.Entry,
+	)
+	return err
+}
+
+const workflowRecoveryHistoryExpire = `-- name: WorkflowRecoveryHistoryExpire :execrows
+DELETE FROM workflow_recovery_history_events WHERE id IN (
+ SELECT id FROM workflow_recovery_history_events WHERE recorded_at<=$1::timestamptz
+ ORDER BY recorded_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+type WorkflowRecoveryHistoryExpireParams struct {
+	BeforeAt   pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) WorkflowRecoveryHistoryExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryExpireParams) (int64, error) {
+	result, err := db.Exec(ctx, workflowRecoveryHistoryExpire, arg.BeforeAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const workflowRecoveryHistoryPrune = `-- name: WorkflowRecoveryHistoryPrune :exec
+DELETE FROM workflow_recovery_history_events WHERE app_id=$1::uuid AND
+(recorded_at<=$2::timestamptz OR id IN (
+ SELECT id FROM workflow_recovery_history_events WHERE app_id=$1::uuid AND recorded_at>$2::timestamptz
+ ORDER BY sequence DESC OFFSET $3::integer
+))
+`
+
+type WorkflowRecoveryHistoryPruneParams struct {
+	AppID     pgtype.UUID
+	BeforeAt  pgtype.Timestamptz
+	KeepCount int32
+}
+
+func (q *Queries) WorkflowRecoveryHistoryPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryPruneParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryHistoryPrune, arg.AppID, arg.BeforeAt, arg.KeepCount)
+	return err
+}
+
+const workflowRecoveryHistorySequence = `-- name: WorkflowRecoveryHistorySequence :one
+SELECT COALESCE(max(sequence),0)::bigint FROM workflow_recovery_history_events WHERE app_id=$1::uuid
+`
+
+func (q *Queries) WorkflowRecoveryHistorySequence(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, workflowRecoveryHistorySequence, appID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const workflowRecoveryPolicyAdvance = `-- name: WorkflowRecoveryPolicyAdvance :exec
+UPDATE workflow_recovery_policies SET next_evaluate_at=$1::timestamptz,last_evaluated_at=$2::timestamptz,job_cursor=$3::uuid,status=$4::text WHERE app_id=$5::uuid
+`
+
+type WorkflowRecoveryPolicyAdvanceParams struct {
+	NextAt    pgtype.Timestamptz
+	NowAt     pgtype.Timestamptz
+	JobCursor pgtype.UUID
+	Status    string
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyAdvanceParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryPolicyAdvance,
+		arg.NextAt,
+		arg.NowAt,
+		arg.JobCursor,
+		arg.Status,
+		arg.AppID,
+	)
+	return err
+}
+
+const workflowRecoveryPolicyBudget = `-- name: WorkflowRecoveryPolicyBudget :one
+SELECT count(*) FILTER(WHERE prepared_at>$1::timestamptz)::bigint AS hourly_actions,max(prepared_at)::timestamptz AS last_prepared_at FROM workflow_recovery_policy_targets WHERE app_id=$2::uuid
+`
+
+type WorkflowRecoveryPolicyBudgetParams struct {
+	SinceAt pgtype.Timestamptz
+	AppID   pgtype.UUID
+}
+
+type WorkflowRecoveryPolicyBudgetRow struct {
+	HourlyActions  int64
+	LastPreparedAt pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryPolicyBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyBudgetParams) (WorkflowRecoveryPolicyBudgetRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyBudget, arg.SinceAt, arg.AppID)
+	var i WorkflowRecoveryPolicyBudgetRow
+	err := row.Scan(&i.HourlyActions, &i.LastPreparedAt)
+	return i, err
+}
+
+const workflowRecoveryPolicyChangeJobs = `-- name: WorkflowRecoveryPolicyChangeJobs :many
+SELECT id FROM event_recovery_jobs WHERE app_id=$1::uuid AND selection->'workflow_runs'->>'name'=ANY($2::text[])
+ORDER BY created_at DESC,id DESC LIMIT $3::integer
+`
+
+type WorkflowRecoveryPolicyChangeJobsParams struct {
+	AppID         pgtype.UUID
+	WorkflowNames []string
+	PageLimit     int32
+}
+
+func (q *Queries) WorkflowRecoveryPolicyChangeJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyChangeJobsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyChangeJobs, arg.AppID, arg.WorkflowNames, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyClaim = `-- name: WorkflowRecoveryPolicyClaim :one
+SELECT p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at,a.account_id,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id
+WHERE p.enabled AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_evaluate_at<=$1::timestamptz
+ORDER BY p.next_evaluate_at,p.app_id LIMIT 1 FOR UPDATE OF p SKIP LOCKED
+`
+
+type WorkflowRecoveryPolicyClaimRow struct {
+	AppID                pgtype.UUID
+	Version              int64
+	Enabled              bool
+	Policy               []byte
+	UpdatedAt            pgtype.Timestamptz
+	ActorKind            string
+	ActorID              string
+	NextEvaluateAt       pgtype.Timestamptz
+	LastEvaluatedAt      pgtype.Timestamptz
+	JobCursor            pgtype.UUID
+	Status               string
+	NextExecuteAt        pgtype.Timestamptz
+	AutomaticFailures    int32
+	AutomaticPausedAt    pgtype.Timestamptz
+	AutomaticPauseReason string
+	NextHealthAt         pgtype.Timestamptz
+	AccountID            pgtype.UUID
+	Slug                 string
+}
+
+func (q *Queries) WorkflowRecoveryPolicyClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryPolicyClaimRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyClaim, nowAt)
+	var i WorkflowRecoveryPolicyClaimRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+		&i.AccountID,
+		&i.Slug,
+	)
+	return i, err
+}
+
+const workflowRecoveryPolicyControl = `-- name: WorkflowRecoveryPolicyControl :one
+WITH controlled AS (UPDATE workflow_recovery_policies p SET
+ automatic_paused_at=CASE WHEN $1::text='pause' THEN $2::timestamptz ELSE NULL END,
+ automatic_pause_reason=CASE WHEN $1::text='pause' THEN 'operator: '||$3::text ELSE '' END,
+ automatic_failures=CASE WHEN $1::text='resume' THEN 0 ELSE automatic_failures END,
+ status=CASE WHEN $1::text='pause' THEN 'paused' ELSE 'monitoring' END,
+ updated_at=$2::timestamptz, actor_kind=$4::text,actor_id=$5::text,
+ next_execute_at=$2::timestamptz,next_evaluate_at=$2::timestamptz
+FROM apps a WHERE a.id=p.app_id AND a.account_id=$6::uuid AND a.status<>'deleted'
+ AND p.app_id=$7::uuid AND p.version=$8::bigint
+ AND p.updated_at=$9::timestamptz
+ AND p.automatic_paused_at IS NOT DISTINCT FROM $10::timestamptz
+ AND p.enabled AND p.policy->>'mode'='automatic_retry'
+RETURNING p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at), audited AS (
+ INSERT INTO workflow_recovery_policy_controls(id,app_id,policy_version,operation,reason,actor_kind,actor_id,controlled_at)
+ SELECT $11::uuid,app_id,version,$1::text,$3::text,$4::text,$5::text,$2::timestamptz FROM controlled RETURNING id
+)
+SELECT controlled.app_id, controlled.version, controlled.enabled, controlled.policy, controlled.updated_at, controlled.actor_kind, controlled.actor_id, controlled.next_evaluate_at, controlled.last_evaluated_at, controlled.job_cursor, controlled.status, controlled.next_execute_at, controlled.automatic_failures, controlled.automatic_paused_at, controlled.automatic_pause_reason, controlled.next_health_at FROM controlled,audited
+`
+
+type WorkflowRecoveryPolicyControlParams struct {
+	Operation         string
+	NowAt             pgtype.Timestamptz
+	Reason            string
+	ActorKind         string
+	ActorID           string
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	ExpectedVersion   int64
+	ExpectedUpdatedAt pgtype.Timestamptz
+	ExpectedPausedAt  pgtype.Timestamptz
+	ControlID         pgtype.UUID
+}
+
+type WorkflowRecoveryPolicyControlRow struct {
+	AppID                pgtype.UUID
+	Version              int64
+	Enabled              bool
+	Policy               []byte
+	UpdatedAt            pgtype.Timestamptz
+	ActorKind            string
+	ActorID              string
+	NextEvaluateAt       pgtype.Timestamptz
+	LastEvaluatedAt      pgtype.Timestamptz
+	JobCursor            pgtype.UUID
+	Status               string
+	NextExecuteAt        pgtype.Timestamptz
+	AutomaticFailures    int32
+	AutomaticPausedAt    pgtype.Timestamptz
+	AutomaticPauseReason string
+	NextHealthAt         pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryPolicyControl(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyControlParams) (WorkflowRecoveryPolicyControlRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyControl,
+		arg.Operation,
+		arg.NowAt,
+		arg.Reason,
+		arg.ActorKind,
+		arg.ActorID,
+		arg.AccountID,
+		arg.AppID,
+		arg.ExpectedVersion,
+		arg.ExpectedUpdatedAt,
+		arg.ExpectedPausedAt,
+		arg.ControlID,
+	)
+	var i WorkflowRecoveryPolicyControlRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+	)
+	return i, err
+}
+
+const workflowRecoveryPolicyControlAudit = `-- name: WorkflowRecoveryPolicyControlAudit :many
+SELECT operation,reason,actor_kind,actor_id,controlled_at FROM workflow_recovery_policy_controls WHERE app_id=$1::uuid ORDER BY controlled_at DESC,id
+`
+
+type WorkflowRecoveryPolicyControlAuditRow struct {
+	Operation    string
+	Reason       string
+	ActorKind    string
+	ActorID      string
+	ControlledAt pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryPolicyControlAudit(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowRecoveryPolicyControlAuditRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyControlAudit, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryPolicyControlAuditRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryPolicyControlAuditRow
+		if err := rows.Scan(
+			&i.Operation,
+			&i.Reason,
+			&i.ActorKind,
+			&i.ActorID,
+			&i.ControlledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyEvaluationExecutions = `-- name: WorkflowRecoveryPolicyEvaluationExecutions :many
+SELECT entry FROM workflow_recovery_history_events
+WHERE app_id=$1::uuid AND occurred_at>=$2::timestamptz AND occurred_at<=$3::timestamptz
+ AND recorded_at>$4::timestamptz AND recorded_at<=$5::timestamptz
+ AND entry->>'kind'='retry_transition' AND entry->>'evaluation_reason'='child_created'
+ORDER BY occurred_at,id LIMIT $6::integer
+`
+
+type WorkflowRecoveryPolicyEvaluationExecutionsParams struct {
+	AppID         pgtype.UUID
+	StartAt       pgtype.Timestamptz
+	EndAt         pgtype.Timestamptz
+	RetainedAfter pgtype.Timestamptz
+	ObservedAt    pgtype.Timestamptz
+	PageLimit     int32
+}
+
+func (q *Queries) WorkflowRecoveryPolicyEvaluationExecutions(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyEvaluationExecutionsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyEvaluationExecutions,
+		arg.AppID,
+		arg.StartAt,
+		arg.EndAt,
+		arg.RetainedAfter,
+		arg.ObservedAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyEvaluationReviews = `-- name: WorkflowRecoveryPolicyEvaluationReviews :many
+WITH durable AS (
+ SELECT entry->>'id' AS evidence_id, entry->'candidate_evidence' AS evidence, COALESCE(entry->>'workflow','')::text AS workflow
+ FROM workflow_recovery_history_events
+ WHERE app_id=$5::uuid AND entry->>'kind'='candidates_observed'
+ AND occurred_at>=$1::timestamptz AND occurred_at<=$2::timestamptz
+ AND recorded_at>$6::timestamptz AND recorded_at<=$7::timestamptz
+), reviews AS (
+ SELECT jsonb_build_object('id',evidence->>'review_id','app_id',evidence->>'app_id','job_id',evidence->>'job_id','policy_version',evidence->'policy_version','policy',evidence->'policy','observed_at',evidence->'observed_at','decisions',evidence->'decisions') AS review, workflow, evidence_id FROM durable
+ UNION ALL
+ SELECT r.review, COALESCE(j.selection->'workflow_runs'->>'name','')::text AS workflow, ''::text AS evidence_id
+ FROM workflow_recovery_policy_reviews r JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=r.app_id
+ WHERE r.app_id=$5::uuid AND NOT EXISTS(SELECT 1 FROM durable d WHERE d.evidence->>'review_id'=r.id::text)
+)
+SELECT review, workflow, COALESCE(evidence_id,'')::text AS evidence_id FROM reviews
+WHERE (review->>'observed_at')::timestamptz>=$1::timestamptz AND (review->>'observed_at')::timestamptz<=$2::timestamptz
+ AND ($3::text='' OR workflow=$3::text)
+ORDER BY (review->>'observed_at')::timestamptz,review->>'id' LIMIT $4::integer
+`
+
+type WorkflowRecoveryPolicyEvaluationReviewsParams struct {
+	StartAt       pgtype.Timestamptz
+	EndAt         pgtype.Timestamptz
+	Workflow      string
+	PageLimit     int32
+	AppID         pgtype.UUID
+	RetainedAfter pgtype.Timestamptz
+	ObservedAt    pgtype.Timestamptz
+}
+
+type WorkflowRecoveryPolicyEvaluationReviewsRow struct {
+	Review     []byte
+	Workflow   string
+	EvidenceID string
+}
+
+func (q *Queries) WorkflowRecoveryPolicyEvaluationReviews(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyEvaluationReviewsParams) ([]WorkflowRecoveryPolicyEvaluationReviewsRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyEvaluationReviews,
+		arg.StartAt,
+		arg.EndAt,
+		arg.Workflow,
+		arg.PageLimit,
+		arg.AppID,
+		arg.RetainedAfter,
+		arg.ObservedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryPolicyEvaluationReviewsRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryPolicyEvaluationReviewsRow
+		if err := rows.Scan(&i.Review, &i.Workflow, &i.EvidenceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyGet = `-- name: WorkflowRecoveryPolicyGet :one
+SELECT p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE a.account_id=$1::uuid AND p.app_id=$2::uuid
+`
+
+type WorkflowRecoveryPolicyGetParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryPolicyGet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyGetParams) (WorkflowRecoveryPolicy, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyGet, arg.AccountID, arg.AppID)
+	var i WorkflowRecoveryPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+	)
+	return i, err
+}
+
+const workflowRecoveryPolicyJobs = `-- name: WorkflowRecoveryPolicyJobs :many
+SELECT id FROM event_recovery_jobs WHERE app_id=$1::uuid AND selection->'workflow_runs' IS NOT NULL AND selection->'workflow_runs'<>'null'::jsonb AND ($2::uuid IS NULL OR id>$2::uuid)
+ORDER BY id LIMIT $3::integer
+`
+
+type WorkflowRecoveryPolicyJobsParams struct {
+	AppID     pgtype.UUID
+	AfterID   pgtype.UUID
+	PageLimit int32
+}
+
+func (q *Queries) WorkflowRecoveryPolicyJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyJobsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyJobs, arg.AppID, arg.AfterID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyReviewCount = `-- name: WorkflowRecoveryPolicyReviewCount :one
+SELECT count(*) FROM workflow_recovery_policy_reviews WHERE app_id=$1::uuid
+`
+
+func (q *Queries) WorkflowRecoveryPolicyReviewCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyReviewCount, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const workflowRecoveryPolicyReviewDecide = `-- name: WorkflowRecoveryPolicyReviewDecide :one
+UPDATE workflow_recovery_policy_reviews r SET review_decision=COALESCE(r.review_decision,$1::jsonb)
+FROM apps a WHERE a.id=r.app_id AND a.account_id=$2::uuid AND r.app_id=$3::uuid AND r.id=$4::uuid AND r.review ? 'plan'
+RETURNING (r.review || COALESCE((SELECT jsonb_build_object('automatic_execution',jsonb_build_object('actions',jsonb_agg(jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'result',e.result,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation)) ORDER BY e.position))) FROM workflow_recovery_policy_executions e WHERE e.review_id=r.id HAVING count(*)>0),'{}'::jsonb) || jsonb_build_object('review_decision',r.review_decision) || COALESCE((SELECT (CASE WHEN n.receipt IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('notification',n.receipt) END || CASE WHEN n.completion IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('completion_notification',n.completion) END) FROM workflow_recovery_review_notifications n WHERE n.review_id=r.id),'{}'::jsonb))::jsonb AS review
+`
+
+type WorkflowRecoveryPolicyReviewDecideParams struct {
+	Decision  []byte
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryPolicyReviewDecide(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewDecideParams) ([]byte, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyReviewDecide,
+		arg.Decision,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+	)
+	var review []byte
+	err := row.Scan(&review)
+	return review, err
+}
+
+const workflowRecoveryPolicyReviewGet = `-- name: WorkflowRecoveryPolicyReviewGet :one
+SELECT (r.review || COALESCE((SELECT jsonb_build_object('automatic_execution',jsonb_build_object('actions',jsonb_agg(jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'result',e.result,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation)) ORDER BY e.position))) FROM workflow_recovery_policy_executions e WHERE e.review_id=r.id HAVING count(*)>0),'{}'::jsonb) || CASE WHEN r.review_decision IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('review_decision',r.review_decision) END || CASE WHEN n.receipt IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('notification',n.receipt) END || CASE WHEN n.completion IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('completion_notification',n.completion) END)::jsonb AS review FROM workflow_recovery_policy_reviews r LEFT JOIN workflow_recovery_review_notifications n ON n.review_id=r.id JOIN apps a ON a.id=r.app_id WHERE a.account_id=$1::uuid AND r.app_id=$2::uuid AND r.id=$3::uuid
+`
+
+type WorkflowRecoveryPolicyReviewGetParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryPolicyReviewGet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewGetParams) ([]byte, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyReviewGet, arg.AccountID, arg.AppID, arg.ID)
+	var review []byte
+	err := row.Scan(&review)
+	return review, err
+}
+
+const workflowRecoveryPolicyReviewInsert = `-- name: WorkflowRecoveryPolicyReviewInsert :execrows
+INSERT INTO workflow_recovery_policy_reviews(id,app_id,job_id,fingerprint,review,observed_at) VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::jsonb,$6::timestamptz) ON CONFLICT(app_id,job_id,fingerprint) DO NOTHING
+`
+
+type WorkflowRecoveryPolicyReviewInsertParams struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	JobID       pgtype.UUID
+	Fingerprint string
+	Review      []byte
+	NowAt       pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryPolicyReviewInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewInsertParams) (int64, error) {
+	result, err := db.Exec(ctx, workflowRecoveryPolicyReviewInsert,
+		arg.ID,
+		arg.AppID,
+		arg.JobID,
+		arg.Fingerprint,
+		arg.Review,
+		arg.NowAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const workflowRecoveryPolicyReviews = `-- name: WorkflowRecoveryPolicyReviews :many
+SELECT (r.review || COALESCE((SELECT jsonb_build_object('automatic_execution',jsonb_build_object('actions',jsonb_agg(jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'result',e.result,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation)) ORDER BY e.position))) FROM workflow_recovery_policy_executions e WHERE e.review_id=r.id HAVING count(*)>0),'{}'::jsonb) || CASE WHEN r.review_decision IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('review_decision',r.review_decision) END || CASE WHEN n.receipt IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('notification',n.receipt) END || CASE WHEN n.completion IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('completion_notification',n.completion) END)::jsonb AS review,r.id FROM workflow_recovery_policy_reviews r LEFT JOIN workflow_recovery_review_notifications n ON n.review_id=r.id JOIN apps a ON a.id=r.app_id WHERE a.account_id=$1::uuid AND r.app_id=$2::uuid AND ($3::uuid IS NULL OR r.id>$3::uuid) ORDER BY r.id LIMIT $4::integer
+`
+
+type WorkflowRecoveryPolicyReviewsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	AfterID   pgtype.UUID
+	PageLimit int32
+}
+
+type WorkflowRecoveryPolicyReviewsRow struct {
+	Review []byte
+	ID     pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryPolicyReviews(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyReviewsParams) ([]WorkflowRecoveryPolicyReviewsRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyReviews,
+		arg.AccountID,
+		arg.AppID,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryPolicyReviewsRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryPolicyReviewsRow
+		if err := rows.Scan(&i.Review, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicySet = `-- name: WorkflowRecoveryPolicySet :one
+INSERT INTO workflow_recovery_policies(app_id,version,enabled,policy,updated_at,actor_kind,actor_id,next_evaluate_at,status)
+SELECT a.id,1,$1::boolean,$2::jsonb,$3::timestamptz,$4::text,$5::text,$3::timestamptz,$6::text
+FROM apps a WHERE a.id=$7::uuid AND a.account_id=$8::uuid AND a.status<>'deleted' AND $9::bigint=0
+ON CONFLICT(app_id) DO UPDATE SET version=workflow_recovery_policies.version+1,enabled=excluded.enabled,policy=excluded.policy,updated_at=excluded.updated_at,actor_kind=excluded.actor_kind,actor_id=excluded.actor_id,next_evaluate_at=excluded.next_evaluate_at,status=excluded.status,job_cursor=NULL,next_execute_at=excluded.next_evaluate_at,next_health_at=excluded.next_evaluate_at,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason=''
+WHERE workflow_recovery_policies.version=$9::bigint
+RETURNING app_id, version, enabled, policy, updated_at, actor_kind, actor_id, next_evaluate_at, last_evaluated_at, job_cursor, status, next_execute_at, automatic_failures, automatic_paused_at, automatic_pause_reason, next_health_at
+`
+
+type WorkflowRecoveryPolicySetParams struct {
+	Enabled         bool
+	Policy          []byte
+	NowAt           pgtype.Timestamptz
+	ActorKind       string
+	ActorID         string
+	Status          string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	ExpectedVersion int64
+}
+
+func (q *Queries) WorkflowRecoveryPolicySet(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicySetParams) (WorkflowRecoveryPolicy, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicySet,
+		arg.Enabled,
+		arg.Policy,
+		arg.NowAt,
+		arg.ActorKind,
+		arg.ActorID,
+		arg.Status,
+		arg.AppID,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i WorkflowRecoveryPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+	)
+	return i, err
+}
+
+const workflowRecoveryPolicyTargetInsert = `-- name: WorkflowRecoveryPolicyTargetInsert :exec
+INSERT INTO workflow_recovery_policy_targets(app_id,review_id,run_id,resume_count,action,prepared_at) VALUES($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::timestamptz)
+`
+
+type WorkflowRecoveryPolicyTargetInsertParams struct {
+	AppID       pgtype.UUID
+	ReviewID    pgtype.UUID
+	RunID       pgtype.UUID
+	ResumeCount int32
+	Action      string
+	NowAt       pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryPolicyTargetInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyTargetInsertParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryPolicyTargetInsert,
+		arg.AppID,
+		arg.ReviewID,
+		arg.RunID,
+		arg.ResumeCount,
+		arg.Action,
+		arg.NowAt,
+	)
+	return err
+}
+
+const workflowRecoveryPolicyTargets = `-- name: WorkflowRecoveryPolicyTargets :many
+SELECT run_id,resume_count,action FROM workflow_recovery_policy_targets WHERE app_id=$1::uuid AND run_id=ANY($2::uuid[])
+`
+
+type WorkflowRecoveryPolicyTargetsParams struct {
+	AppID  pgtype.UUID
+	RunIds []pgtype.UUID
+}
+
+type WorkflowRecoveryPolicyTargetsRow struct {
+	RunID       pgtype.UUID
+	ResumeCount int32
+	Action      string
+}
+
+func (q *Queries) WorkflowRecoveryPolicyTargets(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyTargetsParams) ([]WorkflowRecoveryPolicyTargetsRow, error) {
+	rows, err := db.Query(ctx, workflowRecoveryPolicyTargets, arg.AppID, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRecoveryPolicyTargetsRow{}
+	for rows.Next() {
+		var i WorkflowRecoveryPolicyTargetsRow
+		if err := rows.Scan(&i.RunID, &i.ResumeCount, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRecoveryPolicyUpdate = `-- name: WorkflowRecoveryPolicyUpdate :one
+UPDATE workflow_recovery_policies p SET version=p.version+1,enabled=$1::boolean,policy=$2::jsonb,updated_at=$3::timestamptz,actor_kind=$4::text,actor_id=$5::text,next_evaluate_at=$3::timestamptz,status=$6::text,job_cursor=NULL,next_execute_at=$3::timestamptz,next_health_at=$3::timestamptz,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason=''
+FROM apps a WHERE p.app_id=a.id AND a.id=$7::uuid AND a.account_id=$8::uuid AND a.status<>'deleted' AND p.version=$9::bigint RETURNING p.app_id, p.version, p.enabled, p.policy, p.updated_at, p.actor_kind, p.actor_id, p.next_evaluate_at, p.last_evaluated_at, p.job_cursor, p.status, p.next_execute_at, p.automatic_failures, p.automatic_paused_at, p.automatic_pause_reason, p.next_health_at
+`
+
+type WorkflowRecoveryPolicyUpdateParams struct {
+	Enabled         bool
+	Policy          []byte
+	NowAt           pgtype.Timestamptz
+	ActorKind       string
+	ActorID         string
+	Status          string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	ExpectedVersion int64
+}
+
+func (q *Queries) WorkflowRecoveryPolicyUpdate(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyUpdateParams) (WorkflowRecoveryPolicy, error) {
+	row := db.QueryRow(ctx, workflowRecoveryPolicyUpdate,
+		arg.Enabled,
+		arg.Policy,
+		arg.NowAt,
+		arg.ActorKind,
+		arg.ActorID,
+		arg.Status,
+		arg.AppID,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i WorkflowRecoveryPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.Version,
+		&i.Enabled,
+		&i.Policy,
+		&i.UpdatedAt,
+		&i.ActorKind,
+		&i.ActorID,
+		&i.NextEvaluateAt,
+		&i.LastEvaluatedAt,
+		&i.JobCursor,
+		&i.Status,
+		&i.NextExecuteAt,
+		&i.AutomaticFailures,
+		&i.AutomaticPausedAt,
+		&i.AutomaticPauseReason,
+		&i.NextHealthAt,
+	)
+	return i, err
+}
+
+const workflowRecoveryReviewCompletionCapture = `-- name: WorkflowRecoveryReviewCompletionCapture :exec
+UPDATE workflow_recovery_review_notifications SET completion=$1::jsonb WHERE review_id=$2::uuid AND completion IS NULL
+`
+
+type WorkflowRecoveryReviewCompletionCaptureParams struct {
+	Completion []byte
+	ReviewID   pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewCompletionCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewCompletionCaptureParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewCompletionCapture, arg.Completion, arg.ReviewID)
+	return err
+}
+
+const workflowRecoveryReviewCompletionClaim = `-- name: WorkflowRecoveryReviewCompletionClaim :one
+SELECT n.review_id,r.app_id,a.account_id FROM workflow_recovery_review_notifications n JOIN workflow_recovery_policy_reviews r ON r.id=n.review_id JOIN apps a ON a.id=r.app_id
+WHERE n.completion IS NULL AND n.next_completion_at<=$1::timestamptz ORDER BY n.next_completion_at,n.review_id LIMIT 1 FOR UPDATE OF n SKIP LOCKED
+`
+
+type WorkflowRecoveryReviewCompletionClaimRow struct {
+	ReviewID  pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewCompletionClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryReviewCompletionClaimRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryReviewCompletionClaim, nowAt)
+	var i WorkflowRecoveryReviewCompletionClaimRow
+	err := row.Scan(&i.ReviewID, &i.AppID, &i.AccountID)
+	return i, err
+}
+
+const workflowRecoveryReviewCompletionDefer = `-- name: WorkflowRecoveryReviewCompletionDefer :exec
+UPDATE workflow_recovery_review_notifications SET next_completion_at=$1::timestamptz WHERE review_id=$2::uuid AND completion IS NULL
+`
+
+type WorkflowRecoveryReviewCompletionDeferParams struct {
+	NextAt   pgtype.Timestamptz
+	ReviewID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewCompletionDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewCompletionDeferParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewCompletionDefer, arg.NextAt, arg.ReviewID)
+	return err
+}
+
+const workflowRecoveryReviewNotificationCapture = `-- name: WorkflowRecoveryReviewNotificationCapture :exec
+UPDATE workflow_recovery_review_notifications SET receipt=$1::jsonb WHERE review_id=$2::uuid AND receipt IS NULL
+`
+
+type WorkflowRecoveryReviewNotificationCaptureParams struct {
+	Receipt  []byte
+	ReviewID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationCapture(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationCaptureParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewNotificationCapture, arg.Receipt, arg.ReviewID)
+	return err
+}
+
+const workflowRecoveryReviewNotificationClaim = `-- name: WorkflowRecoveryReviewNotificationClaim :one
+SELECT n.review_id,r.app_id,a.account_id FROM workflow_recovery_review_notifications n JOIN workflow_recovery_policy_reviews r ON r.id=n.review_id JOIN apps a ON a.id=r.app_id
+WHERE n.receipt IS NULL AND n.next_at<=$1::timestamptz
+ORDER BY n.next_at,n.review_id LIMIT 1 FOR UPDATE OF n SKIP LOCKED
+`
+
+type WorkflowRecoveryReviewNotificationClaimRow struct {
+	ReviewID  pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryReviewNotificationClaimRow, error) {
+	row := db.QueryRow(ctx, workflowRecoveryReviewNotificationClaim, nowAt)
+	var i WorkflowRecoveryReviewNotificationClaimRow
+	err := row.Scan(&i.ReviewID, &i.AppID, &i.AccountID)
+	return i, err
+}
+
+const workflowRecoveryReviewNotificationDefer = `-- name: WorkflowRecoveryReviewNotificationDefer :exec
+UPDATE workflow_recovery_review_notifications SET next_at=$1::timestamptz WHERE review_id=$2::uuid AND receipt IS NULL
+`
+
+type WorkflowRecoveryReviewNotificationDeferParams struct {
+	NextAt   pgtype.Timestamptz
+	ReviewID pgtype.UUID
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationDefer(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationDeferParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewNotificationDefer, arg.NextAt, arg.ReviewID)
+	return err
+}
+
+const workflowRecoveryReviewNotificationEnqueue = `-- name: WorkflowRecoveryReviewNotificationEnqueue :exec
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::jsonb,$7::uuid[],$8::timestamptz) ON CONFLICT(event,source_id) DO NOTHING
+`
+
+type WorkflowRecoveryReviewNotificationEnqueueParams struct {
+	EventID     pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Event       string
+	ReviewID    pgtype.UUID
+	Payload     []byte
+	ReceiverIds []pgtype.UUID
+	NowAt       pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationEnqueue(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationEnqueueParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewNotificationEnqueue,
+		arg.EventID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Event,
+		arg.ReviewID,
+		arg.Payload,
+		arg.ReceiverIds,
+		arg.NowAt,
+	)
+	return err
+}
+
+const workflowRecoveryReviewNotificationInsert = `-- name: WorkflowRecoveryReviewNotificationInsert :exec
+INSERT INTO workflow_recovery_review_notifications(review_id,next_at) VALUES($1::uuid,$2::timestamptz) ON CONFLICT DO NOTHING
+`
+
+type WorkflowRecoveryReviewNotificationInsertParams struct {
+	ReviewID pgtype.UUID
+	NowAt    pgtype.Timestamptz
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationInsert(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationInsertParams) error {
+	_, err := db.Exec(ctx, workflowRecoveryReviewNotificationInsert, arg.ReviewID, arg.NowAt)
+	return err
+}
+
+const workflowRecoveryReviewNotificationReceivers = `-- name: WorkflowRecoveryReviewNotificationReceivers :many
+SELECT h.id FROM app_webhooks h WHERE h.scope='app' AND h.account_id=$1::uuid AND h.app_id=$2::uuid AND h.enabled AND (cardinality(h.event_filter)=0 OR $3::text=ANY(h.event_filter)) ORDER BY h.id
+`
+
+type WorkflowRecoveryReviewNotificationReceiversParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Event     string
+}
+
+func (q *Queries) WorkflowRecoveryReviewNotificationReceivers(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationReceiversParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, workflowRecoveryReviewNotificationReceivers, arg.AccountID, arg.AppID, arg.Event)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workflowRunRecoveryCandidate = `-- name: WorkflowRunRecoveryCandidate :one
+SELECT 0::bigint AS outbox_id,''::text AS event_source,''::text AS event_id,''::text AS event_type,
+ ''::text AS subscription_id,r.updated_at::timestamptz AS failed_at,r.status::text AS failure_code,false::boolean AS retryable,
+ jsonb_build_object('run_id',r.id::text,'expected_resume_count',$1::integer)::jsonb AS expected_progress
+FROM workflow_runs r JOIN apps a ON a.id=r.app_id
+WHERE a.account_id=$2::uuid AND a.id=$3::uuid
+ AND r.id=$4::uuid AND r.workflow_name=$5::text
+ AND r.status IN ('failed','dead') AND r.resume_count=$1::integer
+`
+
+type WorkflowRunRecoveryCandidateParams struct {
+	ExpectedResumeCount int32
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	RunID               pgtype.UUID
+	WorkflowName        string
+}
+
+type WorkflowRunRecoveryCandidateRow struct {
+	OutboxID         int64
+	EventSource      string
+	EventID          string
+	EventType        string
+	SubscriptionID   string
+	FailedAt         pgtype.Timestamptz
+	FailureCode      string
+	Retryable        bool
+	ExpectedProgress []byte
+}
+
+func (q *Queries) WorkflowRunRecoveryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryCandidateParams) (WorkflowRunRecoveryCandidateRow, error) {
+	row := db.QueryRow(ctx, workflowRunRecoveryCandidate,
+		arg.ExpectedResumeCount,
+		arg.AccountID,
+		arg.AppID,
+		arg.RunID,
+		arg.WorkflowName,
+	)
+	var i WorkflowRunRecoveryCandidateRow
+	err := row.Scan(
+		&i.OutboxID,
+		&i.EventSource,
+		&i.EventID,
+		&i.EventType,
+		&i.SubscriptionID,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.Retryable,
+		&i.ExpectedProgress,
+	)
+	return i, err
+}
+
+const workflowRunRecoveryRetryCandidate = `-- name: WorkflowRunRecoveryRetryCandidate :one
+SELECT 0::bigint AS outbox_id,''::text AS event_source,''::text AS event_id,''::text AS event_type,
+ ''::text AS subscription_id,r.updated_at::timestamptz AS failed_at,r.status::text AS failure_code,false::boolean AS retryable,
+ jsonb_build_object('run_id',r.id::text,'expected_resume_count',$1::integer,
+ 'parent_job_id',parent.id::text,'parent_position',item.position)::jsonb AS expected_progress
+FROM event_recovery_jobs parent JOIN event_recovery_items item ON item.job_id=parent.id
+JOIN event_recovery_workflow_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.run_id=(item.expected_progress->>'run_id')::uuid
+ AND result.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+JOIN workflow_runs r ON r.id=result.run_id AND r.app_id=parent.app_id
+WHERE parent.id=$2::uuid AND parent.account_id=$3::uuid
+ AND parent.app_id=$4::uuid AND parent.selection->>'mode'='workflow'
+ AND parent.selection->'workflow_runs'->>'name'=$5::text
+ AND parent.state IN ('completed','cancelled','expired') AND item.state='queued'
+ AND item.position=$6::bigint AND result.state='failed'
+ AND result.recorded_at<=$7::timestamptz AND result.run_id=$8::uuid
+ AND result.resume_number=$1::integer
+ AND r.workflow_name=$5::text AND r.resume_count=result.resume_number
+ AND r.status IN ('failed','dead')
+`
+
+type WorkflowRunRecoveryRetryCandidateParams struct {
+	ExpectedResumeCount int32
+	ParentJobID         pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	WorkflowName        string
+	ParentPosition      int64
+	NowAt               pgtype.Timestamptz
+	RunID               pgtype.UUID
+}
+
+type WorkflowRunRecoveryRetryCandidateRow struct {
+	OutboxID         int64
+	EventSource      string
+	EventID          string
+	EventType        string
+	SubscriptionID   string
+	FailedAt         pgtype.Timestamptz
+	FailureCode      string
+	Retryable        bool
+	ExpectedProgress []byte
+}
+
+func (q *Queries) WorkflowRunRecoveryRetryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryRetryCandidateParams) (WorkflowRunRecoveryRetryCandidateRow, error) {
+	row := db.QueryRow(ctx, workflowRunRecoveryRetryCandidate,
+		arg.ExpectedResumeCount,
+		arg.ParentJobID,
+		arg.AccountID,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.ParentPosition,
+		arg.NowAt,
+		arg.RunID,
+	)
+	var i WorkflowRunRecoveryRetryCandidateRow
+	err := row.Scan(
+		&i.OutboxID,
+		&i.EventSource,
+		&i.EventID,
+		&i.EventType,
+		&i.SubscriptionID,
+		&i.FailedAt,
+		&i.FailureCode,
+		&i.Retryable,
+		&i.ExpectedProgress,
+	)
+	return i, err
 }

@@ -18,6 +18,13 @@ type fakeManifestPostgresClient struct {
 	bindingErr  error
 	requests    []api.CreateManagedPostgresBindingRequest
 	databaseIDs []string
+	updates     []api.UpdateAppRequest
+	updateErr   error
+}
+
+func (f *fakeManifestPostgresClient) UpdateApp(_ context.Context, _ string, request api.UpdateAppRequest) (api.AppResponse, error) {
+	f.updates = append(f.updates, request)
+	return f.app, f.updateErr
 }
 
 func (f *fakeManifestPostgresClient) GetApp(context.Context, string) (api.AppResponse, error) {

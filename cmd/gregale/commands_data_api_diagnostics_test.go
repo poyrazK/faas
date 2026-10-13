@@ -418,3 +418,13 @@ func TestDataAPIDiagnosticsHelpAndOfflineInputProtection(t *testing.T) {
 		t.Fatal("invalid input printed file content")
 	}
 }
+
+func TestDataAPIDiagnosticsRefreshAdmission(t *testing.T) {
+	c := newDataAPIDiagnosticsCollector("", "")
+	c.observe(dataAPIDiagnosticFixture(t, 1, "rest", "rejected", 503, 1, "data_api_refresh_paused"))
+	c.observe(dataAPIDiagnosticFixture(t, 2, "rest", "unavailable", 503, 2, "data_api_refresh_unavailable"))
+	c.finish()
+	if c.report.Partial || c.report.Invalid != 0 || c.report.Summary.Requests != 2 || c.report.Failures.Unavailable != 2 {
+		t.Fatalf("refresh admission diagnostics lost: %+v", c.report)
+	}
+}

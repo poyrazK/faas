@@ -2282,8 +2282,21 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// ghcr.io/onebox-faas/...). Production RegistryClient
 		// satisfies AuthManifestPuller so both paths carry the
 		// correct auth shape.
-		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
-		fullRootfsDispatched := false
+		var above aboveBaseStream
+		var diffs []string
+		fullRootfsDispatched := dep.FullRootfsOverride != nil && *dep.FullRootfsOverride
+		if fullRootfsDispatched {
+			// An explicit full-rootfs image is self-contained. Pulling the
+			// shared runtime base first would make this path depend on an
+			// unrelated registry and turn an unreachable base into a deploy
+			// failure, even though BuildFullRootfs never consumes it.
+			if err := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: full-rootfs dispatch")
+				return err
+			}
+		} else {
+			above, diffs, err = h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
+		}
 		if err != nil {
 			// ADR-141 §Decision 3 + §Decision 2: when the app image is
 			// not built FROM our runner-* base, dispatch on the

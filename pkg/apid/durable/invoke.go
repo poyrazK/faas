@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -41,8 +42,20 @@ func (s *Service) Invoke(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A socket remains attached to its original immutable entity scope even if
+	// an environment name or app slug is deleted and recreated during its life.
+	if expected, ok := r.Context().Value(SocketScopeFence{}).(durableentity.ID); ok && expected != id {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Entity scope changed", "reconnect after reviewing the selected scope"))
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
+	if s.TenantQuotas != nil {
+		if err := s.TenantQuotas.AdmitInvocation(ctx, id); err != nil {
+			WriteTenantQuotaProblem(w, err)
+			return
+		}
+	}
 	started := time.Now()
 	result, err := s.Engine.Invoke(ctx, id, s.Owner, durableentity.Request{ID: request.RequestID, Payload: request.Payload}, func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
 		return s.invokeDurableEntityHandler(ctx, acct, app, scope, id, request, view)
@@ -50,19 +63,19 @@ func (s *Service) Invoke(w http.ResponseWriter, r *http.Request, acct state.Acco
 	s.Metrics.observeResult("invoke", result, err)
 	s.Metrics.observeDuration("invoke", started)
 	if err != nil {
-		writeDurableEntityProblem(w, err)
+		WriteProblem(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.DurableEntityInvokeResponse{Value: result.Value, Version: result.Version, Replayed: result.Replayed})
 }
 
 func (s *Service) Identity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest) (durableentity.ID, string, *api.Problem) {
-	return s.resolveDurableEntityIdentity(r, acct, app, request, false)
+	return s.ResolveIdentity(r, acct, app, request, false)
 }
 
 // Owner inspection can diagnose held tenant work without granting execution to
 // a suspended tenant or requiring its current plan to permit new invocations.
-func (s *Service) resolveDurableEntityIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest, inspect bool) (durableentity.ID, string, *api.Problem) {
+func (s *Service) ResolveIdentity(r *http.Request, acct state.Account, app state.App, request api.DurableEntityInvokeRequest, inspect bool) (durableentity.ID, string, *api.Problem) {
 	id := durableentity.ID{AccountID: acct.ID, AppID: app.ID, Namespace: request.Namespace, Key: request.Key}
 	scope, env, problem := s.Host.ResolveQueueEnvironment(r.Context(), acct, app, request.Environment)
 	if problem != nil {
@@ -101,7 +114,12 @@ func (s *Service) resolveDurableEntityIdentity(r *http.Request, acct state.Accou
 	return id, scope, nil
 }
 
-func writeDurableEntityProblem(w http.ResponseWriter, err error) {
+func WriteProblem(w http.ResponseWriter, err error) {
+	var quota *entitysocket.QuotaError
+	if errors.As(err, &quota) {
+		WriteTenantQuotaProblem(w, err)
+		return
+	}
 	var problem *api.Problem
 	if errors.As(err, &problem) {
 		api.WriteProblem(w, problem)
@@ -109,6 +127,8 @@ func writeDurableEntityProblem(w http.ResponseWriter, err error) {
 	}
 	status, code, detail := http.StatusServiceUnavailable, "durable_entity_unavailable", "entity storage or execution is unavailable; retry the same request_id and exact payload"
 	switch {
+	case errors.Is(err, durableentity.ErrRetired):
+		status, code, detail = http.StatusGone, "durable_entity_retired", "this entity identity is permanently retired; use a new identity for new work"
 	case errors.Is(err, durableentity.ErrInvalid):
 		status, code, detail = http.StatusUnprocessableEntity, "durable_entity_invalid", "invalid entity identity, request, or handler transition"
 	case errors.Is(err, durableentity.ErrLimit):
@@ -134,3 +154,6 @@ func writeDurableEntityProblem(w http.ResponseWriter, err error) {
 	}
 	api.WriteProblem(w, problem)
 }
+
+// SocketScopeFence pins a transport to the immutable identity admitted at connect.
+type SocketScopeFence struct{}

@@ -142,7 +142,10 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 			if observer {
 				event = "mcp_task_observer_health_check_failed"
 			}
-			log.Printf(`{"event":%q}`, event)
+			body, _ := json.Marshal(struct {
+				Event string `json:"event"`
+			}{Event: event})
+			log.Print(string(body))
 		}
 	}
 

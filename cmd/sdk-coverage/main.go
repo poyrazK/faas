@@ -47,6 +47,9 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
+	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
+
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
@@ -278,6 +281,27 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers":  "ReconcileObjectStorageComputeTriggers",
+	"GET /v1/apps/{slug}/entities/quotas":                    "InspectDurableEntityTenantQuotas",
+	"GET /v1/apps/{slug}/entities/readiness":                 "GetDurableEntityReadiness",
+	"GET /v1/apps/{slug}/entities/quota-migration/plan":      "PlanDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-migration":           "InspectDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/start":    "StartDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/step":     "StepDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-policy":              "InspectDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/preview":     "PreviewDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/apply":       "ApplyDurableEntityQuotaPolicy",
+	"GET /v1/apps/{slug}/entities/registry":                  "ListDurableEntityRegistry",
+	"POST /v1/apps/{slug}/entities/registry/enable":          "EnableDurableEntityRegistry",
+	"GET /v1/apps/{slug}/entities/registry/cleanup":          "InspectDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/start":   "StartDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/step":    "StepDurableEntityRegistryCleanup",
+	"GET /v1/apps/{slug}/entities/retirement":                "PreviewDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/start":         "StartDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/step":          "StepDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
+	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
+
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -534,24 +558,28 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
 	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
+	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
 
-	"GET /v1/apps/{slug}/route-requirements/gate":                 "GetCanaryRouteGate",
-	"PUT /v1/apps/{slug}/route-requirements/gate":                 "SetCanaryRouteGate",
-	"POST /v1/apps/{slug}/route-policy/plan":                      "PlanRoutePolicy",
-	"POST /v1/apps/{slug}/route-policy/apply":                     "ApplyRoutePolicy",
-	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":      "GetRoutePolicyReceipt",
-	"GET /v1/outbound/integrations/{integration}/probe-policy":    "GetOutboundBindingProbePolicy",
-	"PUT /v1/outbound/integrations/{integration}/probe-policy":    "SetOutboundBindingProbePolicy",
-	"DELETE /v1/outbound/integrations/{integration}/probe-policy": "DeleteOutboundBindingProbePolicy",
-	"POST /v1/deployments/{id}/promote-with-application-ack":      "PromoteDeploymentWithBindings",
-	"POST /v1/deployments/{id}/promote":                           "PromoteDeploymentWithBindings",
-	"GET /v1/apps/{slug}/bindings":                                "GetAppBindingInventory",
-	"GET /v1/apps/{slug}/bindings/release-policy":                 "GetBindingReleasePolicy",
-	"PUT /v1/apps/{slug}/bindings/release-policy":                 "SetBindingReleasePolicy",
-	"GET /v1/apps/{slug}/alert-rollbacks":                         "ListAlertRollbacks",
-	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                  "GetAlertRollback",
-	"GET /v1/apps/{slug}/rollbacks/{operation}":                   "GetRollbackOperation",
-	"GET /v1/apps/{slug}/operational-summary":                     "GetAppOperationalSummary",
+	"GET /v1/apps/{slug}/route-requirements/gate":                     "GetCanaryRouteGate",
+	"PUT /v1/apps/{slug}/route-requirements/gate":                     "SetCanaryRouteGate",
+	"POST /v1/apps/{slug}/route-policy/plan":                          "PlanRoutePolicy",
+	"POST /v1/apps/{slug}/route-policy/apply":                         "ApplyRoutePolicy",
+	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":          "GetRoutePolicyReceipt",
+	"GET /v1/outbound/integrations/{integration}/probe-policy":        "GetOutboundBindingProbePolicy",
+	"PUT /v1/outbound/integrations/{integration}/probe-policy":        "SetOutboundBindingProbePolicy",
+	"DELETE /v1/outbound/integrations/{integration}/probe-policy":     "DeleteOutboundBindingProbePolicy",
+	"POST /v1/deployments/{id}/promote-with-application-ack":          "PromoteDeploymentWithBindings",
+	"POST /v1/deployments/{id}/promote":                               "PromoteDeploymentWithBindings",
+	"GET /v1/apps/{slug}/bindings":                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/bindings/release-policy":                     "GetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy":                     "SetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy-with-object-storage": "SetObjectStorageBindingReleasePolicy",
+	"GET /v1/apps/{slug}/alert-rollbacks":                             "ListAlertRollbacks",
+	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                      "GetAlertRollback",
+	"GET /v1/apps/{slug}/rollbacks/{operation}":                       "GetRollbackOperation",
+	"GET /v1/apps/{slug}/operational-summary":                         "GetAppOperationalSummary",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -1253,6 +1281,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/inbox":                     "SendAppMessage",
 	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
 	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
+	"GET /v1/commit-sources/{source}/publications":                           "ListCommitPublications",
 	"GET /v1/commit-sources/{source}":                                        "GetCommitSource",
 	"PATCH /v1/commit-sources/{source}":                                      "SetCommitSourceEnabled",
 	"PUT /v1/commit-sources/{source}/connection":                             "PutCommitSourceConnection",
@@ -1274,6 +1303,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-deliveries/attempts":                          "ListEventFanoutAttemptHistory",
 	"GET /v1/events/receipt":                                                 "GetEventReceipt",
 	"GET /v1/events/backlog":                                                 "GetEventBacklog",
+	"GET /v1/events/recipient-blocker":                                       "GetEventRecipientBlocker",
+	"POST /v1/events/recipient-blockers":                                     "GetEventRecipientBlockers",
 	"GET /v1/events/retention":                                               "GetEventRetentionHealth",
 	"GET /v1/events/storage":                                                 "GetEventStorageUsage",
 	"GET /v1/events/receipt/replays":                                         "GetEventReceiptReplays",
@@ -1306,6 +1337,26 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
+	// Workflow recovery policy and operator routes use the public client names.
+	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                         "GetEventRecoveryByRequest",
+	"GET /v1/apps/{slug}/recovery-policy":                                                 "GetWorkflowRecoveryPolicy",
+	"GET /v1/apps/{slug}/recovery-policy/health":                                          "GetWorkflowRecoveryPolicyHealth",
+	"GET /v1/apps/{slug}/recovery-policy/history":                                         "GetWorkflowRecoveryHistory",
+	"GET /v1/apps/{slug}/recovery-policy/queue":                                           "GetWorkflowRecoveryAutomaticQueue",
+	"GET /v1/apps/{slug}/recovery-policy/report":                                          "GetWorkflowRecoveryReport",
+	"GET /v1/apps/{slug}/recovery-policy/reviews":                                         "ListWorkflowRecoveryPolicyReviews",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}":                              "GetWorkflowRecoveryPolicyReview",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status":                       "GetWorkflowRecoveryReviewStatus",
+	"GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}":               "GetWorkflowRecoveryActionReceipt",
+	"POST /v1/apps/{slug}/recovery-policy/change-preview":                                 "PreviewWorkflowRecoveryPolicyChange",
+	"POST /v1/apps/{slug}/recovery-policy/control":                                        "ControlWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/evaluate":                                       "EvaluateWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress": "SuppressWorkflowRecoveryAutomaticAction",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision":                    "DecideWorkflowRecoveryPolicyReview",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancel":                                   "CancelWorkflowRecoveryExecution",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview":                     "PreviewWorkflowRecoveryCancellation",
+	"PUT /v1/apps/{slug}/recovery-policy":                                                 "SetWorkflowRecoveryPolicy",
+
 	// Events delivery controls and durable recovery use descriptive SDK verbs.
 	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                 "PreviewWorkflowEventReplay",
 	"POST /v1/apps/{slug}/workflow-event-replays":                                       "CreateWorkflowEventReplayBackfill",
@@ -1313,6 +1364,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":  "PauseEventSubscription",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume": "ResumeEventSubscription",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                   "GetEventConsumerHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":          "GetEventConsumerDeliveryHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health":         "GetEventConsumerExecutionHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "GetEventSubscriptionRetryPolicy",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "SetEventSubscriptionRetryPolicy",
@@ -1802,9 +1854,16 @@ func (r *reportT) print() {
 	}
 }
 
+// Convenience aliases share a route with its checked path-shaped method.
+// An alias is accounted for only while that route still exists in the spec.
+var methodAliasRoutes = map[string]string{
+	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+}
+
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 	r := reportT{}
 	methodUsage := map[string]bool{} // SDK methods touched by a route
+	routeUsage := map[string]bool{}
 	for path, ops := range spec {
 		for method := range ops {
 			key := strings.ToUpper(method) + " " + path
@@ -1819,10 +1878,11 @@ func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 				r.missing = append(r.missing, fmt.Sprintf("%s → SDK method %q", key, sdkName))
 			}
 			methodUsage[sdkName] = true
+			routeUsage[key] = true
 		}
 	}
 	for m := range methods {
-		if sdkMethodExclude[m] || methodUsage[m] {
+		if sdkMethodExclude[m] || methodUsage[m] || routeUsage[methodAliasRoutes[m]] {
 			continue
 		}
 		r.warn = append(r.warn, m+" (no spec route)")

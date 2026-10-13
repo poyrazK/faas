@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 992 | [Combined managed PostgreSQL rollout readiness](992-managed-postgres-combined-rollout-readiness.md) | accepted; native execution pending | Offline provider/durable and native guest evidence bound to one clean source revision and independently approved qualification bundle; optional staging enforcement |
 | 831 | [Edge WAF signatures, bot challenge, and client certificates](831-edge-waf-bot-challenge-mtls.md) | proposed | Sequenced plan: Coraza + OWASP CRS `kind=waf` first (observe-only preview, latency gate), then a proof-of-work `kind=challenge`, then custom-domain-only mTLS on demand |
 | 830 | [Platform security headers on customer app responses](830-customer-response-security-headers.md) | accepted | Customer responses keep app-set security headers; platform fills defaults only when absent, drops `includeSubDomains` on custom domains, and stops forcing `X-Frame-Options`/`Permissions-Policy` on customer apps |
 | 829 | [New apps observe the pre-auth source limit by default](829-default-pre-auth-observe.md) | accepted | New apps get an observe-only, plan-clamped per-source guard unless the create request sets `pre_auth_rate_limit`; existing apps unchanged; amendment 1 adds the advisory enforce suggestion and `gregale app --pre-auth` |
@@ -86,6 +87,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 975 | [Allowances and tiers on platform tenant rate cards](975-platform-tenant-allowances-and-tiers.md) | accepted | Tenant-wide monthly allowances and graduated tiers across apps; calendar-month statements re-priced against finalized lines; app card features only block fallback minutes |
 | 990 | [AI gateway phase 2: per-app limits, fallback routes, retries, cache and cost](990-ai-gateway-budgets-fallback-cost.md) | accepted | Per-app token limits, invisible OpenAI stream usage injection, replayable POST bodies for retries/cache/fallback routes, customer price lists with daily/monthly cost budgets, Runs streaming through the relay, `gregale ai` CLI |
 | 991 | [AI gateway phase 3: hard caps, guardrails, providers, translation, key pools and visibility](991-ai-gateway-hard-caps-providers-visibility.md) | accepted | Admission-time reservations make token/cost limits hard caps; per-app RPM/TPM, model allow-lists and output ceilings; Gemini, Azure OpenAI, Bedrock (SigV4) and Vertex (service account); OpenAI-format routes translating to Anthropic/Gemini; extra key pools with per-key cooldown; 80/100% budget alert webhooks, opt-in request metadata log, Grafana dashboard; the whole AI gateway ships behind the off-by-default `ai_gateway_enabled` / `FAAS_AI_GATEWAY_ENABLED` release gate |
+| 994 | [AI gateway phase 4: price catalog, per-end-user limits and key affinity](994-ai-gateway-price-catalog-end-users-affinity.md) | accepted | Built-in EUR price catalog generated from LiteLLM (MIT) prices models an integration's list omits; `X-Gregale-AI-User` attributes calls and per-end-user UTC-day token/cost hard caps (10,000 tracked users per day, `~other` overflow, 31-day rollups); `X-Gregale-AI-Session` key-pool affinity by rendezvous hash; AI apid endpoints lifted into `pkg/apid/outboundai` |
+| 995 | [AI gateway phase 5: structured output, Bedrock/Vertex route targets, embeddings, end-user alerts and export](995-ai-gateway-structured-output-targets-user-alerts.md) | accepted | OpenAI `response_format` maps to Anthropic `output_config.format`, Gemini `responseJsonSchema` and Bedrock `outputConfig.textFormat` (json_object refused where a schema is required); openai routes reach Bedrock Converse (binary stream translated) and Vertex Claude/Gemini under one project/location; openai routes accept embeddings (Gemini, Vertex, OpenAI, Azure; base64 float32); 80/100% per-end-user alerts to the calling app; streamed CSV/NDJSON per-user export; Node/Python relay URL and header helpers; route attempts no longer double-escape ARN paths |
 | 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
 | 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
@@ -476,6 +479,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
+| 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -690,6 +694,46 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
+## Automation recovery lifecycle
+
+- [ADR-1000: Reviewed workflow event recovery jobs](1000-reviewed-workflow-event-recovery-jobs.md) — durable submission of pinned automation event plans.
+
+- [ADR-1001: Durable recovery of reviewed native workflow runs](1001-durable-workflow-run-recovery.md)
+
+- [ADR-1002: Observe the admitted workflow recovery generation](1002-workflow-recovery-execution-observations.md)
+- [ADR-1003: Retain workflow recovery outcomes and notify execution completion](1003-workflow-recovery-terminal-results.md)
+- [ADR-1004: Reviewed retries from saved workflow recovery failures](1004-reviewed-workflow-recovery-retries.md)
+- [ADR-1005: Server-side native workflow recovery preflight](1005-workflow-recovery-preflight.md)
+- [ADR-1006: Workflow recovery execution attention](1006-workflow-recovery-execution-attention.md)
+- [ADR-1007: Reviewed workflow recovery cancellation](1007-reviewed-workflow-recovery-cancellation.md)
+- [ADR-1008: Saved workflow recovery response plans](1008-saved-workflow-recovery-response-plans.md)
+- [ADR-1009: Preview workflow recovery policies](1009-preview-workflow-recovery-policies.md)
+
+- [ADR-1010: Policy recovery review decisions and live freshness](1010-policy-recovery-review-decisions.md)
+
+- [ADR-1011: Durable recovery review-ready notifications](1011-recovery-review-ready-notifications.md)
+
+- [ADR-1012: Recovery review execution outcomes and completion notification](1012-recovery-review-execution-completion.md)
+
+- [ADR-1013: Bounded automatic recovery retries](1013-bounded-automatic-recovery-retries.md)
+- [ADR-1014: Recovery queue visibility and operator controls](1014-recovery-queue-and-operator-controls.md)
+- [ADR-1015: Queued retry suppression and blocked notifications](1015-queued-retry-suppression-and-blocked-notifications.md)
+
+- [ADR-1016: Automatic retry queue evaluation evidence](1016-automatic-retry-queue-evaluation-evidence.md)
+
+- [ADR-1017: Recovery policy change preview](1017-recovery-policy-change-preview.md)
+- [ADR-1018: Recovery automation health](1018-recovery-automation-health.md)
+- [ADR-1019: Recovery health alert incidents](1019-recovery-health-alert-incidents.md)
+- [ADR-1020: Read-only retained recovery history](1020-recovery-retained-history.md)
+- [ADR-1021: Durable recovery policy, worker and incident events](1021-durable-recovery-history.md)
+- [ADR-1022: Observed recovery automation effectiveness report](1022-recovery-effectiveness-report.md)
+- [ADR-1023: Evidence-limited historical recovery policy evaluation](1023-historical-recovery-policy-evaluation.md)
+
+- [ADR-1024: Durable recovery candidate evidence](1024-durable-recovery-candidate-evidence.md)
+- [ADR-1025: Policy-independent workflow failure evidence](1025-policy-independent-workflow-failure-evidence.md)
+
+- [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
+
 ## Events and delivery
 
 - [ADR-606: Independent event recipient routing and recovery](606-independent-event-recipient-routing.md)
@@ -747,6 +791,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
+- [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -791,6 +836,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-904: Automation failure notification policy](904-automation-failure-notification-policy.md)
 - [ADR-905: Automation failure admission pauses](905-automation-failure-admission-pauses.md)
 
+- [ADR-934: Transactional event consumer SDK](934-transactional-event-consumer-sdk.md)
+
+- [ADR-935: Commit application event publication](935-commit-application-event-publication.md)
+
 - [ADR-944: Isolated durable entity restore validation](944-durable-entity-isolated-restore-validation.md)
 
 - [ADR-945: Durable entity operation observability](945-durable-entity-operation-observability.md)
@@ -801,12 +850,34 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-948: Built validator artifacts and project publication](948-built-validator-artifacts-and-project-publication.md)
 
-- [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
+- [ADR-866: Durable entity developer workflow](866-durable-entity-developer-workflow.md)
+- [ADR-867: Durable entity operational visibility](867-durable-entity-operational-visibility.md)
+- [ADR-868: Durable entity generated clients](868-durable-entity-generated-clients.md)
+- [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
+- [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
+
+- [ADR-1027: Object storage compute clients and write canaries](1027-object-storage-compute-clients-and-write-canaries.md)
+
+- [ADR-1028: Object storage operation release gates](1028-object-storage-operation-release-gates.md)
+
+- [ADR-1029: Binding preflight against stored release policies](1029-binding-preflight-stored-release-policy.md)
+
+- [ADR-1030: Policy-driven storage canary verification](1030-policy-driven-storage-canary-verification.md)
+
+- [ADR-1031: Node compute secret reload coordinator](1031-node-compute-secret-reload-coordinator.md)
+- [ADR-1032: Go and Python compute secret reload coordinators](1032-go-python-compute-secret-reload-coordinators.md)
+- [ADR-1033: Storage client leases and retirement](1033-storage-client-leases-and-retirement.md)
+
+- [ADR-1034: Managed storage Node compute starter](1034-managed-storage-node-compute-starter.md)
+- [ADR-1035: Managed object storage for developer sessions](1035-developer-managed-object-storage.md)
+
+- [ADR-1036: Declarative bucket triggers for the owning compute app](1036-managed-object-storage-compute-triggers.md)
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)

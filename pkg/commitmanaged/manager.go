@@ -102,7 +102,7 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	if err := commitwork.QualifySource(ctx, pool, src.ID); err != nil {
 		return 0, "source_binding_unqualified", nil
 	}
-	relay := commitwork.Relay{SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
+	relay := commitwork.Relay{ContractVersion: src.ContractVersion, SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
 	replays, replayErr := m.Store.PendingCommitReplays(ctx, src.AccountID, src.ID)
 	if replayErr != nil {
 		return 0, "replay_pending", nil
@@ -193,6 +193,17 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 	if err := e.Validate(); err != nil {
 		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "invalid_event"}
 	}
+	if a.source.Destination == "event" {
+		publisher, ok := a.store.(state.CommitPublicationStore)
+		if !ok {
+			return commitwork.Receipt{}, errors.New("commit: publication store unavailable")
+		}
+		r, err := publisher.AcceptCommitPublication(ctx, a.source.AccountID, a.source.ID, e)
+		return convert(r, err)
+	}
+	if e.SchemaVersion != "" {
+		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "invalid_event"}
+	}
 	// Recover receipt before current version/plan checks. Content comparison is
 	// always performed by the durable store, even when the destination changed.
 	if _, err := a.store.CommitReceiptByEvent(ctx, a.source.AccountID, a.source.ID, e.ID); err == nil {
@@ -248,8 +259,11 @@ func convert(r state.CommitReceipt, err error) (commitwork.Receipt, error) {
 	if errors.Is(err, state.ErrConflict) || errors.Is(err, exclusivework.ErrIdentityConflict) {
 		err = &commitwork.PermanentError{Code: "identity_conflict"}
 	}
+	if errors.Is(err, state.ErrEventSchemaRequired) || errors.Is(err, state.ErrEventSchemaUnknown) || errors.Is(err, state.ErrEventDataInvalid) {
+		err = &commitwork.PermanentError{Code: "event_schema_rejected"}
+	}
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
 		err = &commitwork.PermanentError{Code: "destination_unqualified"}
 	}
-	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID}, err
+	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID, Publication: r.Publication}, err
 }

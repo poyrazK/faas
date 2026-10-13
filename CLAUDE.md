@@ -77,6 +77,8 @@ docs/adr/
    while a second deployment is coming up alongside the one already serving —
    a traffic split or canary overlap. Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
+   Under measured admission (ADR-909, schedd's default) a node's measured memory
+   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2× that, with eviction above the ceiling.
 3. An app always has a live snapshot OR a cold-bootable rootfs — never neither.
 4. A parked app consumes zero resident RAM (its cgroup must be gone).
 5. Two instances restored from one snapshot never share IP, netns, jail uid, or RNG stream.
@@ -117,8 +119,7 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - SQL via sqlc only; no string-built queries. Every state column has a CHECK.
 - Handlers ≤ 50 lines — extract. Table-driven tests. No global state except wiring.
 - New apid code goes in a `pkg/apid/<domain>` package (ADR-982); `pkg/apid/apidserver`
-  keeps wiring, the route table and middleware. `make apid-size-check` fails if its
-  non-test code grows; PRs that move code out lower `scripts/ci/apid_size_baseline.txt`.
+  keeps wiring, the route table and middleware.
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
@@ -161,9 +162,12 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   disappears on reboot and eats RAM until then.
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
-- `go test ./pkg/apid/apidserver` compiles two units: the package with its internal tests
-  (~9 GB peak) and the external `apidserver_test` package (~6 GB). Write new apid tests in
-  `package apidserver_test` and reach internals through `export_test.go`; every test added
-  to the internal unit grows the bigger compile. Run these builds one at a time, type-check
-  with `go vet ./pkg/apid/apidserver` while iterating, and keep the default shared GOCACHE:
-  per-job private caches grow to ~11 GB each and have filled developer disks.
+- apidserver's tests compile as two units: the package with its internal tests, and the
+  external `apidserver_test` package. Run them with `make test-apid [RUN='^TestX'] [RACE=1]`,
+  not a bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and
+  `GOMEMLIMIT=6GiB`, which holds a `-race` build near 7.5 GB RSS instead of ~13.5 GB.
+  Write new apid tests in `package apidserver_test` and reach internals through
+  `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
+  one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
+  the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
+  developer disks.

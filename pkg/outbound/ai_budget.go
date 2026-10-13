@@ -22,6 +22,13 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 		*spec.BindingTokensPerMinute > api.MaxOutboundAITokensPerMinute) {
 		return fmt.Errorf("%w: binding tokens-per-minute limit is invalid", ErrInvalidIntegration)
 	}
+	if spec.AIEndUser != "" && !api.ValidOutboundAIUserID(spec.AIEndUser) {
+		return fmt.Errorf("%w: AI end user is invalid", ErrInvalidIntegration)
+	}
+	if (spec.UserDailyAITokenLimit != nil && (*spec.UserDailyAITokenLimit < 1 || *spec.UserDailyAITokenLimit > api.MaxOutboundAITokensPerDay)) ||
+		(spec.UserDailyAICostLimit != nil && (*spec.UserDailyAICostLimit < 1 || *spec.UserDailyAICostLimit > api.MaxOutboundAICostMillicents)) {
+		return fmt.Errorf("%w: per-end-user AI limit is invalid", ErrInvalidIntegration)
+	}
 	return nil
 }
 
@@ -31,11 +38,15 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 type aiBudgetState struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost  int64
 	inflightTokens, inflightBindingTokens, inflightCost int64
+	// The call's end user today and its live reservations (ADR-994).
+	userTokens, userCost, inflightUserTokens, inflightUserCost int64
 }
 
-// aiBudgetLimits are the effective AI limits; nil means unlimited.
+// aiBudgetLimits are the effective AI limits; nil means unlimited. The
+// user limits apply only to a call that names an end user.
 type aiBudgetLimits struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost *int64
+	userTokens, userCost                               *int64
 }
 
 // aiReservation is one call's admission-time estimate (ADR-991).
@@ -52,10 +63,14 @@ func positiveLimit(value int64) *int64 {
 }
 
 func aiBudgetLimitsFromSpec(spec AdmissionSpec) aiBudgetLimits {
-	return aiBudgetLimits{
+	limits := aiBudgetLimits{
 		dailyTokens: spec.DailyAITokenLimit, bindingTokens: spec.BindingDailyAITokenLimit,
 		dailyCost: spec.DailyAICostLimit, monthlyCost: spec.MonthlyAICostLimit,
 	}
+	if spec.AIEndUser != "" {
+		limits.userTokens, limits.userCost = spec.UserDailyAITokenLimit, spec.UserDailyAICostLimit
+	}
+	return limits
 }
 
 func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
@@ -80,6 +95,8 @@ func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLim
 		{limits.bindingTokens, state.bindingTokens, state.inflightBindingTokens, reserve.tokens, ReasonDailyTokenLimit, nextDay},
 		{limits.dailyCost, state.dailyCost, state.inflightCost, reserve.cost, ReasonDailyCostLimit, nextDay},
 		{limits.monthlyCost, state.monthlyCost, state.inflightCost, reserve.cost, ReasonMonthlyCostLimit, nextMonth},
+		{limits.userTokens, state.userTokens, state.inflightUserTokens, reserve.tokens, ReasonUserDailyTokenLimit, nextDay},
+		{limits.userCost, state.userCost, state.inflightUserCost, reserve.cost, ReasonUserDailyCostLimit, nextDay},
 	}
 	for _, check := range checks {
 		if check.limit == nil {

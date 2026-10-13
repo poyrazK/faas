@@ -337,13 +337,22 @@ export class FaaSClient {
           }
           const problem = (body && typeof body === 'object' ? body : {}) as Problem;
           const err = problemToError(problem, resp.status);
+          const retryAfter = resp.headers.get('Retry-After');
+          if (retryAfter) Object.defineProperty(err, 'retryAfter', { value: retryAfter, enumerable: true });
           // If the wrapper already produced a typed error, throw it.
           // The generator's `catchErrorCodes` would otherwise raise
           // its own `ApiError`; we want customers to see our typed
           // sentinels.
           throw err satisfies FaasError;
         }
-        // Non-JSON error body — return as-is so the generator's
+        const retryAfter = resp.headers.get('Retry-After');
+        if (retryAfter) {
+          await resp.body?.cancel().catch(() => undefined);
+          const err = problemToError({}, resp.status);
+          Object.defineProperty(err, 'retryAfter', { value: retryAfter, enumerable: true });
+          throw err;
+        }
+        // Non-JSON error body without Retry-After — return as-is so the generator's
         // own ApiError path takes over. (Authlimiter returns
         // text/plain; that's the canonical case for "no Problem".)
       }

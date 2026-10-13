@@ -111,6 +111,15 @@ func (c withoutBudgetContext) Value(key any) any {
 	return c.Context.Value(key)
 }
 
+// Detached returns a context free of the request budget and of the caller's
+// cancellation, bounded by timeout. Work that must finish once started — a
+// project apply that has committed apps but not yet enqueued their builds
+// (ADR-093 amendment) — uses it so a short budget or a client disconnect
+// cannot strand it halfway.
+func Detached(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(WithoutBudget(context.WithoutCancel(parent)), timeout)
+}
+
 func budgetBaseContext(parent context.Context) context.Context {
 	if stored, ok := parent.Value(budgetParentKey{}).(context.Context); ok && stored != nil {
 		return stored

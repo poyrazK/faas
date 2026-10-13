@@ -221,7 +221,7 @@ func (r *Registry) Default(region string) (Backend, error) {
 	}
 	backend, ok := r.backends[r.defaults[region]]
 	if !ok {
-		return Backend{}, ErrUnsupported
+		return Backend{}, fmt.Errorf("%w: no database backend in region %q (available: %s)", ErrUnsupported, region, joinOffered(r.Regions(), func(v string) string { return v }))
 	}
 	return backend, nil
 }

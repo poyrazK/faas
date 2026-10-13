@@ -174,6 +174,26 @@ func edgeTransportStatus(r *http.Request, status int) bool {
 	return false
 }
 
+// EncodeEdgeTransportResponse applies edgeTransportStatus to a response
+// another public reverse proxy is about to return, for use in its
+// ModifyResponse hook; resp.Request is the outbound request, which carries the
+// Worker's headers. Any upstream copy of the private marker is dropped first:
+// only the public edge may emit it. Production-us hunt #9 (H9-134): apid's
+// 504 long_poll_timeout for a sync invoke reached the CLI as Cloudflare's
+// generic page because the control-plane proxy never transported it.
+func EncodeEdgeTransportResponse(resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	resp.Header.Del(edgeOriginalStatusHeader)
+	if !edgeTransportStatus(resp.Request, resp.StatusCode) {
+		return
+	}
+	resp.Header.Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
+	resp.StatusCode = edgeOrigin504TransportStatus
+	resp.Status = strconv.Itoa(edgeOrigin504TransportStatus) + " " + http.StatusText(edgeOrigin504TransportStatus)
+}
+
 // edgeTransportWriter applies edgeTransportStatus to a problem the public
 // proxy writes itself (internal round-trip failures).
 type edgeTransportWriter struct {

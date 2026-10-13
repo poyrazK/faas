@@ -9,6 +9,12 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "list" {
+		return cmdBucketList(args[1:])
+	}
+	if len(args) > 0 && args[0] == "delete" {
+		return cmdBucketDelete(args[1:])
+	}
 	if len(args) > 0 && args[0] == "versions" {
 		return cmdBucketVersionsList(args[1:])
 	}
@@ -53,6 +59,12 @@ func cmdBucket(args []string) int {
 	}
 	if len(args) > 0 && args[0] == "writes" {
 		return cmdBucketWrites(args[1:])
+	}
+	if len(args) > 0 && args[0] != "reconcile" {
+		// Unknown subcommands used to fall through to the capacity parser and
+		// print `bucket reconcile` usage (H9-141).
+		printCommandValidation(osStderr, "unknown bucket subcommand %q; run `gregale bucket --help`\n", args[0])
+		return 1
 	}
 	return cmdBucketCapacity(args)
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -32,6 +33,76 @@ type nativeOwnershipRunner struct {
 	instance string
 	checked  bool
 	lease    Lease
+}
+
+type joiningNativeWakeFixture struct {
+	*recoveryVMMFixture
+	restoreAttempted chan struct{}
+}
+
+func (*joiningNativeWakeFixture) joinsWakeNetwork() {}
+
+func (v *joiningNativeWakeFixture) Restore(ctx context.Context, lease Lease, spec RestoreSpec) error {
+	v.restoreAttempted <- struct{}{}
+	return v.fakeVMM.Restore(ctx, lease, spec)
+}
+
+// Native network helpers hold the durable owner lock. Provisioning the jail
+// while a helper is still running can observe incomplete owner effects.
+func TestNativeWakeCompletesNetworkBeforeRestoreStaging(t *testing.T) {
+	m, _, _ := nativeManagerFixture(t)
+	base := m.vmm.(*recoveryVMMFixture)
+	restoreAttempted := make(chan struct{}, 1)
+	m.vmm = &joiningNativeWakeFixture{recoveryVMMFixture: base, restoreAttempted: restoreAttempted}
+
+	networkStarted := make(chan struct{})
+	networkRelease := make(chan struct{})
+	defer func() {
+		select {
+		case <-networkRelease:
+		default:
+			close(networkRelease)
+		}
+	}()
+	command := base.command
+	var first sync.Once
+	base.command = func(ctx context.Context, argv []string, input []byte) ([]byte, error) {
+		first.Do(func() {
+			close(networkStarted)
+			<-networkRelease
+		})
+		return command(ctx, argv, input)
+	}
+
+	finished := make(chan error, 1)
+	go func() {
+		_, err := m.Wake(t.Context(), restoreWakeRequest("native-network-order"))
+		finished <- err
+	}()
+	select {
+	case <-networkStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native wake never started network setup")
+	}
+	select {
+	case <-restoreAttempted:
+		t.Fatal("restore staging started while a native network helper was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(networkRelease)
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("native wake: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("native wake did not finish after network setup completed")
+	}
+	select {
+	case <-restoreAttempted:
+	default:
+		t.Fatal("restore staging did not run after network setup")
+	}
 }
 
 func (r *nativeOwnershipRunner) Run(_ context.Context, argv []string) error {

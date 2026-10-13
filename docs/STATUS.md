@@ -7,7 +7,7 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Safe releases by default — 2026-10-10
+## Safe releases by default — 2026-10-12
 
 [ADR-1160](adr/1160-safe-releases-by-default.md) makes the balanced health-gated
 canary with first-wake 5xx rollback the default for production releases,
@@ -16,9 +16,20 @@ rollback of image, GitHub, and preview deployments, which the latest-revision
 promotion fence had silently superseded. The metal drill suite
 (`cmd/e2e/safe_release_drill_metal_test.go`) passed on the n2 node:
 safe default, low-traffic advance (336–356 s), 5xx abort, crash-loop abort,
-canary-worker fallback, and rollback recovery in 8.3 s
-([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+canary-worker fallback, and rollback recovery in 8.3–11.8 s with a verified
+`complete` rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
 are `beta` in the product registry.
+
+## Combined PostgreSQL rollout readiness — 2026-10-12
+
+[ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
+and durable lifecycle evidence with a separately approved native guest bundle.
+The offline verifier requires the same clean source revision, SQL major, current
+artifact hashes and unexpired evidence. Staging canaries can opt into enforcement;
+partial configuration cannot fall back to legacy approval. Portable race, verdict,
+lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20261012-managed-postgres-rollout-readiness/REPORT.md)
+record the qualification boundary. Supported native execution remains pending; this change
+does not enable production provisioning or alter Neon resources or billing.
 
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
@@ -551,6 +562,18 @@ the client through the gateway with its first chunk 0.8 ms after the headers
 and the second 1.97 s later, matching the handler's 2 s pause, and with both
 `Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
 runner core.
+Request timeouts have per-plan ceilings: Free 30 s, Hobby 1 min, Pro 5 min,
+Scale 15 min (ADR-1150, `Limits.RequestBudgetMaxMs`). The gateway passes the
+budget left to the guest in `X-Faas-Deadline-Ms`, and the runner bounds an
+invocation by the longer of that and 30 s. Evidence, 2026-10-12 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set): a Pro function with `request_timeout_s=120` and the default
+30 s idle timeout streamed four ticks over 36.1 s through the gateway. Its
+handler saw `X-Faas-Deadline-Ms=119999`, not the 86400000 the client sent.
+The first attempt was cut at 29.5 s: on single-box installs schedd's stats
+poller read only the empty capacity-stream cache, so the idle reaper never
+saw the in-flight request. The poller now reads vmmd `Stats` directly when
+schedd has no owner node.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

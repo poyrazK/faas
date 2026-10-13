@@ -24,6 +24,10 @@ import (
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// Bounded recovery of explicitly requested PostgreSQL cutover retirements.
+const ManagedPostgresCutoverDrainBatchMax = 32
+const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
@@ -161,10 +165,15 @@ type ProfilingLimits struct {
 }
 
 const (
-	EventReplayPreviewPageDefault    = 50
-	EventReplayPreviewPageMax        = 100
-	EventReplayPreviewCursorMaxBytes = 4096
-	EventReplayPreviewReadTimeout    = 5 * time.Second
+	AutomationEventRecoveryReceiptMaxPages = 25
+	AutomationRecoveryPlanMaxBytes         = 64 << 10
+	AutomationRecoveryBatchMaxRuns         = 25
+	AutomationRecoveryPreviewDefaultLimit  = 10
+	AutomationRecoveryPreviewMaxLimit      = 25
+	EventReplayPreviewPageDefault          = 50
+	EventReplayPreviewPageMax              = 100
+	EventReplayPreviewCursorMaxBytes       = 4096
+	EventReplayPreviewReadTimeout          = 5 * time.Second
 )
 
 // Historical backfills pin only the bounded settled-receipt retention window.
@@ -219,6 +228,18 @@ const (
 	InspectWatchIntervalMin     = time.Second
 	InspectWatchIntervalMax     = time.Hour
 	InspectWatchReadTimeout     = 30 * time.Second
+)
+
+// Commit recovery diagnostics sample a bounded number of subscriptions per pass (ADR-947).
+const CommitRecoveryDiagnosticsReadMax = 50
+
+// Reserve successful-sample refresh capacity when diagnostic retries compete (ADR-949).
+const CommitRecoveryDiagnosticsRefreshReserve = 1
+
+// Exact recipient blocker identity and timeout bounds (ADR-948).
+const (
+	EventRecipientBlockerIdentityMaxBytes = 256
+	EventRecipientBlockerReadTimeout      = 5 * time.Second
 )
 
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
@@ -296,6 +317,13 @@ const CanaryLowTrafficMaxHold = 5 * time.Minute
 // production-us hunt #4: both were 30 s, so the SDK always gave up first.
 const SyncInvokeWaitSeconds = 25
 const SyncInvokeWaitSecondsFree = 5
+
+// GatewaySynthDispatchTimeout bounds one schedd → gatewayd-internal synth
+// call: a cron HTTP target, an async invocation or a workflow step, including
+// any wake it triggers and the application's answer. It is therefore the
+// per-attempt execution limit of an async invocation; an attempt that outlives
+// it is recorded as a timeout and retried under the invocation's retry policy.
+const GatewaySynthDispatchTimeout = 30 * time.Second
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
@@ -760,6 +788,15 @@ const (
 	OutboundAIBudgetAlertsPageMax               = 100
 	OutboundAIBudgetAlertWarnPercent            = 80
 	OutboundAIBudgetAlertFullPercent            = 100
+	// Per-end-user attribution (ADR-994): the distinct X-Gregale-AI-User
+	// values rolled up per integration and UTC day (later ones aggregate
+	// under "~other" and only integration and app budgets limit them), how
+	// long those rollups stay, the page size of their listing and the
+	// longest end-user or session ID.
+	OutboundAIUsersPerDay            = 10_000
+	OutboundAIUserUsageRetentionDays = 31
+	OutboundAIUserUsagePageMax       = 1_000
+	OutboundAIUserIDMaxBytes         = 64
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -784,10 +821,21 @@ const (
 	PostgresCopyWorkerTasksMax               = 64
 	// Selected source databases per private checkpoint admission barrier.
 	// Oversize sets fail before provider or SQL IO; they are never truncated.
-	PostgresCheckpointDatabasesMax = 1024
-	PostgresCopyInventoryMaxBytes  = 4 << 20
-	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
-	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// Private dormant stage credentials retain one bounded encrypted envelope
+	// per durable owner until explicit terminal retirement.
+	PostgresCheckpointCredentialsPerAccountMax     = 4096
+	PostgresCheckpointCredentialCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointCredentialPasswordBytes      = 32
+	PostgresCheckpointActivationPlanMaxBytes       = 16 << 20
+	PostgresCheckpointPublicationMaxBytes          = 24 << 20
+	PostgresCheckpointConnectionCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointConnectionHostMaxBytes       = 253
+	PostgresCheckpointConnectionHostLabelMaxBytes  = 63
+	PostgresCheckpointConnectionDatabaseMaxBytes   = 63
+	PostgresCheckpointDatabasesMax                 = 1024
+	PostgresCopyInventoryMaxBytes                  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes                   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes                 = PostgresCopyEnvelopeMaxBytes + (64 << 10)
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128
@@ -974,6 +1022,12 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// ArtifactCacheMinFreeBytes is the free space the node artifact cache
+	// (snapshots, app layers, bases) leaves on its filesystem. Builder drives
+	// and capture staging share that disk, so besides its byte budget
+	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
+	// the filesystem has less than this free.
+	ArtifactCacheMinFreeBytes int64 = 8 << 30
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -1434,7 +1488,9 @@ type Limits struct {
 	// (RequestBudgetAppDefault for Apps, RequestBudgetDefault for
 	// Functions) and RequestBudgetMax in the limits.go const block. Per-route
 	// overrides via edge-rule kind=budget take precedence at
-	// request time.
+	// request time. RequestBudgetMaxMs is the plan's ceiling for every
+	// budget source (request_timeout_s, edge rules, the override header);
+	// it may not exceed RequestBudgetPlanMax (ADR-1150).
 	RequestBudgetMs    int // 0 → type-aware default; non-zero plan override
 	RequestBudgetMaxMs int // 0 → RequestBudgetMax; non-zero must be ≥ RequestBudgetMs
 
@@ -2876,6 +2932,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:             100,
 		VCPU:                           2,
 		IdleTimeoutS:                   60,
+		RequestBudgetMaxMs:             30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays:          30,
 		IncludedGBHours:                5,
 		PriceMillicents:                0,
@@ -3268,6 +3325,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    100,
 		VCPU:                  2,
 		IdleTimeoutS:          60,
+		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       50,
 		PriceMillicents:       900_000, // €9.00
@@ -3687,6 +3745,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    250,
 		VCPU:                  2,
 		IdleTimeoutS:          300,
+		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       250,
 		PriceMillicents:       2_900_000, // €29.00
@@ -4068,6 +4127,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    250,
 		VCPU:                  4,
 		IdleTimeoutS:          600,
+		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1500,
 		PriceMillicents:       9_900_000, // €99.00
@@ -8729,7 +8789,13 @@ const (
 	// gatewayd-internal independently bounds upload, wake, burst expansion,
 	// per-VM capacity wait, and guest execution. The edge must permit their
 	// worst-case serial composition or it silently becomes the policy owner.
-	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetMax
+	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetPlanMax
+	// ProjectApplyTimeout bounds one project apply (POST /v1/projects): the
+	// source upload, re-scan, reconcile and every workload's build enqueue
+	// share that request, so apid's default budget cannot hold it. Hunt #9 on
+	// production-us: the apps committed, then the enqueue failed on the 5 s
+	// deadline and left them undeployed.
+	ProjectApplyTimeout = RequestUploadTimeoutMax + RequestBudgetMax
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
@@ -8742,11 +8808,16 @@ const (
 	// RequestBudgetMs override. Apps are ordinary HTTP services and need
 	// a less surprising default than the short Function invocation budget.
 	RequestBudgetAppDefault = 30 * time.Second
-	// RequestBudgetMax is the absolute upper bound on any per-request
-	// budget. Defends against a misconfiguration that would re-pin a
-	// 300 s stdlib WriteTimeout as the request budget. Per-plan max
-	// lives on Limits.RequestBudgetMaxMs; 0 falls back here.
+	// RequestBudgetMax is the default per-plan ceiling on a request budget,
+	// used when a plan sets no RequestBudgetMaxMs, and apid's own maximum.
+	// Defends against a misconfiguration that would re-pin a 300 s stdlib
+	// WriteTimeout as the request budget.
 	RequestBudgetMax = 30 * time.Second
+	// RequestBudgetPlanMax is the largest request budget any plan may allow
+	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
+	// it, edge-rule and route-requirement budgets are validated against it,
+	// and the public edge's envelope timeout includes it.
+	RequestBudgetPlanMax = 15 * time.Minute
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is
@@ -8826,8 +8897,8 @@ func (l Limits) RequestBudget() time.Duration {
 	if d <= 0 {
 		d = RequestBudgetDefault
 	}
-	if d > RequestBudgetMax {
-		d = RequestBudgetMax
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	return d
 }
@@ -8850,8 +8921,8 @@ func (l Limits) RequestBudgetForType(appType string) time.Duration {
 			d = RequestBudgetDefault
 		}
 	}
-	if d > RequestBudgetMax {
-		d = RequestBudgetMax
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	if max := l.RequestBudgetMaxDuration(); max > 0 && d > max {
 		d = max
@@ -8862,7 +8933,7 @@ func (l Limits) RequestBudgetForType(appType string) time.Duration {
 // RequestBudgetMaxDuration returns the absolute upper bound for any
 // per-request budget on this plan. 0 falls back to
 // RequestBudgetMax. Per-plan override clamps to [RequestBudget(),
-// 5 * RequestBudgetMax] so a customer with a 5 s plan default
+// RequestBudgetPlanMax] so a customer with a 5 s plan default
 // cannot accidentally configure a 100 ms max (which would force the
 // default down to 100 ms).
 //
@@ -8871,6 +8942,9 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	d := time.Duration(l.RequestBudgetMaxMs) * time.Millisecond
 	if d <= 0 {
 		d = RequestBudgetMax
+	}
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	if d < l.RequestBudget() {
 		d = l.RequestBudget()
@@ -9722,6 +9796,48 @@ const (
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
 
+// Read-only checkpoint object comparison bounds; these grant no storage or IO
+// entitlement. One retained original request exists per private target bucket.
+const ObjectCheckpointVerificationPlanMaxBytes = 16 << 20
+const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40
+
+// Native retirement embeds the bounded original copy plan plus creation metadata.
+const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20
+
+// Bounds for private source compensation plans and native observations.
+const CheckpointSourceCompensationMaxBytes = 16 << 20
+
+// CheckpointCaptureRetirementMaxBytes bounds the complete original capture and
+// source-compensation evidence retained for native artifact cleanup.
+const CheckpointCaptureRetirementMaxBytes = 16 << 20
+
+// Bounds for private PostgreSQL checkpoint target compensation evidence.
+const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20
+
+// Original PostgreSQL copy ownership and permanent retirement observations.
+const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
+
+// Non-secret original workload ownership and native retirement observations.
+const CheckpointWorkloadRetirementMaxBytes = 2 << 20
+
+// Private recovery pages bound original clone wake dispatch ownership reads.
+const CheckpointWorkloadWakeRecoveryBatchMax = 100
+
+// Private recovery pages bound retained clone migration handoff evidence reads.
+const CheckpointWorkloadMigrationRecoveryBatchMax = 100
+
+// CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
+const CloneConfigurationOwnershipMaxBytes = 32 << 10
+
+// CloneCompensationReceiptMaxBytes bounds the private terminal cleanup report.
+const CloneCompensationReceiptMaxBytes = 4 << 10
+
+// Private recovery pages bound retained destination adoption dispatch reads.
+const CheckpointWorkloadMigrationAdoptionRecoveryBatchMax = 100
+
+// Private recovery pages bound retained source cancel/resume dispatch reads.
+const CheckpointWorkloadMigrationResumeRecoveryBatchMax = 100
+
 // App health is a read-only, bounded evidence projection, not a probe loop.
 const (
 	AppHealthInstanceLimit          = 256
@@ -9938,6 +10054,7 @@ const (
 	EventRecoveryActiveJobsMax       = 3
 	EventRecoveryJobLifetime         = 24 * time.Hour
 	EventRecoveryJobRetention        = 30 * 24 * time.Hour
+	EventRecoveryRequestMaxBytes     = 64 << 10
 	EventRecoveryRequestTimeout      = 5 * time.Second
 )
 
@@ -10073,6 +10190,147 @@ const (
 const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
+)
+
+// EventConsumerInbox bounds application-owned transactional consumer receipts.
+// The inbox schema generator packages these limits with the standalone SDK.
+const (
+	EventConsumerRequestMaxBytes  = 1 << 20
+	EventConsumerResultMaxBytes   = 1 << 20
+	EventConsumerIdentityMaxBytes = 4096
+)
+
+// Commit publication history bounds metadata-only reads.
+const CommitPublicationHistoryPageDefault = 50
+const CommitPublicationHistoryPageMax = 200
+
+const CommitPublicationHistoryCursorMaxBytes = 192
+
+// Commit delivery reports bound each invocation of recipient traversal.
+const CommitDeliveryReportPagesMax = 20
+const CommitDeliveryReportFileMaxBytes = 64 << 20
+
+// CommitRecoveryApplyMax bounds sequential reviewed recovery attempts per call.
+const CommitRecoveryApplyMax = 50
+
+// CommitRecoveryStatusMax bounds subscriber observations per read-only status call.
+const CommitRecoveryStatusMax = 50
+
+// Commit recovery monitoring bounds per-pass polling without changing read budgets.
+const (
+	CommitRecoveryWatchIntervalMin     = 100 * time.Millisecond
+	CommitRecoveryWatchIntervalMax     = time.Minute
+	CommitRecoveryWatchIntervalDefault = time.Second
+)
+
+// Total automatic transient retries across a recovery watch.
+const CommitRecoveryWatchReadRetriesMax = 20
+
+// Optional recovery evidence age bounds; zero disables freshness enforcement.
+const (
+	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
+	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
+)
+
+// Exact recipient batches bound storage work and request memory.
+const EventRecipientBlockerBatchMax = 50
+const EventRecipientBlockerBatchBodyMaxBytes = 65536
+
+// Optional diagnostic age policy uses the receipt observation age bounds.
+const CommitRecoveryDiagnosticAgeMin = CommitRecoveryWatchObservationAgeMin
+const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
+
+// Optional stall detection uses the diagnostic age duration bounds.
+const CommitRecoveryStallThresholdMin = CommitRecoveryDiagnosticAgeMin
+const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax
+
+// Durable alert queues reserve one terminal notification per active incident.
+const CommitRecoveryAlertQueueMax = 1024
+const CommitRecoveryAlertSequenceMax uint64 = 9007199254740991
+
+// EventConsumerDeliveryHealthSampleMax bounds the oldest pending blocker sample.
+const EventConsumerDeliveryHealthSampleMax = 50
+
+// Delivery health watches are local, bounded, read-only monitors.
+const (
+	EventDeliveryHealthWatchIntervalMin           = 100 * time.Millisecond
+	EventDeliveryHealthWatchIntervalMax           = time.Minute
+	EventDeliveryHealthWatchIntervalDefault       = 5 * time.Second
+	EventDeliveryHealthWatchTimeoutDefault        = 2 * time.Minute
+	EventDeliveryHealthWatchTimeoutMax            = 24 * time.Hour
+	EventDeliveryHealthWatchAgeMin                = 100 * time.Millisecond
+	EventDeliveryHealthWatchAgeMax                = 24 * time.Hour
+	EventDeliveryHealthWatchAgeDefault            = 30 * time.Second
+	EventDeliveryHealthWatchThresholdMin          = 100 * time.Millisecond
+	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
+	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
+)
+
+// EventDeliveryHealthAlertQueueMax bounds pending notifications plus closing reservations.
+const EventDeliveryHealthAlertQueueMax = 1024
+
+// EventDeliveryHealthAlertSequenceMax keeps notification identities exactly representable.
+const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991
+
+// EventDeliveryHealthAcknowledgementHistoryMax bounds exact acknowledgement retries.
+const EventDeliveryHealthAcknowledgementHistoryMax = 1024
+
+// EventDeliveryHealthSLO defaults require meaningful traffic and sustained breaches.
+const EventDeliveryHealthSLOMinimumSamplesDefault int64 = 10
+const EventDeliveryHealthSLOSustainDefault = time.Minute
+
+const EventDeliveryHealthSLOPercentageMin = 0.000001
+const EventDeliveryHealthSLOPercentageMax = 100.0
+
+// Event execution metadata outcomes are retained independently of invocation results.
+const EventExecutionLedgerRetention = 30 * 24 * time.Hour
+const EventExecutionLedgerPruneBatchDefault = 500
+const EventExecutionLedgerPruneBatchMax = 5000
+
+// Native recovery execution monitoring is advisory (ADR-1006).
+const (
+	WorkflowRecoveryExecutionStallDefaultSeconds   = 900
+	WorkflowRecoveryExecutionMonitorMinSeconds     = 60
+	WorkflowRecoveryExecutionMonitorMaxSeconds     = 604800
+	WorkflowRecoveryExecutionAttentionPollInterval = time.Minute
+)
+
+// WorkflowRecoveryActionReceiptsMax bounds durable decisions per recovery job.
+const WorkflowRecoveryActionReceiptsMax = 100
+
+// Preview policies bound scheduler work and retained review evidence.
+const (
+	WorkflowRecoveryPolicyPauseFailuresMax        = 10
+	WorkflowRecoveryPolicyFiltersMax              = 10
+	WorkflowRecoveryHealthDefaultStallSeconds     = 300
+	WorkflowRecoveryHistoryCursorMaxBytes         = 2048
+	WorkflowRecoveryHistoryDefaultPage            = 25
+	WorkflowRecoveryHistoryEventsMax              = 10000
+	WorkflowRecoveryPolicyEvaluationFailuresMax   = 500
+	WorkflowRecoveryFailureObserverTxnAttempts    = 4
+	WorkflowRecoveryFailureObserverBatch          = 100
+	WorkflowRecoveryFailureObserverRefresh        = 5 * time.Minute
+	WorkflowRecoveryFailureObservationFreshness   = 15 * time.Minute
+	WorkflowRecoveryFailureEvidenceMax            = 10000
+	WorkflowRecoveryFailurePruneBatch             = 1000
+	WorkflowRecoveryFailureRetention              = 30 * 24 * time.Hour
+	WorkflowRecoveryPolicyEvaluationReviewsMax    = 100
+	WorkflowRecoveryPolicyEvaluationCandidatesMax = 500
+	WorkflowRecoveryPolicyEvaluationExecutionsMax = 10000
+
+	WorkflowRecoveryReportEntriesMax         = 10000
+	WorkflowRecoveryReportEvidenceMax        = 5
+	WorkflowRecoveryHistoryPruneBatch        = 1000
+	WorkflowRecoveryHistoryRetention         = 30 * 24 * time.Hour
+	WorkflowRecoveryHealthMinStallSeconds    = 1
+	WorkflowRecoveryHealthMaxStallSeconds    = 86400
+	WorkflowRecoveryPolicyMinCooldownSeconds = 60
+	WorkflowRecoveryPolicyMaxCooldownSeconds = 604800
+	WorkflowRecoveryPolicyHourlyActionsMax   = 100
+	WorkflowRecoveryPolicyReviewsMax         = 1000
+	WorkflowRecoveryPolicyJobsPerPoll        = 5
+	WorkflowRecoveryPolicyPollBatch          = 10
+	WorkflowRecoveryPolicyPollInterval       = time.Minute
 )
 
 // Active condition summaries bound context retention and displayed groups.

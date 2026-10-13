@@ -58,7 +58,9 @@ const (
 	// AppTaskObjectStorageBindingProbeCommand runs a bounded, read-only S3
 	// canary using the selected binding's six injected environment variables.
 	AppTaskObjectStorageBindingProbeCommand = "__gregale_object_storage_binding_probe_v1__"
-	AppTaskOutboundBindingProbeCommand      = "__gregale_outbound_binding_probe_v1__"
+	// V2 opts into a tiny disposable object and carries the selected permission.
+	AppTaskObjectStorageWriteProbeCommand = "__gregale_object_storage_binding_probe_v2__"
+	AppTaskOutboundBindingProbeCommand    = "__gregale_outbound_binding_probe_v1__"
 	// AppTaskServiceBindingSmokeCommand is a reserved argv[0] handled directly
 	// by guest-init. It sends one bounded GET through a declared HTTPS service
 	// binding to an explicitly pinned target deployment.
@@ -115,6 +117,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	}
 	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingSmokeCommand && !IsServiceBindingSmokeCommand(r.Command, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid service binding smoke command")
+	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskObjectStorageWriteProbeCommand && !IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid object-storage write probe command")
 	}
 	deploymentID := r.VerificationDeploymentID
 	if deploymentID != "" {
@@ -181,6 +186,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 // IsBindingVerificationCommand excludes generic commands and service smoke
 // requests; explicit deployment selection is limited to these four probes.
 func IsBindingVerificationCommand(command []string, shell bool) bool {
+	if IsObjectStorageWriteProbeCommand(command, shell) {
+		return true
+	}
 	if shell || len(command) != 2 || command[1] == "" {
 		return false
 	}
@@ -190,6 +198,11 @@ func IsBindingVerificationCommand(command []string, shell bool) bool {
 	default:
 		return false
 	}
+}
+
+func IsObjectStorageWriteProbeCommand(command []string, shell bool) bool {
+	return !shell && len(command) == 3 && command[0] == AppTaskObjectStorageWriteProbeCommand &&
+		ValidObjectStorageBindingPrefix(command[1]) && ValidObjectStorageWriteProbeMode(command[2])
 }
 
 // IsServiceBindingSmokeCommand admits only a bounded platform GET with an exact
