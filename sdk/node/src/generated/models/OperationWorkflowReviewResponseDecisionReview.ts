@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowReviewResponseEscalationAcknowledgment } from './OperationWorkflowReviewResponseEscalationAcknowledgment.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 import type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
 import type { OperationWorkflowReviewResponseHandoffReassignment } from './OperationWorkflowReviewResponseHandoffReassignment.js';
@@ -10,6 +11,10 @@ import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
  * First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
+   */
+  escalation_acknowledgment?: OperationWorkflowReviewResponseEscalationAcknowledgment;
   /**
    * OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current ownership receives only the ordinary overdue notice.
    */

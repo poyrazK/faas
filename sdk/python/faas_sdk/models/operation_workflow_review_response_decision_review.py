@@ -9,6 +9,9 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_escalation_acknowledgment import (
+        OperationWorkflowReviewResponseEscalationAcknowledgment,
+    )
     from ..models.operation_workflow_review_response_handoff_acceptance import (
         OperationWorkflowReviewResponseHandoffAcceptance,
     )
@@ -42,6 +45,10 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset = UNSET
+    """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
+    Notification acknowledgment alone does not create this record. Only the system overdue delivery marker may
+    change."""
     acceptance_escalation_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at
     the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current
@@ -103,6 +110,10 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = self.changes
 
         health = self.health.to_dict()
+
+        escalation_acknowledgment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_acknowledgment, Unset):
+            escalation_acknowledgment = self.escalation_acknowledgment.to_dict()
 
         acceptance_escalation_owner = self.acceptance_escalation_owner
 
@@ -166,6 +177,8 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if escalation_acknowledgment is not UNSET:
+            field_dict["escalation_acknowledgment"] = escalation_acknowledgment
         if acceptance_escalation_owner is not UNSET:
             field_dict["acceptance_escalation_owner"] = acceptance_escalation_owner
         if acceptance_escalated_at is not UNSET:
@@ -205,6 +218,9 @@ class OperationWorkflowReviewResponseDecisionReview:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_escalation_acknowledgment import (
+            OperationWorkflowReviewResponseEscalationAcknowledgment,
+        )
         from ..models.operation_workflow_review_response_handoff_acceptance import (
             OperationWorkflowReviewResponseHandoffAcceptance,
         )
@@ -224,6 +240,15 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        _escalation_acknowledgment = d.pop("escalation_acknowledgment", UNSET)
+        escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset
+        if isinstance(_escalation_acknowledgment, Unset):
+            escalation_acknowledgment = UNSET
+        else:
+            escalation_acknowledgment = OperationWorkflowReviewResponseEscalationAcknowledgment.from_dict(
+                _escalation_acknowledgment
+            )
 
         acceptance_escalation_owner = d.pop("acceptance_escalation_owner", UNSET)
 
@@ -309,6 +334,7 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            escalation_acknowledgment=escalation_acknowledgment,
             acceptance_escalation_owner=acceptance_escalation_owner,
             acceptance_escalated_at=acceptance_escalated_at,
             handed_off_at=handed_off_at,

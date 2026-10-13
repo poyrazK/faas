@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
+import type { OperationWorkflowReviewResponseEscalationAcknowledgment } from './OperationWorkflowReviewResponseEscalationAcknowledgment.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 import type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
 import type { OperationWorkflowReviewResponseHandoffReassignment } from './OperationWorkflowReviewResponseHandoffReassignment.js';
@@ -10,6 +11,10 @@ import type { OperationWorkflowReviewResponseHandoffReassignment } from './Opera
  * OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
  */
 export type OperationWorkflowReviewResponseChange = {
+  /**
+   * OperationWorkflowReviewResponseChange.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
+   */
+  escalation_acknowledgment?: OperationWorkflowReviewResponseEscalationAcknowledgment;
   /**
    * OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
    */
@@ -49,7 +54,7 @@ export type OperationWorkflowReviewResponseChange = {
   /**
    * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
    */
-  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted' | 'handoff_declined' | 'handoff_reassigned';
+  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted' | 'handoff_declined' | 'handoff_reassigned' | 'escalation_acknowledged';
   /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */

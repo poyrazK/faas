@@ -79371,6 +79371,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - review_response_escalation_commitment_overdue
           - review_response_handoff_acceptance_escalated
           - review_response_handoff_acceptance_overdue
           - review_response_decision_review_overdue
@@ -80673,6 +80674,9 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        escalation_acknowledgment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationAcknowledgment'
+          description: OperationWorkflowReviewResponseDecisionReview.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
         acceptance_escalation_owner:
           type: string
           maxLength: 256
@@ -80794,6 +80798,60 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
           description: OperationWorkflowReviewResponseDecision.health. Immutable reviewed snapshot including original freshness timestamps.
       required: [kind, reason, owner, at, actor, health]
+    OperationWorkflowReviewResponseEscalationAcknowledgmentRequest:
+      type: object
+      additionalProperties: false
+      description: One immutable coordination commitment for the current escalated, unaccepted handoff. Preserve the parent response owner, plan and exact check-in, even if overdue. Cannot combine with a decision, acceptance, decline or reassignment. Current handoff and escalation timestamps are required. Due date must be in the future and within seven days.
+      required: [decision_at, required_at, handed_off_at, escalated_at, coordinator, plan, due_at]
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+        required_at:
+          type: string
+          format: date-time
+        handed_off_at:
+          type: string
+          format: date-time
+        escalated_at:
+          type: string
+          format: date-time
+        coordinator:
+          type: string
+          maxLength: 256
+          description: Control-free trimmed UTF-8 coordinator or team label, nonblank and limited to 256 bytes. Uses the existing authorized operator model; not proof of team membership.
+        plan:
+          type: string
+          maxLength: 1024
+          description: Nonblank UTF-8 next-action plan, limited to 1024 bytes; line breaks and tabs are allowed.
+        due_at:
+          type: string
+          format: date-time
+          description: Future next-action deadline within seven days. This does not extend the handoff acceptance or decision-review deadlines.
+    OperationWorkflowReviewResponseEscalationAcknowledgment:
+      type: object
+      additionalProperties: false
+      description: Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time. Notification acknowledgment alone does not create this record. Only the system overdue delivery marker may change.
+      required: [coordinator, plan, due_at, at, actor]
+      properties:
+        coordinator:
+          type: string
+          maxLength: 256
+        plan:
+          type: string
+          maxLength: 1024
+        due_at:
+          type: string
+          format: date-time
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        overdue_notified_at:
+          type: string
+          format: date-time
+          description: One-time follow-up publication marker. Stored atomically with its inbox notice and mirrored in retained history; human update timestamps remain unchanged.
     OperationWorkflowReviewResponseHandoffAcceptanceRequest:
       type: object
       additionalProperties: false
@@ -80999,6 +81057,9 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        escalation_acknowledgment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationAcknowledgmentRequest'
+          description: OperationWorkflowReviewResponseRequest.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
         handoff_acceptance_escalation_owner:
           type: string
           maxLength: 256
@@ -81311,6 +81372,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        escalation_acknowledgment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationAcknowledgment'
+          description: OperationWorkflowReviewResponseChange.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
         handoff_acceptance_escalation_owner:
           type: string
           maxLength: 256
@@ -81348,7 +81412,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

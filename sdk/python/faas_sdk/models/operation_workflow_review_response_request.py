@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_decision_request import (
         OperationWorkflowReviewResponseDecisionRequest,
     )
+    from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
+        OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
+    )
     from ..models.operation_workflow_review_response_handoff_acceptance_request import (
         OperationWorkflowReviewResponseHandoffAcceptanceRequest,
     )
@@ -47,6 +50,11 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgmentRequest | Unset = UNSET
+    """One immutable coordination commitment for the current escalated, unaccepted handoff. Preserve the parent
+    response owner, plan and exact check-in, even if overdue. Cannot combine with a decision, acceptance, decline or
+    reassignment. Current handoff and escalation timestamps are required. Due date must be in the future and within
+    seven days."""
     handoff_acceptance_escalation_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseRequest.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
     label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
@@ -92,6 +100,10 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        escalation_acknowledgment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_acknowledgment, Unset):
+            escalation_acknowledgment = self.escalation_acknowledgment.to_dict()
 
         handoff_acceptance_escalation_owner = self.handoff_acceptance_escalation_owner
 
@@ -139,6 +151,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if escalation_acknowledgment is not UNSET:
+            field_dict["escalation_acknowledgment"] = escalation_acknowledgment
         if handoff_acceptance_escalation_owner is not UNSET:
             field_dict["handoff_acceptance_escalation_owner"] = handoff_acceptance_escalation_owner
         if handoff_reassignment is not UNSET:
@@ -169,6 +183,9 @@ class OperationWorkflowReviewResponseRequest:
         from ..models.operation_workflow_review_response_decision_request import (
             OperationWorkflowReviewResponseDecisionRequest,
         )
+        from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
+            OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
+        )
         from ..models.operation_workflow_review_response_handoff_acceptance_request import (
             OperationWorkflowReviewResponseHandoffAcceptanceRequest,
         )
@@ -186,6 +203,15 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _escalation_acknowledgment = d.pop("escalation_acknowledgment", UNSET)
+        escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgmentRequest | Unset
+        if isinstance(_escalation_acknowledgment, Unset):
+            escalation_acknowledgment = UNSET
+        else:
+            escalation_acknowledgment = OperationWorkflowReviewResponseEscalationAcknowledgmentRequest.from_dict(
+                _escalation_acknowledgment
+            )
 
         handoff_acceptance_escalation_owner = d.pop("handoff_acceptance_escalation_owner", UNSET)
 
@@ -247,6 +273,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            escalation_acknowledgment=escalation_acknowledgment,
             handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,
             handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,

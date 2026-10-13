@@ -86,6 +86,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			return n, err
 		}
 	}
+	if req.ReviewResponse != nil {
+		if err := validateReviewEscalationAcknowledgment(n, *req.ReviewResponse); err != nil {
+			return n, err
+		}
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if req.PreparedReviewResponse != nil {
 		response := *req.PreparedReviewResponse
@@ -149,6 +154,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			review.HandedOffAt = &now
 			review.AcceptanceEscalationOwner = response.HandoffAcceptanceEscalationOwner
 			review.AcceptanceEscalatedAt = nil
+			review.EscalationAcknowledgment = nil
 			review.OwnerChanged = true
 			review.Decline = nil
 			review.ReassignmentRequired = false
@@ -157,7 +163,19 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			due := now.Add(time.Duration(effectiveHandoffAcceptanceWindow(&response)) * time.Second)
 			review.AcceptanceDueAt = &due
 		}
+		var acknowledgmentForHistory *api.OperationWorkflowReviewResponseEscalationAcknowledgment
+		if acknowledgment := req.ReviewResponse.EscalationAcknowledgment; acknowledgment != nil {
+			due := acknowledgment.DueAt.UTC().Truncate(time.Microsecond)
+			if !due.After(now) {
+				return n, ErrConflict
+			}
+			acknowledgmentForHistory = &api.OperationWorkflowReviewResponseEscalationAcknowledgment{Coordinator: acknowledgment.Coordinator, Plan: acknowledgment.Plan, DueAt: due, At: now, Actor: actor}
+			response.DecisionReview.EscalationAcknowledgment = acknowledgmentForHistory
+		}
 		changeReason := "human_update"
+		if acknowledgmentForHistory != nil {
+			changeReason = "escalation_acknowledged"
+		}
 		if reassignmentForHistory != nil {
 			changeReason = "handoff_reassigned"
 		}
@@ -171,7 +189,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		if req.ReviewResponse.Decision != nil {
 			decisionForHistory = response.Decision
 		}
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptanceEscalationOwner: response.HandoffAcceptanceEscalationOwner, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffReassignment: reassignmentForHistory, HandoffDecline: declineForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{EscalationAcknowledgment: acknowledgmentForHistory, DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptanceEscalationOwner: response.HandoffAcceptanceEscalationOwner, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffReassignment: reassignmentForHistory, HandoffDecline: declineForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true
