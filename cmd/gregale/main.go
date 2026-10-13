@@ -354,6 +354,8 @@ func run(args []string) (status int) {
 		return cmdDeployment(args[1:])
 	case "data-api":
 		return cmdDataAPI(args[1:])
+	case "auth":
+		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
 	case "realtime":

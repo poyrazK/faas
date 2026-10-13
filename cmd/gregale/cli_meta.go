@@ -488,6 +488,7 @@ var templateNames13 = []string{
 	"data-api",
 	"data-api-starter",
 	"durable-entity-node",
+	"auth",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -4027,6 +4028,21 @@ var cliCommands = []cliCommand{
 		DocSlug:   "plan",
 		Short:     "Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout",
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
+	},
+	{
+		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Deploy a managed GoTrue Auth server bound to your database", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
+				{Name: "site-url", Value: "URL", Req: true, Short: "application URL users return to after sign-in"},
+				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				{Name: "autoconfirm", Short: "sign users in without email confirmation (development only)"},
+				{Name: "disable-signup", Short: "allow only invited or administrator-created users"},
+				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
+			}, Examples: []string{"gregale auth create shop-auth --database shop-db --site-url https://shop.example.com"}},
+			{Name: "status", Short: "Show the issuer, JWKS URL and readiness of an Auth app", Positionals: []string{"<name>"}},
+		},
 	},
 	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",

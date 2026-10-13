@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phase 1 (the `auth` credential mode) implemented, not yet qualified on a live backend
+- **Status:** proposed; phases 1 (the `auth` credential mode) and 2 (the template, `gregale auth create|status`) implemented, not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -31,7 +31,10 @@ resource owner, deploy path, metering model or plan quota.
 ### Engine
 
 The engine is `supabase/auth` (GoTrue), MIT licensed, pinned to v2.197.0 by
-image digest. It provides email and password, magic links, one-time codes,
+image digest. The template pins the linux/amd64 manifest
+(`sha256:839f5294…`) of the release index rather than the index itself:
+Gregale builders are x86_64, and the index's arm64 variant ships a binary that
+fails with `exec format error`. It provides email and password, magic links, one-time codes,
 OAuth providers, TOTP and passkey MFA, refresh-token rotation, sessions,
 sign-out, an admin user API, asymmetric signing keys and a JWKS endpoint.
 GoTrue stores everything in a PostgreSQL schema, so users live in the
@@ -44,8 +47,9 @@ template change that must re-run the migration overlay check below.
 `auth` binding, seals the settings as app secrets and deploys the `auth`
 template, following `data-api create`. The app has two processes:
 
-- `release: auth-migrate` runs `auth migrate` and then the `gregale_auth`
-  migrations, as a release task.
+- `release: node migrate.mjs` runs `auth migrate`, and later the
+  `gregale_auth` migrations, as a release task. Only this session raises the
+  statement timeout, to `AuthMigrationStatementTimeoutMS`.
 - `web` runs the Gregale front process, which supervises `auth serve` on
   loopback. GoTrue's default command migrates before serving and is never
   used, so a cold boot or snapshot restore performs no DDL.
@@ -55,9 +59,22 @@ The front serves `/auth/v1/*` by proxying to GoTrue and
 the `/authz/v1/*` organization and policy API, and a loopback-only email hook.
 
 The CLI generates the ES256 signing key locally and stores it only as the
-sealed `GOTRUE_JWT_KEYS` secret. It never prints or logs the key.
-`gregale auth keys rotate` adds a new signing key and keeps the previous one
-for verification until access tokens signed with it have expired.
+sealed `AUTH_JWT_KEYS` secret, which the front passes to GoTrue as
+`GOTRUE_JWT_KEYS`. It never prints or logs the key, and a resumed or repeated
+create never replaces existing signing material. Key rotation, which adds a
+new signing key and keeps the previous one for verification until tokens
+signed with it expire, is a follow-up: secrets are write-only, so it needs a
+verification-key record the CLI can read.
+
+The front starts GoTrue with an explicit environment, never its own. Customers
+configure providers, MFA, password rules and CAPTCHA through
+`GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*` and
+`GOTRUE_SECURITY_CAPTCHA_*` app secrets; any other `GOTRUE_*` secret stops
+startup rather than being ignored. GoTrue rate-limits on `X-Real-IP`, which the
+public gateway replaces with the verified client address, and logs at `warn`
+because its request logs would include verification tokens from `/verify`
+query strings. `--autoconfirm` (development) and `--disable-signup` map to
+GoTrue's own settings.
 
 ### Database credential mode `auth`
 
@@ -194,8 +211,8 @@ in `pkg/api/limits.go`.
 
 1. The `auth` credential mode: provisioning, verification, qualification
    probe, binding constraints, delivery policy, API enums and CLI modes.
-2. The `auth` template, `gregale auth create|status|keys rotate`, and the
-   migration overlay check.
+2. The `auth` template, `gregale auth create|status`, and the migration
+   overlay check. Key rotation follows.
 3. The `gregale_auth` schema and helpers, the verifier allowance, and `--auth`
    for the Data API and edge JWT rules.
 4. Hosted pages, the `@gregale/auth` SDK and the email hook.
@@ -226,8 +243,14 @@ in `pkg/api/limits.go`.
 PostgreSQL tests cover isolation, ownership, idempotency, rotation and
 revocation of the `auth` mode. All 75 GoTrue v2.197.0 migrations have been
 replayed through an `auth` login on PostgreSQL 16: the 16 RLS-enabled tables
-belong to the auth owner and accept its writes. The GoTrue binary must still
-migrate and serve against that credential. Native acceptance must show sign-up, Data
+belong to the auth owner and accept its writes. The built template image has
+run against that credential on PostgreSQL 16: the release task applied every
+migration, sign-up issued an ES256 token that verifies against the published
+JWKS with the expected issuer, audience and 600-second lifetime, refresh
+tokens rotated, and sign-out ended refresh. Under amd64 emulation the instance
+used about 131 MiB (Node ~62 MB, GoTrue ~84 MB RSS), above the Free plan's
+128 MB. Native x86_64 measurement decides whether the front must move from
+Node to a small Go process before Free-plan availability. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits. This ADR alone
 changes no production gate.

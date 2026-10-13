@@ -10216,8 +10216,23 @@ const (
 // Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
 // login's default statement timeout; release-task migrations may raise it
 // for their own session. It is a runaway-query guard, not a plan quota.
+// The auth template's config.mjs mirrors the runtime values;
+// TestAuthTemplateRuntimeBounds keeps them aligned.
 const (
 	AuthStatementTimeoutMS = 30000
+	// AuthAccessTokenTTLSeconds bounds how long a signed-out or banned
+	// session's access token still passes edge-only JWT checks.
+	AuthAccessTokenTTLSeconds = 600
+	// AuthMaxPoolConnections caps GoTrue's direct (unpooled) connections
+	// per instance.
+	AuthMaxPoolConnections = 4
+	// AuthMaxRequestBytes bounds request bodies the front proxies to GoTrue.
+	AuthMaxRequestBytes = 1 << 20
+	// AuthMaxRedirectURLs bounds GOTRUE_URI_ALLOW_LIST entries.
+	AuthMaxRedirectURLs = 50
+	// AuthMigrationStatementTimeoutMS replaces the login default for the
+	// release task's GoTrue migrations, which may rewrite large user tables.
+	AuthMigrationStatementTimeoutMS = 600000
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.
