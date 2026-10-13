@@ -18079,6 +18079,21 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_attempt_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_attempt_instances (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    attempt integer NOT NULL,
+    instance_id uuid NOT NULL,
+    placed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_attempt_instances_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_attempt_instances_generation_check CHECK ((generation > 0))
+);
+
+
+--
 -- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32885,6 +32900,14 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_operation_attempt_instances customer_operation_attempt_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_attempt_instances
+    ADD CONSTRAINT customer_operation_attempt_instances_pkey PRIMARY KEY (operation_id, generation, attempt);
 
 
 --

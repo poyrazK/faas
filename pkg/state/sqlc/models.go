@@ -1615,6 +1615,14 @@ type CustomerOperation struct {
 	JobRunID            pgtype.UUID
 }
 
+type CustomerOperationAttemptInstance struct {
+	OperationID pgtype.UUID
+	Generation  int32
+	Attempt     int32
+	InstanceID  pgtype.UUID
+	PlacedAt    pgtype.Timestamptz
+}
+
 type CustomerOperationCodePin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID

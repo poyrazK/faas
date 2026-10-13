@@ -75515,10 +75515,19 @@ func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) er
 }
 
 const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
-UPDATE invocations SET instance_id=$1::uuid
-WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
-AND lease_expires_at>$4::timestamptz
-AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+WITH stamped AS (
+  UPDATE invocations SET instance_id=$1::uuid
+  WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
+  AND lease_expires_at>$4::timestamptz
+  AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+  RETURNING id,attempts
+), placed AS (
+  INSERT INTO customer_operation_attempt_instances(operation_id,generation,attempt,instance_id)
+  SELECT e.operation_id,e.generation,s.attempts,$1::uuid
+  FROM stamped s JOIN customer_operation_executions e ON e.invocation_id=s.id
+  ON CONFLICT (operation_id,generation,attempt) DO NOTHING
+)
+SELECT 1 FROM stamped
 `
 
 type StampCustomerOperationExecutionAttemptParams struct {
@@ -75528,6 +75537,7 @@ type StampCustomerOperationExecutionAttemptParams struct {
 	Now        pgtype.Timestamptz
 }
 
+// The placement shares the fenced stamp (ADR-1157); an attempt keeps its first.
 func (q *Queries) StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error) {
 	result, err := db.Exec(ctx, stampCustomerOperationExecutionAttempt,
 		arg.InstanceID,
