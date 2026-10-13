@@ -70455,7 +70455,7 @@ components:
         match_host:
           type: string
           maxLength: 253
-          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain.'
+          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1166) covers every hostname the rule''s app serves, including custom domains added later.'
           example: api.example.com
         match_path:
           type: string
@@ -70539,7 +70539,7 @@ components:
       type: object
       required: [match_host, kind, action]
       properties:
-        match_host: { type: string, maxLength: 253 }
+        match_host: { type: string, maxLength: 253, description: 'Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1166). Other values starting with `@` are reserved.' }
         match_path: { type: string, maxLength: 2048, default: "/" }
         match_methods:
           type: array

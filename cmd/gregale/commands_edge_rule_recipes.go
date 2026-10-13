@@ -75,7 +75,7 @@ func cmdEdgeRulesRecipes(args []string) int {
 func cmdEdgeRulesRecipe(args []string) int {
 	fs := newFlagSet("edge-rules recipe", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug (defaults to linked project context)")
-	hostFlag := fs.String("host", "", "hostname the rule matches (defaults to the app canonical URL)")
+	hostFlag := fs.String("host", "", "restrict the rule to one hostname (default: every host the app serves)")
 	var sets multiFlag
 	fs.Var(&sets, "set", "recipe parameter as name=value (repeat; see gregale edge-rules recipes)")
 	enforce := fs.Bool("enforce", false, "enforce immediately instead of starting in log mode")
@@ -110,18 +110,13 @@ func cmdEdgeRulesRecipe(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	host := strings.TrimSpace(*hostFlag)
-	if host == "" {
-		app, getErr := client.GetApp(context.Background(), slug)
-		if getErr != nil {
-			return printErr("Could not resolve app hostname", getErr)
+	// ADR-1166: by default the rule covers every host the app serves,
+	// including custom domains added later; --host restricts it to one.
+	host := api.EdgeRuleAppHosts
+	if raw := strings.TrimSpace(*hostFlag); raw != "" {
+		if host, err = normalizeCacheHost(raw); err != nil {
+			return printErr("Invalid host", err)
 		}
-		host, err = cacheHostFromApp(app)
-	} else {
-		host, err = normalizeCacheHost(host)
-	}
-	if err != nil {
-		return printErr("Invalid host", err)
 	}
 	req, prob := api.BuildEdgeRuleRecipe(recipe.ID, host, values, *enforce)
 	if prob != nil {
@@ -135,10 +130,18 @@ func cmdEdgeRulesRecipe(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if *enforce {
-		PrintOK(osStdout, "Added %q on %s%s (rule %s), enforced.", recipe.Title, host, req.MatchPath, out.ID)
+		PrintOK(osStdout, "Added %q on %s %s (rule %s), enforced.", recipe.Title, recipeHostLabel(host), req.MatchPath, out.ID)
 		return 0
 	}
-	PrintOK(osStdout, "Added %q on %s%s (rule %s) in log mode: it is counted but never acts.", recipe.Title, host, req.MatchPath, out.ID)
+	PrintOK(osStdout, "Added %q on %s %s (rule %s) in log mode: it is counted but never acts.", recipe.Title, recipeHostLabel(host), req.MatchPath, out.ID)
 	_, _ = fmt.Fprintf(osStdout, "  %s\n  Watch:   gregale edge-rules stats --app %s\n  Enforce: gregale edge-rules update %s --mode enforce\n", recipe.LogNote, slug, out.ID)
 	return 0
+}
+
+// recipeHostLabel names the hosts a recipe rule covers.
+func recipeHostLabel(host string) string {
+	if api.IsEdgeRuleAppHosts(host) {
+		return "every host of the app"
+	}
+	return host
 }

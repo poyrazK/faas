@@ -74,7 +74,7 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 	}
 	modes := map[string]string{}
 	for _, r := range rules {
-		if r.Kind != state.EdgeRuleKindIP || r.Match == nil || !strings.HasSuffix(r.Description, "protection recipe.") {
+		if r.Kind != state.EdgeRuleKindIP || r.Match == nil || !strings.HasSuffix(r.Description, "protection recipe.") || r.MatchHost != api.EdgeRuleAppHosts {
 			t.Fatalf("rule = %+v", r)
 		}
 		modes[r.Name] = r.Mode
@@ -82,8 +82,14 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 	if modes["Block unverified bots"] != api.EdgeRuleModeLog || modes["Allow only listed IPs on a path"] != api.EdgeRuleModeEnforce {
 		t.Fatalf("modes = %v", modes)
 	}
-	if body := page(); !strings.Contains(body, "Block unverified bots</strong> <span class=\"muted\">· added") {
+	body = page()
+	if !strings.Contains(body, "Block unverified bots</strong> <span class=\"muted\">· added") {
 		t.Error("page does not mark the added recipe")
+	}
+	// adr: 1166 — the hosts section counts app-wide rules on every host and
+	// app-wide rules show as covering every app host.
+	if !strings.Contains(body, "Hosts") || !strings.Contains(body, "2 rules apply") || !strings.Contains(body, "every app host") {
+		t.Error("page missing host coverage for app-wide rules")
 	}
 
 	for name, tc := range map[string]struct {

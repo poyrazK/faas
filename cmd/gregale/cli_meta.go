@@ -2856,7 +2856,7 @@ var cliCommands = []cliCommand{
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "kind", Short: "rule kind", Value: "KIND", Req: true, ClosedSet: edgeRuleKindVocab},
-				{Name: "match-host", Short: "host to match", Value: "HOST", Req: true},
+				{Name: "match-host", Short: "host to match; @app covers every host the app serves", Value: "HOST", Req: true},
 				{Name: "match-path", Short: "path glob to match (default / covers only the root; /** covers every path)", Value: "PATH"},
 				{Name: "match-method", Short: "HTTP method to match (repeat for multiple)", Value: "METHOD"},
 				{Name: "match-header", Short: "exact request header selector (repeat)", Value: "Name=Value"},
@@ -2958,7 +2958,7 @@ var cliCommands = []cliCommand{
 				"gregale edge-rules update RULE_ID --kind validate --validate-schema @schema.json --validate-mode block",
 				"gregale edge-rules update RULE_ID --kind validate --validate-mode observe",
 			}, Flags: []cliFlag{
-				{Name: "match-host", Short: "new host to match", Value: "HOST"},
+				{Name: "match-host", Short: "new host to match; @app covers every host the app serves", Value: "HOST"},
 				{Name: "match-path", Short: "new path to match", Value: "PATH"},
 				{Name: "match-method", Short: "replacement HTTP method (repeatable)", Value: "METHOD", Repeatable: true},
 				{Name: "match-header", Short: "replacement exact request header selector (repeatable)", Value: "NAME=VALUE", Repeatable: true},
@@ -3073,7 +3073,7 @@ var cliCommands = []cliCommand{
 				"gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
-				{Name: "host", Short: "hostname the rule matches (defaults to the app canonical URL)", Value: "HOST"},
+				{Name: "host", Short: "restrict the rule to one hostname (default: every host the app serves)", Value: "HOST"},
 				{Name: "set", Short: "recipe parameter name=value (repeat)", Value: "NAME=VALUE"},
 				{Name: "enforce", Short: "enforce immediately instead of starting in log mode", Bool: true},
 			}},

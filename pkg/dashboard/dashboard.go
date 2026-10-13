@@ -979,6 +979,17 @@ type AppEdgeRulesData struct {
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
+	// Hosts lists the hostnames the app serves and how many enabled rules
+	// apply to each (ADR-1166), so an uncovered custom domain stands out.
+	Hosts []EdgeRuleHostCoverage
+}
+
+// EdgeRuleHostCoverage is one hostname of the app and the number of
+// enabled edge rules that apply to it.
+type EdgeRuleHostCoverage struct {
+	Host   string
+	Custom bool
+	Rules  int
 }
 
 // EdgeRuleRecipeView is one protection recipe on the edge-rules page.
@@ -1062,6 +1073,8 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// AppWide is set for a match_host "@app" rule (ADR-1166).
+	AppWide bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
