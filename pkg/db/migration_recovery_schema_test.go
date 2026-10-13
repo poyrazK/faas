@@ -78,3 +78,11 @@ func TestApplicationStandardLedgerRecoveryRefusesRemoteBeforeOpening(t *testing.
 		t.Fatalf("remote apply reached database: %v", err)
 	}
 }
+
+func TestStripMigrationRecoveryNoiseKeepsOneFinalNewline(t *testing.T) {
+	raw := "--\n-- PostgreSQL database dump\n--\n\\restrict key\n\nCREATE TABLE t ();\n\n\n--\n-- PostgreSQL database dump complete\n--\n\n\\unrestrict key\n\n"
+	want := "--\n-- PostgreSQL database dump\n--\n\nCREATE TABLE t ();\n\n\n--\n--\n"
+	if got := string(stripMigrationRecoveryNoise([]byte(raw))); got != want {
+		t.Fatalf("normalized dump = %q, want %q", got, want)
+	}
+}

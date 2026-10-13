@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -51,5 +52,12 @@ func stripMigrationRecoveryNoise(raw []byte) []byte {
 	} {
 		raw = regexp.MustCompile(pattern).ReplaceAll(raw, nil)
 	}
-	return raw
+	// Match cmd/schema-dump: removing the banners leaves a pg_dump-release
+	// dependent number of terminal blank lines, and the canonical schema keeps
+	// exactly one final newline.
+	raw = bytes.TrimRight(raw, "\n")
+	if len(raw) == 0 {
+		return raw
+	}
+	return append(raw, '\n')
 }

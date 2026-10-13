@@ -16,12 +16,13 @@ func TestRetryRuntimeAdmissionBusy(t *testing.T) {
 		name     string
 		failures []error
 		want     error
+		wantPg   bool
 		attempts int
 	}{
 		{name: "mapped busy then commit", failures: []error{ErrApplicationStandardRuntimeBusy, ErrApplicationStandardRuntimeBusy}, attempts: 3},
 		{name: "raw guard busy then commit", failures: []error{fmt.Errorf("insert: %w", rawBusy)}, attempts: 2},
 		{name: "definitive refusal", failures: []error{ErrApplicationStandardRuntimeStale}, want: ErrApplicationStandardRuntimeStale, attempts: 1},
-		{name: "other lock refusal", failures: []error{&pgconn.PgError{Code: "55P03"}}, want: &pgconn.PgError{}, attempts: 1},
+		{name: "other lock refusal", failures: []error{&pgconn.PgError{Code: "55P03"}}, wantPg: true, attempts: 1},
 		{name: "busy past budget", failures: busyAttempts(api.ApplicationStandardRuntimeLockAttempts + 1), want: ErrApplicationStandardRuntimeBusy, attempts: api.ApplicationStandardRuntimeLockAttempts},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,18 +38,18 @@ func TestRetryRuntimeAdmissionBusy(t *testing.T) {
 				t.Fatalf("attempts = %d, want %d", attempts, tc.attempts)
 			}
 			var pgErr *pgconn.PgError
-			switch want := tc.want.(type) {
-			case nil:
+			switch {
+			case tc.wantPg:
+				if !errors.As(err, &pgErr) {
+					t.Fatalf("err = %v, want a PostgreSQL refusal", err)
+				}
+			case tc.want == nil:
 				if err != nil || got != attempts {
 					t.Fatalf("result = %d, %v; want commit", got, err)
 				}
-			case *pgconn.PgError:
-				if !errors.As(err, &pgErr) {
-					t.Fatalf("err = %v, want %T", err, want)
-				}
 			default:
-				if !errors.Is(err, want) {
-					t.Fatalf("err = %v, want %v", err, want)
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("err = %v, want %v", err, tc.want)
 				}
 			}
 		})

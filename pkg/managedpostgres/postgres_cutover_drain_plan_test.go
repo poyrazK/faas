@@ -19,6 +19,30 @@ type drainPlanInstanceSpec struct {
 	scope, mode, lifecycle string
 }
 
+// execLegacyInstanceShape fabricates an instance shape that the application
+// standard runtime guard now refuses: a wake instance's kind and artifact are
+// immutable. The drain plan must still classify such legacy rows, so the
+// guard is disabled only inside this fixture transaction.
+func execLegacyInstanceShape(t *testing.T, s *PostgresStore, sql string, args ...any) error {
+	t.Helper()
+	tx, err := s.pool.Begin(t.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, statement := range []string{`ALTER TABLE instances DISABLE TRIGGER application_standard_a_runtime_guard`, sql,
+		`ALTER TABLE instances ENABLE TRIGGER application_standard_a_runtime_guard`} {
+		statementArgs := []any(nil)
+		if statement == sql {
+			statementArgs = args
+		}
+		if _, err := tx.Exec(t.Context(), statement, statementArgs...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(t.Context())
+}
+
 func cutoverDrainPlanFixture(t *testing.T, specs ...drainPlanInstanceSpec) (*PostgresStore, *state.PgStore, Cutover, state.ComputeNode, []state.Instance) {
 	t.Helper()
 	s, ps, c, node := admissionCutoverFixture(t)
@@ -111,10 +135,10 @@ func TestPostgresCutoverDrainPlanUnsupportedMembersStayVisible(t *testing.T) {
 	if _, err := s.pool.Exec(t.Context(), `UPDATE instances SET migrated_from_node_id=node_id WHERE id=$1`, instances[2].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(t.Context(), `UPDATE instances SET kind='build' WHERE id=$1`, instances[3].ID); err != nil {
+	if err := execLegacyInstanceShape(t, s, `UPDATE instances SET kind='build' WHERE id=$1`, instances[3].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pool.Exec(t.Context(), `UPDATE instances SET deployment_id=NULL WHERE id=$1`, instances[4].ID); err != nil {
+	if err := execLegacyInstanceShape(t, s, `UPDATE instances SET deployment_id=NULL WHERE id=$1`, instances[4].ID); err != nil {
 		t.Fatal(err)
 	}
 	plan := fenceDrainPlan(t, s, ps, c, node.ID)
