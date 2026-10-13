@@ -22,6 +22,9 @@ type EventDeliveryHealthWatchOptions struct {
 	LineageStalled, LineageRetentionRisk                   int64
 	LineagePaused                                          time.Duration
 	ReceiptBudgetFull                                      time.Duration
+	// ReceiptBudgetRemaining warns below this many slots; zero disables it.
+	ReceiptBudgetRemaining  int
+	ReceiptBudgetLowSustain time.Duration
 	// WaitingReasonCounts and WaitingReasonDurations select known pending reasons.
 	WaitingReasonCounts    map[string]int64
 	WaitingReasonDurations map[string]time.Duration
@@ -106,6 +109,10 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		}
 		enabled = enabled || n > 0
 	}
+	if o.ReceiptBudgetRemaining < 0 || o.ReceiptBudgetRemaining > EventSubscriptionCapacityCommandMaxReceipts || o.ReceiptBudgetLowSustain < 0 || o.ReceiptBudgetLowSustain > EventDeliveryHealthWatchThresholdMax || (o.ReceiptBudgetLowSustain > 0 && o.ReceiptBudgetLowSustain < EventDeliveryHealthWatchThresholdMin) || (o.ReceiptBudgetRemaining == 0 && o.ReceiptBudgetLowSustain != 0) {
+		return ErrValidation("invalid receipt budget remaining-slot threshold or sustain duration")
+	}
+	enabled = enabled || o.ReceiptBudgetRemaining > 0
 	known := NewEventPendingWaitingReasonCounts()
 	for reason, n := range o.WaitingReasonCounts {
 		if _, ok := known[reason]; !ok || n <= 0 || n > EventDeliveryHealthWatchCountMax {
@@ -152,6 +159,15 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 		if v.threshold > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: v.threshold}, sustained: v.sustained})
 		}
+	}
+	if o.ReceiptBudgetRemaining > 0 {
+		sustain := o.ReceiptBudgetLowSustain
+		if sustain == 0 {
+			sustain = EventSubscriptionCapacityCommandLowSustainDefault
+		}
+		// Existing lifecycle comparisons are upper-bound breaches. Express remaining
+		// slots below N as retained receipts at least limit-N+1, preserving raw usage.
+		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "capacity_command_receipt_budget_used_slots", State: "unknown", Threshold: float64(EventSubscriptionCapacityCommandMaxReceipts - o.ReceiptBudgetRemaining + 1), MinimumSamples: 2, SustainSeconds: sustain.Seconds()}})
 	}
 	reasons := make([]string, 0, len(NewEventPendingWaitingReasonCounts()))
 	for reason := range NewEventPendingWaitingReasonCounts() {
@@ -427,3 +443,5 @@ const EventExecutionLedgerPruneBatchDefault = 500
 const EventExecutionLedgerPruneBatchMax = 5000
 
 const EventSubscriptionCapacityCommandMaxReceipts = 128
+
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second

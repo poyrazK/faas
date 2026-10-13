@@ -50,6 +50,9 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 			return false
 		}
 	}
+	if metric == "capacity_command_receipt_budget_used_slots" {
+		return threshold >= 1 && threshold <= EventSubscriptionCapacityCommandMaxReceipts && math.Trunc(threshold) == threshold
+	}
 	count := metric == "retrying_executions" || metric == "dead_lettered_executions" || metric == "lineage_retry_stalled_jobs" || metric == "lineage_retry_retention_risk_jobs"
 	switch metric {
 	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
@@ -89,6 +92,10 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		if strings.HasPrefix(c.Metric, "slo.") {
 			if c.MinimumSamples < 1 || c.MinimumSamples > EventDeliveryHealthWatchCountMax || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
 				return ErrValidation("invalid checkpoint SLO configuration")
+			}
+		} else if c.Metric == "capacity_command_receipt_budget_used_slots" {
+			if c.MinimumSamples != 2 || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() || c.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(c.Value) != c.Value {
+				return ErrValidation("invalid checkpoint receipt budget warning configuration")
 			}
 		} else if c.MinimumSamples != 0 || c.SustainSeconds != 0 {
 			return ErrValidation("unexpected checkpoint SLO configuration")
@@ -132,6 +139,9 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		n, ok := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
 		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || a.MinimumSamples != c.MinimumSamples || a.SustainSeconds != c.SustainSeconds || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
 			return ErrValidation("invalid checkpoint pending alert")
+		}
+		if a.Metric == "capacity_command_receipt_budget_used_slots" && (a.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(a.Value) != a.Value) {
+			return ErrValidation("invalid checkpoint receipt budget alert usage")
 		}
 		switch a.Transition {
 		case "opened":

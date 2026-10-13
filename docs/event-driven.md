@@ -3318,3 +3318,15 @@ The optional threshold defaults to zero (disabled) and accepts the existing 100m
 Missing budget metadata on older servers, incomplete or malformed counts, scope/time mismatches, stale or repeated observations, and future-dated samples mean unknown. An active alert loses confirmation rather than falsely reporting recovery; sample gaps reset confirmation. Resume requires fresh sustained evidence and does not count downtime. Existing `--checkpoint`, `--resume`, `--alerts-json`, and acknowledgment handling apply, including persistence before notification and the usual matching watch-selection requirement. Older checkpoint readers must be upgraded before reading checkpoints containing the new metric. Node and Python can continue reading the budget through their health response models.
 
 The watcher only reads health. A full receipt budget can reject new command UUIDs, while retained commands repeated with their original inputs remain available. Alerts never apply capacity changes, reserve slots, prune receipts or extend retention.
+
+### Warn before receipt slots run out
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
+```
+
+The remaining-slot threshold defaults to zero (disabled); enabled values are 1–128. A warning opens when remaining slots stay **strictly below** N across at least two fresh observations and the confirmation duration. It clears when a fresh valid budget has N or more remaining slots. Confirmation defaults to 30 seconds and accepts 100ms–24h; selecting `--receipt-budget-low-sustain` requires an enabled remaining threshold. Go users set `EventDeliveryHealthWatchOptions.ReceiptBudgetRemaining` and optional `ReceiptBudgetLowSustain`.
+
+Alerts use metric `capacity_command_receipt_budget_used_slots`, with raw retained receipt usage and converted threshold `128 - N + 1`. For N=16, 113 or more retained receipts means 15 or fewer remaining slots. Alerts also carry `minimum_samples: 2` and `sustain_seconds`. This warning can run alongside `--receipt-budget-full-threshold`; each condition has its own incident. Existing checkpoint, resume and acknowledgment handling apply. Resume must use the same threshold and confirmation duration, and older checkpoint readers need upgrading for the new metric.
+
+Missing, stale, incomplete, repeated, future-dated or scope-mismatched evidence remains unknown; active warnings lose confirmation rather than falsely resolving. Gaps reset confirmation and downtime does not count. Warnings do not reserve receipt slots, predict time to exhaustion, extend retention or change capacity.

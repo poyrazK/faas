@@ -110,6 +110,8 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	fs.Int64Var(&f.options.LineageRetentionRisk, "lineage-retention-risk-threshold", 0, "active retry-job retention-risk count threshold; zero disables")
 	fs.DurationVar(&f.options.LineagePaused, "lineage-paused-threshold", 0, "sustained fresh nonzero paused retry-job backlog duration; zero disables")
 	fs.DurationVar(&f.options.ReceiptBudgetFull, "receipt-budget-full-threshold", 0, "sustained fresh full capacity-command receipt budget duration; zero disables")
+	fs.IntVar(&f.options.ReceiptBudgetRemaining, "receipt-budget-remaining-threshold", 0, "warn when remaining receipt slots stay below N (1..128); zero disables")
+	fs.DurationVar(&f.options.ReceiptBudgetLowSustain, "receipt-budget-low-sustain", 0, "warning confirmation duration (100ms-24h; default 30s when remaining threshold enabled)")
 	fs.Func("waiting-reason-count", "repeatable REASON=N pending recipient threshold", func(value string) error {
 		reason, raw, ok := strings.Cut(value, "=")
 		n, err := strconv.ParseInt(raw, 10, 64)
@@ -160,6 +162,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 	var err error
 	sloSelected, sloTarget := false, false
 	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "receipt-budget-low-sustain" && f.options.ReceiptBudgetRemaining == 0 {
+			err = fmt.Errorf("--receipt-budget-low-sustain requires an enabled --receipt-budget-remaining-threshold")
+		}
 		if strings.HasPrefix(option.Name, "slo-") {
 			sloSelected = true
 			if option.Name != "slo-min-samples" && option.Name != "slo-sustain" {

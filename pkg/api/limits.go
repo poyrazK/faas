@@ -10436,5 +10436,6 @@ const EventSubscriptionCapacityCommandPageMax = 100
 const EventSubscriptionCapacityCommandCursorMaxBytes = 512
 
 const EventSubscriptionCapacityCommandMaxReceipts = 128
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
 const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
 const EventSubscriptionCapacityCommandPruneBatch = 500

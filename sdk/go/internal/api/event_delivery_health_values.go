@@ -6,6 +6,13 @@ import (
 )
 
 func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	if metric == "capacity_command_receipt_budget_used_slots" {
+		_, valid, observed := deliveryHealthReceiptBudgetValue(h)
+		if !valid {
+			return 0, false, observed
+		}
+		return float64(h.CapacityPressure.CapacityCommandBudget.RetainedReceipts), true, observed
+	}
 	if metric == "capacity_command_receipt_budget_full_seconds" {
 		return deliveryHealthReceiptBudgetValue(h)
 	}
