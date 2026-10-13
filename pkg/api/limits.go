@@ -4533,6 +4533,11 @@ const (
 	// still books BillableRAMMB. See MeasuredChargeMB.
 	MeasuredChargeFloorMB         = 64
 	MeasuredChargeHeadroomPercent = 25
+	// QuietPauseAfterMillis is how long an eligible function instance sits
+	// with nothing in flight before vmmd pauses its vCPUs until the next
+	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// ADR's simulation 2 s fit 2.5x the function apps per node.
+	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
