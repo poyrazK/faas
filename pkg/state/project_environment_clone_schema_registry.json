@@ -168,6 +168,14 @@
     "kind": "operational"
   },
   {
+    "table": "alert_rule_channels",
+    "columns": [
+      "channel_id",
+      "rule_id"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "alert_rules",
     "columns": [
       "account_id",
@@ -5806,6 +5814,25 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "notification_channels",
+    "columns": [
+      "account_id",
+      "created_at",
+      "email",
+      "id",
+      "kind",
+      "last_delivered_at",
+      "last_error",
+      "last_error_at",
+      "name",
+      "pagerduty_region",
+      "target_hint",
+      "target_sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "notification_outbox",

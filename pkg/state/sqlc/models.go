@@ -248,6 +248,11 @@ type AlertRule struct {
 	EventSubscriptionID             pgtype.UUID
 }
 
+type AlertRuleChannel struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -5034,6 +5039,22 @@ type NodeJoinJob struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	CompletedAt    pgtype.Timestamptz
+}
+
+type NotificationChannel struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	LastDeliveredAt pgtype.Timestamptz
+	LastError       pgtype.Text
+	LastErrorAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type NotificationOutbox struct {

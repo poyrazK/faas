@@ -4,6 +4,7 @@
 // adr: 694
 // adr: 695
 // adr: 708
+// adr: 749 — notification channels and rule bindings are customer configuration.
 package state
 
 import (
@@ -28,6 +29,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"app_binding_release_policy_history":      CloneSchemaConfiguration,
 		"alert_rollback_actions":                  CloneSchemaOperational,
 		"alert_historical_rollback_claims":        CloneSchemaOperational,
+		"notification_channels":                   CloneSchemaConfiguration,
+		"alert_rule_channels":                     CloneSchemaConfiguration,
 		"deployment_recovery_lineage":             CloneSchemaOperational,
 		"deployment_rollback_operations":          CloneSchemaOperational,
 		"deployment_dependency_gates":             CloneSchemaOperational,

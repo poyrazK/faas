@@ -15,6 +15,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs |
+| [`channels`](#channels) | Alert notification channels: Slack, PagerDuty, email (channels list\|add\|test\|rm) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1593,6 +1594,43 @@ Page the opt-in AI request log, newest first
 | `--before <TIME>` | show calls before this RFC 3339 time |  |
 
 
+## channels
+
+Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)
+
+`gregale channels [<subcommand>]`
+
+### channels list
+
+List channels with their last delivery
+
+### channels add
+
+Add a channel; Slack URLs and PagerDuty keys are read from stdin
+
+`gregale channels add --name <NAME> --kind <KIND> [--secret-stdin] [--pagerduty-region <REGION>] [--email <EMAIL>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | channel name, unique per account | required |
+| `--kind <KIND>` | destination type | required; one of `slack` · `pagerduty` · `email` |
+| `--secret-stdin` | read the Slack webhook URL or PagerDuty routing key from stdin |  |
+| `--pagerduty-region <REGION>` | PagerDuty service region | one of `us` · `eu` |
+| `--email <EMAIL>` | your account email (kind email) |  |
+
+### channels test
+
+Send a marked test notification
+
+`gregale channels test <channel-id>`
+
+### channels rm
+
+Delete a channel
+
+`gregale channels rm <channel-id>`
+
+
 ## alerts
 
 Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app &lt;slug&gt;)
@@ -1638,7 +1676,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1650,7 +1688,8 @@ Add an alert rule
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
-| `--webhook-url <URL>` | https webhook URL | required |
+| `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
+| `--webhook-url <URL>` | https webhook URL (required unless --channel) |  |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
@@ -1748,13 +1787,14 @@ List the global alert preset catalog
 
 Create an app alert from a preset or choose one interactively
 
-`gregale alerts preset enable [--interactive] [--app <slug>] [--webhook-url <URL>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--action <ACTION>] [--cooldown-minutes <N>] [--enabled] [<preset-name>]`
+`gregale alerts preset enable [--interactive] [--app <slug>] [--webhook-url <URL>] [--channel <CHANNEL_ID>]... [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--action <ACTION>] [--cooldown-minutes <N>] [--enabled] [<preset-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose a preset, review its rule, and enter a hidden signing secret |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
-| `--webhook-url <URL>` | HTTPS webhook receiver URL (required unless interactive) |  |
+| `--webhook-url <URL>` | HTTPS webhook receiver URL (required unless interactive or --channel) |  |
+| `--channel <CHANNEL_ID>` | notification channel id to deliver to (repeatable) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin |  |
 | `--webhook-secret <VALUE>` | signing secret (prefer --webhook-secret-stdin) |  |
 | `--action <ACTION>` | alert action (default webhook) | one of `webhook` · `rollback` · `demote` · `promote` |

@@ -136,7 +136,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -839,6 +839,23 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "channels",
+		DocSlug: "channels",
+		Short:   "Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List channels with their last delivery"},
+			{Name: "add", Short: "Add a channel; Slack URLs and PagerDuty keys are read from stdin", Flags: []cliFlag{
+				{Name: "name", Short: "channel name, unique per account", Req: true, Value: "NAME"},
+				{Name: "kind", Short: "destination type", Req: true, Value: "KIND", ClosedSet: []string{"slack", "pagerduty", "email"}},
+				{Name: "secret-stdin", Short: "read the Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
+				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
+			}},
+			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+		},
+	},
+	{
 		Name:    "alerts",
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
@@ -863,7 +880,8 @@ var cliCommands = []cliCommand{
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
 				{Name: "event-subscription-id", Short: "Subscription UUID for event consumer metrics", Value: "UUID"},
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
-				{Name: "webhook-url", Short: "https webhook URL", Req: true, Value: "URL"},
+				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
+				{Name: "webhook-url", Short: "https webhook URL (required unless --channel)", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},

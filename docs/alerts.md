@@ -91,6 +91,52 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Notification channels
+
+Channels deliver alerts to Slack, PagerDuty or email without a webhook
+receiver of your own (ADR-749). Add a channel once per account, then send a
+test:
+
+```bash
+# Slack: create an incoming webhook in Slack, then paste its URL.
+printf '%s\n' "$SLACK_WEBHOOK_URL" | gregale channels add --name ops-slack --kind slack --secret-stdin
+# PagerDuty: an Events API v2 integration key from the service's Integrations tab.
+printf '%s\n' "$PD_ROUTING_KEY" | gregale channels add --name oncall --kind pagerduty --secret-stdin --pagerduty-region eu
+# Email: your account's own address.
+gregale channels add --name me --kind email --email you@example.com
+
+gregale channels test CHANNEL_ID
+gregale channels list
+```
+
+- Slack URLs must be `https://hooks.slack.com/services/…`; PagerDuty
+  notifications go only to PagerDuty's Events API. Both destinations are
+  sealed at rest and never shown again; `list` shows a short hint instead.
+- Email channels can only send to the account's own email address for now.
+- `list` shows each channel's last successful delivery or last error, so a
+  revoked Slack webhook shows up before an incident does.
+
+Point a rule at channels with `--channel` (repeatable, up to five). A rule
+with at least one channel needs no webhook:
+
+```bash
+gregale alerts add --app shop --name "checkout errors" --metric error_rate_pct \
+  --comparison gt --threshold 5 --window-spec 5m --channel OPS_SLACK_ID --channel ONCALL_PD_ID
+```
+
+Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
+closes the incident the fire opened, and Slack and email get a "Resolved"
+message. Each channel is delivered to independently, so a broken Slack
+webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+Presets take channels too: `gregale alerts preset enable availability --app
+shop --channel OPS_SLACK_ID`.
+
+Deleting a channel removes it from every rule; a rule left with no webhook
+and no channel stops notifying. The app dashboard's Alerts panel shows where
+each rule delivers ("Delivers to") and lists every channel with its last
+delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
+visible before an incident.
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable

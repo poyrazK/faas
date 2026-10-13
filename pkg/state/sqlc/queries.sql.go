@@ -10900,6 +10900,17 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
+
+DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
+`
+
+// ADR-749 slice 2: alert rule -> notification channel bindings.
+func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertRuleChannels, ruleID)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -11654,6 +11665,23 @@ where d.record_id=$1::uuid and r.id=d.record_id and t.id=r.trigger_id
 func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteExternalTriggerDeadLetterAudit, recordID)
 	return err
+}
+
+const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
+DELETE FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteNotificationChannel, arg.AccountID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
@@ -20458,6 +20486,36 @@ func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const getNotificationChannel = `-- name: GetNotificationChannel :one
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type GetNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, getNotificationChannel, arg.AccountID, arg.ID)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -21913,6 +21971,25 @@ func (q *Queries) InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAl
 		arg.Status,
 		arg.Receipt,
 	)
+	return err
+}
+
+const insertAlertRuleChannels = `-- name: InsertAlertRuleChannels :exec
+INSERT INTO alert_rule_channels (rule_id, channel_id)
+SELECT r.id, c.id FROM alert_rules r
+JOIN notification_channels c ON c.account_id = r.account_id AND c.id = ANY ($1::uuid[])
+WHERE r.id = $2::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertAlertRuleChannelsParams struct {
+	ChannelIds []pgtype.UUID
+	RuleID     pgtype.UUID
+}
+
+// Only channels owned by the rule's account are bound.
+func (q *Queries) InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error {
+	_, err := db.Exec(ctx, insertAlertRuleChannels, arg.ChannelIds, arg.RuleID)
 	return err
 }
 
@@ -25367,6 +25444,58 @@ func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertNotificationChannel = `-- name: InsertNotificationChannel :one
+
+INSERT INTO notification_channels (account_id, name, kind, target_sealed, target_hint, pagerduty_region, email)
+SELECT $1::uuid, $2::text, $3::text, $4::bytea,
+ $5::text, $6::text, $7::text
+WHERE (SELECT count(*) FROM notification_channels WHERE account_id = $1::uuid) < $8::integer
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type InsertNotificationChannelParams struct {
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	MaxPerAccount   int32
+}
+
+// ADR-749: alert notification channels (apid writes definitions).
+// The per-account cap is enforced inside the insert.
+func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg InsertNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, insertNotificationChannel,
+		arg.AccountID,
+		arg.Name,
+		arg.Kind,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.Email,
+		arg.MaxPerAccount,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -31891,6 +32020,45 @@ func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlert
 	return items, nil
 }
 
+const listAlertRuleChannels = `-- name: ListAlertRuleChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.rule_id = $1::uuid ORDER BY c.name
+`
+
+func (q *Queries) ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listAlertRuleChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -37568,6 +37736,44 @@ func (q *Queries) ListMatchingEventWorkflows(ctx context.Context, db DBTX, arg L
 			return nil, err
 		}
 		items = append(items, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotificationChannels = `-- name: ListNotificationChannels :many
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listNotificationChannels, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -67258,6 +67464,26 @@ func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordNotificationChannelDelivery = `-- name: RecordNotificationChannelDelivery :exec
+UPDATE notification_channels SET
+ last_delivered_at = CASE WHEN $1::text IS NULL THEN $2::timestamptz ELSE last_delivered_at END,
+ last_error = CASE WHEN $1::text IS NULL THEN last_error ELSE left($1::text, 256) END,
+ last_error_at = CASE WHEN $1::text IS NULL THEN last_error_at ELSE $2::timestamptz END
+WHERE id = $3::uuid
+`
+
+type RecordNotificationChannelDeliveryParams struct {
+	Err pgtype.Text
+	At  pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+// meterd and apid's test send record the latest outcome; err NULL = success.
+func (q *Queries) RecordNotificationChannelDelivery(ctx context.Context, db DBTX, arg RecordNotificationChannelDeliveryParams) error {
+	_, err := db.Exec(ctx, recordNotificationChannelDelivery, arg.Err, arg.At, arg.ID)
+	return err
 }
 
 const recordProjectEnvironmentClonePostgresArchive = `-- name: RecordProjectEnvironmentClonePostgresArchive :one

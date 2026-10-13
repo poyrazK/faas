@@ -1152,6 +1152,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pkg/alerts/evaluator.go.
 	promClient := buildPromQLClient(deps)
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
+	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can

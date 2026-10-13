@@ -10431,3 +10431,9 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Alert notification channels (ADR-749).
+const (
+	MaxNotificationChannelsPerAccount = 20
+	MaxChannelsPerAlertRule           = 5
+)

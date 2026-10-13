@@ -1193,9 +1193,10 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 			}
 		}
 		item.RecentDeliveries = deliveries
+		item.DeliversTo = s.ruleDestinations(ctx, rule)
 		items = append(items, item)
 	}
-	return &dashboard.AlertDetailData{Rules: items}
+	return &dashboard.AlertDetailData{Rules: items, Channels: s.dashboardAlertChannels(ctx, acct, now)}
 }
 
 // fetchDashboardPresets returns the per-app alert-preset catalog
