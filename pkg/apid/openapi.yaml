@@ -47972,12 +47972,21 @@ components:
           enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
-      description: Select a Git definition in the project repository; repository identities are verified by
-        the server.
+      description: Select a Git definition. GitHub uses the project's bound repository;
+        GitLab.com requires an account OAuth connection, a repository path and an explicit ref.
+        Repository identity is verified by the server. GitLab.com currently supports report
+        mode, manual approval and prune=false.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
+          default: github
+        repository:
+          type: string
+          description: Canonical GitLab.com group/project path, including subgroups when present.
         ref:
           type: string
-          description: Git ref selecting candidates; defaults to the project production branch.
+          description: Git ref selecting candidates; GitHub defaults to the project production branch.
         manifest_path:
           type: string
           minLength: 1
@@ -48000,7 +48009,7 @@ components:
       additionalProperties: false
     PreviewEnvironmentGitRevisionRequest:
       type: object
-      description: An exact GitHub commit to fetch and review.
+      description: An exact Git commit to fetch and review.
       properties:
         commit_sha:
           type: string
@@ -48304,6 +48313,9 @@ components:
       type: object
       description: Pinned repository identity and source-of-truth controls for one environment.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
         repository_id:
           type: integer
           format: int64
@@ -48331,6 +48343,7 @@ components:
         prune:
           type: boolean
       required:
+      - provider
       - repository_id
       - installation_id
       - repository

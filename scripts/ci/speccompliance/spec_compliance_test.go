@@ -180,6 +180,11 @@ var routeExclude = map[string]bool{
 	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /v1/gitlab/connect":                                    true, // GitLab.com OAuth session + CSRF form
+	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
+	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
+	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
+	"POST /v1/gitlab/disconnect":                                  true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
