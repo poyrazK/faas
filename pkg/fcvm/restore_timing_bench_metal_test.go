@@ -121,7 +121,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 
 	vmm := newMetalVMM(t, 30*time.Second).WithStorage(backend)
 	stageBenchMountHelper(t, vmm)
-	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil)
+	// Warnings reach stderr so a restore that fell back to a cold boot says why.
+	warnings := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, warnings, nil)
 	if n := benchPreparedNetworks(t); n > 0 {
 		if err := m.EnablePreparedNetworks(context.Background(), n); err != nil {
 			t.Fatalf("enable prepared networks: %v", err)
@@ -194,7 +196,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		// helps; if it does not, the cost is fault COUNT and only hugepages
 		// or UFFD can help.
 		if cacheMiss {
-			emptyNodeCache(t, nodeCache)
+			evictFromNodeCache(t, nodeCache, snap.StorageKey, snap.VMStateStorageKey)
 		}
 		if dropCaches {
 			dropPageCache(t)
@@ -235,21 +237,21 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 // of it has to fetch, as it does from the remote store in production.
 type remoteOnlyStore struct{ storage.StorageBackend }
 
-// emptyNodeCache removes every entry of the bench's node cache so the next
-// restore misses. A cache that installs fills in the background is drained
-// first, or a fill installed after this would turn the next miss into a hit.
-func emptyNodeCache(t *testing.T, cache *storage.LocalCacheBackend) {
+// evictFromNodeCache removes keys from the bench's node cache only, never from
+// the canonical store, so the next restore of them misses. A cache that
+// installs fills in the background is drained first, or a fill installed
+// after this would turn the next miss into a hit.
+func evictFromNodeCache(t *testing.T, cache *storage.LocalCacheBackend, keys ...string) {
 	t.Helper()
 	if deferred, ok := any(cache).(interface{ WaitDeferred() }); ok {
 		deferred.WaitDeferred()
 	}
-	entries, err := os.ReadDir(cache.Root())
-	if err != nil {
-		t.Fatalf("read node cache: %v", err)
-	}
-	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(cache.Root(), e.Name())); err != nil {
-			t.Fatalf("empty node cache: %v", err)
+	for _, key := range keys {
+		path := storage.CacheFileForKey(cache.Root(), key)
+		for _, p := range []string{path, path + ".meta", path + ".generation"} {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				t.Fatalf("evict %s from node cache: %v", key, err)
+			}
 		}
 	}
 }
@@ -320,8 +322,14 @@ func (h *restoreBreakdownHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *restoreBreakdownHandler) WithGroup(string) slog.Handler { return h }
 
-func (h *restoreBreakdownHandler) Handle(_ context.Context, r slog.Record) error {
+func (h *restoreBreakdownHandler) Handle(ctx context.Context, r slog.Record) error {
 	if r.Message != "restore timing breakdown" {
+		// Keep warnings visible: a restore that silently fell back to a cold
+		// boot is otherwise reported only as the wrong wake method.
+		if r.Level >= slog.LevelWarn {
+			r.AddAttrs(h.attrs...)
+			return h.sink.prev.Handler().Handle(ctx, r)
+		}
 		return nil
 	}
 	row := map[string]int64{}
