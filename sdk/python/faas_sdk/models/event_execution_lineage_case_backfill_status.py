@@ -1,13 +1,15 @@
 from typing import Literal
 
 EventExecutionLineageCaseBackfillStatus = Literal[
-    "completed", "expired", "not_requested", "pending", "waiting_for_retry_jobs"
+    "cancelled", "completed", "expired", "not_requested", "paused", "pending", "waiting_for_retry_jobs"
 ]
 
 EVENT_EXECUTION_LINEAGE_CASE_BACKFILL_STATUS_VALUES: set[EventExecutionLineageCaseBackfillStatus] = {
+    "cancelled",
     "completed",
     "expired",
     "not_requested",
+    "paused",
     "pending",
     "waiting_for_retry_jobs",
 }

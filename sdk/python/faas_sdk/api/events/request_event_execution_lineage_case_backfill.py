@@ -109,9 +109,9 @@ def sync_detailed(
     """Backfill missing lineage cases from retained admission evidence.
 
      Requires deploy/write scope and an existing execution coverage row. The request UUID and expected
-    previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest
-    scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an
-    upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
+    previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the
+    latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures
+    an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
     this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs,
     without overwriting existing cases, associating roots, executing handlers or reconstructing
     outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence
@@ -154,9 +154,9 @@ def sync(
     """Backfill missing lineage cases from retained admission evidence.
 
      Requires deploy/write scope and an existing execution coverage row. The request UUID and expected
-    previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest
-    scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an
-    upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
+    previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the
+    latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures
+    an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
     this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs,
     without overwriting existing cases, associating roots, executing handlers or reconstructing
     outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence
@@ -194,9 +194,9 @@ async def asyncio_detailed(
     """Backfill missing lineage cases from retained admission evidence.
 
      Requires deploy/write scope and an existing execution coverage row. The request UUID and expected
-    previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest
-    scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an
-    upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
+    previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the
+    latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures
+    an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
     this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs,
     without overwriting existing cases, associating roots, executing handlers or reconstructing
     outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence
@@ -237,9 +237,9 @@ async def asyncio(
     """Backfill missing lineage cases from retained admission evidence.
 
      Requires deploy/write scope and an existing execution coverage row. The request UUID and expected
-    previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest
-    scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an
-    upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
+    previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the
+    latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures
+    an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on
     this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs,
     without overwriting existing cases, associating roots, executing handlers or reconstructing
     outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence

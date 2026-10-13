@@ -15,8 +15,8 @@ T = TypeVar("T", bound="RequestEventExecutionLineageCaseBackfillRequest")
 class RequestEventExecutionLineageCaseBackfillRequest:
     request_id: UUID
     expected_previous_request_id: UUID | Unset = UNSET
-    """Omit for the first request; otherwise use the latest completed or expired request UUID. Repeated submissions
-    preserve their original guard."""
+    """Omit for the first request; otherwise use the latest completed, cancelled or expired request UUID. Repeated
+    submissions preserve their original guard."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

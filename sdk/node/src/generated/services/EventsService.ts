@@ -7,6 +7,7 @@ import type { AppEventPublishStatusResponse } from '../models/AppEventPublishSta
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
 import type { CancelEventExecutionLineageRetryJobRequest } from '../models/CancelEventExecutionLineageRetryJobRequest.js';
+import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/ControlEventExecutionLineageCaseBackfillRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
@@ -1502,6 +1503,147 @@ export class EventsService {
     });
   }
   /**
+   * Pause a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Pauses a pending or waiting scan. Repeating pause on a paused scan leaves its metadata unchanged. Completed, cancelled and expired scans return 409. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @throws ApiError
+   */
+  public static pauseEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
+        413: `Request exceeds the 65536-byte body limit.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+      },
+    });
+  }
+  /**
+   * Resume a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Resumes a paused scan from its saved cursor and fixed retained range. Repeating resume on a pending or waiting scan leaves metadata unchanged. Completed, cancelled and expired scans return 409. Active bulk retry jobs still govern whether the scheduler can scan. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @throws ApiError
+   */
+  public static resumeEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
+        413: `Request exceeds the 65536-byte body limit.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+      },
+    });
+  }
+  /**
+   * Cancel a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Cancels unprocessed diagnostic work while keeping existing case records, cursor and counters. Repeating cancel on a cancelled, completed or expired scan returns its current terminal state unchanged. A cancelled scan cannot be resumed. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @throws ApiError
+   */
+  public static cancelEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
+        413: `Request exceeds the 65536-byte body limit.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+      },
+    });
+  }
+  /**
    * Inspect the latest bounded lineage diagnostic scan.
    * Requires read scope. Reports the latest scan only, or not_requested. Counters describe examined retained receipts, not live blockers or complete history. Existing case revisions and forward repair progress are preserved. Expiry is visible immediately after the 30-day work deadline.
    * @returns EventExecutionLineageCaseBackfill Latest scan status and counters.
@@ -1539,8 +1681,8 @@ export class EventsService {
   }
   /**
    * Backfill missing lineage cases from retained admission evidence.
-   * Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
-   * @returns EventExecutionLineageCaseBackfill Previously completed or expired scan, or an empty retained range.
+   * Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+   * @returns EventExecutionLineageCaseBackfill Current paused, cancelled, completed or expired scan, or an empty retained range.
    * @throws ApiError
    */
   public static requestEventExecutionLineageCaseBackfill({

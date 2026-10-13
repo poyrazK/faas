@@ -289,3 +289,49 @@ an old retry from matching a reset numeric revision or a changed root incarnatio
 Case listing and retry results expose identifiers and reason codes only; no event
 payload is added. Downgrading the column migration requires stopping diagnostic
 requests and physically pruning guarded cases and retry jobs first.
+
+## Control diagnostic scans
+
+Read the latest scan and copy its `request_id` and exact original `created_at`:
+
+```sh
+gregale --json events subscription-lineage-case-backfill APP SUB
+gregale --json events subscription-lineage-case-backfill-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+gregale --json events subscription-lineage-case-backfill-resume APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+gregale --json events subscription-lineage-case-backfill-cancel APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+```
+
+POST `execution-reconciliation/case-backfill/{requestID}/pause`, `/resume` or
+`/cancel` with `{"expected_created_at": "ORIGINAL_CREATED_AT"}`, substituting the
+actual timestamp from GET. Each requires deploy/write scope and MFA and returns
+200 with current scan metadata. Go exposes `PauseEventExecutionLineageCaseBackfill`,
+`ResumeEventExecutionLineageCaseBackfill` and
+`CancelEventExecutionLineageCaseBackfill`; Node and Python expose matching operations.
+A wrong/superseded UUID or creation timestamp returns 409 with
+`event_lineage_case_backfill_changed`. Missing scan/access returns 404.
+
+Pause preserves progress and excludes the scan from scheduler selection. Resume
+continues the same cursor and fixed upper receipt ID; active bulk retry jobs may
+still cause `waiting_for_retry_jobs`. Paused scans cannot be replaced until cancelled
+or expired, and their original 30-day deadline continues running. Resume after
+expiry returns 409. Source evidence can expire or change during the pause.
+
+Cancel stops future diagnostic batches after it commits. It preserves the cases
+already created, their diagnostic identities, counters and retention. An already
+running scheduler batch may commit before pause/cancel gets the coverage lock.
+Normal repair and separately authorized retries/deliveries continue independently.
+No control repairs roots, executes handlers, resets repair evidence or extends a
+work/case deadline.
+
+Repeating pause on paused, or resume on pending/waiting, leaves metadata unchanged.
+Repeating cancel on cancelled, completed or expired returns that terminal state
+unchanged. Completed/cancelled/expired scans reject pause and resume with 409.
+A cancelled scan cannot resume. Repeating its original request also leaves it
+cancelled; to deliberately rescan, choose a new UUID and pass the cancelled UUID
+as `expected_previous_request_id`.
+
+These are desired-state controls. Opposing requests take effect in server lock
+order, and the creation guard does not order separate control commands. After a
+lost response, timeout or another operator's opposite control, read status before
+repeating your desired action. A delayed repeated pause/resume can reapply its
+state after an intervening opposite operation; cancellation remains terminal.

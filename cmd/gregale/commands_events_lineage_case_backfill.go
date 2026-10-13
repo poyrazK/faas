@@ -15,7 +15,7 @@ func cmdEventsLineageCaseBackfill(args []string, request bool) int {
 	var requestID, previousID string
 	if request {
 		fs.StringVar(&requestID, "request-id", "", "stable scan request UUID")
-		fs.StringVar(&previousID, "expected-previous-request-id", "", "reviewed completed or expired scan UUID")
+		fs.StringVar(&previousID, "expected-previous-request-id", "", "reviewed completed, cancelled or expired scan UUID")
 	}
 	if err := fs.Parse(flags); err != nil {
 		return 1

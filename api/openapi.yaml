@@ -33561,6 +33561,180 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventExecutionLineageCaseBackfill
+      summary: Pause a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Pauses a pending or waiting scan. Repeating pause on a paused scan leaves its metadata unchanged. Completed, cancelled and expired scans return 409. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Reviewed original nonzero diagnostic scan UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: Current guarded scan state and preserved progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventExecutionLineageCaseBackfill
+      summary: Resume a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Resumes a paused scan from its saved cursor and fixed retained range. Repeating resume on a pending or waiting scan leaves metadata unchanged. Completed, cancelled and expired scans return 409. Active bulk retry jobs still govern whether the scheduler can scan. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Reviewed original nonzero diagnostic scan UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: Current guarded scan state and preserved progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventExecutionLineageCaseBackfill
+      summary: Cancel a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Cancels unprocessed diagnostic work while keeping existing case records, cursor and counters. Repeating cancel on a cancelled, completed or expired scan returns its current terminal state unchanged. A cancelled scan cannot be resumed. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Reviewed original nonzero diagnostic scan UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: Current guarded scan state and preserved progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill:
     get:
       tags: [events]
@@ -33607,7 +33781,7 @@ paths:
       tags: [events]
       operationId: requestEventExecutionLineageCaseBackfill
       summary: Backfill missing lineage cases from retained admission evidence.
-      description: Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+      description: Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -33632,7 +33806,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
         '200':
-          description: Previously completed or expired scan, or an empty retained range.
+          description: Current paused, cancelled, completed or expired scan, or an empty retained range.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
@@ -62774,13 +62948,19 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
 
+    ControlEventExecutionLineageCaseBackfillRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        expected_created_at: { type: string, format: date-time, description: Exact original created_at of the reviewed retained scan. }
     RequestEventExecutionLineageCaseBackfillRequest:
       type: object
       additionalProperties: false
       required: [request_id]
       properties:
         request_id: { type: string, format: uuid }
-        expected_previous_request_id: { type: string, format: uuid, description: Omit for the first request; otherwise use the latest completed or expired request UUID. Repeated submissions preserve their original guard. }
+        expected_previous_request_id: { type: string, format: uuid, description: "Omit for the first request; otherwise use the latest completed, cancelled or expired request UUID. Repeated submissions preserve their original guard." }
     EventExecutionLineageCaseBackfill:
       type: object
       additionalProperties: false
@@ -62790,7 +62970,7 @@ components:
         previous_request_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        status: { type: string, enum: [not_requested, pending, waiting_for_retry_jobs, completed, expired] }
+        status: { type: string, enum: [not_requested, pending, waiting_for_retry_jobs, paused, cancelled, completed, expired] }
         through_outbox_id: { type: integer, format: int64, minimum: 0 }
         cursor: { type: integer, format: int64, minimum: 0 }
         scanned: { type: integer, format: int64, minimum: 0 }

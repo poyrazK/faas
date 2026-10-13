@@ -7,7 +7,7 @@ export type EventExecutionLineageCaseBackfill = {
   previous_request_id?: string;
   subscription_id: string;
   app_id: string;
-  status: 'not_requested' | 'pending' | 'waiting_for_retry_jobs' | 'completed' | 'expired';
+  status: 'not_requested' | 'pending' | 'waiting_for_retry_jobs' | 'paused' | 'cancelled' | 'completed' | 'expired';
   through_outbox_id: number;
   cursor: number;
   scanned: number;

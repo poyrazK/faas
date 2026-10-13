@@ -225,3 +225,23 @@ func (c *Client) RequestEventExecutionLineageCaseBackfill(ctx context.Context, a
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill", req, &out)
 	return out, err
 }
+
+// ControlEventExecutionLineageCaseBackfillRequest fences the original diagnostic scan incarnation.
+type ControlEventExecutionLineageCaseBackfillRequest struct {
+	ExpectedCreatedAt time.Time `json:"expected_created_at"`
+}
+
+func (c *Client) controlEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+	var out EventExecutionLineageCaseBackfill
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill/"+url.PathEscape(id)+"/"+action, req, &out)
+	return out, err
+}
+func (c *Client) PauseEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "pause", req)
+}
+func (c *Client) ResumeEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "resume", req)
+}
+func (c *Client) CancelEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "cancel", req)
+}

@@ -30,6 +30,8 @@ func cmdEvents(args []string) int {
 		return cmdEventDeliveryHealthAlerts(args[1:])
 	case "subscription-delivery-health":
 		return cmdEventsSubscriptionDeliveryHealth(args[1:])
+	case "subscription-lineage-case-backfill-pause", "subscription-lineage-case-backfill-resume", "subscription-lineage-case-backfill-cancel":
+		return cmdEventsLineageCaseBackfillControl(args[1:], args[0])
 	case "subscription-lineage-case-backfill":
 		return cmdEventsLineageCaseBackfill(args[1:], false)
 	case "subscription-lineage-case-backfill-request":

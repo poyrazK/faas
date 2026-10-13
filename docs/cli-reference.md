@@ -2282,6 +2282,36 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-case-backfill-pause
+
+Pause a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-pause [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-resume
+
+Resume a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-resume [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-cancel
+
+Cancel a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-cancel [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
 ### events subscription-lineage-case-backfill
 
 Inspect latest lineage diagnostic scan
@@ -2297,7 +2327,7 @@ Backfill missing lineage diagnostics from retained evidence
 | Flag | Meaning | |
 |---|---|---|
 | `--request-id <UUID>` | stable scan identity |  |
-| `--expected-previous-request-id <UUID>` | reviewed completed or expired scan identity |  |
+| `--expected-previous-request-id <UUID>` | reviewed completed, cancelled or expired scan identity |  |
 
 ### events subscription-lineage-retry-preview
 

@@ -16,6 +16,7 @@ import (
 type EventExecutionLineageCaseBackfillStore interface {
 	GetEventExecutionLineageCaseBackfill(context.Context, string, string, string) (api.EventExecutionLineageCaseBackfill, error)
 	RequestEventExecutionLineageCaseBackfill(context.Context, string, string, string, api.RequestEventExecutionLineageCaseBackfillRequest) (api.EventExecutionLineageCaseBackfill, error)
+	ControlEventExecutionLineageCaseBackfill(context.Context, string, string, string, string, string, api.ControlEventExecutionLineageCaseBackfillRequest) (api.EventExecutionLineageCaseBackfill, error)
 	AdvanceEventExecutionLineageCaseBackfills(context.Context, int) (int, error)
 }
 
@@ -26,6 +27,9 @@ func cloneLineageCaseBackfill(job api.EventExecutionLineageCaseBackfill) api.Eve
 	return job
 }
 func activeLineageCaseBackfill(status string) bool {
+	return runnableLineageCaseBackfill(status) || status == "paused"
+}
+func runnableLineageCaseBackfill(status string) bool {
 	return status == "pending" || status == "waiting_for_retry_jobs"
 }
 func lineageCaseBackfillView(app, sub string, job *api.EventExecutionLineageCaseBackfill) api.EventExecutionLineageCaseBackfill {
@@ -369,7 +373,7 @@ func (m *MemStore) AdvanceEventExecutionLineageCaseBackfills(ctx context.Context
 	subs := []string{}
 	for sub, c := range m.eventExecutionCoverage {
 		job := c.repair.CaseBackfill
-		if job == nil || !activeLineageCaseBackfill(job.Status) {
+		if job == nil || !runnableLineageCaseBackfill(job.Status) {
 			continue
 		}
 		app, ok := m.eventSubscriptionAppLocked(job.AppID)

@@ -5,7 +5,7 @@
 export type RequestEventExecutionLineageCaseBackfillRequest = {
   request_id: string;
   /**
-   * Omit for the first request; otherwise use the latest completed or expired request UUID. Repeated submissions preserve their original guard.
+   * Omit for the first request; otherwise use the latest completed, cancelled or expired request UUID. Repeated submissions preserve their original guard.
    */
   expected_previous_request_id?: string;
 };
