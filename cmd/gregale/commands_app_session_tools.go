@@ -132,7 +132,7 @@ func openAppTaskStreamSession(ctx context.Context, client *api.Client, slug stri
 	defer cancel()
 	conn, err := dialAppTaskAttach(waitCtx, client, slug, task, false, nil)
 	if err != nil {
-		cancelInteractiveTask(client, slug, task.ID)
+		cancelInteractiveTask(ctx, client, slug, task.ID)
 		return nil, nil, err
 	}
 	return newAppTaskStreamSession(conn, osStderr), func() { _ = conn.Close() }, nil

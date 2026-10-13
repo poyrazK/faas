@@ -169,7 +169,10 @@ func (f *attachFixture) dial(token string, query string) (*websocket.Conn, *http
 
 func TestAppTaskAttachRelaysSession(t *testing.T) {
 	f := newAttachFixture(t)
-	conn, _, err := f.dial("tok", "?rows=40&cols=120")
+	conn, handshake, err := f.dial("tok", "?rows=40&cols=120")
+	if handshake != nil {
+		_ = handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -230,6 +233,9 @@ func TestAppTaskAttachHTTPFailures(t *testing.T) {
 				tc.mutate(f)
 			}
 			conn, resp, err := f.dial(tc.token, "")
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
 			if err == nil {
 				_ = conn.Close()
 				t.Fatal("dial succeeded")

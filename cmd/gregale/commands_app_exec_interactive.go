@@ -81,7 +81,7 @@ func runInteractiveAppExec(ctx context.Context, exec interactiveAppExec) int {
 	conn, err := dialAppTaskAttach(waitCtx, exec.client, exec.slug, task, exec.request.TTY, stdinFile)
 	if err != nil {
 		if errors.Is(waitCtx.Err(), context.Canceled) {
-			cancelInteractiveTask(exec.client, exec.slug, task.ID)
+			cancelInteractiveTask(ctx, exec.client, exec.slug, task.ID)
 			return 130
 		}
 		return printErr("Could not attach to the session", err)
@@ -242,8 +242,10 @@ func pumpAppTaskAttach(ctx context.Context, conn *websocket.Conn, tty bool, stdi
 	}
 }
 
-func cancelInteractiveTask(client *api.Client, slug, taskID string) {
-	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// cancelInteractiveTask runs after ctx is usually already cancelled, so the
+// request detaches from its cancellation and gets its own short deadline.
+func cancelInteractiveTask(ctx context.Context, client *api.Client, slug, taskID string) {
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if _, err := client.CancelAppTask(cancelCtx, slug, taskID); err != nil {
 		PrintWarn(osStderr, "could not request cancellation for task %s: %v", taskID, err)

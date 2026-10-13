@@ -57,7 +57,10 @@ func TestPumpAppTaskAttachRelaysSession(t *testing.T) {
 	defer server.Close()
 
 	dialer := websocket.Dialer{Subprotocols: []string{api.AppTaskAttachSubprotocol}}
-	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	conn, handshake, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if handshake != nil {
+		_ = handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -165,6 +165,7 @@ export type { AppSLOResponse } from './models/AppSLOResponse.js';
 export type { AppsMetricsResponse } from './models/AppsMetricsResponse.js';
 export type { AppStaticEgressIPResponse } from './models/AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './models/AppStreamingStatus.js';
+export type { AppTaskAttachInfo } from './models/AppTaskAttachInfo.js';
 export type { AppTaskFailure } from './models/AppTaskFailure.js';
 export type { AppTaskID } from './models/AppTaskID.js';
 export type { AppTaskListResponse } from './models/AppTaskListResponse.js';

@@ -130,7 +130,7 @@ func runAppTaskTTY(ctx context.Context, session *apptaskproto.InteractiveSession
 func runAppTaskPipes(ctx context.Context, session *apptaskproto.InteractiveSession, cmd *exec.Cmd, credential *syscall.Credential) (apptaskproto.Result, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return appTaskInfraFailure("command_start_failed", "command could not be started", 126), nil
+		return appTaskInfraFailure("command_start_failed", "command could not be started", 126), nil //nolint:nilerr // start errors are terminal protocol results
 	}
 	cmd.Stdout = session.Stdout
 	cmd.Stderr = session.Stderr

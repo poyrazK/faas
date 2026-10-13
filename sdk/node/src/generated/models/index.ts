@@ -138,6 +138,7 @@ export type { AppSecurityResponse } from './AppSecurityResponse.js';
 export type { AppServiceBinding } from './AppServiceBinding.js';
 export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './AppStreamingStatus.js';
+export type { AppTaskAttachInfo } from './AppTaskAttachInfo.js';
 export type { AppTaskFailure } from './AppTaskFailure.js';
 export type { AppTaskID } from './AppTaskID.js';
 export type { AppTaskListResponse } from './AppTaskListResponse.js';

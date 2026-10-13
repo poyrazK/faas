@@ -281,6 +281,8 @@ from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
 from .app_streaming_status_cap_kind import AppStreamingStatusCapKind
 from .app_streaming_status_status import AppStreamingStatusStatus
+from .app_task_attach_info import AppTaskAttachInfo
+from .app_task_attach_info_subprotocol import AppTaskAttachInfoSubprotocol
 from .app_task_failure import AppTaskFailure
 from .app_task_list_response import AppTaskListResponse
 from .app_task_response import AppTaskResponse
@@ -501,7 +503,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -4354,6 +4355,8 @@ __all__ = (
     "AppStreamingStatus",
     "AppStreamingStatusCapKind",
     "AppStreamingStatusStatus",
+    "AppTaskAttachInfo",
+    "AppTaskAttachInfoSubprotocol",
     "AppTaskFailure",
     "AppTaskListResponse",
     "AppTaskResponse",
@@ -4535,7 +4538,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
