@@ -51,6 +51,7 @@ native_e2e_phase_files() {
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go ;;
     # Deploy paths: image, source tarball, healthcheck, port override, secrets.
     deploy) printf '%s\n' \
+      binary_function_metal_test.go \
       deploy_healthcheck_metal_test.go \
       dev_loop_metal_test.go \
       deploy_override_port_metal_test.go \
@@ -84,7 +85,7 @@ native_e2e_phase_files() {
       wake_platform_bench_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
-    streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go ;;
+    streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go ;;
     # App log delivery (SSE).
     logs) printf '%s\n' logs_e2e_test.go ;;
     # Spec §11 ship-blocking fences. Small, and must never be skipped quietly.

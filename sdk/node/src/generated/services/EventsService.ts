@@ -10,6 +10,7 @@ import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWork
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
+import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliveryHealth.js';
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
@@ -17,6 +18,9 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventRecipientBlockerBatchRequest } from '../models/EventRecipientBlockerBatchRequest.js';
+import type { EventRecipientBlockerBatchResponse } from '../models/EventRecipientBlockerBatchResponse.js';
+import type { EventRecipientBlockerResponse } from '../models/EventRecipientBlockerResponse.js';
 import type { EventRecoveryControlRequest } from '../models/EventRecoveryControlRequest.js';
 import type { EventRecoveryHealth } from '../models/EventRecoveryHealth.js';
 import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
@@ -608,6 +612,95 @@ export class EventsService {
     });
   }
   /**
+   * Read an ordered batch of exact recipient routing diagnostics.
+   * Read-only. One independent snapshot per item, up to 50 items and 65536 body bytes. Duplicate queries are processed independently. All guards validate before reads. Results preserve request order and echo each query. Per-item read failures contain no evidence. A shared five second deadline bounds work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
+   * @returns EventRecipientBlockerBatchResponse Independent ordered results and errors, with Cache-Control no-store.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlockers({
+    requestBody,
+  }: {
+    requestBody: EventRecipientBlockerBatchRequest,
+  }): CancelablePromise<EventRecipientBlockerBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events/recipient-blockers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect routing blockers for one exact retained recipient.
+   * Requires apps:read or admin. Reads only the authenticated account, in
+   * one repeatable read snapshot. Matches source, ID, precise acceptance and
+   * recipient before inspecting current routing controls. No backlog pagination
+   * or consumer aggregation. Returns available for current routing evidence,
+   * not_waiting only when the retained recipient has left pending/processing,
+   * unavailable for missing or inconsistent retained evidence, or
+   * acceptance_replaced when the retained identity has a different timestamp.
+   * Not_waiting never implies handler completion or replay attribution.
+   * Foreign and missing receipts both return unavailable with receipt_unavailable.
+   * Read-only; never follows links, claims work or submits recovery.
+   *
+   * @returns EventRecipientBlockerResponse Exact recipient routing observation, including unavailable evidence.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlocker({
+    source,
+    id,
+    subscriptionId,
+    expectedAcceptedAt,
+  }: {
+    /**
+     * Original event source for the exact recipient lookup.
+     */
+    source: string,
+    /**
+     * Original event identifier within the source.
+     */
+    id: string,
+    /**
+     * Consumer subscription captured by the original event acceptance.
+     */
+    subscriptionId: string,
+    /**
+     * Exact original acceptance instant, preserving fractional precision.
+     */
+    expectedAcceptedAt: string,
+  }): CancelablePromise<EventRecipientBlockerResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/recipient-blocker',
+      query: {
+        'source': source,
+        'id': id,
+        'subscription_id': subscriptionId,
+        'expected_accepted_at': expectedAcceptedAt,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Read timeout or storage unavailable.`,
+      },
+    });
+  }
+  /**
    * Discover waiting event consumers and recipient counts.
    * Requires apps:read or admin. Reads only the authenticated account's
    * captured application and workflow recipients plus added backfill
@@ -770,6 +863,7 @@ export class EventsService {
   public static getEventReceipt({
     source,
     id,
+    expectedAcceptedAt,
     after,
     limit = 100,
   }: {
@@ -781,6 +875,10 @@ export class EventsService {
      * Published event ID paired with the required source for this receipt lookup.
      */
     id: string,
+    /**
+     * Optional original acceptance time. Returns 409 if the retained event belongs to a replacement acceptance.
+     */
+    expectedAcceptedAt?: string,
     /**
      * Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.
      */
@@ -794,6 +892,7 @@ export class EventsService {
       method: 'GET',
       url: '/v1/events/receipt',
       query: {
+        'expected_accepted_at': expectedAcceptedAt,
         'source': source,
         'id': id,
         'after': after,
@@ -804,6 +903,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1350,8 +1450,51 @@ export class EventsService {
     });
   }
   /**
+   * Inspect subscription delivery health across routing and retained execution evidence.
+   * Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Current execution counts include bounded retained handler replays. Attempt rates and completion latency use durable per-subscription window evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+   * @returns EventConsumerDeliveryHealth Independent routing, execution, and oldest pending sample reads.
+   * @throws ApiError
+   */
+  public static getEventConsumerDeliveryHealth({
+    slug,
+    subscriptionId,
+    window = '5m',
+  }: {
+    /**
+     * Application slug for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    subscriptionId: string,
+    /**
+     * Retained observation window for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    window?: '5m' | '15m' | '1h' | '6h' | '24h',
+  }): CancelablePromise<EventConsumerDeliveryHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `Invalid subscription identifier or combined delivery observation window.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `The combined delivery health request exceeded its bounded deadline.`,
+      },
+    });
+  }
+  /**
    * Inspect consumer execution health over a retained history window.
-   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound coverage; history_complete is always false. Counts are not unique event totals. Completion latency starts at original event acceptance.
+   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
    * @returns EventConsumerExecutionHealth Retained execution states and windowed handler outcomes.
    * @throws ApiError
    */

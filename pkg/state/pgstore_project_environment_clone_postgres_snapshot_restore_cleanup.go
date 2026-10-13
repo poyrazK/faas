@@ -37,7 +37,7 @@ func cloneForkCleanupContextTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvi
 	if err != nil {
 		return op, snapshot, ProjectEnvironmentClonePostgresSnapshotRestore{}, err
 	}
-	if op.Status != CloneOperationCompensating {
+	if op.Status != CloneOperationCompensating || len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
 		return op, snapshot, ProjectEnvironmentClonePostgresSnapshotRestore{}, ErrConflict
 	}
 	receipt, err := readCloneSnapshotRestoreTx(ctx, tx, op, snapshot)

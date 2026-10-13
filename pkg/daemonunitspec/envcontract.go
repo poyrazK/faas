@@ -340,6 +340,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GRYPE_BIN", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GUEST_INIT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GUEST_TRACING_ENABLED", Owners: []string{"apid", "vmmd"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958)"},
+	{Name: "FAAS_HEARTBEAT_FAILURE_THRESHOLD", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "3", Note: "consecutive failed node pings before schedd declares a node lost (H9-171); the e2e harness sets 1 so recovery tests need not wait three heartbeat periods"},
 	{Name: "FAAS_HOST_AGE_IDENTITY_PATH", Owners: []string{"apid", "githubd", "imaged", "meterd", "s3-gatewayd", "schedd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_AGE_KEY", Owners: []string{"githubd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_HOST_AGE_PUB", Owners: []string{"githubd"}, Source: EnvSourceUnit},

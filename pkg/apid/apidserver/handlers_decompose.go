@@ -31,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -106,7 +107,12 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //  5. Rendering per-workload appliedBuild results in the response
 //     so the CLI's `faas apply` flow can show "app X: deployment Y,
 //     build Z" per workload (PR-A, Phase 5 close-the-loop).
+//
+//nolint:contextcheck // r carries reqbudget.Detached(r.Context()) on purpose (ADR-093 amendment)
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	ctx, cancel := reqbudget.Detached(r.Context(), api.ProjectApplyTimeout) // ADR-093 amendment
+	defer cancel()
+	r = r.WithContext(ctx)
 	planToken := r.URL.Query().Get("plan_token")
 	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(r, acct, planToken, true)
 	if prob != nil {

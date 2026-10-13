@@ -1,7 +1,7 @@
 from typing import Literal
 
 OutboundAIBudgetThresholdWebhookPayloadBudget = Literal[
-    "app_daily_tokens", "daily_cost", "daily_tokens", "monthly_cost"
+    "app_daily_tokens", "daily_cost", "daily_tokens", "monthly_cost", "user_daily_cost", "user_daily_tokens"
 ]
 
 OUTBOUND_AI_BUDGET_THRESHOLD_WEBHOOK_PAYLOAD_BUDGET_VALUES: set[OutboundAIBudgetThresholdWebhookPayloadBudget] = {
@@ -9,6 +9,8 @@ OUTBOUND_AI_BUDGET_THRESHOLD_WEBHOOK_PAYLOAD_BUDGET_VALUES: set[OutboundAIBudget
     "daily_cost",
     "daily_tokens",
     "monthly_cost",
+    "user_daily_cost",
+    "user_daily_tokens",
 }
 
 

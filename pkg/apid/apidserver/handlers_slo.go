@@ -264,22 +264,28 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	for _, app := range apps {
 		appIDs = append(appIDs, app.ID)
 	}
+	// 9. usage_minutes rollup (instance_hours / gb_hours), read before the
+	// Prometheus scans: it does not depend on Prometheus, and a scan that
+	// times out can exhaust the request's deadline. Reading it last zeroed
+	// it whenever telemetry degraded, so a slow query made the account look
+	// idle (production-us hunt #9, H9-133).
+	start, end := windowToRange(window)
+	instH, gbH, usageErr := s.store.UsageSLOForAccount(ctx, acct.ID, start, end)
+	if usageErr == nil {
+		resp.InstanceHours, resp.GBHours = instH, gbH
+	}
 	if len(appIDs) == 0 {
-		start, end := windowToRange(window)
-		if instH, gbH, usageErr := s.store.UsageSLOForAccount(ctx, acct.ID, start, end); usageErr == nil {
-			resp.InstanceHours, resp.GBHours = instH, gbH
-		}
 		return resp, appmetrics.SourcePrometheus
 	}
 	snapshot := fetchAccountMetricsSnapshot(ctx, s.promqlClient, appIDs, window, true, false)
 	if snapshot.requestsErr != nil {
-		return degradedAccountSLO(snapshot.requestsErr, s.log, "requests_total", acct.ID, window)
+		return degradedAccountSLOPartial(resp, snapshot.requestsErr, s.log, "requests_total", acct.ID, window)
 	}
 	if snapshot.latencyErr != nil {
-		return degradedAccountSLO(snapshot.latencyErr, s.log, "latency", acct.ID, window)
+		return degradedAccountSLOPartial(resp, snapshot.latencyErr, s.log, "latency", acct.ID, window)
 	}
 	if snapshot.coldBootsErr != nil {
-		return degradedAccountSLO(snapshot.coldBootsErr, s.log, "cold_boot", acct.ID, window)
+		return degradedAccountSLOPartial(resp, snapshot.coldBootsErr, s.log, "cold_boot", acct.ID, window)
 	}
 
 	requests := aggregateMetricValues(snapshot.requestsByApp, appIDs)
@@ -307,19 +313,10 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		return degradedAccountSLOPartial(resp, snapshot.throttledErr, s.log, "throttled_total", acct.ID, window)
 	}
 
-	// 9. usage_minutes rollup (instance_hours / gb_hours).
-	if s.store != nil {
-		start, end := windowToRange(window)
-		instH, gbH, err := s.store.UsageSLOForAccount(ctx, acct.ID, start, end)
-		if err == nil {
-			resp.InstanceHours = instH
-			resp.GBHours = gbH
-		} else {
-			s.log.Warn("handlers_slo: usage_minutes rollup failed", "account_id", acct.ID, "err", err.Error())
-			return resp, appmetrics.SourceDegradedPrefix + "postgres unavailable"
-		}
+	if usageErr != nil {
+		s.log.Warn("handlers_slo: usage_minutes rollup failed", "account_id", acct.ID, "err", usageErr.Error())
+		return resp, appmetrics.SourceDegradedPrefix + "postgres unavailable"
 	}
-
 	return resp, appmetrics.SourcePrometheus
 }
 
@@ -361,13 +358,15 @@ func degradedAppSLO(err error, log *slog.Logger, label, appID, window string) (a
 	return api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
 }
 
-// degradedAccountSLO mirrors degradedAppSLO for the
-// account-scoped surface. Same CodeQL-safe sanitiser
-// pattern.
+// degradedAccountSLO mirrors degradedAppSLO for the account-scoped surface
+// when nothing has been collected yet.
 func degradedAccountSLO(err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
 	return degradedAccountSLOPartial(api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable}, err, log, label, accountID, window)
 }
 
+// degradedAccountSLOPartial is degradedAccountSLO (same CodeQL-safe sanitiser
+// pattern) keeping the fields resp already holds: the Postgres usage rollup
+// and any metrics collected before the failing query.
 func degradedAccountSLOPartial(resp api.AccountSLOResponse, err error, log *slog.Logger, label, accountID, window string) (api.AccountSLOResponse, string) {
 	msg := strings.ReplaceAll(err.Error(), "\r", "")
 	msg = strings.ReplaceAll(msg, "\n", "")

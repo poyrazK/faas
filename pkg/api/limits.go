@@ -24,6 +24,10 @@ import (
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// Bounded recovery of explicitly requested PostgreSQL cutover retirements.
+const ManagedPostgresCutoverDrainBatchMax = 32
+const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
@@ -226,6 +230,18 @@ const (
 	InspectWatchReadTimeout     = 30 * time.Second
 )
 
+// Commit recovery diagnostics sample a bounded number of subscriptions per pass (ADR-947).
+const CommitRecoveryDiagnosticsReadMax = 50
+
+// Reserve successful-sample refresh capacity when diagnostic retries compete (ADR-949).
+const CommitRecoveryDiagnosticsRefreshReserve = 1
+
+// Exact recipient blocker identity and timeout bounds (ADR-948).
+const (
+	EventRecipientBlockerIdentityMaxBytes = 256
+	EventRecipientBlockerReadTimeout      = 5 * time.Second
+)
+
 // Backlog discovery bounds metadata responses and aggregation (ADR-617).
 const (
 	EventBacklogPageDefault      = 100
@@ -284,6 +300,13 @@ const RollbackOn5xxBatchSize = 100
 // production-us hunt #4: both were 30 s, so the SDK always gave up first.
 const SyncInvokeWaitSeconds = 25
 const SyncInvokeWaitSecondsFree = 5
+
+// GatewaySynthDispatchTimeout bounds one schedd → gatewayd-internal synth
+// call: a cron HTTP target, an async invocation or a workflow step, including
+// any wake it triggers and the application's answer. It is therefore the
+// per-attempt execution limit of an async invocation; an attempt that outlives
+// it is recorded as a timeout and retried under the invocation's retry policy.
+const GatewaySynthDispatchTimeout = 30 * time.Second
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
@@ -748,6 +771,15 @@ const (
 	OutboundAIBudgetAlertsPageMax               = 100
 	OutboundAIBudgetAlertWarnPercent            = 80
 	OutboundAIBudgetAlertFullPercent            = 100
+	// Per-end-user attribution (ADR-994): the distinct X-Gregale-AI-User
+	// values rolled up per integration and UTC day (later ones aggregate
+	// under "~other" and only integration and app budgets limit them), how
+	// long those rollups stay, the page size of their listing and the
+	// longest end-user or session ID.
+	OutboundAIUsersPerDay            = 10_000
+	OutboundAIUserUsageRetentionDays = 31
+	OutboundAIUserUsagePageMax       = 1_000
+	OutboundAIUserIDMaxBytes         = 64
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -772,10 +804,21 @@ const (
 	PostgresCopyWorkerTasksMax               = 64
 	// Selected source databases per private checkpoint admission barrier.
 	// Oversize sets fail before provider or SQL IO; they are never truncated.
-	PostgresCheckpointDatabasesMax = 1024
-	PostgresCopyInventoryMaxBytes  = 4 << 20
-	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
-	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// Private dormant stage credentials retain one bounded encrypted envelope
+	// per durable owner until explicit terminal retirement.
+	PostgresCheckpointCredentialsPerAccountMax     = 4096
+	PostgresCheckpointCredentialCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointCredentialPasswordBytes      = 32
+	PostgresCheckpointActivationPlanMaxBytes       = 16 << 20
+	PostgresCheckpointPublicationMaxBytes          = 24 << 20
+	PostgresCheckpointConnectionCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointConnectionHostMaxBytes       = 253
+	PostgresCheckpointConnectionHostLabelMaxBytes  = 63
+	PostgresCheckpointConnectionDatabaseMaxBytes   = 63
+	PostgresCheckpointDatabasesMax                 = 1024
+	PostgresCopyInventoryMaxBytes                  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes                   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes                 = PostgresCopyEnvelopeMaxBytes + (64 << 10)
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128
@@ -8724,6 +8767,12 @@ const (
 	// per-VM capacity wait, and guest execution. The edge must permit their
 	// worst-case serial composition or it silently becomes the policy owner.
 	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetPlanMax
+	// ProjectApplyTimeout bounds one project apply (POST /v1/projects): the
+	// source upload, re-scan, reconcile and every workload's build enqueue
+	// share that request, so apid's default budget cannot hold it. Hunt #9 on
+	// production-us: the apps committed, then the enqueue failed on the 5 s
+	// deadline and left them undeployed.
+	ProjectApplyTimeout = RequestUploadTimeoutMax + RequestBudgetMax
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
@@ -9724,6 +9773,48 @@ const (
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
 
+// Read-only checkpoint object comparison bounds; these grant no storage or IO
+// entitlement. One retained original request exists per private target bucket.
+const ObjectCheckpointVerificationPlanMaxBytes = 16 << 20
+const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40
+
+// Native retirement embeds the bounded original copy plan plus creation metadata.
+const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20
+
+// Bounds for private source compensation plans and native observations.
+const CheckpointSourceCompensationMaxBytes = 16 << 20
+
+// CheckpointCaptureRetirementMaxBytes bounds the complete original capture and
+// source-compensation evidence retained for native artifact cleanup.
+const CheckpointCaptureRetirementMaxBytes = 16 << 20
+
+// Bounds for private PostgreSQL checkpoint target compensation evidence.
+const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20
+
+// Original PostgreSQL copy ownership and permanent retirement observations.
+const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
+
+// Non-secret original workload ownership and native retirement observations.
+const CheckpointWorkloadRetirementMaxBytes = 2 << 20
+
+// Private recovery pages bound original clone wake dispatch ownership reads.
+const CheckpointWorkloadWakeRecoveryBatchMax = 100
+
+// Private recovery pages bound retained clone migration handoff evidence reads.
+const CheckpointWorkloadMigrationRecoveryBatchMax = 100
+
+// CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
+const CloneConfigurationOwnershipMaxBytes = 32 << 10
+
+// CloneCompensationReceiptMaxBytes bounds the private terminal cleanup report.
+const CloneCompensationReceiptMaxBytes = 4 << 10
+
+// Private recovery pages bound retained destination adoption dispatch reads.
+const CheckpointWorkloadMigrationAdoptionRecoveryBatchMax = 100
+
+// Private recovery pages bound retained source cancel/resume dispatch reads.
+const CheckpointWorkloadMigrationResumeRecoveryBatchMax = 100
+
 // App health is a read-only, bounded evidence projection, not a probe loop.
 const (
 	AppHealthInstanceLimit          = 256
@@ -10077,6 +10168,101 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// EventConsumerInbox bounds application-owned transactional consumer receipts.
+// The inbox schema generator packages these limits with the standalone SDK.
+const (
+	EventConsumerRequestMaxBytes  = 1 << 20
+	EventConsumerResultMaxBytes   = 1 << 20
+	EventConsumerIdentityMaxBytes = 4096
+)
+
+// Commit publication history bounds metadata-only reads.
+const CommitPublicationHistoryPageDefault = 50
+const CommitPublicationHistoryPageMax = 200
+
+const CommitPublicationHistoryCursorMaxBytes = 192
+
+// Commit delivery reports bound each invocation of recipient traversal.
+const CommitDeliveryReportPagesMax = 20
+const CommitDeliveryReportFileMaxBytes = 64 << 20
+
+// CommitRecoveryApplyMax bounds sequential reviewed recovery attempts per call.
+const CommitRecoveryApplyMax = 50
+
+// CommitRecoveryStatusMax bounds subscriber observations per read-only status call.
+const CommitRecoveryStatusMax = 50
+
+// Commit recovery monitoring bounds per-pass polling without changing read budgets.
+const (
+	CommitRecoveryWatchIntervalMin     = 100 * time.Millisecond
+	CommitRecoveryWatchIntervalMax     = time.Minute
+	CommitRecoveryWatchIntervalDefault = time.Second
+)
+
+// Total automatic transient retries across a recovery watch.
+const CommitRecoveryWatchReadRetriesMax = 20
+
+// Optional recovery evidence age bounds; zero disables freshness enforcement.
+const (
+	CommitRecoveryWatchObservationAgeMin = 100 * time.Millisecond
+	CommitRecoveryWatchObservationAgeMax = 24 * time.Hour
+)
+
+// Exact recipient batches bound storage work and request memory.
+const EventRecipientBlockerBatchMax = 50
+const EventRecipientBlockerBatchBodyMaxBytes = 65536
+
+// Optional diagnostic age policy uses the receipt observation age bounds.
+const CommitRecoveryDiagnosticAgeMin = CommitRecoveryWatchObservationAgeMin
+const CommitRecoveryDiagnosticAgeMax = CommitRecoveryWatchObservationAgeMax
+
+// Optional stall detection uses the diagnostic age duration bounds.
+const CommitRecoveryStallThresholdMin = CommitRecoveryDiagnosticAgeMin
+const CommitRecoveryStallThresholdMax = CommitRecoveryDiagnosticAgeMax
+
+// Durable alert queues reserve one terminal notification per active incident.
+const CommitRecoveryAlertQueueMax = 1024
+const CommitRecoveryAlertSequenceMax uint64 = 9007199254740991
+
+// EventConsumerDeliveryHealthSampleMax bounds the oldest pending blocker sample.
+const EventConsumerDeliveryHealthSampleMax = 50
+
+// Delivery health watches are local, bounded, read-only monitors.
+const (
+	EventDeliveryHealthWatchIntervalMin           = 100 * time.Millisecond
+	EventDeliveryHealthWatchIntervalMax           = time.Minute
+	EventDeliveryHealthWatchIntervalDefault       = 5 * time.Second
+	EventDeliveryHealthWatchTimeoutDefault        = 2 * time.Minute
+	EventDeliveryHealthWatchTimeoutMax            = 24 * time.Hour
+	EventDeliveryHealthWatchAgeMin                = 100 * time.Millisecond
+	EventDeliveryHealthWatchAgeMax                = 24 * time.Hour
+	EventDeliveryHealthWatchAgeDefault            = 30 * time.Second
+	EventDeliveryHealthWatchThresholdMin          = 100 * time.Millisecond
+	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
+	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
+)
+
+// EventDeliveryHealthAlertQueueMax bounds pending notifications plus closing reservations.
+const EventDeliveryHealthAlertQueueMax = 1024
+
+// EventDeliveryHealthAlertSequenceMax keeps notification identities exactly representable.
+const EventDeliveryHealthAlertSequenceMax uint64 = 9007199254740991
+
+// EventDeliveryHealthAcknowledgementHistoryMax bounds exact acknowledgement retries.
+const EventDeliveryHealthAcknowledgementHistoryMax = 1024
+
+// EventDeliveryHealthSLO defaults require meaningful traffic and sustained breaches.
+const EventDeliveryHealthSLOMinimumSamplesDefault int64 = 10
+const EventDeliveryHealthSLOSustainDefault = time.Minute
+
+const EventDeliveryHealthSLOPercentageMin = 0.000001
+const EventDeliveryHealthSLOPercentageMax = 100.0
+
+// Event execution metadata outcomes are retained independently of invocation results.
+const EventExecutionLedgerRetention = 30 * 24 * time.Hour
+const EventExecutionLedgerPruneBatchDefault = 500
+const EventExecutionLedgerPruneBatchMax = 5000
 
 // Native recovery execution monitoring is advisory (ADR-1006).
 const (

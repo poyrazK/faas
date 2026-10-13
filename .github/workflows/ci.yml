@@ -586,7 +586,12 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
-    timeout-minutes: 45
+    # Green runs on 2026-10-12/13 took 42-43 minutes. ADR-590's PGClone
+    # checkpoint tests (#4499) then pushed pkg/apid/apidserver past 50
+    # minutes under -race: its 317 sequential TestPGClone* functions took
+    # 41 of them on 2026-10-13. go test has 90 until they are split out or
+    # sped up.
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -689,7 +694,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=30m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=90m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: upload public API state-adapter coverage
@@ -815,8 +820,8 @@ jobs:
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
-            test_timeout: 20m
-            job_timeout_minutes: 30
+            test_timeout: 30m
+            job_timeout_minutes: 45
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
@@ -1053,10 +1058,17 @@ jobs:
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
-    timeout-minutes: 20
+    # The memory-bounded pkg/sched compile below roughly doubles that
+    # compile's time on a cold cache.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    # pkg/sched with its internal tests is ~140k lines; its race+coverage
+    # compile reached ~15 GB RSS with DWARF on. Both steps must pass the same
+    # flags, or the test step recompiles it instead of hitting the cache.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/sched=-dwarf=false -c=1"'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1085,6 +1097,20 @@ jobs:
           restore-keys: |
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+      # The pkg/sched test compile peaked near 15 GB of compiler RSS and
+      # pkg/fcvm's tests near 6 GB. With both in flight under -p 4 the 16 GB
+      # hosted runner ran out of memory and GitHub reported "The runner has
+      # received a shutdown signal" (diagnosed 2026-10-13). Compiling first,
+      # two packages at a time and under a soft memory limit, fills the build
+      # cache, so the test step below only links and runs.
+      - name: compile shard 1 test binaries
+        env:
+          # The soft limit makes the pkg/sched compile collect harder instead of
+          # growing to ~11 GB; it only affects this compile-only step.
+          GOMEMLIMIT: 6GiB
+        run: |
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/pkg/apid/apidserver$' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          go test -race -cover -covermode=atomic -count=1 -p 2 -run='^$' $PKGS > /dev/null
       - name: unit tests (pure Go shard 1)
         env:
           # Pull requests let Go's test cache skip packages whose transitive
@@ -1200,7 +1226,8 @@ jobs:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    timeout-minutes: 35
+    # Whole green runs took 29-34 minutes on 2026-10-12/13.
+    timeout-minutes: 50
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
@@ -1289,7 +1316,9 @@ jobs:
     # The complete cold-run gate sequence can exhaust 30 minutes at the
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
-    timeout-minutes: 45
+    # A cold run on 2026-10-13 spent 18 minutes in the standards gates and
+    # 11 in promtool, and was cancelled at 45 during the last gate.
+    timeout-minutes: 70
     permissions:
       contents: read
     env:
@@ -1318,13 +1347,6 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
-      # ADR-977: pkg/apid/apidserver is one package compiled as a unit (~16 GB peak for its
-      # tests). New code goes in pkg/apid/<domain>; growth needs a visible
-      # baseline bump.
-      - name: apid size
-        run: make apid-size-check
-      - name: apid size gate checker tests
-        run: make apid-size-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that

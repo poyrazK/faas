@@ -19,7 +19,7 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 	if version == 0 {
 		version = 1
 	}
-	if version != 1 && version != 2 {
+	if version != 1 && version != 2 && version != 3 {
 		return errors.New("commit: unsupported source contract")
 	}
 	if pool == nil {
@@ -30,6 +30,10 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 		"accepted_at": "timestamptz", "receipt_id": "uuid", "invocation_id": "uuid", "operation_id": "uuid",
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
 		"attempts": "int4", "blocked_code": "text",
+	}
+	if version == 3 {
+		required["schema_version"] = "text"
+		required["publication_acceptance_id"] = "int8"
 	}
 	if version == 2 {
 		required["routing"] = "jsonb"

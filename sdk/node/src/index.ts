@@ -182,6 +182,21 @@ export {
   type VerifyWebhookOptions,
 } from './webhook.js';
 
+// AI gateway helpers for apps: relay URLs, end-user and session headers (ADR-995).
+export {
+  AI_SESSION_HEADER,
+  AI_USER_HEADER,
+  AIGatewayError,
+  aiGatewayHeaders,
+  aiGatewayURL,
+  isValidAIUserId,
+  opaqueAIUserId,
+  withAIGatewayHeaders,
+  type AIGatewayCaller,
+  type AIGatewayTarget,
+  type AIGatewayURLOptions,
+} from './ai-gateway.js';
+
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
@@ -301,6 +316,21 @@ export type { OperationWorkflowPlannedEffect } from './generated/models/Operatio
 export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
+
+export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
+  withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
+  type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
+  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+
+export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
+
+export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem, type CommitDeliveryReportChange, type CommitDeliveryReportSubscriber, type CommitDeliveryReportRecovery } from './commit-delivery-report.js';
+
+export { planCommitRecovery, CommitRecoveryPlanError, type CommitRecoveryPlan, type CommitRecoveryPlanItem } from './commit-recovery-plan.js';
+
+export { applyCommitRecovery, CommitRecoveryApplyError, type CommitRecoveryApplyResult, type CommitRecoveryApplyItem } from './commit-recovery-apply.js';
+
+export { diagnoseCommitRecoveryStatus, type CommitRecoveryDiagnostics, type CommitRecoveryDiagnosticProgress, type CommitRecoveryDiagnosticEstimate, type CommitRecoveryDiagnosticConsumer, type CommitRecoveryConsumerStall, type CommitRecoveryBlockerIncident, type CommitRecoveryAlertOutbox, type CommitRecoveryAlertAcknowledgement, type CommitRecoveryBlockerTransition, type CommitRecoveryPersistentBlocker, type CommitRecoveryDiagnosticObservation, type CommitRecoveryDiagnosticRouting, type CommitRecoveryDiagnosticOrdering, type CommitRecoveryDiagnosticChange, watchCommitRecoveryStatus, commitRecoveryStatusSettled, getCommitRecoveryStatus, CommitRecoveryStatusError, type CommitRecoveryStatusResult, type CommitRecoveryStatusItem, type CommitRecoveryStatusSelection, type CommitRecoveryMonitoring, type CommitRecoveryStatusObservation, type CommitRecoveryStatusChange } from './commit-recovery-status.js';
 
 export type { OperationWorkflowChangeReason } from "./customer-operation-decisions.js";
 

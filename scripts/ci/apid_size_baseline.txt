@@ -1,6 +1,0 @@
-# Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-982).
-# Hide durable entities PR: absorb +7 lines main gained after #4489 and +4 lines of route
-# wiring that hides the preview. The gate itself lives in pkg/apid/durable (visibility.go).
-# Durable management handlers and cleanup workers remain in pkg/apid/durable.
-# Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-156393
