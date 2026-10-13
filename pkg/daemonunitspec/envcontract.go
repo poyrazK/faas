@@ -341,6 +341,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_IMAGED_ROLE", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_IMAGE_DIGEST", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled"},
 	{Name: "FAAS_INSTANCE_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
+	{Name: "FAAS_INTERACTIVE_APP_TASKS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path"},
 	{Name: "FAAS_INTERNAL_H2C", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_SOCKET", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_SVC_KEY_PATH", Owners: []string{"schedd"}, Source: EnvSourceDefault},

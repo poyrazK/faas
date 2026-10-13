@@ -981,6 +981,18 @@
     "kind": "configuration"
   },
   {
+    "table": "app_task_attach_sessions",
+    "columns": [
+      "attach_token_sha256",
+      "created_at",
+      "node_id",
+      "node_recorded_at",
+      "task_id",
+      "tty"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_tasks",
     "columns": [
       "account_id",
