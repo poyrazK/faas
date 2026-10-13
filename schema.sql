@@ -8019,6 +8019,39 @@ END; $$;
 
 
 --
+-- Name: guard_regional_runtime_usage_outbox(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_usage_outbox() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE original jsonb;
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'regional usage outbox is retained' USING ERRCODE='23514'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||NEW.app_id::text,0));
+ IF TG_OP='INSERT' THEN
+  SELECT grant_claims INTO original FROM regional_runtime_quota_receipts
+   WHERE app_id=NEW.app_id AND allocation_id=NEW.allocation_id AND grant_envelope IS NOT NULL;
+  IF original IS NULL OR original IS DISTINCT FROM NEW.usage_claims->'Grant'
+   OR NEW.usage_claims->'Grant'->'Binding'->>'CellID' IS DISTINCT FROM NEW.cell_id::text
+   OR (NEW.usage_claims->>'MinuteMicros')::bigint IS DISTINCT FROM (extract(epoch FROM NEW.minute)*1000000)::bigint
+   OR NEW.ack_claims IS NOT NULL OR NEW.ack_envelope IS NOT NULL THEN
+   RAISE EXCEPTION 'regional usage original issuance conflicts' USING ERRCODE='23514';
+  END IF;
+ ELSE
+  IF (NEW.id,NEW.app_id,NEW.allocation_id,NEW.cell_id,NEW.minute,NEW.usage_claims,NEW.envelope,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.allocation_id,OLD.cell_id,OLD.minute,OLD.usage_claims,OLD.envelope,OLD.created_at)
+   OR OLD.ack_claims IS NOT NULL OR NEW.ack_claims IS NULL OR NEW.ack_envelope IS NULL
+   OR NEW.ack_claims->'Usage' IS DISTINCT FROM NEW.usage_claims THEN
+   RAISE EXCEPTION 'regional usage outbox cannot be rewritten' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_retired_queue_invocation(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11517,6 +11550,17 @@ BEGIN
     RAISE EXCEPTION 'regional quota authority and tombstones are retained'
         USING ERRCODE = '23514', CONSTRAINT = 'regional_runtime_quota_identity';
 END;
+$$;
+
+
+--
+-- Name: refuse_regional_runtime_usage_outbox_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_runtime_usage_outbox_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN RAISE EXCEPTION 'regional usage outbox is retained' USING ERRCODE='23514'; END
 $$;
 
 
@@ -24436,6 +24480,52 @@ CREATE TABLE public.regional_runtime_serving_seats (
 
 
 --
+-- Name: regional_runtime_usage_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_usage_outbox (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    allocation_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    usage_claims jsonb NOT NULL,
+    envelope jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    ack_claims jsonb,
+    ack_envelope jsonb,
+    CONSTRAINT regional_runtime_usage_outbox_ack_claims_check CHECK ((jsonb_typeof(ack_claims) = 'object'::text)),
+    CONSTRAINT regional_runtime_usage_outbox_ack_envelope_check CHECK ((jsonb_typeof(ack_envelope) = 'object'::text)),
+    CONSTRAINT regional_runtime_usage_outbox_allocation_id_check CHECK ((allocation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_usage_outbox_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_usage_outbox_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_runtime_usage_outbox_check CHECK (((ack_claims IS NULL) = (ack_envelope IS NULL))),
+    CONSTRAINT regional_runtime_usage_outbox_envelope_check CHECK ((jsonb_typeof(envelope) = 'object'::text)),
+    CONSTRAINT regional_runtime_usage_outbox_minute_check CHECK ((minute = date_trunc('minute'::text, minute))),
+    CONSTRAINT regional_runtime_usage_outbox_usage_claims_check CHECK ((jsonb_typeof(usage_claims) = 'object'::text))
+);
+
+
+--
+-- Name: regional_runtime_usage_outbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.regional_runtime_usage_outbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: regional_runtime_usage_outbox_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.regional_runtime_usage_outbox_id_seq OWNED BY public.regional_runtime_usage_outbox.id;
+
+
+--
 -- Name: release_bundles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26456,6 +26546,13 @@ ALTER TABLE ONLY public.regional_runtime_billing_intervals ALTER COLUMN id SET D
 --
 
 ALTER TABLE ONLY public.regional_runtime_floor_intervals ALTER COLUMN id SET DEFAULT nextval('public.regional_runtime_floor_intervals_id_seq'::regclass);
+
+
+--
+-- Name: regional_runtime_usage_outbox id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_usage_outbox ALTER COLUMN id SET DEFAULT nextval('public.regional_runtime_usage_outbox_id_seq'::regclass);
 
 
 --
@@ -31477,6 +31574,22 @@ ALTER TABLE ONLY public.regional_runtime_serving_resumes
 
 ALTER TABLE ONLY public.regional_runtime_serving_seats
     ADD CONSTRAINT regional_runtime_serving_seats_pkey PRIMARY KEY (app_id, seat_id);
+
+
+--
+-- Name: regional_runtime_usage_outbox regional_runtime_usage_outbox_app_id_allocation_id_minute_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_usage_outbox
+    ADD CONSTRAINT regional_runtime_usage_outbox_app_id_allocation_id_minute_key UNIQUE (app_id, allocation_id, minute);
+
+
+--
+-- Name: regional_runtime_usage_outbox regional_runtime_usage_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_usage_outbox
+    ADD CONSTRAINT regional_runtime_usage_outbox_pkey PRIMARY KEY (id);
 
 
 --
@@ -37092,6 +37205,13 @@ CREATE INDEX regional_runtime_inventory_seat_scan ON public.regional_runtime_ser
 
 
 --
+-- Name: regional_runtime_usage_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_usage_pending_idx ON public.regional_runtime_usage_outbox USING btree (id) WHERE (ack_claims IS NULL);
+
+
+--
 -- Name: regional_seat_active_permit; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41786,6 +41906,20 @@ CREATE TRIGGER regional_runtime_quota_receipt_guard BEFORE INSERT OR DELETE OR U
 --
 
 CREATE TRIGGER regional_runtime_quota_receipt_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_quota_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_quota_truncate();
+
+
+--
+-- Name: regional_runtime_usage_outbox regional_runtime_usage_outbox_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_usage_outbox_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_usage_outbox FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_usage_outbox();
+
+
+--
+-- Name: regional_runtime_usage_outbox regional_runtime_usage_outbox_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_runtime_usage_outbox_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_usage_outbox FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_runtime_usage_outbox_truncate();
 
 
 --

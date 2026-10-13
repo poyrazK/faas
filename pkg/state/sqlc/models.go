@@ -6295,6 +6295,19 @@ type RegionalRuntimeServingSeat struct {
 	ClosedByPhysicalStop bool
 }
 
+type RegionalRuntimeUsageOutbox struct {
+	ID           int64
+	AppID        pgtype.UUID
+	AllocationID pgtype.UUID
+	CellID       pgtype.UUID
+	Minute       pgtype.Timestamptz
+	UsageClaims  []byte
+	Envelope     []byte
+	CreatedAt    pgtype.Timestamptz
+	AckClaims    []byte
+	AckEnvelope  []byte
+}
+
 type ReleaseBundle struct {
 	ID           pgtype.UUID
 	GitSha       string

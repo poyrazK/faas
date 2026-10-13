@@ -992,6 +992,7 @@ type DeploymentActivationLocker interface {
 type Store interface {
 	GlobalRuntimeUsageStore
 	RegionalRuntimeBillingHistoryStore
+	RegionalRuntimeUsageOutboxStore
 	RegionalRuntimeFloorHistoryStore
 	RegionalAppTaskBillingHistoryStore
 	// ADR-797: decorators preserve the local global-management admission read.

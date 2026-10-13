@@ -34,6 +34,7 @@ type Querier interface {
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountPendingDeletionEmail(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
+	AckRegionalRuntimeUsageOutbox(ctx context.Context, db DBTX, arg AckRegionalRuntimeUsageOutboxParams) (RegionalRuntimeUsageOutbox, error)
 	AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentGitOpsEffectParams) (int64, error)
 	// Legacy scheduler subscribers cannot acknowledge another worker's lease.
 	AcknowledgePendingNotification(ctx context.Context, db DBTX, id int64) error
@@ -1096,6 +1097,7 @@ type Querier interface {
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	InsertRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
+	InsertRegionalRuntimeUsageOutbox(ctx context.Context, db DBTX, arg InsertRegionalRuntimeUsageOutboxParams) (RegionalRuntimeUsageOutbox, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -1563,6 +1565,7 @@ type Querier interface {
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
+	ListPendingRegionalRuntimeUsage(ctx context.Context, db DBTX, arg ListPendingRegionalRuntimeUsageParams) ([]RegionalRuntimeUsageOutbox, error)
 	// The tenant creation index supports descending keyset paging. Only public
 	// summary fields cross this boundary; source input/results/capabilities do not.
 	ListPlatformTenantCustomerOperations(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsParams) ([][]byte, error)
@@ -2661,6 +2664,8 @@ type Querier interface {
 	RegionalRuntimeServingResume(ctx context.Context, db DBTX, arg RegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	RegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	RegionalRuntimeServingSeatUsage(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatUsageParams) (RegionalRuntimeServingSeatUsageRow, error)
+	// adr: 802
+	RegionalRuntimeUsageOutbox(ctx context.Context, db DBTX, arg RegionalRuntimeUsageOutboxParams) (RegionalRuntimeUsageOutbox, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	// ADR-740: durable global capacity reservations.
 	RegisterGlobalRuntimeQuotaPolicy(ctx context.Context, db DBTX, arg RegisterGlobalRuntimeQuotaPolicyParams) error

@@ -7296,6 +7296,22 @@
     "kind": "operational"
   },
   {
+    "table": "regional_runtime_usage_outbox",
+    "columns": [
+      "ack_claims",
+      "ack_envelope",
+      "allocation_id",
+      "app_id",
+      "cell_id",
+      "created_at",
+      "envelope",
+      "id",
+      "minute",
+      "usage_claims"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "release_bundles",
     "columns": [
       "applied_at",

@@ -273,6 +273,8 @@ type MemStore struct {
 	regionalAppTaskBillingRows    map[int64]RegionalAppTaskBillingInterval
 	regionalRuntimeServingSeats   map[string]RegionalRuntimeServingSeatReceipt
 	regionalRuntimeServingResumes map[string]RegionalRuntimeServingResumeReceipt
+	regionalRuntimeUsageOutbox    map[string]RegionalRuntimeUsageOutboxItem
+	regionalRuntimeUsageNext      int64
 	globalRuntimeUsageAuthority   GlobalRuntimeUsageAuthority
 	globalRuntimeUsageReceipts    map[string]GlobalRuntimeUsageReceipt
 	deployTokens                  map[string]DeployToken

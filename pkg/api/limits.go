@@ -26,6 +26,11 @@ const (
 	GlobalRuntimeUsageQuantityMax      = int64(9007199254740991)
 	GlobalRuntimeUsagePayloadMaxBytes  = 4 << 10
 	GlobalRuntimeUsageEnvelopeMaxBytes = 8 << 10
+	// ADR-802: retained delivery bounds, independent of capacity entitlements.
+	GlobalRuntimeUsageAckPayloadMaxBytes  = GlobalRuntimeUsagePayloadMaxBytes + 256
+	GlobalRuntimeUsageAckEnvelopeMaxBytes = GlobalRuntimeUsageEnvelopeMaxBytes + 512
+	RegionalRuntimeUsagePageMax           = 1000
+	RegionalRuntimeUsageDeliveryTimeout   = 30 * time.Second
 )
 
 // ADR-730 directory/proof protocol bounds. These do not grant runtime capacity.

@@ -37,6 +37,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"regional_image_release_heads":            CloneSchemaOperational,
 		"regional_image_release_receipts":         CloneSchemaOperational,
 		"regional_release_grants":                 CloneSchemaIdentity,
+		"regional_runtime_usage_outbox":           CloneSchemaOperational,
 		"regional_runtime_floor_history_start":    CloneSchemaOperational,
 		"regional_runtime_floor_intervals":        CloneSchemaOperational,
 		"regional_runtime_capacity_receipts":      CloneSchemaOperational,
