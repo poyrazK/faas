@@ -49,6 +49,10 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    handoff_acceptance_escalation_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
+    label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
+    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset = UNSET
     """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
     notification intent. Ownership assignment is not acceptance."""
@@ -91,6 +95,8 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        handoff_acceptance_escalation_owner = self.handoff_acceptance_escalation_owner
 
         handoff_reassignment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_reassignment, Unset):
@@ -135,6 +141,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if handoff_acceptance_escalation_owner is not UNSET:
+            field_dict["handoff_acceptance_escalation_owner"] = handoff_acceptance_escalation_owner
         if handoff_reassignment is not UNSET:
             field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
@@ -181,6 +189,8 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        handoff_acceptance_escalation_owner = d.pop("handoff_acceptance_escalation_owner", UNSET)
 
         _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
         handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset
@@ -238,6 +248,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,
             handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,

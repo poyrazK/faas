@@ -11,6 +11,14 @@ import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
   /**
+   * OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current ownership receives only the ordinary overdue notice.
+   */
+  acceptance_escalation_owner?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.acceptance_escalated_at. One-time escalation delivery marker committed atomically with the overdue marker and both inbox notices. Reset only by a new handoff.
+   */
+  acceptance_escalated_at?: string;
+  /**
    * OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it.
    */
   handed_off_at?: string;

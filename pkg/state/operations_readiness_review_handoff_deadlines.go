@@ -74,6 +74,10 @@ func applyReviewHandoffDeadline(r *readinessSubscriptionRecord, n api.OperationW
 		return n, nil, true
 	}
 	review.AcceptanceDeadlineNotifiedAt = &now
+	escalate := review.AcceptanceEscalationOwner != "" && review.AcceptanceEscalationOwner != response.Owner
+	if escalate {
+		review.AcceptanceEscalatedAt = &now
+	}
 	notice := readinessSubscriptionNotify(r, "review_response_handoff_acceptance_overdue", "The handed-off review was not explicitly accepted within its acceptance window. Record acceptance with a note and future check-in, or review responsibility; acknowledgment does not accept the handoff and the original decision review deadline remains in force.", nil)
 	if n.BusinessImpact != nil {
 		impact := *n.BusinessImpact
@@ -82,7 +86,15 @@ func applyReviewHandoffDeadline(r *readinessSubscriptionRecord, n api.OperationW
 	}
 	notice.DecisionReview = &api.OperationWorkflowReviewResponseDecisionReviewEvent{SourceNotificationID: n.ID, SourceSequence: n.Sequence, Decision: *response.Decision, Review: *review}
 	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: response.Owner, UpdatedAt: now, UpdatedBy: "system:handoff-acceptance-deadline"}
-	return n, []api.OperationWorkflowReadinessNotification{notice}, true
+	notices := []api.OperationWorkflowReadinessNotification{notice}
+	if escalate {
+		escalation := readinessSubscriptionNotify(r, "review_response_handoff_acceptance_escalated", "The assigned team missed its handoff acceptance deadline. Review the routing and decline history and explicitly coordinate the next action; ownership and the original decision review deadline remain unchanged.", nil)
+		escalation.BusinessImpact = notice.BusinessImpact
+		escalation.DecisionReview = notice.DecisionReview
+		escalation.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: review.AcceptanceEscalationOwner, UpdatedAt: now, UpdatedBy: "system:handoff-acceptance-escalation"}
+		notices = append(notices, escalation)
+	}
+	return n, notices, true
 }
 
 func reviewHandoffTime(review *api.OperationWorkflowReviewResponseDecisionReview) *time.Time {

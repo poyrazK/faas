@@ -79371,6 +79371,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - review_response_handoff_acceptance_escalated
           - review_response_handoff_acceptance_overdue
           - review_response_decision_review_overdue
           - review_response_decision_review_required
@@ -80672,6 +80673,14 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        acceptance_escalation_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current ownership receives only the ordinary overdue notice.
+        acceptance_escalated_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.acceptance_escalated_at. One-time escalation delivery marker committed atomically with the overdue marker and both inbox notices. Reset only by a new handoff.
         handed_off_at:
           type: string
           format: date-time
@@ -80990,6 +80999,10 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        handoff_acceptance_escalation_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseRequest.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
         handoff_reassignment:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignmentRequest'
           description: OperationWorkflowReviewResponseRequest.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
@@ -81199,6 +81212,10 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        handoff_acceptance_escalation_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponse.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
         handoff_accept_after_seconds:
           type: integer
           format: int64
@@ -81294,6 +81311,10 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        handoff_acceptance_escalation_owner:
+          type: string
+          maxLength: 256
+          description: OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
         handoff_reassignment:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignment'
           description: OperationWorkflowReviewResponseChange.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.

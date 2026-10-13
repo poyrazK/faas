@@ -28,6 +28,9 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if input.FallbackOwner != nil && *input.FallbackOwner != "" && (!text(*input.FallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.FallbackOwner == input.Owner) {
 		return nil, ErrInvalidArgument
 	}
+	if input.HandoffAcceptanceEscalationOwner != nil && *input.HandoffAcceptanceEscalationOwner != "" && (!text(*input.HandoffAcceptanceEscalationOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.HandoffAcceptanceEscalationOwner == input.Owner) {
+		return nil, ErrInvalidArgument
+	}
 	if input.HandoffAcceptAfterSeconds != nil && (*input.HandoffAcceptAfterSeconds < 60 || *input.HandoffAcceptAfterSeconds > 604800) {
 		return nil, ErrInvalidArgument
 	}
@@ -75,9 +78,13 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	}
 	response := &api.OperationWorkflowReviewResponse{HandoffAcceptAfterSeconds: api.OperationWorkflowReviewResponseHandoffAcceptDefaultSeconds, DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
 	if alert.ReviewResponse != nil {
+		response.HandoffAcceptanceEscalationOwner = alert.ReviewResponse.HandoffAcceptanceEscalationOwner
 		response.HandoffAcceptAfterSeconds = effectiveHandoffAcceptanceWindow(alert.ReviewResponse)
 		response.DecisionReviewFallbackOwner = alert.ReviewResponse.DecisionReviewFallbackOwner
 		response.DecisionReviewAfterSeconds = effectiveDecisionReviewWindow(alert.ReviewResponse)
+	}
+	if input.HandoffAcceptanceEscalationOwner != nil {
+		response.HandoffAcceptanceEscalationOwner = *input.HandoffAcceptanceEscalationOwner
 	}
 	if input.HandoffAcceptAfterSeconds != nil {
 		response.HandoffAcceptAfterSeconds = *input.HandoffAcceptAfterSeconds

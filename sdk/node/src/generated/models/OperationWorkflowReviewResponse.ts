@@ -12,6 +12,10 @@ import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowRev
  */
 export type OperationWorkflowReviewResponse = {
   /**
+   * OperationWorkflowReviewResponse.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
+   */
+  handoff_acceptance_escalation_owner?: string;
+  /**
    * OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
    */
   handoff_accept_after_seconds?: number;

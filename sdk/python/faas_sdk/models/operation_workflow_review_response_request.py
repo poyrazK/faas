@@ -47,6 +47,10 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    handoff_acceptance_escalation_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseRequest.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
+    label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
+    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentRequest | Unset = UNSET
     """Reassign a currently declined handoff to a different parent response owner. Preserve plan, check-in and
     review deadline; start a new acceptance clock. Cannot combine with a decision, acceptance or decline."""
@@ -88,6 +92,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        handoff_acceptance_escalation_owner = self.handoff_acceptance_escalation_owner
 
         handoff_reassignment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_reassignment, Unset):
@@ -133,6 +139,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if handoff_acceptance_escalation_owner is not UNSET:
+            field_dict["handoff_acceptance_escalation_owner"] = handoff_acceptance_escalation_owner
         if handoff_reassignment is not UNSET:
             field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
@@ -178,6 +186,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        handoff_acceptance_escalation_owner = d.pop("handoff_acceptance_escalation_owner", UNSET)
 
         _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
         handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentRequest | Unset
@@ -237,6 +247,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,
             handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,

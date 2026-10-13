@@ -11,6 +11,10 @@ import type { OperationWorkflowReviewResponseHandoffReassignment } from './Opera
  */
 export type OperationWorkflowReviewResponseChange = {
   /**
+   * OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured.
+   */
+  handoff_acceptance_escalation_owner?: string;
+  /**
    * OperationWorkflowReviewResponseChange.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
    */
   handoff_reassignment?: OperationWorkflowReviewResponseHandoffReassignment;

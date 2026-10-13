@@ -42,6 +42,13 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    acceptance_escalation_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at
+    the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current
+    ownership receives only the ordinary overdue notice."""
+    acceptance_escalated_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.acceptance_escalated_at. One-time escalation delivery marker
+    committed atomically with the overdue marker and both inbox notices. Reset only by a new handoff."""
     handed_off_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by
     acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it."""
@@ -96,6 +103,12 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = self.changes
 
         health = self.health.to_dict()
+
+        acceptance_escalation_owner = self.acceptance_escalation_owner
+
+        acceptance_escalated_at: str | Unset = UNSET
+        if not isinstance(self.acceptance_escalated_at, Unset):
+            acceptance_escalated_at = self.acceptance_escalated_at.isoformat()
 
         handed_off_at: str | Unset = UNSET
         if not isinstance(self.handed_off_at, Unset):
@@ -153,6 +166,10 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if acceptance_escalation_owner is not UNSET:
+            field_dict["acceptance_escalation_owner"] = acceptance_escalation_owner
+        if acceptance_escalated_at is not UNSET:
+            field_dict["acceptance_escalated_at"] = acceptance_escalated_at
         if handed_off_at is not UNSET:
             field_dict["handed_off_at"] = handed_off_at
         if reassignment is not UNSET:
@@ -207,6 +224,15 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        acceptance_escalation_owner = d.pop("acceptance_escalation_owner", UNSET)
+
+        _acceptance_escalated_at = d.pop("acceptance_escalated_at", UNSET)
+        acceptance_escalated_at: datetime.datetime | Unset
+        if isinstance(_acceptance_escalated_at, Unset):
+            acceptance_escalated_at = UNSET
+        else:
+            acceptance_escalated_at = datetime.datetime.fromisoformat(_acceptance_escalated_at)
 
         _handed_off_at = d.pop("handed_off_at", UNSET)
         handed_off_at: datetime.datetime | Unset
@@ -283,6 +309,8 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            acceptance_escalation_owner=acceptance_escalation_owner,
+            acceptance_escalated_at=acceptance_escalated_at,
             handed_off_at=handed_off_at,
             reassignment=reassignment,
             reassignment_required=reassignment_required,

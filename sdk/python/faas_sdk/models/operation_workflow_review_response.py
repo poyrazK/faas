@@ -55,6 +55,10 @@ class OperationWorkflowReviewResponse:
     """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
     """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
+    handoff_acceptance_escalation_owner: str | Unset = UNSET
+    """OperationWorkflowReviewResponse.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label
+    for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is
+    pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
     handoff_accept_after_seconds: int | Unset = UNSET
     """OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting
     to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned."""
@@ -120,6 +124,8 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = self.history_truncated
 
+        handoff_acceptance_escalation_owner = self.handoff_acceptance_escalation_owner
+
         handoff_accept_after_seconds = self.handoff_accept_after_seconds
 
         decision_review_fallback_owner = self.decision_review_fallback_owner
@@ -172,6 +178,8 @@ class OperationWorkflowReviewResponse:
                 "history_truncated": history_truncated,
             }
         )
+        if handoff_acceptance_escalation_owner is not UNSET:
+            field_dict["handoff_acceptance_escalation_owner"] = handoff_acceptance_escalation_owner
         if handoff_accept_after_seconds is not UNSET:
             field_dict["handoff_accept_after_seconds"] = handoff_accept_after_seconds
         if decision_review_fallback_owner is not UNSET:
@@ -240,6 +248,8 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = d.pop("history_truncated")
 
+        handoff_acceptance_escalation_owner = d.pop("handoff_acceptance_escalation_owner", UNSET)
+
         handoff_accept_after_seconds = d.pop("handoff_accept_after_seconds", UNSET)
 
         decision_review_fallback_owner = d.pop("decision_review_fallback_owner", UNSET)
@@ -305,6 +315,7 @@ class OperationWorkflowReviewResponse:
             updated_by=updated_by,
             history=history,
             history_truncated=history_truncated,
+            handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,
             handoff_accept_after_seconds=handoff_accept_after_seconds,
             decision_review_fallback_owner=decision_review_fallback_owner,
             decision_review_after_seconds=decision_review_after_seconds,
