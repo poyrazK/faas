@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// createImageRun mounts ADR-1151's POST /v1/image-runs. Dependencies are read
+// createImageRun mounts ADR-1161's POST /v1/image-runs. Dependencies are read
 // per request so tests that swap the store or notifier see the change.
 func (s *server) createImageRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, _ := s.store.(imagerun.Store)

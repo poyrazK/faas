@@ -529,7 +529,7 @@ func TestPendingJobMaterializationClaimFailureIsObservable(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestMaterializeJobRecordsImageConfigForImageRuns(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

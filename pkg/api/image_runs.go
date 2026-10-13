@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// Image runs (ADR-1151): `docker run`-shaped one-task Job runs against a
+// Image runs (ADR-1161): `docker run`-shaped one-task Job runs against a
 // platform-managed runner job per account and image.
 
 const (

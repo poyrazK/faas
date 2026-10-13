@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1151
+// adr: 1161
 func TestRunImageRequestedOnlyBeforeTerminator(t *testing.T) {
 	cases := map[string]struct {
 		args []string
@@ -30,7 +30,7 @@ func TestRunImageRequestedOnlyBeforeTerminator(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestParseImageRunArgsFollowsDockerSemantics(t *testing.T) {
 	strs := func(v ...string) *[]string { return &v }
 	cases := map[string]struct {
@@ -63,7 +63,7 @@ func TestParseImageRunArgsFollowsDockerSemantics(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 	var mu sync.Mutex
 	var pulls []string
@@ -116,7 +116,7 @@ func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestImageRunExitCodeMapsOutcomes(t *testing.T) {
 	cases := map[string]struct {
 		task api.JobTaskResponse

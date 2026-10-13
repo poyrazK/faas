@@ -1,4 +1,4 @@
-// Package imagerun serves POST /v1/image-runs (ADR-1151): `docker run`-shaped
+// Package imagerun serves POST /v1/image-runs (ADR-1161): `docker run`-shaped
 // one-task Job runs against a platform-managed runner job per account and
 // image. The runner job caches the materialized image; runs, logs and
 // cancellation use the ordinary /v1/jobs/{job}/runs routes.

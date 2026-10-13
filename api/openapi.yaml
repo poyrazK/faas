@@ -23302,7 +23302,7 @@ paths:
     post:
       tags: [jobs]
       operationId: createImageRun
-      summary: Run one command from an OCI image (ADR-1151).
+      summary: Run one command from an OCI image (ADR-1161).
       description: |
         `docker run`-shaped entry point. apid keeps one platform-managed
         runner job (kind `image_run`) per account and normalized image, so
@@ -66842,7 +66842,7 @@ components:
         input_ref: { type: string, minLength: 1, maxLength: 2048 }
 
     CreateImageRunRequest:
-      description: "Body of POST /v1/image-runs (ADR-1151)."
+      description: "Body of POST /v1/image-runs (ADR-1161)."
       type: object
       required: [image]
       properties:

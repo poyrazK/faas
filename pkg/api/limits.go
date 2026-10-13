@@ -6179,7 +6179,7 @@ var (
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
 
 	// ImageRunCachedImages caps the platform-managed image-run runner jobs
-	// (ADR-1151) an account keeps live, one per cached image. They do not
+	// (ADR-1161) an account keeps live, one per cached image. They do not
 	// count against JobMaxPerAccount; at the cap the least recently used
 	// idle image is evicted.
 	ImageRunCachedImages = [4]int{0, 3, 10, 25}

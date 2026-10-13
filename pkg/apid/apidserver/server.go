@@ -376,7 +376,7 @@ type server struct {
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled       bool
 	// imageRunsEnabled is the operator gate for POST /v1/image-runs
-	// (ADR-1151, FAAS_IMAGE_RUNS).
+	// (ADR-1161, FAAS_IMAGE_RUNS).
 	imageRunsEnabled        bool
 	outboundProbeGatewayURL string
 	// runtimeConfig is the durable operator configuration snapshot. It is
@@ -764,7 +764,7 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	return s
 }
 
-// WithImageRunsEnabled attaches the image-run gate (ADR-1151).
+// WithImageRunsEnabled attaches the image-run gate (ADR-1161).
 func (s *server) WithImageRunsEnabled(enabled bool) *server {
 	s.imageRunsEnabled = enabled
 	return s

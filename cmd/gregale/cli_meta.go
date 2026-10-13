@@ -3474,7 +3474,7 @@ var cliCommands = []cliCommand{
 			"gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'",
 		},
 		Flags: []cliFlag{
-			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1151)", Value: "REF"},
+			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161)", Value: "REF"},
 			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
 			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},
 			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},

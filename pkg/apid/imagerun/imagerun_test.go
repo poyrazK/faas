@@ -84,7 +84,7 @@ func (hs *harness) materialize(jobName string, entrypoint, cmd []string) {
 
 func strs(v ...string) *[]string { return &v }
 
-// adr: 1151
+// adr: 1161
 func TestCreateRejectsBeforeTouchingState(t *testing.T) {
 	cases := map[string]struct {
 		plan    api.Plan
@@ -116,7 +116,7 @@ func TestCreateRejectsBeforeTouchingState(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestCreatePullsThenQueuesDockerResolvedCommand(t *testing.T) {
 	cases := map[string]struct {
 		entrypoint, cmd []string
@@ -161,7 +161,7 @@ func TestCreatePullsThenQueuesDockerResolvedCommand(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestCreateRejectsImageWithoutCommand(t *testing.T) {
 	hs := newHarness(t, api.PlanPro)
 	_, pulling, _ := hs.post(api.CreateImageRunRequest{Image: "scratch-tool"})
@@ -172,7 +172,7 @@ func TestCreateRejectsImageWithoutCommand(t *testing.T) {
 	}
 }
 
-// adr: 1151
+// adr: 1161
 func TestCreateReportsFullCacheAndManagedNames(t *testing.T) {
 	hs := newHarness(t, api.PlanHobby) // three cached images
 	ctx := context.Background()

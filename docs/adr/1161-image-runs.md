@@ -1,4 +1,4 @@
-# ADR-1151 · Image runs (`gregale run --image`)
+# ADR-1161 · Image runs (`gregale run --image`)
 
 - **Status:** accepted for an operator-gated preview
 - **Date:** 2026-10-13

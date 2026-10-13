@@ -53,7 +53,7 @@ type Job struct {
 	ScheduleRevision int64
 	ID               string
 	AccountID        string
-	Kind             string // 'batch' | 'recurring' | 'image_run' (ADR-1151)
+	Kind             string // 'batch' | 'recurring' | 'image_run' (ADR-1161)
 	Name             string
 	ImageRef         string
 	RAMMB            int
@@ -88,7 +88,7 @@ type Job struct {
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
 	// ImageEntrypoint and ImageCmd are the source image's own ENTRYPOINT and
-	// CMD, recorded by imaged before it publishes a ready artifact (ADR-1151).
+	// CMD, recorded by imaged before it publishes a ready artifact (ADR-1161).
 	// ImageConfigRecorded is false for artifacts published before that.
 	ImageEntrypoint     []string
 	ImageCmd            []string

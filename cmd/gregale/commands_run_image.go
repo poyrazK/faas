@@ -1,6 +1,6 @@
 package main
 
-// gregale run --image (ADR-1151): run one command from an OCI image in a
+// gregale run --image (ADR-1161): run one command from an OCI image in a
 // fresh microVM, `docker run` style. Arguments after the flags are the
 // command; they replace the image CMD while the image ENTRYPOINT stays,
 // unless --entrypoint overrides it.

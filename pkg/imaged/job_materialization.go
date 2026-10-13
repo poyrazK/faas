@@ -125,7 +125,7 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull image config: %v", err))
 	}
-	// Image runs (ADR-1151) resolve Docker-style commands from the image's
+	// Image runs (ADR-1161) resolve Docker-style commands from the image's
 	// own ENTRYPOINT and CMD, so keep them before the fallback below.
 	imageEntrypoint := append([]string{}, config.Entrypoint...)
 	imageCmd := append([]string{}, config.Cmd...)

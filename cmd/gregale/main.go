@@ -534,7 +534,7 @@ func run(args []string) (status int) {
 	case "run":
 		// ADR-171: execute untrusted source in a fresh, networkless
 		// disposable microVM and tear it down after the terminal result.
-		// ADR-1151: --image runs one command from an OCI image instead.
+		// ADR-1161: --image runs one command from an OCI image instead.
 		if runImageRequested(args[1:]) {
 			return cmdRunImage(args[1:])
 		}

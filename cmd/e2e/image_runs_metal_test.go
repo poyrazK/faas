@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1151
+// adr: 1161
 // TestImageRunsMetal drives `gregale run --image` end to end on real
 // apid/imaged/schedd/vmmd: the first run pulls and caches the image and runs
 // its own CMD; a second run of the same image reuses the cached artifact and

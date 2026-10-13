@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1151
+// adr: 1161
 func TestImageRunRouteIsGatedAndRunnerJobsAreManaged(t *testing.T) {
 	e, notifier := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
 	srv, acct := *e.S(), *e.Acct()

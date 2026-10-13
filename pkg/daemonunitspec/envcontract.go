@@ -354,7 +354,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_IMAGED_PRESTAGE_ONLY", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "release rollout one-shot exits after staging every assigned runtime base before node drain"},
 	{Name: "FAAS_IMAGED_ROLE", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_IMAGE_DIGEST", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled"},
-	{Name: "FAAS_IMAGE_RUNS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1151)"},
+	{Name: "FAAS_IMAGE_RUNS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1161)"},
 	{Name: "FAAS_INSTANCE_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_INTERNAL_H2C", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_SOCKET", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

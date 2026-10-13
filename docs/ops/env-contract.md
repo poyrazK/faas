@@ -275,7 +275,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
-| `FAAS_IMAGE_RUNS` | apid, shared | `default` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1151) |
+| `FAAS_IMAGE_RUNS` | apid, shared | `default` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1161) |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |

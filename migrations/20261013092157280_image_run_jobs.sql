@@ -1,5 +1,5 @@
 -- filename: 20261013092157280_image_run_jobs.sql
--- ADR-1151: image runs execute one-task Job runs against a platform-managed
+-- ADR-1161: image runs execute one-task Job runs against a platform-managed
 -- runner job per account and image. Runner jobs use kind 'image_run', are
 -- never scheduled, and record the image's own ENTRYPOINT and CMD so apid can
 -- resolve Docker-style commands.

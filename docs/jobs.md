@@ -312,7 +312,7 @@ customer cancellation.
 ## Image runs
 
 `gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
-fresh microVM, the way `docker run` does (ADR-1151):
+fresh microVM, the way `docker run` does (ADR-1161):
 
 ```sh
 gregale run --image alpine echo hello

@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1151
+// adr: 1161
 // testImageRunJobs pins the runner-job contract: hidden from listings and the
 // Job quota, cached per name, re-queued on demand, image config recorded under
 // the materialization claim, and evicted least-recently-used only when idle.

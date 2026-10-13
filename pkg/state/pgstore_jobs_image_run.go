@@ -21,7 +21,7 @@ const imageRunIdleJobsSQL = `select id from jobs j
 	 limit $2
 	 for update of j skip locked`
 
-// JobEnsureImageRun implements ImageRunJobStore (ADR-1151). The account row
+// JobEnsureImageRun implements ImageRunJobStore (ADR-1161). The account row
 // lock serializes concurrent ensures for one account, so the cache count,
 // eviction and insert cannot interleave.
 func (s *PgStore) JobEnsureImageRun(ctx context.Context, in ImageRunEnsure) (ImageRunEnsureResult, error) {

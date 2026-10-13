@@ -6,7 +6,7 @@ import (
 )
 
 // JobKindImageRun marks a platform-managed runner job for image runs
-// (ADR-1151). apid creates, touches and evicts these rows; customer job
+// (ADR-1161). apid creates, touches and evicts these rows; customer job
 // listings and the Job quota exclude them.
 const JobKindImageRun = "image_run"
 

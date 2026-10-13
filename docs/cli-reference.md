@@ -9077,7 +9077,7 @@ Run untrusted code in an isolated disposable microVM, or one command from an OCI
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1151) |  |
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
 | `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
