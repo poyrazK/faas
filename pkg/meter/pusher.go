@@ -215,7 +215,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	}
 	now := p.now()
 	start, end := billing.CompletedUsageWindow(now, lookback)
-	// ADR-968: deliver an hour only once every minute up to its end is final;
+	// ADR-1162: deliver an hour only once every minute up to its end is final;
 	// a late catch-up row can never land in an hour already delivered.
 	finalThrough, err := p.usageFinalThrough(ctx, now)
 	if err != nil {
@@ -441,7 +441,7 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		}
 		if capCents, capped := caps[acct.ID]; capped && billable > 0 {
 			// Reserve the month's billable compute, then bill egress only up to
-			// the cap. The hour settles either way (ADR-968).
+			// the cap. The hour settles either way (ADR-1162).
 			hour := window.Hour.UTC().Truncate(time.Hour)
 			monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 			computeRaw, sumErr := sumUsageRows(ctx, p.store, acct.ID, monthStart, hour.Add(time.Hour))
@@ -622,7 +622,7 @@ func (p *Pusher) billableUsage(ctx context.Context, acct state.Account, hour tim
 
 // billablePendingUsage returns the overage to deliver for one pending window.
 // The month's allowance follows its recorded plan history, and a capped
-// account is billed only up to its cap (ADR-968). Either way the window is
+// account is billed only up to its cap (ADR-1162). Either way the window is
 // settled: a partial delivery under the cap is final, so raising the cap
 // later never back-bills usage the cap already excluded.
 func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, window state.UsageWindow, cursors map[string]overageCursor, caps map[string]int64, grants *monthGrants) (int64, error) {
@@ -658,7 +658,7 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 
 // monthGrants memoises each account-month's recorded plan activations for one
 // push pass, so every window's allowance follows its month's plan history
-// rather than the account's current plan (ADR-968).
+// rather than the account's current plan (ADR-1162).
 type monthGrants struct {
 	store state.Store
 	byKey map[string][]state.FinancialPriceSnapshot
@@ -692,7 +692,7 @@ func (g *monthGrants) included(ctx context.Context, acct state.Account, hour tim
 }
 
 // usageFinalThrough returns the instant before which meterd writes no further
-// compute usage (ADR-968): every earlier minute is recorded compute-complete
+// compute usage (ADR-1162): every earlier minute is recorded compute-complete
 // or older than api.MeterUsageFinalAfter, the sampler's catch-up bound. A
 // provider usage event is keyed by (account, hour) and cannot be amended, so
 // an hour is delivered only once all its minutes are final. A stalled minute

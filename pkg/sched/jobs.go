@@ -1149,7 +1149,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			}
 			continue
 		}
-		// ADR-968: an account at its monthly spend cap starts no new job
+		// ADR-1162: an account at its monthly spend cap starts no new job
 		// task. The task stays queued until the cap is raised or the month
 		// rolls over; it is never failed for the cap.
 		if e.spendCapReached(ctx, run.AccountID) {

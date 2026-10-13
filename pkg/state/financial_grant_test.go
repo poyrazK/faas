@@ -1,4 +1,4 @@
-// spec: §10, ADR-968 — the month's allowance follows its plan history.
+// spec: §10, ADR-1162 — the month's allowance follows its plan history.
 package state
 
 import (

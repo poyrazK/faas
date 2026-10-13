@@ -21,7 +21,7 @@ import (
 // month.
 //
 // The allowance follows the month's recorded plan history exactly as the
-// provider pusher applies it hour by hour (ADR-968): each UTC hour uses the
+// provider pusher applies it hour by hour (ADR-1162): each UTC hour uses the
 // largest grant activated before the hour ends. A segment is split at the
 // hours where that grant changes, so the result equals the sum of the
 // pusher's hourly deliveries before any spend-cap clamp. acct.Plan is the

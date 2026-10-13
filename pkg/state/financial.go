@@ -37,7 +37,7 @@ type FinancialPriceSnapshot struct {
 
 // MonthComputeIncludedMBSeconds returns the compute allowance (mb_seconds)
 // that applies to a calendar month's usage up to through, from that month's
-// recorded price activations (ADR-968). It is the largest compute grant whose
+// recorded price activations (ADR-1162). It is the largest compute grant whose
 // activation precedes through, so a mid-month downgrade never shrinks the
 // month's allowance and an upgrade applies from its recorded activation, not
 // retroactively. Usage before the first recorded activation uses the earliest

@@ -1,4 +1,4 @@
-// spec: §10 — integer money and a shared, exact overage cap (ADR-968).
+// spec: §10 — integer money and a shared, exact overage cap (ADR-1162).
 package meter
 
 import (

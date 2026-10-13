@@ -8310,11 +8310,11 @@ const MeterCatchUpMinutesPerTick = 15
 // compute usage for it: the catch-up window, the sampler's newest-closed-minute
 // offset, and one tick of skew. The provider pusher delivers an hour only when
 // every minute up to its end is recorded compute-complete or older than this,
-// so late catch-up rows can never land in an hour already delivered (ADR-968).
+// so late catch-up rows can never land in an hour already delivered (ADR-1162).
 const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
 
 // SpendCapJobDeferInterval is how long a queued job task of an account at its
-// monthly spend cap waits before the dispatcher re-checks the cap (ADR-968).
+// monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
 const SpendCapJobDeferInterval = time.Minute
 
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure

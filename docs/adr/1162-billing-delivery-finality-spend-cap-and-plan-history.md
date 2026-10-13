@@ -1,4 +1,4 @@
-# ADR-968: Billing delivery finality, a hard spend cap, and plan-history allowances
+# ADR-1162: Billing delivery finality, a hard spend cap, and plan-history allowances
 
 Status: accepted (local implementation; no live provider qualification yet).
 

@@ -52,7 +52,7 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 }
 
 // Each meter is billed up to the cap less the other meter's month-to-date
-// billable cost (ADR-968). Compute reserves the 1,000-millicent egress
+// billable cost (ADR-1162). Compute reserves the 1,000-millicent egress
 // overage and bills nothing; egress reserves the 500-millicent fractional
 // compute and bills exactly the remaining 500. The cap may be under-used when
 // both meters are clamped, never exceeded.

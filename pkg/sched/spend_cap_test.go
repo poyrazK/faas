@@ -1,4 +1,4 @@
-// spend_cap_test.go pins ADR-968: the account spend cap stops always-on
+// spend_cap_test.go pins ADR-1162: the account spend cap stops always-on
 // capacity, not only request wakes.
 package sched
 

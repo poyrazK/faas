@@ -4741,7 +4741,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"app_secrets", `delete from app_secrets where app_id = $1`},
 		{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
 		{"builder_usage", `delete from builder_usage where app_id = $1`},
-		// usage_minutes and usage_daily are deliberately retained (ADR-968):
+		// usage_minutes and usage_daily are deliberately retained (ADR-1162):
 		// they are the account's billing evidence. The month's included
 		// allowance, overage deliveries, the spend cap, invoice credits and
 		// the reconciler all sum them, so a mid-month purge would hand the
@@ -21634,7 +21634,7 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 
 // CurrentMonthOverageCents returns the account's derived compute overage in
 // integer cents for the current UTC month. It removes the month's included
-// allowance (the largest plan grant recorded this month, ADR-968) before
+// allowance (the largest plan grant recorded this month, ADR-1162) before
 // converting the remainder to cents. Integer math only — never float on
 // money (CLAUDE.md).
 //
@@ -21671,7 +21671,7 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
 }
 
-// monthOverageCents applies the month's recorded plan history (ADR-968):
+// monthOverageCents applies the month's recorded plan history (ADR-1162):
 // the largest grant activated so far, never less than the current plan's
 // allowance, whose activation may not be captured yet. This is the same
 // allowance the provider pusher removes, so the spend cap, the dashboard and

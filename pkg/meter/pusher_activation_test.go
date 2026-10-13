@@ -88,7 +88,7 @@ func TestPushPendingMidHourIdentityPreservesAllowance(t *testing.T) {
 				if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
 					t.Fatalf("replay = (%d, %v), want no new deliveries", pushed, err)
 				}
-				// ADR-968: windows above the cap settle with zero receipts, so
+				// ADR-1162: windows above the cap settle with zero receipts, so
 				// raising the cap later never back-bills them.
 				pending, err := store.PendingBillingMeterUsageWindows(ctx, "stripe", kind, hour, hour.Add(2*time.Hour))
 				if err != nil || len(pending) != 0 {

@@ -2940,7 +2940,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	)
 	if bypassGates {
 		concurrency = e.ledger.Concurrency(app.ID)
-		// ADR-968: explicit-deployment admissions (min-instance floors,
+		// ADR-1162: explicit-deployment admissions (min-instance floors,
 		// service replicas, workers, per-deployment wakes) skip the request
 		// gates but not the account spend cap; otherwise always-on capacity
 		// keeps running past the cap. Deployment smoke verifies a release and
@@ -6471,7 +6471,7 @@ func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.A
 // tearing down a newly-woken app.
 //
 // Besides an evicted_cold app, a suspended or abuse-held account and an
-// account at its monthly spend cap (ADR-968) also park every live instance.
+// account at its monthly spend cap (ADR-1162) also park every live instance.
 func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if appID == "" {
 		return 0, fmt.Errorf("sched: park app: empty app id")
@@ -9687,7 +9687,7 @@ const (
 //     wire surface is CodeAdmissionRefused (HTTP 402 + Retry-After
 //     intentionally omitted — the cap is a deliberate budget, not
 //     back-pressure), and (c) live instances are parked by the
-//     reaper's lifecycle reconcile, not by this gate (ADR-968:
+//     reaper's lifecycle reconcile, not by this gate (ADR-1162:
 //     Engine.appMustPark). Caller short-circuits with no INSERT and
 //     emits the audit row overage.cap_reached via the checker's
 //     RecordReached (UTC-day deduped).
@@ -9788,7 +9788,7 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 }
 
 // admitSpendCap is the admission-side spend-cap decision shared by the
-// request gate and the explicit-deployment path (ADR-968). Nil checker
+// request gate and the explicit-deployment path (ADR-1162). Nil checker
 // tolerates legacy fixtures. The audit row is emitted here because the
 // admission decision is the only site that observes the refusal;
 // pkg/sched/loop.go `reaper_scale_down` is the precedent for
@@ -9811,7 +9811,7 @@ func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64
 // spendCapReached reports whether the account's monthly spend cap is
 // reached, without the admission metric or audit side effects. Lifecycle
 // reconcilers use it to park live capacity and stop refilling warm pools
-// (ADR-968). Fails open like OverageChecker.Check.
+// (ADR-1162). Fails open like OverageChecker.Check.
 func (e *Engine) spendCapReached(ctx context.Context, accountID string) bool {
 	if e.overage == nil || accountID == "" {
 		return false

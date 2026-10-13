@@ -214,7 +214,7 @@ func TestPushHourOverageProviderExcludesIncludedCalendarMonthUsage(t *testing.T)
 	}
 }
 
-// ADR-968: the window that crosses the cap is billed exactly up to the cap and
+// ADR-1162: the window that crosses the cap is billed exactly up to the cap and
 // settled, instead of being held for a back-bill if the cap is raised later.
 func TestPushPendingOverageCapBillsCrossingWindowUpToCap(t *testing.T) {
 	ctx := context.Background()
@@ -371,7 +371,7 @@ func TestPushPendingEgressLiveHonorsCombinedOverageCap(t *testing.T) {
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
 	completeUsageThrough(t, ctx, store, now)
 	// 1 GiB of egress overage costs 2 cents; the 1-cent cap bills exactly half
-	// of it and settles the window (ADR-968).
+	// of it and settles the window (ADR-1162).
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
 		t.Fatalf("PushPending = (%d, %v), want one capped delivery", pushed, err)
 	}

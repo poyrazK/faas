@@ -1,4 +1,4 @@
-// spec: §10, ADR-968 — delivery finality, the hard spend cap and plan-history
+// spec: §10, ADR-1162 — delivery finality, the hard spend cap and plan-history
 // allowances.
 package meter_test
 

@@ -27,7 +27,7 @@ func IncludedMBSeconds(plan Plan) int64 {
 
 // BillableMBSecondsAbove returns the portion of total usage above an explicit
 // calendar-month allowance. Callers that know the month's plan history pass
-// the allowance that history grants (ADR-968) instead of the current plan's.
+// the allowance that history grants (ADR-1162) instead of the current plan's.
 func BillableMBSecondsAbove(includedMBSeconds, totalMBSeconds int64) int64 {
 	if totalMBSeconds <= 0 || totalMBSeconds <= includedMBSeconds {
 		return 0

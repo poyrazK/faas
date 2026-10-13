@@ -9,7 +9,7 @@ historical.
 
 ## Local billing integrity: delivery finality, hard spend cap, plan history — 2026-10-11
 
-[ADR-968](adr/968-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+[ADR-1162](adr/1162-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
 billing gaps. The provider pusher delivers an hour only once every minute up to its end
 is recorded compute-complete or older than the catch-up bound, so late catch-up rows
 can no longer land in a delivered hour. The spend cap bills exactly up to the cap,

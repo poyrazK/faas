@@ -1011,7 +1011,7 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
 	}
-	// ADR-968: the purge keeps the app's usage rows; they are the
+	// ADR-1162: the purge keeps the app's usage rows; they are the
 	// account's billing evidence for the month.
 	usage, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, usageMinute)
 	if err != nil {

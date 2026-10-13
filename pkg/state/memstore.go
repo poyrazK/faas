@@ -6594,7 +6594,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	// m.usage (usage_minutes) is retained like PgStore: it is the
-	// account's billing evidence for the month (ADR-968).
+	// account's billing evidence for the month (ADR-1162).
 	filteredLogEvents := m.logEvents[:0]
 	for _, event := range m.logEvents {
 		if event.AppID != id {
@@ -18541,7 +18541,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-968), and converts the
+// largest plan grant recorded this month, ADR-1162), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //

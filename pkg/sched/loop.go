@@ -2377,7 +2377,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	apps = owned
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
-	// suspended accounts and accounts at their spend cap (ADR-968) from the
+	// suspended accounts and accounts at their spend cap (ADR-1162) from the
 	// table source of truth on every reaper tick so a restart or missed
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.

@@ -160,7 +160,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	}
 	// A paused warm VM holds resident RAM and is billed, so an account at its
 	// spend cap keeps no pool until the cap is raised or the month rolls over
-	// (ADR-968).
+	// (ADR-1162).
 	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
 		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ID) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)

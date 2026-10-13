@@ -12,7 +12,7 @@ import (
 )
 
 // The spend cap is a hard ceiling on what a calendar month is billed
-// (ADR-968). An hour that crosses it is billed exactly up to the cap and then
+// (ADR-1162). An hour that crosses it is billed exactly up to the cap and then
 // settled; usage beyond the cap is never billed, even if the cap is raised
 // later, and schedd parks the account's workloads while the cap holds. The
 // allowances below are exact: rational arithmetic compares costs before any
