@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // ADR-607 acceptance drives the scheduler; production apid only records intent.
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Public publish/receipt/replay handlers, real fanout and drain, PostgreSQL,
@@ -37,10 +38,10 @@ func TestEventDeliveryRecoveryPostgresHTTP(t *testing.T) {
 }
 
 type eventDeliverySettlementLossStore struct {
-	*state.PgStore
-	target string
-	lost   atomic.Bool
-	claim  state.InvocationClaim
+	PgStore *state.PgStore
+	target  string
+	lost    atomic.Bool
+	claim   state.InvocationClaim
 }
 
 func (s *eventDeliverySettlementLossStore) CompleteInvocationClaim(ctx context.Context, id string, claim state.InvocationClaim, result json.RawMessage) error {
@@ -163,7 +164,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 		ids[i] = rows[0].ID
 	}
 	loss := &eventDeliverySettlementLossStore{PgStore: store, target: ids[1]}
-	drain := sched.NewDrain(loss, engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
+	drain := sched.NewDrain(statetest.NewPg(loss), engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
 	drain.Tick(ctx)
 	initial := readEventDeliveryRecoveryReceipt(t, e)
 	assertEventRecoveryConsumerState(t, initial, subscriptions[0].ID, "completed", 1)

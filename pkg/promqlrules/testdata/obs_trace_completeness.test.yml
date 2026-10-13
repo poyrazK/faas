@@ -152,7 +152,7 @@ tests:
         alertname: FaasOperatorActionTraceCompletenessLowPage
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               family: obs_trace
               component: schedd
             exp_annotations:
@@ -175,7 +175,7 @@ tests:
         alertname: FaasOperatorActionTraceCompletenessFirstTickStalled
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               family: obs_trace
               component: schedd
             exp_annotations:
@@ -221,7 +221,7 @@ tests:
         alertname: FaasOperatorActionTraceCompletenessLowPage
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               family: obs_trace
               component: schedd
             exp_annotations:

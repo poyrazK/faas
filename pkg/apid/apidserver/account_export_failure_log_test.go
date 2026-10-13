@@ -14,10 +14,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // failingUsageStore makes the export's usage section fail.
-type failingUsageStore struct{ state.Store }
+type failingUsageStore struct{ Store state.Store }
 
 func (failingUsageStore) UsageByAccount(context.Context, string, time.Time) ([]state.Usage, error) {
 	return nil, errors.New("usage scan canceled")
@@ -32,7 +33,7 @@ func TestExportAccount_AssemblyFailureIsLogged(t *testing.T) {
 	seedOneApp(t, e, "exp-fail")
 	var logs bytes.Buffer
 	e.s.log = slog.New(slog.NewTextHandler(&logs, nil))
-	e.s.store = failingUsageStore{Store: e.s.store}
+	e.s.store = statetest.NewStore(failingUsageStore{Store: e.s.store})
 
 	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
 	if rec.Code != http.StatusServiceUnavailable {

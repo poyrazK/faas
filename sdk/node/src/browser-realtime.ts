@@ -34,3 +34,17 @@ export function createBrowserRealtimeSocketFactory(
     return openSocket(url, [...protocols, `${REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX}${token}`]);
   };
 }
+
+/** Obtain a fresh backend-issued subscription ticket on every reconnect. */
+export function createBrowserRealtimeTicketSocketFactory(
+  getTicket: () => string | Promise<string>,
+  openSocket: (url: string, protocols: string[]) => RealtimeSocket =
+    (url, protocols) => new WebSocket(url, protocols),
+): BrowserRealtimeSocketFactory {
+  return async (url, protocols) => {
+    if (!protocols.includes(REALTIME_RESUME_SUBPROTOCOL)) throw new RealtimeConfigurationError('subscription tickets require v2');
+    const ticket = await getTicket();
+    if (!/^grt_[A-Za-z0-9_-]{43}$/.test(ticket)) throw new RealtimeConfigurationError('invalid subscription ticket');
+    return openSocket(url, [...protocols, `${REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX}${ticket}`]);
+  };
+}

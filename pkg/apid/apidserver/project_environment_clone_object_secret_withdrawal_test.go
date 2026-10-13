@@ -51,7 +51,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 			case "stale":
 				f.lease.Token = uuid.NewString()
 			case "runtime":
-				node, nodeErr := s.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+				node, nodeErr := s.PgStore.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
 				if nodeErr != nil {
 					t.Fatal(nodeErr)
 				}
@@ -59,7 +59,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 				if err = f.pool.QueryRow(t.Context(), "SELECT source_deployment_id FROM project_environment_clone_workloads WHERE operation_id=$1 AND app_id=$2", f.lease.Operation.ID, secret.AppID).Scan(&deploymentID); err != nil {
 					t.Fatal(err)
 				}
-				instance, createErr := s.CreateInstance(t.Context(), secret.AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, "")
+				instance, createErr := s.PgStore.CreateInstance(t.Context(), secret.AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, "")
 				if createErr != nil {
 					t.Fatal(createErr)
 				}
@@ -68,7 +68,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease)
+			err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease)
 			if fault != "none" && fault != "legacy" {
 				if err == nil || (fault != "write" && !errors.Is(err, state.ErrConflict)) {
 					t.Fatal("unsafe withdrawal accepted", fault, err)
@@ -88,7 +88,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 				if _, err = f.pool.Exec(t.Context(), "DROP TRIGGER reject_secret_withdrawal ON project_environment_clone_object_secret_withdrawals; DROP FUNCTION reject_secret_withdrawal()"); err != nil {
 					t.Fatal(err)
 				}
-				err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease)
+				err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease)
 			}
 			if err != nil {
 				t.Fatal("atomic withdrawal", err)
@@ -114,7 +114,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 			}
 			setSecretRecipient, mfaIdentities, hostHMACKey = nil, nil, nil
 			reclaimCommonCheckpointWorker(t, f)
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 				t.Fatal("keyless replay", err)
 			}
 			replay, err := sqlc.New().ReadCloneObjectSecretWithdrawal(t.Context(), f.pool, pgtype.UUID{Bytes: uuid.MustParse(f.lease.Operation.ID), Valid: true})
@@ -124,7 +124,7 @@ func TestPGCloneObjectSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 			if _, err = f.pool.Exec(t.Context(), "UPDATE app_secrets SET ciphertext='changed' WHERE app_id=$1 AND scope=$2 AND key='TOKEN'", f.apps[0].ID, f.lease.Operation.TargetEnvironment); err != nil {
 				t.Fatal(err)
 			}
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("changed post-state granted replay", err)
 			}
 		})
@@ -138,7 +138,7 @@ func TestPGCloneObjectSecretWithdrawalRejectsChangedReceipt(t *testing.T) {
 			var err error
 			checkpointPgWithdrawalOwnershipFixture(t, f)
 
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 				t.Fatal(err)
 			}
 			switch fault {
@@ -160,7 +160,7 @@ func TestPGCloneObjectSecretWithdrawalRejectsChangedReceipt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("changed evidence granted replay", fault, err)
 			}
 		})
@@ -200,13 +200,13 @@ func TestPGCloneObjectSecretWithdrawalChainsPostgresReceipt(t *testing.T) {
 	}
 	checkpointPgWithdrawalOwnershipFixture(t, f)
 	compensateCheckpointObjectFixture(t, f)
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("object withdrawal preceded PostgreSQL", err)
 	}
 	if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
 		t.Fatal("PostgreSQL withdrawal", err)
 	}
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("object withdrawal", err)
 	}
 	row, err := sqlc.New().ReadCloneObjectSecretWithdrawal(t.Context(), f.pool, pgtype.UUID{Bytes: uuid.MustParse(f.lease.Operation.ID), Valid: true})
@@ -218,13 +218,13 @@ func TestPGCloneObjectSecretWithdrawalChainsPostgresReceipt(t *testing.T) {
 	if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
 		t.Fatal("PostgreSQL chain replay", err)
 	}
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("object chain replay", err)
 	}
 	if _, err = f.pool.Exec(t.Context(), "UPDATE project_environment_clone_postgres_secret_withdrawals SET recorded_at=recorded_at+interval '1 microsecond' WHERE operation_id=$1", f.lease.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("changed predecessor replay", err)
 	}
 }
@@ -264,20 +264,20 @@ func TestPGCloneObjectSecretWithdrawalWithoutEnvelopes(t *testing.T) {
 	}
 	checkpointPgWithdrawalOwnershipFixture(t, f)
 	compensateCheckpointObjectFixture(t, f)
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal(err)
 	}
 	row, err := sqlc.New().ReadCloneObjectSecretWithdrawal(t.Context(), f.pool, pgtype.UUID{Bytes: uuid.MustParse(f.lease.Operation.ID), Valid: true})
 	if err != nil || row.PriorManifestSha256 != row.ManifestSha256 {
 		t.Fatal("unchanged configuration lost ownership", err)
 	}
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("empty transition replay", err)
 	}
 	if _, err = f.pool.Exec(t.Context(), "DELETE FROM project_environment_clone_object_secret_withdrawals WHERE operation_id=$1", f.lease.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("missing empty transition receipt accepted", err)
 	}
 }

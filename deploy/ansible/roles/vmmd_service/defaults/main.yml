@@ -24,3 +24,7 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # with 4 prepared networks; production-us without them paid setup_network
 # 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
 vmmd_prepared_networks: 4
+
+# ADR-740 developer live source patches. Must match control_plane_service's
+# value: apid publishes patches and vmmd serves them to developer environments.
+faas_dev_patch_delivery_enabled: false

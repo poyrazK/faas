@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A sanitized application stack frame used by grouping version 1.
+ * A sanitized stack frame. Grouping excludes line numbers; in_app selects application evidence.
  */
 export type IssueFrame = {
   file: string;

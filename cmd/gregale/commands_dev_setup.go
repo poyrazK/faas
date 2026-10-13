@@ -11,14 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 // devSetupReceipt is the local, side-effect-free plan produced by
-// `gregale dev setup`. It deliberately contains only paths, filenames, and
-// counts: config files are validated but their values never enter the receipt.
+// `gregale dev setup`. It contains paths, filenames, counts and safe resource
+// plans: config files are validated but secret values never enter the receipt.
 type devSetupReceipt struct {
+	Buckets                 []api.DevBucketRequest `json:"buckets,omitempty"`
 	Version                 int                    `json:"version"`
 	Path                    string                 `json:"path"`
 	Project                 string                 `json:"project"`
@@ -59,7 +61,7 @@ type devSetupDoctorSummary struct {
 	Errors   int           `json:"errors"`
 }
 
-const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
+const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
 
 // cmdDevSetup prepares the first developer environment without making a
 // remote mutation. --start hands the validated, exact plan to cmdDev, which
@@ -74,6 +76,8 @@ func cmdDevSetup(args []string) int {
 	once := fs.Bool("once", false, "start, sync once, and exit")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream when starting")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
+	var bucketNames devBucketNames
+	fs.Var(&bucketNames, "bucket", "provision a private workspace bucket when starting; repeatable")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database when starting")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
@@ -114,6 +118,10 @@ func cmdDevSetup(args []string) int {
 	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
+	}
+	buckets, err := resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
+	if err != nil {
+		return printErr("Invalid developer buckets", err)
 	}
 	lease, err := resolveDevTTL(*ttl)
 	if err != nil {
@@ -161,6 +169,9 @@ func cmdDevSetup(args []string) int {
 	}
 	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease)
 
+	receipt.Buckets = buckets
+	receipt.StartCommand = appendDevBucketArgs(receipt.StartCommand, bucketNames)
+
 	if !receipt.Authenticated {
 		receipt.Warnings = append(receipt.Warnings, "not logged in; run `gregale login` before starting")
 	}
@@ -182,7 +193,7 @@ func cmdDevSetup(args []string) int {
 			return 1
 		}
 		if *start {
-			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
+			return cmdDev(appendDevBucketArgs(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease), bucketNames))
 		}
 		return 0
 	}
@@ -195,7 +206,7 @@ func cmdDevSetup(args []string) int {
 		return 0
 	}
 	PrintProgress(osStdout, "Starting the developer environment")
-	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
+	return cmdDev(appendDevBucketArgs(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease), bucketNames))
 }
 
 func resolveDevSetupSource(sourceDir string) (devSourceConfig, error) {

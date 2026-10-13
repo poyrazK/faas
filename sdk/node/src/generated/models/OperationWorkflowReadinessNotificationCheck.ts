@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowNextActionDigestCheck } from './OperationWorkflowNextActionDigestCheck.js';
 import type { OperationWorkflowReadinessBusinessOutcome } from './OperationWorkflowReadinessBusinessOutcome.js';
 import type { OperationWorkflowReadinessChange } from './OperationWorkflowReadinessChange.js';
 import type { OperationWorkflowReadinessHandoff } from './OperationWorkflowReadinessHandoff.js';
@@ -10,6 +11,7 @@ import type { OperationWorkflowReadinessNotification } from './OperationWorkflow
  * Current advisory evidence check preserving the original notification. Global failures remain unavailable.
  */
 export type OperationWorkflowReadinessNotificationCheck = {
+  next_action_digest?: OperationWorkflowNextActionDigestCheck;
   business_outcome?: OperationWorkflowReadinessBusinessOutcome;
   handoff: OperationWorkflowReadinessHandoff;
   notification: OperationWorkflowReadinessNotification;
@@ -18,7 +20,7 @@ export type OperationWorkflowReadinessNotificationCheck = {
    */
   checked_at: string;
   /**
-   * OperationWorkflowReadinessNotificationCheck.status. Ready or blocked only for a comparable retained edge; otherwise the explicit comparison boundary status.
+   * OperationWorkflowReadinessNotificationCheck.status. Digest_checked for per-item source reconciliation; ready or blocked only for a comparable retained edge; otherwise the explicit comparison boundary status.
    */
   status: string;
   change?: OperationWorkflowReadinessChange;

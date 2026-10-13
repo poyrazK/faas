@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type nativeRetirementWorkerTestStore struct {
@@ -109,13 +110,13 @@ func nativeRetirementWorkerFixture(t *testing.T) (*server, *nativeRetirementWork
 			Workloads: []state.ProjectEnvironmentCloneCheckpointRetirementWorkload{{AppID: uuid.NewString(), TargetDeploymentID: uuid.NewString()}}},
 	}}
 	driver := &nativeRetirementWorkerTestDriver{store: store}
-	srv.store, srv.cloneWorkloadRetirementDriver = store, driver
+	srv.store, srv.cloneWorkloadRetirementDriver = statetest.NewPg(store), driver
 	return srv, store, driver
 }
 
 func TestCloneNativeRetirementWorkerCompletesBeforeMetadataCleanup(t *testing.T) {
 	srv, store, driver := nativeRetirementWorkerFixture(t)
-	if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err != nil {
+	if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(store.events, ",")
@@ -136,7 +137,7 @@ func TestCloneNativeRetirementWorkerDefersUncertainOrIncompleteClosure(t *testin
 			} else {
 				driver.fail = fault
 			}
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err == nil {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err == nil {
 				t.Fatal("failed native retirement accepted")
 			}
 			if store.committed || strings.Contains(strings.Join(store.events, ","), "configuration") || store.events[len(store.events)-1] != "release" {
@@ -160,7 +161,7 @@ func TestCloneNativeRetirementWorkerRecoversWithoutRedispatch(t *testing.T) {
 				store.native.Observation = state.ProjectEnvironmentCloneCheckpointWorkloadRetirementObservation{OwnerToken: store.lease.Operation.ID, PlanSHA256: state.ProjectEnvironmentCloneCheckpointWorkloadRetirementPlanSHA256(store.native.Plan), NoOwnedInstances: true}
 			}
 			if fault != "already_retired" {
-				if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err == nil {
+				if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err == nil {
 					t.Fatal("lost native reply accepted")
 				}
 				if store.committed {
@@ -169,7 +170,7 @@ func TestCloneNativeRetirementWorkerRecoversWithoutRedispatch(t *testing.T) {
 				driver.fail = ""
 				store.events = nil
 			}
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err != nil {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err != nil {
 				t.Fatal("retirement recovery failed", err)
 			}
 			wantCalls := 0

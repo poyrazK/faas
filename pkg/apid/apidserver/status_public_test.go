@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestPublicStatusOverviewCombinesTelemetryHistoryAndPublicEvents(t *testing.T) {
@@ -233,7 +234,7 @@ func TestLegacyStatusProjectionIncludesOperatorIncidents(t *testing.T) {
 	}
 }
 
-type failingStatusEventStore struct{ state.Store }
+type failingStatusEventStore struct{ Store state.Store }
 
 func (f failingStatusEventStore) ListPublicStatusEvents(context.Context, state.StatusEventListOptions) ([]state.StatusIncident, error) {
 	return nil, errors.New("status event database unavailable")
@@ -242,7 +243,7 @@ func (f failingStatusEventStore) ListPublicStatusEvents(context.Context, state.S
 func TestPublicStatusOverviewUsesLastSnapshotWhenEventStoreFails(t *testing.T) {
 	cache := newStatusCache("", slog.Default())
 	cache.setPublic(api.PublicStatusOverview{OverallStatus: "degraded", DataStatus: "fresh", UpdatedAt: time.Now().Add(-time.Minute)}, time.Now().Add(-time.Minute))
-	srv := newServer(failingStatusEventStore{Store: state.NewMemStore()}, slog.Default(), "gregale.dev", nil)
+	srv := newServer(statetest.NewStore(failingStatusEventStore{Store: state.NewMemStore()}), slog.Default(), "gregale.dev", nil)
 	srv.statusCache = cache
 	recorder := httptest.NewRecorder()
 	srv.publicStatusOverviewHandler(recorder, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
@@ -290,7 +291,7 @@ func TestColdCacheEventStoreFailureCannotReportOperational(t *testing.T) {
 	}
 	cache.hasCached = true
 	cache.lastEval = time.Now()
-	srv := newServer(failingStatusEventStore{Store: state.NewMemStore()}, slog.Default(), "gregale.dev", nil)
+	srv := newServer(statetest.NewStore(failingStatusEventStore{Store: state.NewMemStore()}), slog.Default(), "gregale.dev", nil)
 	srv.statusCache = cache
 	recorder := httptest.NewRecorder()
 	srv.publicStatusOverviewHandler(recorder, httptest.NewRequest(http.MethodGet, "/v1/status", nil))

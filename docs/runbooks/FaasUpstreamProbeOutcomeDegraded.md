@@ -8,7 +8,7 @@ outcome vocabulary).
 ADR: ADR-098 §9.A (closed outcome vocabulary) + §11 (host hash
 redaction).
 Issue: #955.
-Severity: page.
+Severity: warn (ADR-1236).
 
 This alert is the fleet-wide complement to the existing
 `FaasUpstreamProbeHighFailureRate` (severity warn, 5 % over 10m

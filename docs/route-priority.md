@@ -27,6 +27,13 @@ Within a class, requests are served in arrival order, and the request already
 at the front of the queue is never moved. A request that loses its place gets
 the same `503` with `Retry-After` as a full queue.
 
+## Queue outcomes
+
+`gregale routes priority my-api` (and the `queue` block of `GET`) shows, per
+class over the last 24 hours, how many requests waited, took a lower class's
+place, lost their place, or were turned away. If nothing had to wait, it says
+so.
+
 ## Which routes are which
 
 - **Saved rules**: up to 20, as `[METHOD] PATH`. A path is a route template

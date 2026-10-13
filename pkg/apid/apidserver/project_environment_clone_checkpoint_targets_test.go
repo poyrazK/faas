@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointTargetLostReplyStore struct {
@@ -80,7 +81,7 @@ func checkpointTargetFixture(t *testing.T, setup ...func(*cloneCoordinatorFixtur
 	t.Helper()
 	f, base, release, _ := checkpointReleaseFixture(t, setup...)
 	store := &checkpointTargetLostReplyStore{checkpointReleaseLostReplyStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	driver := &checkpointTargetTestDriver{checkpointReleaseTestDriver: release, f: &f, native: map[string]state.ProjectEnvironmentCloneCheckpointObjectTargetObservation{}}
 	var err error
 	f.lease, err = f.srv.releaseProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
@@ -99,11 +100,11 @@ func assertCheckpointTargetsPrivate(t *testing.T, f *cloneCoordinatorFixture, st
 		if err := f.pool.QueryRow(t.Context(), "select app_id::text from object_buckets where id=$1", resource.TargetID).Scan(&appID); err != nil {
 			t.Fatal(err)
 		}
-		bucket, err := store.ProjectEnvironmentCloneObjectBucketForLease(t.Context(), f.lease, appID, resource.SourceID, resource.TargetID)
+		bucket, err := store.PgStore.ProjectEnvironmentCloneObjectBucketForLease(t.Context(), f.lease, appID, resource.SourceID, resource.TargetID)
 		if err != nil || bucket.PublicRead || bucket.ServeAt != "" || (bucket.State == "ready") != wantReady {
 			t.Fatal("private target state", bucket.ID, bucket.State, err)
 		}
-		if _, err := store.GetObjectBucket(t.Context(), bucket.AccountID, bucket.AppID, bucket.ID); !errors.Is(err, state.ErrNotFound) {
+		if _, err := store.PgStore.GetObjectBucket(t.Context(), bucket.AccountID, bucket.AppID, bucket.ID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("target published", err)
 		}
 	}
@@ -230,16 +231,16 @@ func TestPGCloneCheckpointTargetCreationGenericRecoveryExcluded(t *testing.T) {
 		for _, recovery := range []bool{false, true} {
 			var err error
 			if recovery {
-				_, err = store.ClaimObjectBucketRecovery(t.Context(), target.AccountID, target.AppID, target.ID, uuid.NewString(), "provisioning")
+				_, err = store.PgStore.ClaimObjectBucketRecovery(t.Context(), target.AccountID, target.AppID, target.ID, uuid.NewString(), "provisioning")
 			} else {
-				_, err = store.ClaimObjectBucket(t.Context(), target.AccountID, target.AppID, target.ID, uuid.NewString(), "provisioning")
+				_, err = store.PgStore.ClaimObjectBucket(t.Context(), target.AccountID, target.AppID, target.ID, uuid.NewString(), "provisioning")
 			}
 			if !errors.Is(err, state.ErrConflict) {
 				t.Fatal("generic native creation admitted", err)
 			}
 		}
 	}
-	due, err := store.DueObjectBuckets(t.Context(), true, 100)
+	due, err := store.PgStore.DueObjectBuckets(t.Context(), true, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

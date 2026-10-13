@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointPgActivationFailureStore struct {
@@ -112,7 +113,7 @@ func checkpointPgActivationFixture(t *testing.T) (*cloneCoordinatorFixture, *che
 		t.Fatal(err)
 	}
 	store := &checkpointPgActivationFailureStore{checkpointPgConnectionFailureStore: s}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	// Activation and original intent recovery never require secret material.
 	setSecretRecipient = nil
 	mfaIdentities = nil
@@ -120,7 +121,7 @@ func checkpointPgActivationFixture(t *testing.T) (*cloneCoordinatorFixture, *che
 }
 func assertCheckpointPgActivationPrivate(t *testing.T, f *cloneCoordinatorFixture, s *checkpointPgActivationFailureStore, want string) state.ProjectEnvironmentCloneCheckpointPgActivation {
 	t.Helper()
-	in, err := s.ProjectEnvironmentCloneCheckpointPgActivationForLease(t.Context(), f.lease)
+	in, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgActivationForLease(t.Context(), f.lease)
 	if err != nil || in.State != want {
 		t.Fatal("activation journal", in.State, err)
 	}
@@ -390,11 +391,11 @@ func TestPGCloneCheckpointPgActivationRetirementFencesDelayedActivation(t *testi
 			if !errors.Is(err, state.ErrConflict) {
 				t.Fatal("unfenced delayed activation allowed retirement", err)
 			}
-			owner, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresCredentialRetirement(t.Context(), f.lease, bindingID)
+			owner, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredentialRetirement(t.Context(), f.lease, bindingID)
 			if err != nil || owner.State != "requested" || owner.Plan.ActivationRequestID == "" || owner.Plan.ActivationPlanSHA256 == "" {
 				t.Fatal("retirement lost original activation intent", err)
 			}
-			if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+			if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("unfenced activation released fork", err)
 			}
 			retire.edit = nil

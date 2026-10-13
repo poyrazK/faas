@@ -312,6 +312,9 @@ Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.
 
+See [object storage from compute workloads](object-storage-compute.md) for SDK
+runtime helpers, atomic credential reload and permission-aware write canaries.
+
 ### Release gates and staging smoke
 
 Run the read-only release preflight before promoting a release. It checks that
@@ -2299,3 +2302,40 @@ ETag mismatch returns 412. Failed observations issue no native PUT, and
 uncertain dispatched writes retain their receipt for recovery. Conditional
 GCS multipart completion requires a separate durable staging/publication
 implementation and still returns 501. See [ADR-955](adr/955-gcs-conditional-put-capabilities.md).
+
+
+## Multipart checksums and object attributes (ADR-1038)
+
+Select `ChecksumAlgorithm` when calling the standard S3
+`CreateMultipartUpload` operation. CRC32/CRC32C support `COMPOSITE` and
+`FULL_OBJECT`; CRC64NVME supports `FULL_OBJECT`; SHA1/SHA256 support
+`COMPOSITE`. When type is omitted, CRC64NVME defaults to full-object and the
+other supported algorithms default to composite. Unsupported combinations
+are rejected before native initiation. This enrollment is currently S3-only.
+
+Each part is validated and its checksum is returned by `UploadPart` and
+`ListParts`. Include the returned part checksums with the selected ETags in
+`CompleteMultipartUpload`. Full-object completion can instead supply its whole
+checksum; a supplied checksum or object size must match the verified native
+part inventory. Checksum-enabled completion requires consecutive part numbers
+starting at one. A rejected checksum does not consume the upload.
+
+The policy and completion snapshot survive restart. Completion returns the
+verified checksum and public version; a terminal retry returns that same result.
+Unknown acknowledgments retain quota and mutation fences until existing
+receipt/version proof and checksum readback both establish completion. Checksums
+do not replace write receipts or prove absence.
+
+Request `ChecksumMode=ENABLED` for GET/HEAD checksum metadata. Standard
+`GetObjectAttributes` supports `ETag`, `Checksum`, `ObjectParts`, `StorageClass`
+and `ObjectSize`, with bounded `MaxParts`/`PartNumberMarker` pagination. Retained
+versions use the same public version selectors and bucket read permission as
+GET/HEAD. Delete markers preserve the public version and standard 404/405
+behavior. Conditional and range headers on `GetObjectAttributes` are explicitly
+unsupported. Native identities remain private.
+
+Checksum-enabled parts share the gateway's configured aggregate spool budget,
+free-space floor, transfer slots and deadlines. Choose part sizes within that
+spool budget. Other limits, cleanup proofs and legacy unselected uploads remain
+unchanged. Local compatibility fixtures exercise Go, Node, Boto3 and AWS CLI;
+live provider qualification remains a separate operator acceptance step.

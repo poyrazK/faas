@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestUnifiedDeadLetter_QueueListInspectAndReplay(t *testing.T) {
@@ -264,7 +265,7 @@ func TestAccountUnifiedDeadLetter_PreventsCrossAccountRead(t *testing.T) {
 }
 
 // pgDeadLetterIDStore reproduces PgStore's answer for an id that is not a UUID.
-type pgDeadLetterIDStore struct{ *state.MemStore }
+type pgDeadLetterIDStore struct{ MemStore *state.MemStore }
 
 func (pgDeadLetterIDStore) DeadLetterEventByID(context.Context, string, string) (state.DeadLetterEvent, error) {
 	return state.DeadLetterEvent{}, state.ErrInvalidArgument
@@ -275,7 +276,7 @@ func (pgDeadLetterIDStore) DeadLetterEventByID(context.Context, string, string) 
 func TestUnifiedDeadLetter_MalformedIDIsNotFound(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	apidserver.MustSeedApp(t, e, "dlq-owner")
-	(*(*e.S()).Store()) = pgDeadLetterIDStore{MemStore: (*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewMem(pgDeadLetterIDStore{MemStore: (*e.Store())})
 	rec := e.Do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq/not-an-id", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("malformed id status = %d, want 404; body=%s", rec.Code, rec.Body.String())

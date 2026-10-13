@@ -9,10 +9,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type runtimeSecretDeliveryTrackingStore struct {
-	state.Store
+	Store  state.Store
 	result state.AppSecretDeliveryResult
 	err    error
 	calls  int
@@ -103,7 +104,7 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 						}
 					}
 				}
-				engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+				engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
 				if prime {
 					err = engine.Prime(ctx, app.ID, dep.ID)
 				} else {

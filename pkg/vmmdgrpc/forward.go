@@ -65,6 +65,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -220,6 +221,9 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
+	if err := s.resumeQuiet(stream.Context(), reqInit.GetInstance()); err != nil {
+		return err
+	}
 	// Per-invocation extension hooks are deliberately asynchronous. A slow or
 	// absent extension must never add latency to the customer request path.
 	if hooker, ok := s.vmm.(extensionHookVMM); ok {
@@ -756,6 +760,9 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// Per-instance concurrency accounting (mirrors ForwardHTTPStream).
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
+	if err := s.resumeQuiet(stream.Context(), reqInit.GetInstance()); err != nil {
+		return err
+	}
 	// An upgraded session outlives any request; instance teardown ends it
 	// through this context (H9-129).
 	ctx, release := s.forwardSessions.track(stream.Context(), reqInit.GetInstance())
@@ -1451,6 +1458,48 @@ func (s *Server) beginActivity(instanceID string) {
 		return
 	}
 	s.activity.Begin(instanceID)
+}
+
+// quietResumer is the ADR-1151 capability fcvm.Manager provides.
+type quietResumer interface {
+	QuietResume(ctx context.Context, instance string) error
+}
+
+// resumeQuiet resumes a quiet-paused instance (ADR-1151) before the bridge
+// dials its guest. Callers mark activity first, so the pause pass cannot
+// pause the guest again while the forward runs. A failed resume fails the
+// forward fast instead of letting it hang on a paused guest.
+func (s *Server) resumeQuiet(ctx context.Context, instanceID string) error {
+	q, ok := s.vmm.(quietResumer)
+	if !ok {
+		return nil
+	}
+	if err := q.QuietResume(ctx, instanceID); err != nil {
+		return status.Errorf(codes.Unavailable, "resume quiet-paused instance: %v", err)
+	}
+	return nil
+}
+
+// quietReporter reports an instance's ADR-1151 quiet pause state.
+type quietReporter interface {
+	QuietPauseState(instance string) (paused bool, since time.Time)
+}
+
+// addQuietPauseState fills InstanceStats.quiet_paused(_since) so schedd
+// can leave a quiet-paused instance's vCPUs out of the node's active vCPU.
+func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
+	q, ok := s.vmm.(quietReporter)
+	if !ok {
+		return
+	}
+	paused, since := q.QuietPauseState(row.GetInstance())
+	if !paused {
+		return
+	}
+	row.QuietPaused = true
+	if !since.IsZero() {
+		row.QuietPausedSince = timestamppb.New(since)
+	}
 }
 
 // endActivity (PR-B, issue #462) is the nil-safe bridge to

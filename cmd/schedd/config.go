@@ -181,6 +181,13 @@ type Config struct {
 	// check either way.
 	MeasuredAdmission bool `toml:"measured_admission"`
 
+	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
+	// active instances: bookings less those vmmd reports quiet-paused, with
+	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
+	// budget. Off by default; turn it on together with vmmd's quiet_pause on
+	// the same nodes. A node without a fresh sample counts every booking.
+	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).

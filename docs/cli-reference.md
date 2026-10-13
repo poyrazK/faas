@@ -59,7 +59,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (linked app or interactive picker) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
-| [`run`](#run) | Run untrusted code in an isolated disposable microVM |
+| [`run`](#run) | Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image) |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
@@ -1263,7 +1263,7 @@ Read the stored release policy
 
 Replace the release policy using its current revision
 
-`gregale bindings release-policy set [--scope <SCOPE>] [--mode <off|enforce>] [--require-verification] [--max-age <DURATION>] [--require-application-ack] --expected-revision <N> [--reason <TEXT>] <app>`
+`gregale bindings release-policy set [--scope <SCOPE>] [--mode <off|enforce>] [--require-verification] [--max-age <DURATION>] [--require-application-ack] [--object-storage-require <PREFIX=read|write|read_write>] [--clear-object-storage-requirements] --expected-revision <N> [--reason <TEXT>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1272,6 +1272,8 @@ Replace the release policy using its current revision
 | `--require-verification` | alias for --mode enforce |  |
 | `--max-age <DURATION>` | maximum verification age (default 10m; 1s to 24h) |  |
 | `--require-application-ack` | require current application acknowledgements |  |
+| `--object-storage-require <PREFIX=read|write|read_write>` | require storage operations (repeatable; replaces all storage requirements) |  |
+| `--clear-object-storage-requirements` | explicitly remove all storage operation requirements |  |
 | `--expected-revision <N>` | current policy revision; use 0 initially | required |
 | `--reason <TEXT>` | update reason; required when disabling enforcement |  |
 
@@ -1304,7 +1306,7 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1315,8 +1317,10 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
 | `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
 | `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+| `--release-policy` | apply stored scope requirements and confirm the policy after every inventory evaluation (read-only) |  |
+| `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
-| `--timeout <DURATION>` | maximum preflight wait (default 5m) |  |
+| `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
 
 Examples:
@@ -1325,6 +1329,7 @@ Examples:
 gregale bindings check --app my-api --interactive
 gregale bindings check my-api --max-verification-age 10m --json
 gregale bindings check my-api --scope production
+gregale bindings check my-api --deployment v12 --release-policy --wait --json
 gregale bindings check my-api --deployment v12 --max-verification-age 10m --json
 ```
 
@@ -1378,17 +1383,20 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--release-policy] [--dry-run] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--object-storage-write] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | verify services, managed PostgreSQL, object storage and configured outbound bindings |  |
+| `--release-policy` | run the stored policy&#39;s required storage canaries and finish with policy-aware preflight |  |
+| `--dry-run` | preview --release-policy storage operations without creating tasks |  |
 | `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
 | `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
 | `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
+| `--object-storage-write` | opt into a tiny upload and cleanup; also verify download for read/write bindings |  |
 | `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
-| `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+| `--wait-timeout <D>` | maximum time to wait for canaries; bounds the entire --release-policy workflow |  |
 
 Examples:
 
@@ -1398,6 +1406,8 @@ gregale bindings verify my-api --all
 gregale bindings verify my-api --deployment v12 --all
 gregale bindings verify my-api --postgres DATABASE_URL
 gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
+gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify my-api --deployment v12 --release-policy --object-storage-write --json
 ```
 
 ### bindings smoke
@@ -1450,13 +1460,16 @@ gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
+gregale ai logs show <integration-id> <request-id>
+gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
+gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
 ```
 
 ### ai policy
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1465,8 +1478,24 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+
+### ai content-policy
+
+Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
+
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--email <ACTION>` | e-mail addresses | one of `off` · `redact` · `block` |
+| `--payment-card <ACTION>` | payment card numbers | one of `off` · `redact` · `block` |
+| `--iban <ACTION>` | IBANs | one of `off` · `redact` · `block` |
+| `--secrets <ACTION>` | API keys, tokens and private keys | one of `off` · `redact` · `block` |
+| `--block-term <TERM>` | block requests containing this term, ignoring case (repeat) |  |
+| `--clear-terms` | remove every blocked term first |  |
 
 ### ai app-limit
 
@@ -1501,7 +1530,7 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 
 | Flag | Meaning | |
 |---|---|---|
-| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
+| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears) |  |
 
 ### ai catalog
 
@@ -1571,11 +1600,23 @@ List budget alerts recorded at 80% and 100%
 |---|---|---|
 | `--limit <N>` | alerts to show, 1 to 100 |  |
 
+### ai replay
+
+Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay
+
+`gregale ai replay [--target <TARGET>] [--no-wait] [--timeout <duration>] [show] <integration-id|replay-id> [<request-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] to replay on (repeat, at most 5) |  |
+| `--no-wait` | print the replay without waiting for results |  |
+| `--timeout <duration>` | how long to wait for results (default 3m) |  |
+
 ### ai logs
 
-Page the opt-in AI request log, newest first
+Page the opt-in AI request log, newest first, or show one call&#39;s captured bodies
 
-`gregale ai logs [--limit <N>] [--before <TIME>] <integration-id>`
+`gregale ai logs [--limit <N>] [--before <TIME>] [show] <integration-id> [<request-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3485,10 +3526,12 @@ Follow an accepted fresh restart without submitting another request
 
 Run a one-off command against the live deployment
 
-`gregale app <slug> exec [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale app <slug> exec [--interactive] [--tty] [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | attach stdin and stream output live (-i; default command /bin/sh) |  |
+| `--tty` | allocate a remote terminal (-t; use -it) |  |
 | `--shell` | interpret one command string through the app shell |  |
 | `--detach` | return after the task is queued |  |
 | `--timeout-seconds <N>` | server-side command timeout |  |
@@ -3499,6 +3542,27 @@ Run a one-off command against the live deployment
 | `--idempotency-key <KEY>` | stable retry identity for this submission |  |
 | `--poll-interval <D>` | status polling interval while attached |  |
 | `--wait-timeout <D>` | maximum attached wait |  |
+
+### app cp
+
+Copy a path out of a fresh VM of the live deployment
+
+`gregale app <slug> cp [--wait-timeout <D>] <remote-path> <local-path|->`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
+
+### app port-forward
+
+Forward a local port to HOST:PORT reached from inside the app&#39;s network
+
+`gregale app <slug> port-forward [--address <A>] [--wait-timeout <D>] [LOCAL_PORT:]HOST:PORT`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--address <A>` | local address to listen on (default 127.0.0.1) |  |
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
 
 ### app security
 
@@ -6511,7 +6575,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -6658,7 +6722,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
+`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6671,6 +6735,7 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database and inject DATABASE_URL |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
@@ -6802,7 +6867,7 @@ run `gregale delayed-task add` against the developer app
 
 preflight a project and prepare the first developer environment
 
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
+`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6814,6 +6879,7 @@ preflight a project and prepare the first developer environment
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
 | `--open` | open the verified URL |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--ttl <DURATION>` | environment lease after the latest sync |  |
@@ -8059,7 +8125,7 @@ Show what the edge rejected for an app: pre-auth blocks, validation failures, an
 
 Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8070,6 +8136,7 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
+| `--verified-bot` | simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 | `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |
@@ -9370,7 +9437,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -9430,12 +9497,19 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 ## run
 
-Run untrusted code in an isolated disposable microVM
+Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
+| `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
+| `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
+| `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
+| `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
+| `--detach` | with --image, queue the run and print its id without waiting (-d) |  |
 | `--workflow-id <ID>` | caller-generated workflow grouping id |  |
 | `--step-label <LABEL>` | short label for this step within --workflow-id |  |
 | `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |
@@ -9454,6 +9528,13 @@ Run untrusted code in an isolated disposable microVM
 | `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
+
+Examples:
+
+```sh
+gregale run --image alpine echo hello
+gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
+```
 
 
 ## runs

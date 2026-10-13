@@ -217,6 +217,12 @@ type AppTaskOutputVMMAPI interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
+// AppTaskInteractiveVMMAPI runs an interactive app-task session (ADR-1037)
+// whose input and output belong to one attached client.
+type AppTaskInteractiveVMMAPI interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
 // AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
 // the scheduler's proof that a fresh app-task-only guest exists.
 type AppTaskRestoreVMMAPI interface {
@@ -248,6 +254,10 @@ type flowSnapshotter interface {
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
 	vmmdpb.UnimplementedVmmdServer
+
+	// appTaskAttach pairs interactive app tasks with their attached client
+	// (ADR-1037). The zero value is ready to use.
+	appTaskAttach appTaskAttachRegistry
 
 	vmm   VmmdAPI
 	ops   *wire.OpsMetrics
@@ -319,7 +329,11 @@ type Server struct {
 	// here from a row already committed to a peer; without that
 	// distinction it could either strand a paused source or resume
 	// a VM after ownership moved away.
-	nodeID                        string
+	nodeID string
+	// qualificationNodeID is the durable local compute identity used by the
+	// attempt-aware qualification RPCs. A legacy single-box vmmd can use its
+	// seeded default-local row without enabling multi-node migration paths.
+	qualificationNodeID           string
 	managedPostgresDrainAuthority state.ManagedPostgresDrainAuthority
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
@@ -419,6 +433,15 @@ func (s *Server) WithDivergedInstances(diverged *DivergedInstances) *Server {
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
+// WithQualificationNodeID binds private qualification RPCs to the local
+// compute row, including the seeded default-local row in single-box mode.
+func (s *Server) WithQualificationNodeID(nodeID string) *Server {
+	if s != nil {
+		s.qualificationNodeID = strings.TrimSpace(nodeID)
 	}
 	return s
 }
@@ -1329,6 +1352,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	for inst, b := range resident {
 		total += b
 		row := buildInstanceStatsRow(inst, b, s.cpuCache, s.netCache, s.activity, s.ops)
+		s.addQuietPauseState(row)
 		if provider, ok := s.vmm.(interface {
 			DiskUsage(string) (fcvm.DiskUsage, bool)
 		}); ok {

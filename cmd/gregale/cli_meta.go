@@ -471,6 +471,7 @@ var templateNames13 = []string{
 	"event-worker",
 	"queue-worker",
 	"s3-uploader",
+	"object-storage-node",
 	"slack-bot",
 	"rest-api-postgres",
 	"cron-worker",
@@ -660,6 +661,8 @@ var cliCommands = []cliCommand{
 					{Name: "require-verification", Short: "alias for --mode enforce"},
 					{Name: "max-age", Value: "DURATION", Short: "maximum verification age (default 10m; 1s to 24h)"},
 					{Name: "require-application-ack", Short: "require current application acknowledgements"},
+					{Name: "object-storage-require", Value: "PREFIX=read|write|read_write", Short: "require storage operations (repeatable; replaces all storage requirements)"},
+					{Name: "clear-object-storage-requirements", Short: "explicitly remove all storage operation requirements"},
 					{Name: "expected-revision", Value: "N", Req: true, Short: "current policy revision; use 0 initially"},
 					{Name: "reason", Value: "TEXT", Short: "update reason; required when disabling enforcement"},
 				}, Examples: []string{"gregale bindings release-policy set public-api --scope production --require-verification --max-age 10m --expected-revision 0"}},
@@ -677,10 +680,12 @@ var cliCommands = []cliCommand{
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment whose evidence must pass, including zero-traffic candidates"},
 					{Name: "allow-unsupported", Short: "waive connectivity coverage for active queue and outbound bindings"},
 					{Name: "require-application-ack", Short: "require current PostgreSQL/object-storage application acknowledgements"},
+					{Name: "release-policy", Short: "apply stored scope requirements and confirm the policy after every inventory evaluation (read-only)"},
+					{Name: "object-storage-require", Value: "PREFIX=read|write|read_write", Short: "require recorded storage operation evidence (repeatable; no writes)"},
 					{Name: "wait", Short: "poll read-only inventory while probes, refreshes or application acknowledgements are pending"},
-					{Name: "timeout", Value: "DURATION", Short: "maximum preflight wait (default 5m)"},
+					{Name: "timeout", Value: "DURATION", Short: "maximum waiting or policy-aware preflight time (default 5m)"},
 					{Name: "poll-interval", Value: "DURATION", Short: "inventory polling interval with --wait (default 1s)"},
-				}, Examples: []string{"gregale bindings check --app my-api --interactive", "gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
+				}, Examples: []string{"gregale bindings check --app my-api --interactive", "gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --release-policy --wait --json", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
 			},
 			{
 				Name:  "object-storage",
@@ -701,13 +706,16 @@ var cliCommands = []cliCommand{
 				Positionals: []string{"<app>", "[<service>]"},
 				Flags: []cliFlag{
 					{Name: "all", Short: "verify services, managed PostgreSQL, object storage and configured outbound bindings"},
+					{Name: "release-policy", Short: "run the stored policy's required storage canaries and finish with policy-aware preflight"},
+					{Name: "dry-run", Short: "preview --release-policy storage operations without creating tasks"},
 					{Name: "postgres", Short: "verify one managed PostgreSQL binding by environment key", Value: "ENVIRONMENT_KEY"},
 					{Name: "outbound", Short: "verify a configured outbound integration by UUID", Value: "INTEGRATION_ID"},
 					{Name: "object-storage", Short: "verify one object-storage binding by environment prefix (read access only)", Value: "PREFIX"},
+					{Name: "object-storage-write", Short: "opt into a tiny upload and cleanup; also verify download for read/write bindings"},
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment to verify, including zero-traffic candidates"},
 					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
-					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
-				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS"},
+					{Name: "wait-timeout", Short: "maximum time to wait for canaries; bounds the entire --release-policy workflow", Value: "D"},
+				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS", "gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json", "gregale bindings verify my-api --deployment v12 --release-policy --object-storage-write --json"},
 			},
 			{
 				Name:        "smoke",
@@ -773,6 +781,9 @@ var cliCommands = []cliCommand{
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
+			"gregale ai logs show <integration-id> <request-id>",
+			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
+			"gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
@@ -781,8 +792,17 @@ var cliCommands = []cliCommand{
 				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
 				{Name: "request-log", Short: "log per-call metadata for 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "request-log-content", Short: "also keep the first 32 KiB of each logged call's bodies for 3 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
+			}},
+			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "payment-card", Short: "payment card numbers", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "iban", Short: "IBANs", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "secrets", Short: "API keys, tokens and private keys", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "block-term", Short: "block requests containing this term, ignoring case (repeat)", Value: "TERM"},
+				{Name: "clear-terms", Short: "remove every blocked term first", Bool: true},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
@@ -796,7 +816,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
-				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
+				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "catalog", Short: "Show the built-in prices that apply to models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
@@ -824,7 +844,12 @@ var cliCommands = []cliCommand{
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
-			{Name: "logs", Short: "Page the opt-in AI request log, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "replay", Short: "Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay", Positionals: []string{"[show]", "<integration-id|replay-id>", "[<request-id>]"}, Flags: []cliFlag{
+				{Name: "target", Short: "<integration-id>[:<model>] to replay on (repeat, at most 5)", Value: "TARGET"},
+				{Name: "no-wait", Short: "print the replay without waiting for results", Bool: true},
+				{Name: "timeout", Short: "how long to wait for results (default 3m)", Value: "duration"},
+			}},
+			{Name: "logs", Short: "Page the opt-in AI request log, newest first, or show one call's captured bodies", Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},
 				{Name: "before", Short: "show calls before this RFC 3339 time", Value: "TIME"},
 			}},
@@ -1246,6 +1271,8 @@ var cliCommands = []cliCommand{
 				{Name: "json", Short: "print the last observed restart receipt"},
 			}}}},
 			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
+				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
+				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},
@@ -1256,6 +1283,13 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable retry identity for this submission", Value: "KEY"},
 				{Name: "poll-interval", Short: "status polling interval while attached", Value: "D"},
 				{Name: "wait-timeout", Short: "maximum attached wait", Value: "D"},
+			}},
+			{Name: "cp", Short: "Copy a path out of a fresh VM of the live deployment", Positionals: []string{"<remote-path>", "<local-path|->"}, Flags: []cliFlag{
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
+			}},
+			{Name: "port-forward", Short: "Forward a local port to HOST:PORT reached from inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
+				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
 			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{
 				{Name: "posture", Short: "show the read-only security posture"},
@@ -2257,6 +2291,7 @@ var cliCommands = []cliCommand{
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
+			{Name: "bucket", Short: "provision a private workspace bucket; repeatable", Value: "NAME"},
 			{Name: "postgres", Short: "provision an isolated PostgreSQL database and inject DATABASE_URL"},
 			{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
 			{Name: "postgres-seed", Short: "shell command run once in the developer app after its database is ready", Value: "CMD"},
@@ -2316,6 +2351,7 @@ var cliCommands = []cliCommand{
 				{Name: "once", Short: "sync once and exit"},
 				{Name: "no-logs", Short: "do not attach runtime logs"},
 				{Name: "open", Short: "open the verified URL"},
+				{Name: "bucket", Short: "provision a private workspace bucket; repeatable", Value: "NAME"},
 				{Name: "postgres", Short: "provision an isolated PostgreSQL database"},
 				{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
 				{Name: "ttl", Short: "environment lease after the latest sync", Value: "DURATION"},
@@ -2830,6 +2866,7 @@ var cliCommands = []cliCommand{
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "asn", Short: "simulated client autonomous system for asn conditions (e.g. AS13335)", Value: "AS"},
+				{Name: "verified-bot", Short: "simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims)", Bool: true},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 				{Name: "proposal", Short: "compare against a proposed change: JSON {add,update,remove} file or - for stdin", Value: "file|-"},
@@ -3499,8 +3536,19 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "run",
 		DocSlug: "run",
-		Short:   "Run untrusted code in an isolated disposable microVM",
+		Short:   "Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)",
+		Examples: []string{
+			"gregale run --image alpine echo hello",
+			"gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'",
+		},
 		Flags: []cliFlag{
+			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161)", Value: "REF"},
+			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
+			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},
+			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},
+			{Name: "timeout", Short: "with --image, task deadline (default: the plan's Job ceiling)", Value: "D"},
+			{Name: "pull", Short: "with --image, re-pull a cached tag (always) or reuse it (missing)", Value: "P", ClosedSet: []string{"missing", "always"}},
+			{Name: "detach", Short: "with --image, queue the run and print its id without waiting (-d)"},
 			{Name: "workflow-id", Short: "caller-generated workflow grouping id", Value: "ID"},
 			{Name: "step-label", Short: "short label for this step within --workflow-id", Value: "LABEL"},
 			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},

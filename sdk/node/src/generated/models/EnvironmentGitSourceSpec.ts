@@ -6,6 +6,7 @@
  * Pinned repository identity and source-of-truth controls for one environment.
  */
 export type EnvironmentGitSourceSpec = {
+  provider: 'github' | 'gitlab';
   repository_id: number;
   installation_id: number;
   repository: string;

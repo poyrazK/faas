@@ -25,6 +25,13 @@ FROZEN_OWN_FRAC=0.15 python3 -P -E scripts/experiments/frozen-tier-economics/fre
 python3 -P -E scripts/experiments/frozen-tier-economics/show.py /tmp/results.json
 ```
 
+`FUNCTIONS=1` treats every app as a function app, which idles out after
+30 s on every plan (ADR-974) instead of the plan's idle timeout.
+
+`occupancy.py apps.npz` prints the active vCPU, booked vCPU, resident and
+frozen VM counts per instant under ADR-1151's policy (quiet pause plus
+freeze at the idle timeout).
+
 The simulation runs in about 10 s and peaks at about 1.5 GB of RAM. Plans, prices,
 idle timeouts and node budgets are copied from `pkg/api/limits.go` at the top
 of `freeze_sim.py`; per-tier latencies are the n2 measurements in ADR-906.

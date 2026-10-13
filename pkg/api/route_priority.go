@@ -31,10 +31,30 @@ type RoutePriorityRule struct {
 // configured (saved rules), route_health (the route-health selectors, treated
 // as critical, when nothing is saved) or none.
 type RoutePrioritiesResponse struct {
-	Slug      string              `json:"slug"`
-	Source    string              `json:"source"`
-	Routes    []RoutePriorityRule `json:"routes"`
-	UpdatedAt string              `json:"updated_at,omitempty"`
+	Slug      string                   `json:"slug"`
+	Source    string                   `json:"source"`
+	Routes    []RoutePriorityRule      `json:"routes"`
+	UpdatedAt string                   `json:"updated_at,omitempty"`
+	Queue     *RoutePriorityQueueStats `json:"queue,omitempty"`
+}
+
+// RoutePriorityQueueStats is how the app's warm-capacity queue behaved over
+// the evidence window, per priority class (ADR-1152).
+type RoutePriorityQueueStats struct {
+	Source  string                    `json:"source"`
+	Window  string                    `json:"window"`
+	Classes []RoutePriorityQueueClass `json:"classes"`
+}
+
+// RoutePriorityQueueClass counts queue outcomes for one class: queued
+// requests, requests that took a lower class's place, requests that lost
+// their place, and requests turned away because the queue was full.
+type RoutePriorityQueueClass struct {
+	Class      string `json:"class"`
+	Queued     int64  `json:"queued"`
+	Displacing int64  `json:"displacing"`
+	Displaced  int64  `json:"displaced"`
+	Rejected   int64  `json:"rejected"`
 }
 
 // SetRoutePrioritiesRequest replaces an app's saved route priorities. An empty

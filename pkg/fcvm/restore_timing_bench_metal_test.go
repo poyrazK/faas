@@ -103,9 +103,34 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	capture := newRestoreBreakdownCapture(t)
 	defer capture.restore()
 
-	vmm := newMetalVMM(t, 30*time.Second).WithStorage(store)
+	// FAAS_RESTORE_BENCH_CACHE_MISS=1 restores through an empty node cache
+	// every cycle. That is a wake on a node that does not hold the snapshot:
+	// the memory and vmstate are fetched from the canonical store into the
+	// node cache before the restore can load them.
+	var backend storage.StorageBackend = store
+	var nodeCache *storage.LocalCacheBackend
+	cacheMiss := os.Getenv("FAAS_RESTORE_BENCH_CACHE_MISS") == "1"
+	if cacheMiss {
+		// Production keeps the node cache on the filesystem of vmmd's
+		// TMPDIR, so a fetched fill is hard-linked into place rather than
+		// copied; FAAS_RESTORE_BENCH_CACHE_DIR puts it there.
+		cacheDir := os.Getenv("FAAS_RESTORE_BENCH_CACHE_DIR")
+		if cacheDir == "" {
+			cacheDir = filepath.Join(dir, "node-cache")
+		}
+		nodeCache, err = storage.NewLocalCacheBackend(remoteOnlyStore{store}, cacheDir, 64<<30)
+		if err != nil {
+			t.Fatal(err)
+		}
+		backend = nodeCache
+		t.Log("restoring through an empty node cache every cycle")
+	}
+
+	vmm := newMetalVMM(t, 30*time.Second).WithStorage(backend)
 	stageBenchMountHelper(t, vmm)
-	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil)
+	// Warnings reach stderr so a restore that fell back to a cold boot says why.
+	warnings := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, warnings, nil)
 	if n := benchPreparedNetworks(t); n > 0 {
 		if err := m.EnablePreparedNetworks(context.Background(), n); err != nil {
 			t.Fatalf("enable prepared networks: %v", err)
@@ -177,6 +202,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		// fixes: if resume_hook moves, the cost is fault I/O and prefetch
 		// helps; if it does not, the cost is fault COUNT and only hugepages
 		// or UFFD can help.
+		if cacheMiss {
+			evictFromNodeCache(t, nodeCache, snap.StorageKey, snap.VMStateStorageKey)
+		}
 		if dropCaches {
 			dropPageCache(t)
 		}
@@ -209,6 +237,29 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	reportRestoreTiming(t, rows)
 	if path := os.Getenv("FAAS_RESTORE_BENCH_JSON"); path != "" {
 		writeRestoreTimingJSON(t, path, rows)
+	}
+}
+
+// remoteOnlyStore hides the local store's paths, so the node cache in front
+// of it has to fetch, as it does from the remote store in production.
+type remoteOnlyStore struct{ storage.StorageBackend }
+
+// evictFromNodeCache removes keys from the bench's node cache only, never from
+// the canonical store, so the next restore of them misses. A cache that
+// installs fills in the background is drained first, or a fill installed
+// after this would turn the next miss into a hit.
+func evictFromNodeCache(t *testing.T, cache *storage.LocalCacheBackend, keys ...string) {
+	t.Helper()
+	if deferred, ok := any(cache).(interface{ WaitDeferred() }); ok {
+		deferred.WaitDeferred()
+	}
+	for _, key := range keys {
+		path := storage.CacheFileForKey(cache.Root(), key)
+		for _, p := range []string{path, path + ".meta", path + ".generation"} {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				t.Fatalf("evict %s from node cache: %v", key, err)
+			}
+		}
 	}
 }
 
@@ -278,8 +329,14 @@ func (h *restoreBreakdownHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *restoreBreakdownHandler) WithGroup(string) slog.Handler { return h }
 
-func (h *restoreBreakdownHandler) Handle(_ context.Context, r slog.Record) error {
+func (h *restoreBreakdownHandler) Handle(ctx context.Context, r slog.Record) error {
 	if r.Message != "restore timing breakdown" {
+		// Keep warnings visible: a restore that silently fell back to a cold
+		// boot is otherwise reported only as the wrong wake method.
+		if r.Level >= slog.LevelWarn {
+			r.AddAttrs(h.attrs...)
+			return h.sink.prev.Handler().Handle(ctx, r)
+		}
 		return nil
 	}
 	row := map[string]int64{}
