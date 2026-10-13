@@ -213,6 +213,9 @@ func (c *Client) controlEventExecutionLineageRetryJob(ctx context.Context, app, 
 
 // EventExecutionLineageRetryJobControlReceipt is the immutable outcome of a UUID-keyed control.
 type EventExecutionLineageRetryJobControlReceipt struct {
+	ActorKind         string    `json:"actor_kind,omitempty"`
+	ActorID           string    `json:"actor_id,omitempty"`
+	CredentialType    string    `json:"credential_type,omitempty"`
 	CommandID         string    `json:"command_id"`
 	Sequence          int64     `json:"sequence"`
 	JobRequestID      string    `json:"job_request_id"`

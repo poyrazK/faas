@@ -33987,7 +33987,7 @@ paths:
       tags: [events]
       operationId: listEventExecutionLineageRetryJobControls
       summary: List retained immutable bulk retry control receipts.
-      description: Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+      description: Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -63263,6 +63263,9 @@ components:
       additionalProperties: false
       required: [command_id, sequence, job_request_id, subscription_id, app_id, action, expected_created_at, result_status, processed, selected, job_updated_at, recorded_at, retain_until]
       properties:
+        actor_kind: { type: string, enum: [account, credential, internal], description: Server-resolved original command actor; absent on legacy receipts. }
+        actor_id: { type: string, description: "Account UUID for a session, credential UUID for a bearer, or store for an internal call. Never a token value or session ID." }
+        credential_type: { type: string, enum: [session, api_key, deploy_token, platform_tenant_token, internal], description: Original server-resolved authentication type; absent on legacy receipts. }
         command_id: { type: string, format: uuid }
         sequence: { type: integer, format: int64, minimum: 1, maximum: 128 }
         job_request_id: { type: string, format: uuid }

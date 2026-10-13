@@ -11,10 +11,19 @@ from ..models.event_execution_lineage_retry_job_control_receipt_action import (
     EventExecutionLineageRetryJobControlReceiptAction,
     check_event_execution_lineage_retry_job_control_receipt_action,
 )
+from ..models.event_execution_lineage_retry_job_control_receipt_actor_kind import (
+    EventExecutionLineageRetryJobControlReceiptActorKind,
+    check_event_execution_lineage_retry_job_control_receipt_actor_kind,
+)
+from ..models.event_execution_lineage_retry_job_control_receipt_credential_type import (
+    EventExecutionLineageRetryJobControlReceiptCredentialType,
+    check_event_execution_lineage_retry_job_control_receipt_credential_type,
+)
 from ..models.event_execution_lineage_retry_job_control_receipt_result_status import (
     EventExecutionLineageRetryJobControlReceiptResultStatus,
     check_event_execution_lineage_retry_job_control_receipt_result_status,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EventExecutionLineageRetryJobControlReceipt")
 
@@ -35,6 +44,13 @@ class EventExecutionLineageRetryJobControlReceipt:
     job_updated_at: datetime.datetime
     recorded_at: datetime.datetime
     retain_until: datetime.datetime
+    actor_kind: EventExecutionLineageRetryJobControlReceiptActorKind | Unset = UNSET
+    """Server-resolved original command actor; absent on legacy receipts."""
+    actor_id: str | Unset = UNSET
+    """Account UUID for a session, credential UUID for a bearer, or store for an internal call. Never a token value
+    or session ID."""
+    credential_type: EventExecutionLineageRetryJobControlReceiptCredentialType | Unset = UNSET
+    """Original server-resolved authentication type; absent on legacy receipts."""
 
     def to_dict(self) -> dict[str, Any]:
         command_id = str(self.command_id)
@@ -63,6 +79,16 @@ class EventExecutionLineageRetryJobControlReceipt:
 
         retain_until = self.retain_until.isoformat()
 
+        actor_kind: str | Unset = UNSET
+        if not isinstance(self.actor_kind, Unset):
+            actor_kind = self.actor_kind
+
+        actor_id = self.actor_id
+
+        credential_type: str | Unset = UNSET
+        if not isinstance(self.credential_type, Unset):
+            credential_type = self.credential_type
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -82,6 +108,12 @@ class EventExecutionLineageRetryJobControlReceipt:
                 "retain_until": retain_until,
             }
         )
+        if actor_kind is not UNSET:
+            field_dict["actor_kind"] = actor_kind
+        if actor_id is not UNSET:
+            field_dict["actor_id"] = actor_id
+        if credential_type is not UNSET:
+            field_dict["credential_type"] = credential_type
 
         return field_dict
 
@@ -114,6 +146,22 @@ class EventExecutionLineageRetryJobControlReceipt:
 
         retain_until = datetime.datetime.fromisoformat(d.pop("retain_until"))
 
+        _actor_kind = d.pop("actor_kind", UNSET)
+        actor_kind: EventExecutionLineageRetryJobControlReceiptActorKind | Unset
+        if isinstance(_actor_kind, Unset):
+            actor_kind = UNSET
+        else:
+            actor_kind = check_event_execution_lineage_retry_job_control_receipt_actor_kind(_actor_kind)
+
+        actor_id = d.pop("actor_id", UNSET)
+
+        _credential_type = d.pop("credential_type", UNSET)
+        credential_type: EventExecutionLineageRetryJobControlReceiptCredentialType | Unset
+        if isinstance(_credential_type, Unset):
+            credential_type = UNSET
+        else:
+            credential_type = check_event_execution_lineage_retry_job_control_receipt_credential_type(_credential_type)
+
         event_execution_lineage_retry_job_control_receipt = cls(
             command_id=command_id,
             sequence=sequence,
@@ -128,6 +176,9 @@ class EventExecutionLineageRetryJobControlReceipt:
             job_updated_at=job_updated_at,
             recorded_at=recorded_at,
             retain_until=retain_until,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            credential_type=credential_type,
         )
 
         return event_execution_lineage_retry_job_control_receipt

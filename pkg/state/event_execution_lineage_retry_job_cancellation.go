@@ -113,6 +113,13 @@ func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, acco
 			return api.EventExecutionLineageRetryJob{}, err
 		}
 	}
+	var actor lineageControlActor
+	if req.CommandID != "" {
+		actor, err = eventExecutionLineageControlActor(ctx, account)
+		if err != nil {
+			return api.EventExecutionLineageRetryJob{}, err
+		}
+	}
 	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
@@ -147,7 +154,7 @@ func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, acco
 		if !out.RetainUntil.After(at) {
 			return api.EventExecutionLineageRetryJob{}, ErrNotFound
 		}
-		receipt := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at)
+		receipt := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at, actor)
 		raw, e := json.Marshal(receipt)
 		if e != nil {
 			return api.EventExecutionLineageRetryJob{}, e
@@ -204,6 +211,13 @@ func (m *MemStore) controlEventExecutionLineageRetryJob(ctx context.Context, acc
 			sequence = max(sequence, receipt.Sequence)
 		}
 	}
+	var actor lineageControlActor
+	if req.CommandID != "" {
+		actor, err = eventExecutionLineageControlActor(ctx, account)
+		if err != nil {
+			return api.EventExecutionLineageRetryJob{}, err
+		}
+	}
 	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
@@ -217,7 +231,7 @@ func (m *MemStore) controlEventExecutionLineageRetryJob(ctx context.Context, acc
 		if !out.RetainUntil.After(at) {
 			return api.EventExecutionLineageRetryJob{}, ErrNotFound
 		}
-		value := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at)
+		value := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at, actor)
 		if _, err := json.Marshal(value); err != nil {
 			return api.EventExecutionLineageRetryJob{}, err
 		}

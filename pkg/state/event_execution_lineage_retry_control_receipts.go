@@ -26,8 +26,8 @@ func lineageControlCommandID(id string) (string, error) {
 	}
 	return parsed.String(), nil
 }
-func newLineageControlReceipt(job api.EventExecutionLineageRetryJob, action, command string, sequence int64, at time.Time) api.EventExecutionLineageRetryJobControlReceipt {
-	return api.EventExecutionLineageRetryJobControlReceipt{CommandID: command, Sequence: sequence, JobRequestID: job.RequestID, SubscriptionID: job.SubscriptionID, AppID: job.AppID, Action: action, ExpectedCreatedAt: job.CreatedAt, ResultStatus: job.Status, Processed: job.Processed, Selected: len(job.Items), JobUpdatedAt: job.UpdatedAt, RecordedAt: at, RetainUntil: job.RetainUntil}
+func newLineageControlReceipt(job api.EventExecutionLineageRetryJob, action, command string, sequence int64, at time.Time, actor lineageControlActor) api.EventExecutionLineageRetryJobControlReceipt {
+	return api.EventExecutionLineageRetryJobControlReceipt{ActorKind: actor.Kind, ActorID: actor.ID, CredentialType: actor.CredentialType, CommandID: command, Sequence: sequence, JobRequestID: job.RequestID, SubscriptionID: job.SubscriptionID, AppID: job.AppID, Action: action, ExpectedCreatedAt: job.CreatedAt, ResultStatus: job.Status, Processed: job.Processed, Selected: len(job.Items), JobUpdatedAt: job.UpdatedAt, RecordedAt: at, RetainUntil: job.RetainUntil}
 }
 func lineageControlReceiptFromRow(row sqlc.EventExecutionLineageRetryControlReceipt) (api.EventExecutionLineageRetryJobControlReceipt, error) {
 	var receipt api.EventExecutionLineageRetryJobControlReceipt

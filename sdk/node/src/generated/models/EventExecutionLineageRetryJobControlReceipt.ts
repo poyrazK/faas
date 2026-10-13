@@ -3,6 +3,18 @@
 /* tslint:disable */
 /* eslint-disable */
 export type EventExecutionLineageRetryJobControlReceipt = {
+  /**
+   * Server-resolved original command actor; absent on legacy receipts.
+   */
+  actor_kind?: 'account' | 'credential' | 'internal';
+  /**
+   * Account UUID for a session, credential UUID for a bearer, or store for an internal call. Never a token value or session ID.
+   */
+  actor_id?: string;
+  /**
+   * Original server-resolved authentication type; absent on legacy receipts.
+   */
+  credential_type?: 'session' | 'api_key' | 'deploy_token' | 'platform_tenant_token' | 'internal';
   command_id: string;
   sequence: number;
   job_request_id: string;

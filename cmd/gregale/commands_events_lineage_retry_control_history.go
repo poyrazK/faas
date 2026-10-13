@@ -44,10 +44,17 @@ func cmdEventsLineageRetryJobControls(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "No retained command receipts after this sequence.")
 	}
 	for _, receipt := range out.Controls {
-		_, _ = fmt.Fprintf(osStdout, "Control %s | sequence %d | %s | recorded result %s | processed %d/%d | recorded %s\n", receipt.CommandID, receipt.Sequence, receipt.Action, receipt.ResultStatus, receipt.Processed, receipt.Selected, receipt.RecordedAt.Format(time.RFC3339Nano))
+		_, _ = fmt.Fprintf(osStdout, "Control %s | sequence %d | %s | recorded result %s | actor %s | processed %d/%d | recorded %s\n", receipt.CommandID, receipt.Sequence, receipt.Action, receipt.ResultStatus, lineageControlReceiptActor(receipt), receipt.Processed, receipt.Selected, receipt.RecordedAt.Format(time.RFC3339Nano))
 	}
 	if out.NextAfter > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Next page: --after %d\n", out.NextAfter)
 	}
 	return 0
+}
+
+func lineageControlReceiptActor(receipt api.EventExecutionLineageRetryJobControlReceipt) string {
+	if receipt.ActorKind == "" || receipt.ActorID == "" || receipt.CredentialType == "" {
+		return "unknown (legacy receipt)"
+	}
+	return oneLine(receipt.ActorKind) + ":" + oneLine(receipt.ActorID) + " (" + oneLine(receipt.CredentialType) + ")"
 }

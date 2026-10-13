@@ -100,7 +100,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if receipt := out.ControlReceipt; receipt != nil {
-		_, _ = fmt.Fprintf(osStdout, "Control %s | sequence %d | %s | recorded result %s | processed %d/%d\n", receipt.CommandID, receipt.Sequence, receipt.Action, receipt.ResultStatus, receipt.Processed, receipt.Selected)
+		_, _ = fmt.Fprintf(osStdout, "Control %s | sequence %d | %s | recorded result %s | actor %s | processed %d/%d\n", receipt.CommandID, receipt.Sequence, receipt.Action, receipt.ResultStatus, lineageControlReceiptActor(*receipt), receipt.Processed, receipt.Selected)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Job %s | %s | processed %d/%d\n", oneLine(out.RequestID), oneLine(out.Status), out.Processed, len(out.Items))
 	for _, item := range out.Items {

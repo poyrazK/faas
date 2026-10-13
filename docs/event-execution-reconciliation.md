@@ -510,6 +510,25 @@ requests create no receipt. Receipts expire with the job's unchanged original
 retention deadline and are deleted when that job is pruned. Old creation guards
 prevent commands targeting a replacement after physical pruning and UUID reuse.
 
+New receipts also include server-derived `actor_kind`, `actor_id` and
+`credential_type`. Sessions record the authenticated account UUID (`account`,
+`session`); bearer calls record the credential UUID (`credential`) and its type
+(`api_key`, `deploy_token` or `platform_tenant_token`). These are identity metadata,
+not token values, token hashes, session IDs or emails. Attribution is not accepted
+in control request bodies. Session attribution identifies the account, not a
+particular session or separately identified human.
+
+A repeat from another authorized credential preserves the original actor. Actor
+identity does not change the command conflict key or confer authorization. Revoked
+credentials retain their historical identity in receipts until normal job pruning.
+Older receipts omit these fields and CLI output labels them unknown; they are not
+backfilled. Direct internal store calls without authenticated principal context
+record `internal` / `store` / `internal`. Attribution is stored in the existing
+JSON result, so no schema migration is required. Upgrade all API writers to ensure
+consistent attribution of new receipts; older writers may still omit it during a
+rolling upgrade. Legacy controls without command UUIDs and failed requests are
+still absent, so this history is not a complete actor audit.
+
 To inspect retained receipts:
 
 ```sh

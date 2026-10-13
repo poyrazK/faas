@@ -117,7 +117,9 @@ def sync_detailed(
      Requires read scope and MFA. Fences the original job incarnation with expected_created_at.
     Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by
     their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without
-    a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the
+    a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
+    credential_type; older receipts omit attribution. Repeats preserve the original actor even under
+    another authorized credential. Receipts are immutable metadata observations, expire with the
     original job and cascade on job deletion. Pagination is a live append-only listing, not a
     reservation; timestamps are informational and sequence defines order. An existing retained job with
     no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
@@ -170,7 +172,9 @@ def sync(
      Requires read scope and MFA. Fences the original job incarnation with expected_created_at.
     Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by
     their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without
-    a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the
+    a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
+    credential_type; older receipts omit attribution. Repeats preserve the original actor even under
+    another authorized credential. Receipts are immutable metadata observations, expire with the
     original job and cascade on job deletion. Pagination is a live append-only listing, not a
     reservation; timestamps are informational and sequence defines order. An existing retained job with
     no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
@@ -218,7 +222,9 @@ async def asyncio_detailed(
      Requires read scope and MFA. Fences the original job incarnation with expected_created_at.
     Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by
     their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without
-    a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the
+    a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
+    credential_type; older receipts omit attribution. Repeats preserve the original actor even under
+    another authorized credential. Receipts are immutable metadata observations, expire with the
     original job and cascade on job deletion. Pagination is a live append-only listing, not a
     reservation; timestamps are informational and sequence defines order. An existing retained job with
     no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
@@ -269,7 +275,9 @@ async def asyncio(
      Requires read scope and MFA. Fences the original job incarnation with expected_created_at.
     Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by
     their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without
-    a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the
+    a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
+    credential_type; older receipts omit attribution. Repeats preserve the original actor even under
+    another authorized credential. Receipts are immutable metadata observations, expire with the
     original job and cascade on job deletion. Pagination is a live append-only listing, not a
     reservation; timestamps are informational and sequence defines order. An existing retained job with
     no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
