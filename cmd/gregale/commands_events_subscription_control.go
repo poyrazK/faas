@@ -14,6 +14,10 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events subscription-"+action, flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm changing subscription delivery")
+	var capacity *int
+	if action == "capacity" {
+		capacity = fs.Int("max-pending", -1, "maximum pending plus dispatching deliveries; 0 restores plan limit")
+	}
 	var rate *int
 	if action == "resume" {
 		rate = fs.Int("rate", api.EventSubscriptionDrainRateDefault, "admissions per second (1..100; 0 removes pacing)")
@@ -21,8 +25,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || action != "status" && !*yes || rate != nil && (*rate < 0 || *rate > api.EventSubscriptionDrainRateMax) {
+	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || action != "status" && !*yes || rate != nil && (*rate < 0 || *rate > api.EventSubscriptionDrainRateMax) || capacity != nil && *capacity < 0 {
 		usage := "usage: gregale events subscription-" + action + " <app> <subscription-id>"
+		if action == "capacity" {
+			usage += " --max-pending N"
+		}
 		if action == "resume" {
 			usage += " [--rate N]"
 		}
@@ -41,6 +48,8 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	}
 	var out api.EventSubscriptionDeliveryControl
 	switch action {
+	case "capacity":
+		out, err = client.SetEventSubscriptionCapacity(context.Background(), positional[0], positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity})
 	case "pause":
 		out, err = client.PauseEventSubscription(context.Background(), positional[0], positional[1])
 	case "resume":
@@ -59,6 +68,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 		mode = "paused"
 	}
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s: %s | rate %d/s (0=unlimited) | pending %d | processing %d | oldest pending %.0fs\n", oneLine(out.SubscriptionID), mode, out.RatePerSecond, out.PendingRecipients, out.ProcessingRecipients, out.OldestAgeSeconds)
+	_, _ = fmt.Fprintf(osStdout, "Live deliveries %d | effective subscription limit %d | configured %d (0=plan default)\n", out.LiveDeliveries, out.EffectiveMaxPendingDeliveries, out.MaxPendingDeliveries)
 	if out.CircuitBreaker != nil {
 		_, _ = fmt.Fprintf(osStdout, "Circuit %s | reason %s | recovery rate %d/s | history incomplete %t\n", oneLine(out.CircuitBreaker.State), oneLine(out.CircuitBreaker.Reason), out.CircuitBreaker.RecoveryRatePerSecond, out.CircuitBreaker.HistoryIncomplete)
 	}

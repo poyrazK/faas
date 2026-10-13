@@ -3066,3 +3066,46 @@ the subscriber snapshot and the retained Commit receipt. Each subscriber recover
 independently. Relay retries after event retention return the original Commit
 receipt rather than publishing again. This destination remains under the existing
 Commit qualification gates.
+
+### Limit one subscription's live delivery backlog
+
+```sh
+gregale events subscription-capacity APP SUB --max-pending 16 --yes
+gregale events subscription-status APP SUB
+gregale events subscription-capacity APP SUB --max-pending 0 --yes
+```
+
+`PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity`
+accepts `{ "max_pending_deliveries": 16 }`. The field is required and non-null;
+zero restores the current plan default. Positive values must fit the current plan's
+per-consumer ceiling (Free 64, Hobby 256, Pro 1024, Scale 4096). The operation requires
+deploy-write/admin scope and MFA. It changes capacity independently of pause,
+resume pacing and circuit controls. Controls survive subscription removal.
+
+This ceiling counts trusted pending plus dispatching invocations, including replay
+children. It does not limit publication, routing leases, or running handlers
+separately. Lowering below current usage leaves existing deliveries intact and
+blocks new admission until usage drains below the effective ceiling. Plan changes
+clamp the effective value; zero follows the current plan, while a saved positive
+value remains configured. App/account limits remain shared gates, so configuring
+one consumer does not reserve capacity for another.
+
+Status exposes `max_pending_deliveries`, `effective_max_pending_deliveries` and
+`live_deliveries`. Routing pending/processing counts describe a different stage;
+legacy invocations without trusted slots are excluded from live delivery counts.
+Reads are observations, not admission reservations. Go, Node and Python SDKs expose
+`SetEventSubscriptionCapacity` / generated `setEventSubscriptionCapacity` operations.
+
+Configured capacity uses existing durable `capacity_consumer` waits and health
+metrics. A wait spends no routing-failure budget; five-second polling retries when
+capacity drains. Delivery age limits still apply. Routing and replay share the
+ceiling, live-to-live retries retain slots, and keep-latest/cancellation semantics
+remain unchanged. Fair account/consumer scheduling preferences and captured lane
+ordering still apply. There is no global FIFO or exactly-once execution guarantee;
+consumers retain their normal application-level deduplication.
+
+Apply migration `20261013210000001_subscription_delivery_capacity.sql` and upgrade
+all routing/replay writers before relying on custom ceilings. Older routing writers
+only enforce plan limits. Downgrade restores the earlier replay guard and plan
+limits, discarding overrides. This implementation does not execute the migration.
+See [ADR-1174](adr/1174-configurable-subscription-delivery-capacity.md).

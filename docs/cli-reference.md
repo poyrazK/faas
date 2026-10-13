@@ -2657,6 +2657,17 @@ Inspect delivery pause, pacing, and oldest waiting event
 
 `gregale events subscription-status <app> <subscription-id>`
 
+### events subscription-capacity
+
+Set a lower live-delivery limit for one subscription
+
+`gregale events subscription-capacity [--max-pending <N>] [--yes] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
+| `--yes` | confirm changing subscription capacity |  |
+
 ### events recovery-preview
 
 Preview a bounded selection of failed event consumers

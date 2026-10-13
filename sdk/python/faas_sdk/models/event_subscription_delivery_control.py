@@ -23,6 +23,12 @@ class EventSubscriptionDeliveryControl:
 
     """
 
+    max_pending_deliveries: int
+    """Configured live-delivery ceiling; zero uses the current plan limit."""
+    effective_max_pending_deliveries: int
+    """Effective ceiling after applying the current plan limit."""
+    live_deliveries: int
+    """Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work."""
     subscription_id: UUID
     app_id: UUID
     paused: bool
@@ -37,6 +43,12 @@ class EventSubscriptionDeliveryControl:
     """Updated at in the event subscription delivery control: absent until an operator sets a control."""
 
     def to_dict(self) -> dict[str, Any]:
+        max_pending_deliveries = self.max_pending_deliveries
+
+        effective_max_pending_deliveries = self.effective_max_pending_deliveries
+
+        live_deliveries = self.live_deliveries
+
         subscription_id = str(self.subscription_id)
 
         app_id = str(self.app_id)
@@ -67,6 +79,9 @@ class EventSubscriptionDeliveryControl:
 
         field_dict.update(
             {
+                "max_pending_deliveries": max_pending_deliveries,
+                "effective_max_pending_deliveries": effective_max_pending_deliveries,
+                "live_deliveries": live_deliveries,
                 "subscription_id": subscription_id,
                 "app_id": app_id,
                 "paused": paused,
@@ -90,6 +105,12 @@ class EventSubscriptionDeliveryControl:
         from ..models.event_circuit_breaker_response import EventCircuitBreakerResponse
 
         d = dict(src_dict)
+        max_pending_deliveries = d.pop("max_pending_deliveries")
+
+        effective_max_pending_deliveries = d.pop("effective_max_pending_deliveries")
+
+        live_deliveries = d.pop("live_deliveries")
+
         subscription_id = UUID(d.pop("subscription_id"))
 
         app_id = UUID(d.pop("app_id"))
@@ -126,6 +147,9 @@ class EventSubscriptionDeliveryControl:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
         event_subscription_delivery_control = cls(
+            max_pending_deliveries=max_pending_deliveries,
+            effective_max_pending_deliveries=effective_max_pending_deliveries,
+            live_deliveries=live_deliveries,
             subscription_id=subscription_id,
             app_id=app_id,
             paused=paused,

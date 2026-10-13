@@ -62,6 +62,7 @@ import type { EventSchema } from '../models/EventSchema.js';
 import type { EventSchemaRolloutRequest } from '../models/EventSchemaRolloutRequest.js';
 import type { EventSchemaRolloutResponse } from '../models/EventSchemaRolloutResponse.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
+import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { EventSubscriptionResumeRequest } from '../models/EventSubscriptionResumeRequest.js';
@@ -2841,6 +2842,45 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Set a lower live-delivery ceiling for one event consumer.
+   * Set a lower live-delivery ceiling for one event consumer. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. The explicit integer counts pending plus dispatching invocations. Zero restores the current plan limit; positive values cannot exceed it. Lowering does not evict existing work. Pause, rate and circuit state are preserved; plan downgrades clamp the effective ceiling. Routing and replay share this limit.
+   * @returns EventSubscriptionDeliveryControl Set consumer delivery capacity: current control configuration and waiting recipient counts.
+   * @throws ApiError
+   */
+  public static setEventSubscriptionCapacity({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug for this operation: set the live-delivery ceiling for one event consumer.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier for this operation: set the live-delivery ceiling for one event consumer.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionCapacityRequest,
+  }): CancelablePromise<EventSubscriptionDeliveryControl> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Set consumer delivery capacity: invalid subscription identifier, missing capacity or capacity outside the current plan ceiling.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Set consumer delivery capacity: subscription control request timed out.`,
       },
     });
   }

@@ -471,6 +471,7 @@ type EventConsumerPendingSample = api.EventConsumerPendingSample
 type EventConsumerHealth = api.EventConsumerHealth
 type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
 type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
+type EventSubscriptionCapacityRequest = api.EventSubscriptionCapacityRequest
 type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
 type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
 

@@ -23,7 +23,17 @@ func (r EventSubscriptionResumeRequest) Rate() (int, error) {
 	return rate, nil
 }
 
+// Zero restores the current plan limit. Positive values lower a subscription's
+// live pending-plus-dispatching delivery ceiling without changing siblings.
+type EventSubscriptionCapacityRequest struct {
+	MaxPendingDeliveries *int `json:"max_pending_deliveries"`
+}
+
 type EventSubscriptionDeliveryControl struct {
+	MaxPendingDeliveries          int   `json:"max_pending_deliveries"`
+	EffectiveMaxPendingDeliveries int   `json:"effective_max_pending_deliveries"`
+	LiveDeliveries                int64 `json:"live_deliveries"`
+
 	CircuitBreaker       *EventCircuitBreakerResponse `json:"circuit_breaker,omitempty"`
 	SubscriptionID       string                       `json:"subscription_id"`
 	AppID                string                       `json:"app_id"`
@@ -52,5 +62,11 @@ func (c *Client) PauseEventSubscription(ctx context.Context, app, id string) (Ev
 func (c *Client) ResumeEventSubscription(ctx context.Context, app, id string, req EventSubscriptionResumeRequest) (EventSubscriptionDeliveryControl, error) {
 	var out EventSubscriptionDeliveryControl
 	err := c.do(ctx, http.MethodPost, subscriptionDeliveryControlPath(app, id)+"/resume", req, &out)
+	return out, err
+}
+
+func (c *Client) SetEventSubscriptionCapacity(ctx context.Context, app, id string, req EventSubscriptionCapacityRequest) (EventSubscriptionDeliveryControl, error) {
+	var out EventSubscriptionDeliveryControl
+	err := c.do(ctx, http.MethodPut, subscriptionDeliveryControlPath(app, id)+"/capacity", req, &out)
 	return out, err
 }

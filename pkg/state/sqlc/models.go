@@ -3211,15 +3211,16 @@ type EventSubscriptionCircuitBreaker struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
-	SubscriptionID  pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	Paused          bool
-	RatePerSecond   int32
-	WindowStartedAt pgtype.Timestamptz
-	WindowCount     int32
-	UpdatedAt       pgtype.Timestamptz
-	PausedAt        pgtype.Timestamptz
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Paused               bool
+	RatePerSecond        int32
+	WindowStartedAt      pgtype.Timestamptz
+	WindowCount          int32
+	UpdatedAt            pgtype.Timestamptz
+	PausedAt             pgtype.Timestamptz
+	MaxPendingDeliveries int32
 }
 
 type EventSubscriptionWorkBinding struct {

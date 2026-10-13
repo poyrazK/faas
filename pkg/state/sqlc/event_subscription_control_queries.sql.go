@@ -11,8 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const eventSubscriptionCapacityOverride = `-- name: EventSubscriptionCapacityOverride :one
+SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND subscription_id::text=$3::text),0)::integer AS max_pending_deliveries
+`
+
+type EventSubscriptionCapacityOverrideParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+func (q *Queries) EventSubscriptionCapacityOverride(ctx context.Context, db DBTX, arg EventSubscriptionCapacityOverrideParams) (int32, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityOverride, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var max_pending_deliveries int32
+	err := row.Scan(&max_pending_deliveries)
+	return max_pending_deliveries, err
+}
+
+const eventSubscriptionCapacitySet = `-- name: EventSubscriptionCapacitySet :exec
+INSERT INTO event_subscription_delivery_controls(subscription_id,account_id,app_id,max_pending_deliveries,updated_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::timestamptz)
+ON CONFLICT(subscription_id) DO UPDATE SET max_pending_deliveries=excluded.max_pending_deliveries,updated_at=excluded.updated_at
+WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND event_subscription_delivery_controls.app_id=excluded.app_id
+`
+
+type EventSubscriptionCapacitySetParams struct {
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	MaxPendingDeliveries int32
+	NowAt                pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg EventSubscriptionCapacitySetParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacitySet,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+		arg.MaxPendingDeliveries,
+		arg.NowAt,
+	)
+	return err
+}
+
 const eventSubscriptionControlGet = `-- name: EventSubscriptionControlGet :one
-SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
+SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
 `
 
 type EventSubscriptionControlGetParams struct {
@@ -34,6 +79,7 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 		&i.WindowCount,
 		&i.UpdatedAt,
 		&i.PausedAt,
+		&i.MaxPendingDeliveries,
 	)
 	return i, err
 }

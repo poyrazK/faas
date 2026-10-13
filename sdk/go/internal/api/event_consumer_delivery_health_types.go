@@ -3,16 +3,19 @@ package api
 import "time"
 
 type EventSubscriptionDeliveryControl struct {
-	CircuitBreaker       *EventCircuitBreakerResponse `json:"circuit_breaker,omitempty"`
-	SubscriptionID       string                       `json:"subscription_id"`
-	AppID                string                       `json:"app_id"`
-	Paused               bool                         `json:"paused"`
-	RatePerSecond        int                          `json:"rate_per_second"`
-	PendingRecipients    int64                        `json:"pending_recipients"`
-	ProcessingRecipients int64                        `json:"processing_recipients"`
-	OldestPendingAt      *time.Time                   `json:"oldest_pending_at,omitempty"`
-	OldestAgeSeconds     float64                      `json:"oldest_age_seconds"`
-	UpdatedAt            *time.Time                   `json:"updated_at,omitempty"`
+	MaxPendingDeliveries          int                          `json:"max_pending_deliveries"`
+	EffectiveMaxPendingDeliveries int                          `json:"effective_max_pending_deliveries"`
+	LiveDeliveries                int64                        `json:"live_deliveries"`
+	CircuitBreaker                *EventCircuitBreakerResponse `json:"circuit_breaker,omitempty"`
+	SubscriptionID                string                       `json:"subscription_id"`
+	AppID                         string                       `json:"app_id"`
+	Paused                        bool                         `json:"paused"`
+	RatePerSecond                 int                          `json:"rate_per_second"`
+	PendingRecipients             int64                        `json:"pending_recipients"`
+	ProcessingRecipients          int64                        `json:"processing_recipients"`
+	OldestPendingAt               *time.Time                   `json:"oldest_pending_at,omitempty"`
+	OldestAgeSeconds              float64                      `json:"oldest_age_seconds"`
+	UpdatedAt                     *time.Time                   `json:"updated_at,omitempty"`
 }
 
 type EventCircuitBreakerPolicy struct {

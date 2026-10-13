@@ -31,3 +31,14 @@ SELECT count(*) FILTER (WHERE routing_state='pending')::bigint AS pending_recipi
  count(*) FILTER (WHERE routing_state='processing')::bigint AS processing_recipients,
  min(accepted_at) FILTER (WHERE routing_state='pending')::timestamptz AS oldest_pending_at
 FROM event_routing_backlog WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventSubscriptionCapacitySet :exec
+INSERT INTO event_subscription_delivery_controls(subscription_id,account_id,app_id,max_pending_deliveries,updated_at)
+VALUES (sqlc.arg(subscription_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(max_pending_deliveries)::integer,sqlc.arg(now_at)::timestamptz)
+ON CONFLICT(subscription_id) DO UPDATE SET max_pending_deliveries=excluded.max_pending_deliveries,updated_at=excluded.updated_at
+WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND event_subscription_delivery_controls.app_id=excluded.app_id;
+
+-- name: EventSubscriptionCapacityOverride :one
+SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND subscription_id::text=sqlc.arg(subscription_id)::text),0)::integer AS max_pending_deliveries;

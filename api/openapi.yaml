@@ -35060,6 +35060,49 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity:
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionCapacity
+      summary: Set a lower live-delivery ceiling for one event consumer.
+      description: "Set a lower live-delivery ceiling for one event consumer. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. The explicit integer counts pending plus dispatching invocations. Zero restores the current plan limit; positive values cannot exceed it. Lowering does not evict existing work. Pause, rate and circuit state are preserved; plan downgrades clamp the effective ceiling. Routing and replay share this limit."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: set the live-delivery ceiling for one event consumer."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: set the live-delivery ceiling for one event consumer."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionCapacityRequest' }
+      responses:
+        '200':
+          description: "Set consumer delivery capacity: current control configuration and waiting recipient counts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeliveryControl' }
+        '400':
+          description: "Set consumer delivery capacity: invalid subscription identifier, missing capacity or capacity outside the current plan ceiling."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Set consumer delivery capacity: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-recoveries/notification-retry-backlog:
     get:
       tags: [events]
@@ -63628,12 +63671,23 @@ components:
         configured: { type: boolean }
         policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
 
+    EventSubscriptionCapacityRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit per-subscription live-delivery ceiling. Zero restores the plan default; positive values must not exceed the current plan ceiling. Requires deploy write or admin scope and MFA.
+      required: [max_pending_deliveries]
+      properties:
+        max_pending_deliveries: { type: integer, minimum: 0, description: Maximum pending plus dispatching deliveries; zero restores the current plan default. }
+
     EventSubscriptionDeliveryControl:
       type: object
       additionalProperties: false
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
-      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds]
+      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }
+        effective_max_pending_deliveries: { type: integer, minimum: 1, description: Effective ceiling after applying the current plan limit. }
+        live_deliveries: { type: integer, format: int64, minimum: 0, description: Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work. }
         circuit_breaker: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }

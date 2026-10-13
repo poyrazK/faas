@@ -44,6 +44,12 @@ func getSubscriptionControl(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 		out.RatePerSecond = int(row.RatePerSecond)
 		out.UpdatedAt = timestamptzToTimePtr(row.UpdatedAt)
 	}
+	if err == nil {
+		out.MaxPendingDeliveries = int(row.MaxPendingDeliveries)
+	}
+	if err = populateEventSubscriptionCapacity(ctx, q, db, account, app, sub, &out); err != nil {
+		return out, err
+	}
 	breaker, err := readCircuit(ctx, q, db, account, app, sub)
 	if err != nil {
 		return out, err
@@ -162,14 +168,15 @@ func eventSubscriptionControlProgress(previous PublishedEventRecipientProgress, 
 }
 
 type memEventSubscriptionControl struct {
-	AccountID   string
-	AppID       string
-	Paused      bool
-	Rate        int
-	WindowAt    time.Time
-	WindowCount int
-	PausedAt    time.Time
-	UpdatedAt   time.Time
+	MaxPendingDeliveries int
+	AccountID            string
+	AppID                string
+	Paused               bool
+	Rate                 int
+	WindowAt             time.Time
+	WindowCount          int
+	PausedAt             time.Time
+	UpdatedAt            time.Time
 }
 
 func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string) bool {
@@ -189,10 +196,14 @@ func (m *MemStore) eventSubscriptionControlResponseLocked(account, app, sub stri
 	out := api.EventSubscriptionDeliveryControl{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app)}
 	if c := m.eventSubscriptionControls[out.SubscriptionID]; c != nil && sameMemUUID(c.AccountID, account) && sameMemUUID(c.AppID, app) {
 		out.Paused = c.Paused
+		out.MaxPendingDeliveries = c.MaxPendingDeliveries
 		out.RatePerSecond = c.Rate
 		t := c.UpdatedAt
 		out.UpdatedAt = &t
 	}
+	limits := m.eventDeliveryLimitsLocked(account)
+	out.EffectiveMaxPendingDeliveries = effectiveEventConsumerCapacity(limits.PerConsumer, out.MaxPendingDeliveries)
+	out.LiveDeliveries, _, _ = m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
 	if breaker := m.eventCircuitBreakers[out.SubscriptionID]; breaker != nil {
 		status := circuitResponse(sub, breaker, out.Paused, time.Now().UTC())
 		out.CircuitBreaker = &status

@@ -27,7 +27,7 @@ func (s *Service) eventSubscriptionControl(w http.ResponseWriter, r *http.Reques
 	out, err := applyEventSubscriptionControl(ctx, store, r, acct.ID, app.ID, action)
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
-		api.WriteProblem(w, api.ErrValidation("subscription ID must be a UUID and rate must be between 0 and 100"))
+		api.WriteProblem(w, api.ErrValidation("subscription ID must be a UUID; rate must be between 0 and 100; capacity must be explicit, nonnegative and no greater than the current plan limit"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Subscription delivery control not found", "no matching subscription or retained control belongs to this app"))
 	case errors.Is(err, context.DeadlineExceeded):
@@ -41,6 +41,16 @@ func (s *Service) eventSubscriptionControl(w http.ResponseWriter, r *http.Reques
 func applyEventSubscriptionControl(ctx context.Context, store state.EventSubscriptionControlStore, r *http.Request, account, app, action string) (api.EventSubscriptionDeliveryControl, error) {
 	sub := r.PathValue("subscriptionID")
 	switch action {
+	case "capacity":
+		capacityStore, ok := store.(state.EventSubscriptionCapacityStore)
+		if !ok {
+			return api.EventSubscriptionDeliveryControl{}, errors.New("subscription capacity store unavailable")
+		}
+		var req api.EventSubscriptionCapacityRequest
+		if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil || req.MaxPendingDeliveries == nil {
+			return api.EventSubscriptionDeliveryControl{}, state.ErrInvalidArgument
+		}
+		return capacityStore.SetEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries)
 	case "pause":
 		return store.SetEventSubscriptionDeliveryControl(ctx, account, app, sub, true, 0)
 	case "resume":
@@ -65,4 +75,8 @@ func (s *Service) PauseEventSubscription(w http.ResponseWriter, r *http.Request,
 }
 func (s *Service) ResumeEventSubscription(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.eventSubscriptionControl(w, r, acct, "resume")
+}
+
+func (s *Service) SetEventSubscriptionCapacity(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.eventSubscriptionControl(w, r, acct, "capacity")
 }

@@ -7,6 +7,18 @@ import type { EventCircuitBreakerResponse } from './EventCircuitBreakerResponse.
  * Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
  */
 export type EventSubscriptionDeliveryControl = {
+  /**
+   * Configured live-delivery ceiling; zero uses the current plan limit.
+   */
+  max_pending_deliveries: number;
+  /**
+   * Effective ceiling after applying the current plan limit.
+   */
+  effective_max_pending_deliveries: number;
+  /**
+   * Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work.
+   */
+  live_deliveries: number;
   circuit_breaker?: EventCircuitBreakerResponse;
   subscription_id: string;
   app_id: string;
