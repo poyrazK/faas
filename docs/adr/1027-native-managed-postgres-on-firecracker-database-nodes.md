@@ -349,10 +349,41 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     idle-parked, and that a VM stopped behind the scheduler's back is
     detected and rebooted in 1.4 s.
 
-Not yet: class/storage resize, Restore and usage. Qualification also needs
-the backend probers (`ScaleToZeroProber`, `ComputePolicyProber`,
-`CredentialPrivilegeProber`, `ReadOnlyCredentialProber`) before native can
-pass `QualifyProvider`.
+- **Deterministic credentials.** The contract makes issuance idempotent:
+  re-issuing an identity must return the same login, and qualification
+  checks it.
+  - The password and the SCRAM salt are keyed HMACs of (database, identity,
+    access) under a driver key (`secret_env.credential_key`, at least 32
+    bytes, sealed in apid's env). A re-issue is therefore byte-identical:
+    the same password and the same verifier, so pgproxyd's cached verifier
+    never goes stale.
+  - Rotation is a new identity key, hence a new role. No password is ever
+    stored. Compromising the key compromises every derived password, so it
+    is sealed like the other provider secrets.
+- **Qualification.** The driver implements all four probers that
+  `QualifyProvider` requires of this capability set.
+  - Probe connections go through pgproxyd with issued credentials, as an
+    app's would.
+  - `ProbeScaleToZero` parks the database through schedd and measures the
+    wake on the next connection.
+  - `ProbeCredentialPrivileges` and `ProbeReadOnlyCredentials` follow the
+    shared evidence flow: runtime confinement, row-level security,
+    migrations as the schema owner, revocation ending sessions and logins,
+    and data surviving rotation.
+  - `ProbeComputePolicy` switches the database to always-on and back.
+  - Fixtures are dropped as the superuser through `DatabaseAdmin`.
+  - `TestQualifyProviderPasses` runs all 25 checks against PostgreSQL 16;
+    `TestMetalQualifyProvider` runs them against real database VMs.
+
+Not yet: class/storage resize, Restore and usage.
+
+Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
+
+```json
+{"id": "native-eu", "driver": "firecracker", "region": "eu-central",
+ "settings": {"host_suffix": "db.gregale.dev", "schedd_target": "unix:///run/faas/schedd.sock"},
+ "secret_env": {"credential_key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
+```
 
 ## Phasing
 

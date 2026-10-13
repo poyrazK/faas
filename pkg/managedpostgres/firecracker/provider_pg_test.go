@@ -83,6 +83,7 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.CredentialKey = testCredentialKey
 	sched, verifiers := newFakeScheduler(), newFakeVerifiers()
 	sched.adminRun = psqlAdmin(t, dsn)
 	p, err := New(cfg, sched, verifiers)
@@ -97,6 +98,9 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = super.Exec(ctx, "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)")
+		// initSQL revokes CONNECT on the maintenance databases cluster-wide;
+		// give it back so later tests on the same server are unaffected.
+		_, _ = super.Exec(ctx, "GRANT CONNECT ON DATABASE postgres, template1 TO PUBLIC")
 		for _, role := range roles {
 			_, _ = super.Exec(ctx, "DROP ROLE IF EXISTS "+role)
 		}
@@ -195,11 +199,20 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 	if _, err := connect(rwMaterial, rwMaterial.Password, dbName); pgState(err) != "28000" {
 		t.Errorf("revoked login = %v, want 28000", err)
 	}
-	// Issuing the same binding again re-enables the role with a new password.
-	rotated := issue("binding-rw", managedpostgres.CredentialReadWrite)
+	// Re-issuing the same binding re-enables the same login; rotation is a
+	// new identity, hence a new role, and the revoked one stays out.
+	reissued := issue("binding-rw", managedpostgres.CredentialReadWrite)
+	if reissued.Password != rwMaterial.Password {
+		t.Error("re-issue of the same binding changed the password")
+	}
+	mustConnect(reissued)
+	if err := p.RevokeCredentials(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	rotated := issue("binding-rw-2", managedpostgres.CredentialReadWrite)
 	mustConnect(rotated)
-	if _, err := connect(rwMaterial, rwMaterial.Password, dbName); pgState(err) != "28P01" {
-		t.Errorf("old password after rotation = %v, want 28P01", err)
+	if _, err := connect(rwMaterial, rwMaterial.Password, dbName); pgState(err) != "28000" {
+		t.Errorf("revoked login after rotation = %v, want 28000", err)
 	}
 
 	// The closing assertion refuses a runtime role that could create objects.
@@ -226,4 +239,86 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 		t.Fatal("a refused role's verifier was published")
 	}
 	grant("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+}
+
+// The platform's provider qualification, end to end on PostgreSQL: every
+// check of QualifyProvider, including all four probers, must pass before
+// native databases can be enabled. Admin batches run through psql as
+// guest-init runs them; probe connections go straight to the server, and
+// the connector marks the database awake the way pgproxyd's wake would.
+func TestQualifyProviderPasses(t *testing.T) {
+	dsn := os.Getenv("FAAS_DBVM_SQL_DSN")
+	if dsn == "" {
+		t.Skip("FAAS_DBVM_SQL_DSN (a disposable PostgreSQL superuser DSN) not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	base, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix := make([]byte, 4)
+	_, _ = rand.Read(suffix)
+	dbName := "gregale_q" + hex.EncodeToString(suffix)
+	cfg, err := ParseConfig(managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.test", settingDatabase: dbName}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.CredentialKey = testCredentialKey
+	sched, verifiers := newFakeScheduler(), newFakeVerifiers()
+	sched.adminRun = psqlAdmin(t, dsn)
+	p, err := New(cfg, sched, verifiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.poll = 20 * time.Millisecond
+	p.WithConnector(func(ctx context.Context, m managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
+		c := base.Copy()
+		c.User, c.Password, c.Database, c.TLSConfig, c.Fallbacks = m.Username, m.Password, m.Database, nil, nil
+		conn, err := pgx.ConnectConfig(ctx, c)
+		if err == nil {
+			sched.setState(m.Endpoints[0].Host[:36], "running")
+		}
+		return conn, err
+	})
+	super, err := pgx.ConnectConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = super.Exec(ctx, "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)")
+		// initSQL revokes CONNECT on the maintenance databases cluster-wide;
+		// give it back so later tests on the same server are unaffected.
+		_, _ = super.Exec(ctx, "GRANT CONNECT ON DATABASE postgres, template1 TO PUBLIC")
+		rows, err := super.Query(ctx, `SELECT rolname FROM pg_roles WHERE rolname ~ '^gregale_(rt|ro|mig)_'`)
+		if err == nil {
+			var roles []string
+			for rows.Next() {
+				var r string
+				if rows.Scan(&r) == nil {
+					roles = append(roles, r)
+				}
+			}
+			rows.Close()
+			for _, r := range roles {
+				_, _ = super.Exec(ctx, "DROP ROLE IF EXISTS "+r)
+			}
+		}
+		_ = super.Close(ctx)
+	})
+
+	report, err := managedpostgres.QualifyProvider(ctx, p, managedpostgres.QualificationOptions{
+		ProviderName: Driver, ResourceID: uuid.NewString(), Spec: devSpec(), Mutating: true,
+		Timeout: 4 * time.Minute, PollInterval: 20 * time.Millisecond,
+	})
+	for _, check := range report.Checks {
+		t.Logf("check %s passed=%v %s", check.Name, check.Passed, check.Error)
+	}
+	if err != nil {
+		t.Fatalf("QualifyProvider = %v", err)
+	}
+	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil {
+		t.Fatalf("report lacks prober evidence: %+v", report)
+	}
 }

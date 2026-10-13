@@ -116,52 +116,9 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 	if workdir == "" || base == "" {
 		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the driver metal test")
 	}
-	parent := "dbdriver-metal-test"
-	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
-	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
-		JailBase: filepath.Join(workdir, "driverjail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
-		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
-		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &driverLeaser{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.Recover(); err != nil {
-		t.Fatal(err)
-	}
-	vmmdSock, scheddSock := filepath.Join(workdir, "driver-vmmd.sock"), filepath.Join(workdir, "driver-schedd.sock")
-	serveUnix(t, vmmdSock, func(g *grpc.Server) {
-		vmmdpb.RegisterVmmdServer(g, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt))
-	})
-	store := dbsched.NewMemStore()
-	if err := store.UpsertNode(context.Background(), dbsched.Node{ID: "db-test", TargetURL: "unix://" + vmmdSock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: 20 << 30, Lifecycle: dbsched.NodeActive}); err != nil {
-		t.Fatal(err)
-	}
-	vmm := dbsched.NewGRPCVMMWithDial(nil, dialUnix)
-	t.Cleanup(func() { _ = vmm.Close() })
-	sched := dbsched.New(store, vmm, dbsched.Config{ReadyTimeout: time.Minute}, nil)
-	serveUnix(t, scheddSock, func(g *grpc.Server) {
-		scheddpb.RegisterScheddServer(g, scheddgrpc.New(nil, nil, nil).WithDatabases(sched))
-	})
-	scheddConn, err := dialUnix(context.Background(), "unix://"+scheddSock, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = scheddConn.Close() })
-	client := scheddpb.NewScheddClient(scheddConn)
-
-	cfg, err := ParseConfig(managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.metal.test", settingTLSMode: "require"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifiers := newFakeVerifiers()
-	p, err := New(cfg, client, verifiers)
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := newMetalStack(t, workdir, base)
+	p, sched := st.p, st.sched
+	_, proxyPort, _ := net.SplitHostPort(st.proxyAddr)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	id := uuid.NewString()
@@ -191,26 +148,11 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dialer := pgproxy.NewVmmdDialerWith(nil, dialUnix)
-	t.Cleanup(func() { _ = dialer.Close() })
-	proxy, err := pgproxy.New(pgproxy.Config{TLS: proxyTLS(t, cfg.HostSuffix), HostSuffix: cfg.HostSuffix, DecoySecret: []byte(strings.Repeat("k", 32))},
-		verifiers, pgproxy.NewScheddWaker(client), dialer, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() { _ = proxy.Serve(ctx, ln) }()
-	_, proxyPort, _ := net.SplitHostPort(ln.Addr().String())
-
 	// The app route (ADR-1027): the node-local forwarder relays bytes to
 	// pgproxyd. The host DNAT is proven by pkg/netns's metal test; here the
 	// original destination is the route's, as SO_ORIGINAL_DST reports it.
 	route, err := dbroute.New(dbroute.Config{
-		Upstreams:   []string{ln.Addr().String()},
+		Upstreams:   []string{st.proxyAddr},
 		Destination: netip.AddrPortFrom(api.DatabaseRouteAddress(), api.DatabaseRoutePort),
 		OriginalDestination: func(net.Conn) (netip.AddrPort, error) {
 			return netip.AddrPortFrom(api.DatabaseRouteAddress(), api.DatabaseRoutePort), nil
@@ -291,4 +233,132 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 	}
 	t.Logf("provision %v; issue credential %v; parked -> first query through the app route %v",
 		provisioned.Round(time.Millisecond), issued.Round(time.Millisecond), coldConnect.Round(time.Millisecond))
+}
+
+// metalStack is the native backend end to end: a jailed database runtime
+// behind vmmd's database RPCs, schedd's database scheduler over gRPC, the
+// driver, and pgproxy on a local port.
+type metalStack struct {
+	p         *Provider
+	sched     *dbsched.Scheduler
+	store     *dbsched.MemStore
+	client    scheddpb.ScheddClient
+	cfg       Config
+	proxyAddr string
+}
+
+func newMetalStack(t *testing.T, workdir, base string) *metalStack {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	parent := "dbdriver-metal-test"
+	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
+	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
+		JailBase: filepath.Join(workdir, "driverjail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
+		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
+		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &driverLeaser{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	vmmdSock, scheddSock := filepath.Join(workdir, "driver-vmmd.sock"), filepath.Join(workdir, "driver-schedd.sock")
+	serveUnix(t, vmmdSock, func(g *grpc.Server) {
+		vmmdpb.RegisterVmmdServer(g, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt))
+	})
+	store := dbsched.NewMemStore()
+	if err := store.UpsertNode(context.Background(), dbsched.Node{ID: "db-test", TargetURL: "unix://" + vmmdSock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: 20 << 30, Lifecycle: dbsched.NodeActive}); err != nil {
+		t.Fatal(err)
+	}
+	vmm := dbsched.NewGRPCVMMWithDial(nil, dialUnix)
+	t.Cleanup(func() { _ = vmm.Close() })
+	sched := dbsched.New(store, vmm, dbsched.Config{ReadyTimeout: time.Minute}, nil)
+	serveUnix(t, scheddSock, func(g *grpc.Server) {
+		scheddpb.RegisterScheddServer(g, scheddgrpc.New(nil, nil, nil).WithDatabases(sched))
+	})
+	scheddConn, err := dialUnix(context.Background(), "unix://"+scheddSock, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = scheddConn.Close() })
+	client := scheddpb.NewScheddClient(scheddConn)
+
+	cfg, err := ParseConfig(managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.metal.test", settingTLSMode: "require"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.CredentialKey = testCredentialKey
+	verifiers := newFakeVerifiers()
+	p, err := New(cfg, client, verifiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := pgproxy.NewVmmdDialerWith(nil, dialUnix)
+	t.Cleanup(func() { _ = dialer.Close() })
+	proxy, err := pgproxy.New(pgproxy.Config{TLS: proxyTLS(t, cfg.HostSuffix), HostSuffix: cfg.HostSuffix, DecoySecret: []byte(strings.Repeat("k", 32))},
+		verifiers, pgproxy.NewScheddWaker(client), dialer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() { _ = proxy.Serve(ctx, ln) }()
+	return &metalStack{p: p, sched: sched, store: store, client: client, cfg: cfg, proxyAddr: ln.Addr().String()}
+}
+
+// connectThroughProxy dials pgproxy with the material as an app would, the
+// endpoint resolving to the local proxy.
+func connectThroughProxy(addr string) Connector {
+	return func(ctx context.Context, m managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
+		host, port, _ := net.SplitHostPort(addr)
+		ep := m.Endpoints[0]
+		pc, err := pgx.ParseConfig("host=" + ep.Host + " port=" + port + " user=" + m.Username + " password=" + m.Password +
+			" dbname=" + m.Database + " sslmode=" + m.TLSMode + " connect_timeout=30")
+		if err != nil {
+			return nil, err
+		}
+		pc.LookupFunc = func(context.Context, string) ([]string, error) { return []string{host}, nil }
+		pc.TLSConfig.ServerName = ep.Host
+		return pgx.ConnectConfig(ctx, pc)
+	}
+}
+
+// adr: 1027 — the platform's provider qualification against the real stack:
+// QualifyProvider provisions a database VM, issues credentials, and runs
+// all four probers through pgproxy, including a real suspend and wake.
+func TestMetalQualifyProvider(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the driver metal test")
+	}
+	st := newMetalStack(t, workdir, base)
+	st.p.WithConnector(connectThroughProxy(st.proxyAddr))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	id := uuid.NewString()
+	t.Cleanup(func() { _ = st.sched.Delete(context.Background(), id) })
+	started := time.Now()
+	report, err := managedpostgres.QualifyProvider(ctx, st.p, managedpostgres.QualificationOptions{
+		ProviderName: Driver, ResourceID: id, Spec: devSpec(), Mutating: true, Timeout: 8 * time.Minute, PollInterval: 200 * time.Millisecond,
+	})
+	for _, check := range report.Checks {
+		if !check.Passed {
+			t.Logf("check %s failed: %s", check.Name, check.Error)
+		}
+	}
+	if err != nil {
+		t.Fatalf("QualifyProvider = %v", err)
+	}
+	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil {
+		t.Fatalf("report lacks prober evidence: %+v", report)
+	}
+	t.Logf("qualified in %v: %d checks; scale-to-zero wake %d ms", time.Since(started).Round(time.Millisecond), len(report.Checks), report.ScaleToZero.WakeLatencyMS)
 }

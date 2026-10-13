@@ -42,17 +42,27 @@ type Verifier struct {
 // NewVerifier hashes password with a fresh 16-byte salt. Passwords must be
 // ASCII without control characters, for which SASLprep is the identity.
 func NewVerifier(password string, iterations int) (Verifier, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return Verifier{}, err
+	}
+	return NewVerifierWithSalt(password, salt, iterations)
+}
+
+// NewVerifierWithSalt hashes password with the given salt (at least 16
+// bytes). Callers that must reproduce a verifier exactly, such as a
+// deterministic credential re-issue, derive the salt themselves.
+func NewVerifierWithSalt(password string, salt []byte, iterations int) (Verifier, error) {
 	if iterations < DefaultIterations {
 		return Verifier{}, fmt.Errorf("pgscram: %d iterations is below %d", iterations, DefaultIterations)
+	}
+	if len(salt) < 16 {
+		return Verifier{}, errors.New("pgscram: salt must be at least 16 bytes")
 	}
 	for _, r := range password {
 		if r < 0x21 || r > 0x7e {
 			return Verifier{}, errors.New("pgscram: password must be printable ASCII without spaces")
 		}
-	}
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return Verifier{}, err
 	}
 	return verifierWithSalt(password, salt, iterations)
 }

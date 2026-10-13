@@ -23,13 +23,16 @@ const (
 	settingScheddClientCert = "schedd_client_cert_path"
 	settingScheddClientKey  = "schedd_client_key_path"
 	settingScheddClientCA   = "schedd_client_ca_path"
+	// credentialKeySecret is the secret_env entry naming the environment
+	// variable (sealed in apid's env) that holds the credential key.
+	credentialKeySecret = "credential_key"
 )
 
 // Factory returns the managedpostgres.Factory for this backend. It dials
 // schedd with apid's client certificate and publishes role verifiers
 // through pool, the control-plane database apid already owns.
 func Factory(pool *pgxpool.Pool) managedpostgres.Factory {
-	return func(backend managedpostgres.BackendConfig, _ func(string) string) (managedpostgres.Provider, error) {
+	return func(backend managedpostgres.BackendConfig, getenv func(string) string) (managedpostgres.Provider, error) {
 		if pool == nil {
 			return nil, errors.New("firecracker: the native backend needs the control-plane database")
 		}
@@ -38,6 +41,11 @@ func Factory(pool *pgxpool.Pool) managedpostgres.Factory {
 			return nil, err
 		}
 		s := backend.Settings
+		keyEnv := backend.SecretEnv[credentialKeySecret]
+		if keyEnv == "" || getenv == nil {
+			return nil, fmt.Errorf("firecracker: secret_env.%s must name the credential key variable", credentialKeySecret)
+		}
+		cfg.CredentialKey = []byte(getenv(keyEnv))
 		target := s[settingScheddTarget]
 		if target == "" {
 			target = "unix:///run/faas/schedd.sock"

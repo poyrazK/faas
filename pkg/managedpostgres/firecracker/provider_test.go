@@ -107,6 +107,26 @@ func (f *fakeScheduler) SetDatabaseAlwaysOn(_ context.Context, in *scheddpb.SetD
 	return rt, nil
 }
 
+func (f *fakeScheduler) ParkDatabase(_ context.Context, in *scheddpb.DatabaseRef, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.State = "parked"
+	return rt, nil
+}
+
+// setState stands in for schedd moving a database (pgproxyd waking it).
+func (f *fakeScheduler) setState(id, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rt, ok := f.vms[id]; ok {
+		rt.State = state
+	}
+}
+
 func (f *fakeScheduler) lastAdmin() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -172,8 +192,11 @@ func testConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.CredentialKey = testCredentialKey
 	return cfg
 }
+
+var testCredentialKey = []byte("test-credential-key-0123456789abcdef")
 
 func newTestProvider(t *testing.T) (*Provider, *fakeScheduler, *fakeVerifiers) {
 	t.Helper()
@@ -181,6 +204,9 @@ func newTestProvider(t *testing.T) (*Provider, *fakeScheduler, *fakeVerifiers) {
 	p, err := New(testConfig(t), sched, verifiers)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := New(Config{}, sched, verifiers); err == nil {
+		t.Fatal("a provider without a credential key was built")
 	}
 	return p, sched, verifiers
 }
@@ -444,16 +470,19 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 			t.Fatalf("%s: the VM and the proxy hold different verifiers", access)
 		}
 
+		// The contract: re-issuing the same identity recovers the same login,
+		// byte for byte, so the VM and pgproxyd keep one verifier.
 		again, err := p.IssueCredentials(ctx, req)
-		if err != nil || again.Username != material.Username || again.Password == material.Password {
-			t.Fatalf("%s: re-issue must rotate the same role: %v", access, err)
+		if err != nil || again.Username != material.Username || again.Password != material.Password {
+			t.Fatalf("%s: re-issue must return the same login: %v", access, err)
 		}
-		if v, _ := verifiers.get(testDatabaseID, material.Username); passwordMatches(t, v, material.Password) {
-			t.Fatalf("%s: rotated-out password still matches", access)
+		if v2, _ := verifiers.get(testDatabaseID, material.Username); v2.String() != v.String() {
+			t.Fatalf("%s: re-issue changed the verifier", access)
 		}
-	}
-	if role := credentialRoleName(testDatabaseID, "binding-2", managedpostgres.CredentialReadWrite); role == credentialRoleName(testDatabaseID, "binding-1", managedpostgres.CredentialReadWrite) {
-		t.Fatal("a new identity key must get a new role")
+		rotated, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "binding-2", Access: access})
+		if err != nil || rotated.Username == material.Username || rotated.Password == material.Password {
+			t.Fatalf("%s: a new identity must be a new role and password: %v", access, err)
+		}
 	}
 
 	invalid := []managedpostgres.CredentialRequest{

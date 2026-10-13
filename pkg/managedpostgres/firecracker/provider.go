@@ -8,13 +8,16 @@ package firecracker
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,6 +35,8 @@ type Scheduler interface {
 	DatabaseAdmin(ctx context.Context, in *scheddpb.DatabaseAdminRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseAdminResponse, error)
 	DeleteDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DeleteDatabaseResponse, error)
 	SetDatabaseAlwaysOn(ctx context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	// ParkDatabase suspends a database; only the scale-to-zero prober uses it.
+	ParkDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -58,7 +63,15 @@ type Config struct {
 	Majors          []int
 	Classes         map[managedpostgres.ServiceClass]shape
 	MaxStorageBytes int64
+	// CredentialKey derives each credential's password and SCRAM salt
+	// (at least 32 bytes, from the variable secret_env.credential_key names).
+	// Issuing the same identity again yields the same login, which the
+	// provider contract requires, while no password is ever stored.
+	CredentialKey []byte
 }
+
+// MinCredentialKeyBytes is the shortest accepted credential key.
+const MinCredentialKeyBytes = 32
 
 // Settings keys in BackendConfig.Settings.
 const (
@@ -124,11 +137,17 @@ func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 	return cfg, nil
 }
 
+// Connector opens a SQL session with issued credentials. Qualification
+// probes use it; the default dials the material's endpoint (pgproxyd).
+type Connector func(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error)
+
 // Provider is the native backend.
 type Provider struct {
 	cfg       Config
 	scheduler Scheduler
 	verifiers Verifiers
+	connect   Connector
+	poll      time.Duration
 }
 
 // New builds a Provider over a schedd client and the verifier store.
@@ -136,7 +155,17 @@ func New(cfg Config, scheduler Scheduler, verifiers Verifiers) (*Provider, error
 	if scheduler == nil || verifiers == nil {
 		return nil, errors.New("firecracker: scheduler and verifier store are required")
 	}
-	return &Provider{cfg: cfg, scheduler: scheduler, verifiers: verifiers}, nil
+	if len(cfg.CredentialKey) < MinCredentialKeyBytes {
+		return nil, fmt.Errorf("firecracker: the credential key needs at least %d bytes", MinCredentialKeyBytes)
+	}
+	return &Provider{cfg: cfg, scheduler: scheduler, verifiers: verifiers, connect: connectEndpoint, poll: 500 * time.Millisecond}, nil
+}
+
+// WithConnector replaces how probes reach the database (tests, or an
+// operator host that reaches pgproxyd differently).
+func (p *Provider) WithConnector(c Connector) *Provider {
+	p.connect = c
+	return p
 }
 
 var _ managedpostgres.Provider = (*Provider)(nil)
@@ -292,19 +321,17 @@ func (p *Provider) Delete(ctx context.Context, req managedpostgres.DeleteRequest
 	return managedpostgres.DeleteResult{Done: true}, nil
 }
 
-// IssueCredentials sets a fresh password on the binding's role, as a
-// verifier, and publishes the verifier to pgproxyd. Issuing again rotates
-// the password; the returned material is the only copy.
+// IssueCredentials sets the binding's password on its role, as a verifier,
+// and publishes the same verifier to pgproxyd. Issuing the same identity
+// again returns the same login (the contract's idempotency); the password
+// is derived, never stored.
 func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
 	if req.ProviderResourceID == "" || req.IdentityKey == "" {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
 	}
 	role := credentialRoleName(req.ProviderResourceID, req.IdentityKey, req.Access)
-	password, err := newPassword()
-	if err != nil {
-		return managedpostgres.CredentialMaterial{}, err
-	}
-	verifier, err := pgscram.NewVerifier(password, pgscram.DefaultIterations)
+	password, salt := p.derive(req)
+	verifier, err := pgscram.NewVerifierWithSalt(password, salt, pgscram.DefaultIterations)
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
@@ -365,14 +392,19 @@ func (p *Provider) admin(ctx context.Context, databaseID, sql string) error {
 	return nil
 }
 
-// newPassword returns 32 random bytes as URL-safe base64: printable ASCII,
-// so SASLprep is the identity and the verifier matches every client.
-func newPassword() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
+// derive returns the credential's password and SCRAM salt. Both are keyed
+// HMACs of the binding (database, identity, access), so a re-issue is
+// byte-identical: the same password and the same verifier, so pgproxyd's
+// cached verifier never goes stale. A rotation is a new identity key, hence
+// a new role and password. The password is URL-safe base64: printable
+// ASCII, for which SASLprep is the identity.
+func (p *Provider) derive(req managedpostgres.CredentialRequest) (string, []byte) {
+	mac := func(label string) []byte {
+		h := hmac.New(sha256.New, p.cfg.CredentialKey)
+		h.Write([]byte(label + "\x00" + req.ProviderResourceID + "\x00" + req.IdentityKey + "\x00" + string(req.Access)))
+		return h.Sum(nil)
 	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
+	return base64.RawURLEncoding.EncodeToString(mac("firecracker-password-v1")), mac("firecracker-scram-salt-v1")[:16]
 }
 
 // providerError normalizes schedd errors to the package sentinels. Schedd's
