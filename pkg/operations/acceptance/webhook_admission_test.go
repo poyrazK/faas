@@ -217,8 +217,13 @@ func testWebhookOperationAdmission(t *testing.T, s webhookOperationFixtureStore)
 	}
 }
 
-func TestMemOperationWebhookBinding(t *testing.T) { testWebhookOperationBinding(t, state.NewMemStore()) }
-func TestPgOperationWebhookBinding(t *testing.T)  { s, _ := pgStore(t); testWebhookOperationBinding(t, s) }
+func TestMemOperationWebhookBinding(t *testing.T) {
+	testWebhookOperationBinding(t, state.NewMemStore())
+}
+func TestPgOperationWebhookBinding(t *testing.T) {
+	s, _ := pgStore(t)
+	testWebhookOperationBinding(t, s)
+}
 func TestMemWebhookOperationAdmission(t *testing.T) {
 	testWebhookOperationAdmission(t, state.NewMemStore())
 }
