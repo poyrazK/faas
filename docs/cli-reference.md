@@ -2341,6 +2341,19 @@ Preview retained unresolved lineage cases
 | `--after <ID>` | exclusive outbox cursor |  |
 | `--reason <CODE>` | exact case reason filter |  |
 
+### events subscription-lineage-retry-export
+
+Save a guarded preview as a reviewable retry request
+
+`gregale events subscription-lineage-retry-export [--file <PATH>] [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new JSON request file (never overwrite) |  |
+| `--limit <N>` | selected cases (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
 ### events subscription-lineage-retry-job-create
 
 Submit a reviewed fixed lineage retry selection

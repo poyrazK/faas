@@ -107,7 +107,28 @@ exact reason code. Pagination remains a live listing, not a reservation:
 gregale --json events subscription-lineage-retry-preview APP SUB --reason missing_root --limit 50
 ```
 
-Create a JSON request containing a new UUID and the exact reviewed identities:
+Export one bounded preview page directly to a new request file:
+
+```sh
+gregale events subscription-lineage-retry-export APP SUB --reason missing_root --limit 200 --file retry-request.json
+```
+
+The command reads the existing preview API and creates no retry job. It copies
+each case's revision, original
+acceptance timestamp and diagnostic ID (when present), generates a request UUID,
+and saves an indented JSON file with owner-only permissions. It refuses to
+replace an existing file or export an empty selection. The summary identifies
+the app/subscription, selected count, reason counts and any next-page cursor;
+`--json` returns that summary. Only this page is selected: use `--after` and a
+separate file to review another page. Preview pagination is live, and submission
+still validates every guard against current state.
+
+Review the file and submit it using the create command below. Keep the same file
+and request UUID after a lost response or timeout. Exporting again creates a new
+request identity; use a new export only for a deliberate new selection. The
+request file contains the API body, so supply the same APP and SUB when submitting.
+
+Alternatively, create a JSON request containing a new UUID and the exact reviewed identities:
 
 ```json
 {
