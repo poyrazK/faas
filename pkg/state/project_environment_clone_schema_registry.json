@@ -3684,6 +3684,7 @@
     "columns": [
       "account_id",
       "app_id",
+      "max_pending_deliveries",
       "paused",
       "paused_at",
       "rate_per_second",
