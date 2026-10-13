@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -192,7 +193,8 @@ type Config struct {
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
 	// paused in memory, unbilled, and the next request thaws it. Off by
 	// default. Thawing and parking frozen instances run either way, so
-	// turning it off drains the tier within FrozenTTL.
+	// turning it off drains the tier within FrozenTTL. FAAS_FROZEN_TIER
+	// overrides it.
 	FrozenTier bool `toml:"frozen_tier"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
@@ -505,6 +507,14 @@ func LoadConfig(path string) (*Config, error) {
 	// (single-box dev back-compat).
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
+	}
+	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
+	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER must be a boolean (got %q)", v)
+		}
+		c.FrozenTier = enabled
 	}
 	applyRoutingEnv()
 	return c, nil
