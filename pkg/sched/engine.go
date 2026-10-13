@@ -581,6 +581,11 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// deadNodeSettle holds the dead-node sweep back until this schedd has
+	// read the store without interruption for the staleness window, so a
+	// store outage cannot fail every running instance at once (ADR-1152 §5
+	// rule 4).
+	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
 	// single per-tick decision policy the migrator + deadnode
 	// reconciler consult before any per-instance work. Task #61
@@ -5841,6 +5846,12 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // schedd itself declares a node dead. Failing sooner than schedd's own
 // verdict would terminate instances on a node that is merely slow.
 //
+// The sweep also waits until this schedd has read the store without
+// interruption for the same window (ADR-1152 §5 rule 4). After a store
+// outage longer than 120 s every node's heartbeat is old because nobody
+// could write one; failing rows then would terminate every running
+// instance in the fleet, and vmmd would destroy the healthy VMs behind them.
+//
 // Per-row safety comes from the conditional UPDATE in
 // FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,
 // and whether the recovery controller owns the lifecycle. If the node
@@ -5863,14 +5874,23 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 	if e.deadNodeReconcilerStalenessSeconds > 0 {
 		staleness = time.Duration(e.deadNodeReconcilerStalenessSeconds) * time.Second
 	}
-	threshold := time.Now().UTC().Add(-staleness)
+	now := time.Now().UTC()
+	threshold := now.Add(-staleness)
 	maxPerTick := api.DeadNodeReconcilerTickLimit
 
 	rows, err := e.store.ListRunningInstancesOnDeadNodes(ctx, threshold, maxPerTick)
+	e.deadNodeSettle.observe(err, now)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile dead-node instances: list: %w", err)
 	}
 	if len(rows) == 0 {
+		return 0, nil
+	}
+	if ok, firstWait := e.deadNodeSettle.settled(now, staleness); !ok {
+		if firstWait {
+			e.log.Info("sched: reconcile dead-node instances: waiting for a full staleness window of store access",
+				"candidates", len(rows), "staleness", staleness.String())
+		}
 		return 0, nil
 	}
 	if len(rows) == maxPerTick {
