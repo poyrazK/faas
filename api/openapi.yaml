@@ -28798,7 +28798,7 @@ paths:
             schema: { $ref: '#/components/schemas/PutOperationWebhookBindingRequest' }
       responses:
         '200':
-          description: Saved binding with its new revision.
+          description: Saved operation binding with its new revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
@@ -28821,7 +28821,7 @@ paths:
       description: Returns the bound operation, owner, event selection and revision.
       responses:
         '200':
-          description: Current binding.
+          description: Current operation binding for this endpoint.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
@@ -28832,16 +28832,16 @@ paths:
     delete:
       tags: [inbound_webhooks]
       operationId: deleteOperationWebhookBinding
-      summary: Restore ordinary delivery for future webhook events.
+      summary: Stop starting customer operations from future webhook events.
       description: Operations already admitted through the endpoint, and their event receipts, are retained.
       parameters:
         - name: expected_version
-          description: Current binding revision returned by a previous read or update.
+          description: Current operation binding revision returned by a previous read or update.
           in: query
           required: true
           schema: { type: integer, format: int64, minimum: 1 }
       responses:
-        '204': { description: Binding removed. }
+        '204': { description: Operation binding removed; future events use ordinary delivery. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }

@@ -93,7 +93,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     expected_version: int,
 ) -> Response[Any | Problem]:
-    """Restore ordinary delivery for future webhook events.
+    """Stop starting customer operations from future webhook events.
 
      Operations already admitted through the endpoint, and their event receipts, are retained.
 
@@ -130,7 +130,7 @@ def sync(
     client: AuthenticatedClient | Client,
     expected_version: int,
 ) -> Any | Problem | None:
-    """Restore ordinary delivery for future webhook events.
+    """Stop starting customer operations from future webhook events.
 
      Operations already admitted through the endpoint, and their event receipts, are retained.
 
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     expected_version: int,
 ) -> Response[Any | Problem]:
-    """Restore ordinary delivery for future webhook events.
+    """Stop starting customer operations from future webhook events.
 
      Operations already admitted through the endpoint, and their event receipts, are retained.
 
@@ -197,7 +197,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     expected_version: int,
 ) -> Any | Problem | None:
-    """Restore ordinary delivery for future webhook events.
+    """Stop starting customer operations from future webhook events.
 
      Operations already admitted through the endpoint, and their event receipts, are retained.
 

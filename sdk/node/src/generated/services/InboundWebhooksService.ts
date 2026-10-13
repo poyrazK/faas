@@ -383,7 +383,7 @@ export class InboundWebhooksService {
    * operation bindings must be removed first. An empty event_types list
    * admits every verified event; other types are acknowledged as ignored.
    *
-   * @returns OperationWebhookBindingResponse Saved binding with its new revision.
+   * @returns OperationWebhookBindingResponse Saved operation binding with its new revision.
    * @throws ApiError
    */
   public static putOperationWebhookBinding({
@@ -445,7 +445,7 @@ export class InboundWebhooksService {
   /**
    * Inspect an endpoint's customer operation binding.
    * Returns the bound operation, owner, event selection and revision.
-   * @returns OperationWebhookBindingResponse Current binding.
+   * @returns OperationWebhookBindingResponse Current operation binding for this endpoint.
    * @throws ApiError
    */
   public static getOperationWebhookBinding({
@@ -484,7 +484,7 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Restore ordinary delivery for future webhook events.
+   * Stop starting customer operations from future webhook events.
    * Operations already admitted through the endpoint, and their event receipts, are retained.
    * @returns void
    * @throws ApiError
@@ -503,7 +503,7 @@ export class InboundWebhooksService {
      */
     id: string,
     /**
-     * Current binding revision returned by a previous read or update.
+     * Current operation binding revision returned by a previous read or update.
      */
     expectedVersion: number,
   }): CancelablePromise<void> {
