@@ -433,3 +433,5 @@ type OperationWorkflowNextActionCase = api.OperationWorkflowNextActionCase
 
 type OperationWorkflowNextActionDigestPolicy = api.OperationWorkflowNextActionDigestPolicy
 type OperationWorkflowNextActionDigest = api.OperationWorkflowNextActionDigest
+
+type OperationWorkflowNextActionDigestExplanation = api.OperationWorkflowNextActionDigestExplanation

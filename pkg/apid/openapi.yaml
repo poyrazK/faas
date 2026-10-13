@@ -82451,6 +82451,12 @@ components:
       description: One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded atomically with delivery under the subscription lease. Acknowledgment changes no source obligation.
       required: [items, owner, scope, evaluated_at, soon_until, matching_count, changed_count, remaining_changed_count, retention_limited]
       properties:
+        explanations:
+          type: array
+          maxItems: 20
+          description: Delivery explanations identified by source subscription, sequence and action kind. Older notifications may omit these.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionDigestExplanation'
         items:
           type: array
           minItems: 1
@@ -82479,6 +82485,38 @@ components:
         retention_limited:
           type: boolean
           description: Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable.
+    OperationWorkflowNextActionDigestExplanation:
+      type: object
+      additionalProperties: false
+      description: Why one delivered action qualified, which projected fields changed since its last delivered snapshot, and advisory next steps. Missing historical snapshots never imply no changes; absence from a digest does not prove completion. Evidence comparisons describe references, not live evidence health or escalation state.
+      required: [subscription_id, sequence, action_kind, reasons, comparison, changed_fields, next_step]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        action_kind:
+          type: string
+        reasons:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            type: string
+            enum: [overdue, approaching_deadline, waiting_for_acceptance]
+        comparison:
+          type: string
+          enum: [first_delivery, previous_delivery, previous_snapshot_unavailable]
+        changed_fields:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            enum: [deadline, overdue, owner, summary, trigger, evidence, cases, shared_plan, scope, subscription_tenant_id]
+        next_step:
+          type: string
     OperationWorkflowNextActionCase:
       type: object
       description: Exact workflow case affected by a current source action.

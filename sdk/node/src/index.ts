@@ -384,3 +384,5 @@ export type { OperationWorkflowCaseNextAction } from './customer-operations.js';
 export type { OperationWorkflowNextActionQueueItem, OperationWorkflowNextActionCase } from './customer-operations.js';
 
 export type { OperationWorkflowNextActionDigestPolicy, OperationWorkflowNextActionDigest } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestExplanation } from './customer-operations.js';

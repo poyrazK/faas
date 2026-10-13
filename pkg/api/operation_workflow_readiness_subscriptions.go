@@ -872,14 +872,24 @@ type OperationWorkflowNextActionDigestPolicy struct {
 	CadenceSeconds   int64  `json:"cadence_seconds,omitempty"`
 	SoonAfterSeconds int64  `json:"soon_after_seconds,omitempty"`
 }
+type OperationWorkflowNextActionDigestExplanation struct {
+	SubscriptionID string   `json:"subscription_id"`
+	Sequence       int64    `json:"sequence"`
+	ActionKind     string   `json:"action_kind"`
+	Reasons        []string `json:"reasons"`
+	Comparison     string   `json:"comparison"`
+	ChangedFields  []string `json:"changed_fields"`
+	NextStep       string   `json:"next_step"`
+}
 type OperationWorkflowNextActionDigest struct {
-	Items                 []OperationWorkflowNextActionQueueItem `json:"items"`
-	Owner                 string                                 `json:"owner"`
-	Scope                 string                                 `json:"scope"`
-	EvaluatedAt           time.Time                              `json:"evaluated_at"`
-	SoonUntil             time.Time                              `json:"soon_until"`
-	MatchingCount         int                                    `json:"matching_count"`
-	ChangedCount          int                                    `json:"changed_count"`
-	RemainingChangedCount int                                    `json:"remaining_changed_count"`
-	RetentionLimited      bool                                   `json:"retention_limited"`
+	Explanations          []OperationWorkflowNextActionDigestExplanation `json:"explanations,omitempty"`
+	Items                 []OperationWorkflowNextActionQueueItem         `json:"items"`
+	Owner                 string                                         `json:"owner"`
+	Scope                 string                                         `json:"scope"`
+	EvaluatedAt           time.Time                                      `json:"evaluated_at"`
+	SoonUntil             time.Time                                      `json:"soon_until"`
+	MatchingCount         int                                            `json:"matching_count"`
+	ChangedCount          int                                            `json:"changed_count"`
+	RemainingChangedCount int                                            `json:"remaining_changed_count"`
+	RetentionLimited      bool                                           `json:"retention_limited"`
 }

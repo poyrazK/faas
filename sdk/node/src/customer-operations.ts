@@ -944,3 +944,5 @@ export type OperationWorkflowNextActionCase = import('./generated/models/Operati
 
 export type OperationWorkflowNextActionDigestPolicy = import('./generated/models/OperationWorkflowNextActionDigestPolicy.js').OperationWorkflowNextActionDigestPolicy;
 export type OperationWorkflowNextActionDigest = import('./generated/models/OperationWorkflowNextActionDigest.js').OperationWorkflowNextActionDigest;
+
+export type OperationWorkflowNextActionDigestExplanation = import('./generated/models/OperationWorkflowNextActionDigestExplanation.js').OperationWorkflowNextActionDigestExplanation;

@@ -2,11 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowNextActionDigestExplanation } from './OperationWorkflowNextActionDigestExplanation.js';
 import type { OperationWorkflowNextActionQueueItem } from './OperationWorkflowNextActionQueueItem.js';
 /**
  * One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded atomically with delivery under the subscription lease. Acknowledgment changes no source obligation.
  */
 export type OperationWorkflowNextActionDigest = {
+  /**
+   * Delivery explanations identified by source subscription, sequence and action kind. Older notifications may omit these.
+   */
+  explanations?: Array<OperationWorkflowNextActionDigestExplanation>;
   items: Array<OperationWorkflowNextActionQueueItem>;
   owner: string;
   scope: string;

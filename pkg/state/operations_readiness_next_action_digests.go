@@ -57,6 +57,11 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 	for key, value := range r.DigestKnown {
 		known[key] = value
 	}
+	delivered := map[string]api.OperationWorkflowNextActionQueueItem{}
+	for key, item := range r.DigestDeliveredItems {
+		delivered[key] = item
+	}
+	explanations := []api.OperationWorkflowNextActionDigestExplanation{}
 	items := []api.OperationWorkflowNextActionQueueItem{}
 	matching, changed := 0, 0
 	for _, item := range page.NextActions {
@@ -76,6 +81,9 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 		}
 		changed++
 		if len(items) < 20 {
+			previous, available := delivered[key]
+			explanations = append(explanations, explainNextActionDigest(item, previous, available, known[key] != "", now))
+			delivered[key] = item
 			items = append(items, item)
 			known[key] = fingerprint
 		}
@@ -85,19 +93,80 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 			delete(known, key)
 		}
 	}
+	for key := range delivered {
+		if !live[key] {
+			delete(delivered, key)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	next := now.Add(time.Duration(policy.CadenceSeconds) * time.Second)
 	r.DigestKnown = known
+	r.DigestDeliveredItems = delivered
 	r.Subscription.DigestEvaluatedAt = &now
 	r.Subscription.DigestNextAt = &next
 	if len(items) == 0 {
 		return nil, nil
 	}
 	notice := readinessSubscriptionNotify(r, "next_action_digest", "New or changed team work needs attention. These are retained queue observations; inspect current source controls before acting. Digest acknowledgment changes no ownership, commitment or application obligation.", nil)
-	notice.NextActionDigest = &api.OperationWorkflowNextActionDigest{Items: items, Owner: policy.Owner, Scope: r.Subscription.Scope, EvaluatedAt: now, SoonUntil: soon, MatchingCount: matching, ChangedCount: changed, RemainingChangedCount: changed - len(items), RetentionLimited: true}
+	notice.NextActionDigest = &api.OperationWorkflowNextActionDigest{Explanations: explanations, Items: items, Owner: policy.Owner, Scope: r.Subscription.Scope, EvaluatedAt: now, SoonUntil: soon, MatchingCount: matching, ChangedCount: changed, RemainingChangedCount: changed - len(items), RetentionLimited: true}
 	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: policy.Owner, UpdatedAt: now, UpdatedBy: "system:next-action-digest"}
 	r.Subscription.DigestDeliveredAt = &now
 	return []api.OperationWorkflowReadinessNotification{notice}, nil
+}
+
+// Compare only the last delivered snapshot, never an undelivered evaluation.
+func explainNextActionDigest(item, previous api.OperationWorkflowNextActionQueueItem, available, known bool, now time.Time) api.OperationWorkflowNextActionDigestExplanation {
+	a := item.Action
+	out := api.OperationWorkflowNextActionDigestExplanation{SubscriptionID: a.SubscriptionID, Sequence: a.Sequence, ActionKind: a.Kind, Reasons: []string{}, Comparison: "first_delivery", ChangedFields: []string{}, NextStep: "Inspect current source controls and review the follow-up with current evidence."}
+	if a.DueAt != nil {
+		if !a.DueAt.After(now) {
+			out.Reasons = append(out.Reasons, "overdue")
+		} else {
+			out.Reasons = append(out.Reasons, "approaching_deadline")
+		}
+	}
+	if a.Kind == "handoff_acceptance" {
+		out.Reasons = append(out.Reasons, "waiting_for_acceptance")
+	}
+	if available {
+		out.Comparison = "previous_delivery"
+		pairs := []struct {
+			name           string
+			current, prior any
+		}{
+			{"deadline", a.DueAt, previous.Action.DueAt}, {"overdue", a.Overdue, previous.Action.Overdue},
+			{"owner", a.Owner, previous.Action.Owner}, {"summary", a.Summary, previous.Action.Summary},
+			{"trigger", a.Trigger, previous.Action.Trigger}, {"evidence", a.Evidence, previous.Action.Evidence},
+			{"cases", item.Cases, previous.Cases}, {"shared_plan", a.SharedPlan, previous.Action.SharedPlan},
+			{"scope", item.Scope, previous.Scope}, {"subscription_tenant_id", item.SubscriptionTenantID, previous.SubscriptionTenantID},
+		}
+		for _, pair := range pairs {
+			if readinessDigest(pair.current) != readinessDigest(pair.prior) {
+				out.ChangedFields = append(out.ChangedFields, pair.name)
+			}
+		}
+	} else if known {
+		out.Comparison = "previous_snapshot_unavailable"
+	}
+	switch a.Kind {
+	case "response_check_in":
+		out.NextStep = "Inspect the response plan and record a check-in with current evidence."
+	case "decision_revalidation":
+		out.NextStep = "Review current conditions and record continue, revise or pause."
+	case "handoff_acceptance":
+		out.NextStep = "Inspect the handoff and explicitly accept or decline it using the source controls."
+	case "handoff_reassignment":
+		out.NextStep = "Inspect the declined handoff and route it to a different team with a reason."
+	case "escalation_acknowledgment":
+		out.NextStep = "Inspect the escalation and name a coordinator, action plan and deadline."
+	case "coordinator_completion":
+		out.NextStep = "Inspect the coordinator plan and record completion with linked evidence when fulfilled."
+	case "scheduled_evidence_check":
+		out.NextStep = "The worker will check evidence automatically; inspect the source to reschedule or cancel."
+	case "dependency_review":
+		out.NextStep = "Review current prerequisite evidence using the source playbook controls."
+	}
+	return out
 }

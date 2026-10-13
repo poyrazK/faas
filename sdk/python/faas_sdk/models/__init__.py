@@ -7665,3 +7665,13 @@ from .operation_workflow_next_action_digest_policy import OperationWorkflowNextA
 from .operation_workflow_next_action_digest_policy_action_trigger import (
     OperationWorkflowNextActionDigestPolicyActionTrigger,
 )
+from .operation_workflow_next_action_digest_explanation import OperationWorkflowNextActionDigestExplanation
+from .operation_workflow_next_action_digest_explanation_changed_fields_item import (
+    OperationWorkflowNextActionDigestExplanationChangedFieldsItem,
+)
+from .operation_workflow_next_action_digest_explanation_comparison import (
+    OperationWorkflowNextActionDigestExplanationComparison,
+)
+from .operation_workflow_next_action_digest_explanation_reasons_item import (
+    OperationWorkflowNextActionDigestExplanationReasonsItem,
+)

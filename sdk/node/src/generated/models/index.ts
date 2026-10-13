@@ -1190,6 +1190,7 @@ export type { OperationWorkflowNewMissingConditionProgressCount } from './Operat
 export type { OperationWorkflowNewMissingConditionProgressInstance } from './OperationWorkflowNewMissingConditionProgressInstance.js';
 export type { OperationWorkflowNextActionCase } from './OperationWorkflowNextActionCase.js';
 export type { OperationWorkflowNextActionDigest } from './OperationWorkflowNextActionDigest.js';
+export type { OperationWorkflowNextActionDigestExplanation } from './OperationWorkflowNextActionDigestExplanation.js';
 export type { OperationWorkflowNextActionDigestPolicy } from './OperationWorkflowNextActionDigestPolicy.js';
 export type { OperationWorkflowNextActionQueueItem } from './OperationWorkflowNextActionQueueItem.js';
 export type { OperationWorkflowOutcomeEntry } from './OperationWorkflowOutcomeEntry.js';
