@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { registerIssueSourceMaps, type IssueSourceMap } from './issue-source-maps.js';
+import { loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
 export type { IssueSourceMap } from './issue-source-maps.js';
 
 export interface IssueContext {
@@ -23,6 +24,8 @@ export interface IssueReporterOptions {
   groupingStrategy?: 'legacy' | 'failure-site-v1' | 'cause-chain-v1';
   /** Deployment-local map artifacts; requires failure-site-v1 or cause-chain-v1 grouping. */
   sourceMaps?: readonly IssueSourceMap[];
+  /** Build manifest verified and loaded once against the running deployment. */
+  sourceMapManifest?: IssueSourceMapManifestOptions;
 }
 function bounded(value: string, limit: number): string {
  const bytes=Buffer.from(value,'utf8');let cut=Math.min(bytes.length,limit);
@@ -53,10 +56,14 @@ export function createIssueReporter(options: IssueReporterOptions) {
   if (options.groupingStrategy !== undefined && !['legacy', 'failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy)) {
     throw new Error('Invalid issue grouping strategy');
   }
-  if (options.sourceMaps !== undefined && !['failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy ?? '')) {
+  if ((options.sourceMaps !== undefined || options.sourceMapManifest !== undefined) && !['failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy ?? '')) {
     throw new Error('Issue source maps require failure-site-v1 or cause-chain-v1 grouping');
   }
-  const sourceMaps = registerIssueSourceMaps(options.sourceMaps);
+  if (options.sourceMaps !== undefined && options.sourceMapManifest !== undefined) {
+    throw new Error('Configure sourceMaps or sourceMapManifest, not both');
+  }
+  const sourceMaps = registerIssueSourceMaps(options.sourceMapManifest === undefined
+    ? options.sourceMaps : loadIssueSourceMapManifest(options.sourceMapManifest));
   const groupingStrategy = options.groupingStrategy;
   const token = options.token;
   const endpoint = new URL(`/v1/apps/${encodeURIComponent(options.app)}/issue-events`, base);

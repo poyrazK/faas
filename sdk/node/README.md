@@ -2836,13 +2836,23 @@ reclamation and pure application migrations. See
 
 ## Issue source maps
 
-Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
 `sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
 bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
 Ship matching maps with the deployment and load them before creating the reporter.
 Original frames determine grouping, and raw bundle stacks remain available.
 Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
 [registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
 
 ## Reversible issue grouping
 

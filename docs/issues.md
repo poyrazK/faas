@@ -323,7 +323,7 @@ function. Use stable error codes or overrides to distinguish failures when a map
 does not provide useful names. Dependency sources such as `node_modules` stay
 outside application grouping.
 
-Maps are registered once per reporter, require `failure-site-v1`, and reject
+Maps are registered once per reporter, require `failure-site-v1` or `cause-chain-v1`, and reject
 invalid configuration at initialization. Register at most 32 maps, 512 KiB each,
 and 4 MiB of JSON total. Across the reporter, decoded mapping rows plus segments
 are capped at 100,000, and sources plus names at 8,192. Source roots, sources,
@@ -334,9 +334,65 @@ server validation and redaction.
 
 Roll out matching maps and reporting tokens with each deployment. Enabling maps
 can create new issue identities; saved groups and history are not migrated.
-This first increment covers Node reporters. Automatic build discovery, central
-release artifact uploads, indexed maps, and server-side OTLP symbolication remain
-future work.
+This covers Node reporters. Central release artifact uploads, indexed maps,
+and server-side OTLP symbolication remain future work.
+
+### Discover source maps during Node builds
+
+After producing your JavaScript bundles and flat Source Map v3 files, run the
+SDK's build command. For example, scan `dist` and write a generated manifest:
+
+```sh
+npx gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace
+```
+
+The command is installed with `@gregale/sdk-node`; the programmatic equivalent
+is `buildIssueSourceMapManifest(directory)` from `@gregale/sdk-node/issues/source-maps`.
+Discovery reads local `.js`, `.mjs`, and `.cjs` bundles. It uses the last
+`sourceMappingURL` comment, or an adjacent `bundle.js.map` for hidden-map builds.
+Map paths must stay inside the selected directory. Dependency directories,
+`.git`, and symlinks are excluded. Remote/inline map references, indexed maps,
+invalid maps, and resource-limit violations fail the build command. It does
+not execute bundles or fetch URLs. The output reports the number of maps found;
+zero maps means there is no mapping coverage.
+
+Ship the generated manifest alongside the exact bundles, then configure:
+
+```ts
+const issues = createIssueReporter({
+  baseURL: apiURL, app: 'exports', token: deploymentReportingToken,
+  groupingStrategy: 'cause-chain-v1',
+  sourceMapManifest: {
+    file: '/app/dist/.gregale-issue-maps.json',
+    directory: '/app/dist',
+  },
+});
+```
+
+`directory` must correspond to the directory scanned during the build; its
+absolute location can change between build and deployment. Paths inside the
+manifest are relative, and original source paths are rebased from the map's
+directory. Portable manifests require relative or virtual source paths, such as
+`webpack://`; absolute build-machine source paths are rejected. Original source
+files and original map files are not required at runtime. Embedded source
+content and producer extensions are excluded from the generated manifest.
+
+The reporter checks each bundle's SHA-256 digest and validates all mapping
+bounds once at initialization. Missing, changed, or mismatched bundles reject
+initialization, preventing a manifest from another build from silently supplying
+frame identities. The digest binds the manifest to bundle bytes; it is not a
+signature or independent verification of the producer's mappings. Register either
+`sourceMapManifest` or manual `sourceMaps`, not both. Capture and retry perform
+no filesystem reads, and the raw generated stack is retained as before.
+
+Discovery visits at most 4,096 directory entries and reads at most 16 MiB per
+bundle and 64 MiB of bundles in total. Existing map count, raw map byte, decoded
+mapping, and symbol limits also apply. Manifest files are capped at 4 MiB plus
+64 KiB of envelope overhead, including JSON escaping. Build and deployment
+directories must remain stable while these helpers read them. `--replace`
+allows a repeated build to replace its generated manifest; failed discovery
+leaves the previous output untouched. Without that flag, an existing output
+file is rejected.
 
 ### Grouping explanations
 
