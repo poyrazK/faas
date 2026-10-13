@@ -67924,6 +67924,28 @@ func (q *Queries) RecordRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Co
 	return result.RowsAffected(), nil
 }
 
+const recordTOTPFailure = `-- name: RecordTOTPFailure :exec
+WITH pruned AS (
+    DELETE FROM account_totp_failures
+    WHERE account_id = $1::uuid
+      AND failed_at <= now() - ($2::bigint * interval '1 second')
+)
+INSERT INTO account_totp_failures (account_id, failed_at)
+VALUES ($1::uuid, now())
+`
+
+type RecordTOTPFailureParams struct {
+	AccountID     pgtype.UUID
+	WindowSeconds int64
+}
+
+// ADR-1152: one row per wrong TOTP code, shared by every apid replica.
+// Rows that have left the window are pruned in the same statement.
+func (q *Queries) RecordTOTPFailure(ctx context.Context, db DBTX, arg RecordTOTPFailureParams) error {
+	_, err := db.Exec(ctx, recordTOTPFailure, arg.AccountID, arg.WindowSeconds)
+	return err
+}
+
 const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec
 INSERT INTO trigger_consumer_health (
     trigger_id, last_poll_at, last_success_at, last_error_at, last_error,
@@ -70762,6 +70784,15 @@ DELETE FROM runtime_upgrade_public_edge_guards
 
 func (q *Queries) ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, resetRuntimeUpgradePublicEdgeGuards)
+	return err
+}
+
+const resetTOTPFailures = `-- name: ResetTOTPFailures :exec
+DELETE FROM account_totp_failures WHERE account_id = $1::uuid
+`
+
+func (q *Queries) ResetTOTPFailures(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, resetTOTPFailures, accountID)
 	return err
 }
 
@@ -75672,6 +75703,34 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const tOTPFailureWindow = `-- name: TOTPFailureWindow :one
+SELECT count(*)::bigint AS failures,
+       COALESCE(min(failed_at), now())::timestamptz AS oldest,
+       now()::timestamptz AS checked_at
+FROM account_totp_failures
+WHERE account_id = $1::uuid
+  AND failed_at > now() - ($2::bigint * interval '1 second')
+`
+
+type TOTPFailureWindowParams struct {
+	AccountID     pgtype.UUID
+	WindowSeconds int64
+}
+
+type TOTPFailureWindowRow struct {
+	Failures  int64
+	Oldest    pgtype.Timestamptz
+	CheckedAt pgtype.Timestamptz
+}
+
+// Failures inside the window, the oldest of them, and the database clock.
+func (q *Queries) TOTPFailureWindow(ctx context.Context, db DBTX, arg TOTPFailureWindowParams) (TOTPFailureWindowRow, error) {
+	row := db.QueryRow(ctx, tOTPFailureWindow, arg.AccountID, arg.WindowSeconds)
+	var i TOTPFailureWindowRow
+	err := row.Scan(&i.Failures, &i.Oldest, &i.CheckedAt)
+	return i, err
 }
 
 const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec

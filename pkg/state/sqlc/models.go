@@ -127,6 +127,11 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type AccountTotpFailure struct {
+	AccountID pgtype.UUID
+	FailedAt  pgtype.Timestamptz
+}
+
 type ActiveEnvironmentGitSource struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID

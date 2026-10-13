@@ -14953,6 +14953,16 @@ CREATE TABLE public.account_spend_snapshot (
 
 
 --
+-- Name: account_totp_failures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_totp_failures (
+    account_id uuid NOT NULL,
+    failed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -38204,6 +38214,13 @@ CREATE UNIQUE INDEX account_spend_snapshot_account_source_period_uniq ON public.
 
 
 --
+-- Name: account_totp_failures_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_totp_failures_account_idx ON public.account_totp_failures USING btree (account_id, failed_at);
+
+
+--
 -- Name: accounts_deletion_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49028,6 +49045,14 @@ ALTER TABLE ONLY public.account_passwords
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_totp_failures account_totp_failures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_totp_failures
+    ADD CONSTRAINT account_totp_failures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

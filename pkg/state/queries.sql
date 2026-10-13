@@ -5651,6 +5651,29 @@ RETURNING lease.epoch, lease.acquired_at, lease.expires_at, now()::timestamptz A
 DELETE FROM control_plane_leases
 WHERE name = sqlc.arg(name)::text AND holder = sqlc.arg(holder)::text AND epoch = sqlc.arg(epoch)::bigint;
 
+-- name: RecordTOTPFailure :exec
+-- ADR-1152: one row per wrong TOTP code, shared by every apid replica.
+-- Rows that have left the window are pruned in the same statement.
+WITH pruned AS (
+    DELETE FROM account_totp_failures
+    WHERE account_id = sqlc.arg(account_id)::uuid
+      AND failed_at <= now() - (sqlc.arg(window_seconds)::bigint * interval '1 second')
+)
+INSERT INTO account_totp_failures (account_id, failed_at)
+VALUES (sqlc.arg(account_id)::uuid, now());
+
+-- name: TOTPFailureWindow :one
+-- Failures inside the window, the oldest of them, and the database clock.
+SELECT count(*)::bigint AS failures,
+       COALESCE(min(failed_at), now())::timestamptz AS oldest,
+       now()::timestamptz AS checked_at
+FROM account_totp_failures
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND failed_at > now() - (sqlc.arg(window_seconds)::bigint * interval '1 second');
+
+-- name: ResetTOTPFailures :exec
+DELETE FROM account_totp_failures WHERE account_id = sqlc.arg(account_id)::uuid;
+
 -- name: ControlPlaneLeaseHeld :one
 -- Fencing check: true only while epoch is the current, unexpired holder's.
 SELECT EXISTS(SELECT 1 FROM control_plane_leases

@@ -192,6 +192,7 @@ type MemStore struct {
 	safeReleaseWorkerLeaseUntil          time.Time
 	controlPlaneLeases                   map[string]ControlPlaneLease // lazily created; see control_plane_lease.go
 	controlPlaneLeaseEpoch               int64
+	totpFailures                         map[string][]time.Time // lazily created; see totp_failures.go
 	requestAuditEvents                   map[string]RequestAuditRecord
 	discoveredAPIRoutes                  map[string]DiscoveredAPIRoute
 	discoveryReceipts                    map[string]struct{}
