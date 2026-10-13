@@ -90,6 +90,38 @@ func (r *Runtime) PruneArchive(ctx context.Context, id string, windowSeconds int
 	return res, nil
 }
 
+// SyncArchive ships the database's archive files still on this node to
+// the bucket, through dbbackupd, and reports how many it uploaded. A node
+// without archiving has nothing to ship.
+func (r *Runtime) SyncArchive(ctx context.Context, id string) (int64, error) {
+	if err := validID(id); err != nil {
+		return 0, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return 0, nil
+	}
+	n, err := dbarchive.SyncArchive(ctx, r.cfg.ArchiveSocket, id)
+	if err != nil {
+		return n, fmt.Errorf("dbvm: sync archive: %w", err)
+	}
+	return n, nil
+}
+
+// ReleaseArchive ships what this node holds of a moved database's archive
+// to the bucket and drops its copy here.
+func (r *Runtime) ReleaseArchive(ctx context.Context, id string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return nil
+	}
+	if err := dbarchive.ReleaseArchive(ctx, r.cfg.ArchiveSocket, id); err != nil {
+		return fmt.Errorf("dbvm: release archive: %w", err)
+	}
+	return nil
+}
+
 // ArchiveBytes sizes each database's archive on this node through
 // dbbackupd. Databases it could not size are left out.
 func (r *Runtime) ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error) {

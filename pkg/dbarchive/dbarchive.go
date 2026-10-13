@@ -37,6 +37,12 @@ const (
 	// OpSize reports the bytes of the database's archive on this node
 	// (Response.Size), for the restore-history meter. Admin only.
 	OpSize = "size"
+	// OpSync ships the database's pending archive files to the bucket now;
+	// Response.Size counts them. Admin only (handoff.go).
+	OpSync = "sync"
+	// OpRelease ships them and then drops this node's copy of the archive,
+	// leaving the bucket's. Admin only.
+	OpRelease = "release"
 )
 
 // Stable error codes in Response.Error.

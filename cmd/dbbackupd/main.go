@@ -81,6 +81,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := newMetrics(reg)
+	var uploader *dbarchive.Uploader
 	if cfg.Remote != nil {
 		s3cfg, err := cfg.Remote.s3Config()
 		if err != nil {
@@ -91,7 +92,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 			return err
 		}
 		store.Remote, store.Prefix = remote, cfg.Remote.Prefix
-		uploader := &dbarchive.Uploader{Store: local, Remote: remote, Prefix: cfg.Remote.Prefix, OnPending: func(n int, oldest time.Duration) {
+		uploader = &dbarchive.Uploader{Store: local, Remote: remote, Prefix: cfg.Remote.Prefix, OnPending: func(n int, oldest time.Duration) {
 			m.pendingFiles.Set(float64(n))
 			m.pendingOldest.Set(oldest.Seconds())
 		}}
@@ -121,7 +122,11 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
 	defer stopWatchdog()
 	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil)
-	return (&dbarchive.Server{Store: store, Backups: store, Retention: store, Log: log}).Serve(ctx, ln)
+	srv := &dbarchive.Server{Store: store, Backups: store, Retention: store, Log: log}
+	if uploader != nil {
+		srv.Handoff = uploader
+	}
+	return srv.Serve(ctx, ln)
 }
 
 // prune trims every archive to its retention now and every interval.

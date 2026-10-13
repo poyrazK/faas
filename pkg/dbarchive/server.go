@@ -35,8 +35,10 @@ type Server struct {
 	Backups BackupStore
 	// Retention records windows and serves OpDrop; nil refuses OpDrop.
 	Retention RetentionStore
-	Log       *slog.Logger
-	now       func() time.Time
+	// Handoff serves OpSync and OpRelease; nil (no bucket) refuses them.
+	Handoff Handoff
+	Log     *slog.Logger
+	now     func() time.Time
 }
 
 // Serve accepts streams until ctx ends or ln fails.
@@ -145,6 +147,10 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 	if err := ReadLine(br, &req); err != nil {
 		return
 	}
+	if req.Op == OpSync || req.Op == OpRelease {
+		s.handleHandoff(ctx, conn, header, req)
+		return
+	}
 	if s.Retention == nil || (req.Op != OpDrop && req.Op != OpPrune && req.Op != OpSize) || req.WindowSeconds < 0 {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 		return
@@ -169,6 +175,29 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 		s.Log.Warn("dbarchive: drop failed", "database_id", header.DatabaseID, "err", err)
 	} else {
 		s.Log.Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
+	}
+	_ = WriteLine(conn, Response{Error: codeFor(err)})
+}
+
+// handleHandoff serves OpSync and OpRelease.
+func (s *Server) handleHandoff(ctx context.Context, conn net.Conn, header Header, req Request) {
+	if s.Handoff == nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return
+	}
+	if req.Op == OpSync {
+		n, err := s.Handoff.SyncDatabase(ctx, header.DatabaseID)
+		if err != nil {
+			s.Log.Warn("dbarchive: archive sync failed", "database_id", header.DatabaseID, "err", err)
+		}
+		_ = WriteLine(conn, Response{Error: codeFor(err), Size: int64(n)})
+		return
+	}
+	err := s.Handoff.Release(ctx, header.DatabaseID)
+	if err != nil {
+		s.Log.Warn("dbarchive: archive release failed", "database_id", header.DatabaseID, "err", err)
+	} else {
+		s.Log.Info("dbarchive: archive released to the bucket", "database_id", header.DatabaseID)
 	}
 	_ = WriteLine(conn, Response{Error: codeFor(err)})
 }

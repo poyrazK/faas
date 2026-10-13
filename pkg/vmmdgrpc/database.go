@@ -38,6 +38,13 @@ type DatabaseRuntime interface {
 	GrowVolume(ctx context.Context, id string, sizeBytes int64) error
 	PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error)
 	ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error)
+	// ExportVolume and ImportVolume carry a stopped database's volume to
+	// another node; SyncArchive and ReleaseArchive hand its archive copy
+	// to the bucket (ADR-1027 moves).
+	ExportVolume(id string) (*dbvm.VolumeExport, error)
+	ImportVolume(id string, sizeBytes int64) (*dbvm.VolumeImport, error)
+	SyncArchive(ctx context.Context, id string) (int64, error)
+	ReleaseArchive(ctx context.Context, id string) error
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
@@ -104,6 +111,19 @@ func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDat
 	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
 	if err != nil {
 		return nil, err
+	}
+	if req.GetReleaseArchive() {
+		if req.GetArchive() || req.GetArchiveOnly() {
+			return nil, status.Error(codes.InvalidArgument, "release_archive excludes archive and archive_only")
+		}
+		// A retried release finds the volume gone and releases again.
+		if err := rt.DeleteVolume(ctx, req.GetDatabaseId()); err != nil {
+			return nil, s.databaseStatus("delete volume", err)
+		}
+		if err := rt.ReleaseArchive(ctx, req.GetDatabaseId()); err != nil {
+			return nil, s.databaseStatus("release archive", err)
+		}
+		return &vmmdpb.DeleteDatabaseVolumeResponse{}, nil
 	}
 	// The archive goes first: if dbbackupd is unreachable the volume stays
 	// too, and schedd's retried delete finds both.
@@ -314,8 +334,10 @@ func databaseCode(err error) codes.Code {
 		return codes.AlreadyExists
 	case errors.Is(err, dbvm.ErrVolumeNotFound):
 		return codes.NotFound
-	case errors.Is(err, dbvm.ErrRunning), errors.Is(err, dbvm.ErrNotRunning), errors.Is(err, dbvm.ErrNoArchive):
+	case errors.Is(err, dbvm.ErrRunning), errors.Is(err, dbvm.ErrNotRunning), errors.Is(err, dbvm.ErrNoArchive), errors.Is(err, dbvm.ErrTransferring):
 		return codes.FailedPrecondition
+	case errors.Is(err, dbvm.ErrTransferDigest):
+		return codes.DataLoss
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return codes.DeadlineExceeded
 	default:

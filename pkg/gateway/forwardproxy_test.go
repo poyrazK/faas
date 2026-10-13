@@ -441,6 +441,18 @@ func (f *fakeVmmdClient) PruneDatabaseArchive(context.Context, *vmmdpb.PruneData
 	panic("PruneDatabaseArchive: not stubbed")
 }
 
+func (f *fakeVmmdClient) ExportDatabaseVolume(context.Context, *vmmdpb.ExportDatabaseVolumeRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.DatabaseVolumeChunk], error) {
+	panic("ExportDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) ImportDatabaseVolume(context.Context, ...grpc.CallOption) (grpc.ClientStreamingClient[vmmdpb.DatabaseVolumeChunk, vmmdpb.ImportDatabaseVolumeResponse], error) {
+	panic("ImportDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) SyncDatabaseArchive(context.Context, *vmmdpb.SyncDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.SyncDatabaseArchiveResponse, error) {
+	panic("SyncDatabaseArchive: not stubbed")
+}
+
 func (f *fakeVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseArchiveBytesRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
 	panic("DatabaseArchiveBytes: not stubbed")
 }

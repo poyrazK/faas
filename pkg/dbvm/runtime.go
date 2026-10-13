@@ -109,6 +109,9 @@ type Runtime struct {
 	fcReal string
 	mu     sync.Mutex
 	vms    map[string]*databaseVM
+	// transfers are the stopped databases whose volumes are being
+	// exported or imported (transfer.go).
+	transfers map[string]bool
 }
 
 type databaseVM struct {
@@ -358,6 +361,9 @@ func (r *Runtime) reserve(id string) (*databaseVM, error) {
 	defer r.mu.Unlock()
 	if _, ok := r.vms[id]; ok {
 		return nil, ErrRunning
+	}
+	if r.transfers[id] {
+		return nil, ErrTransferring
 	}
 	jailID := jailIDPrefix + id
 	lease, err := r.cfg.Leases.Acquire(jailID)

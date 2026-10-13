@@ -534,6 +534,17 @@ service Vmmd {
   // DatabaseArchiveBytes reports the size of each database's archive on
   // this node, for the restore-history usage meter.
   rpc DatabaseArchiveBytes(DatabaseArchiveBytesRequest) returns (DatabaseArchiveBytesResponse);
+  // ExportDatabaseVolume streams a stopped database's volume for a move to
+  // another node: a header with its size, its data extents, then the
+  // transfer digest. The database cannot start until the stream ends.
+  rpc ExportDatabaseVolume(ExportDatabaseVolumeRequest) returns (stream DatabaseVolumeChunk);
+  // ImportDatabaseVolume receives an ExportDatabaseVolume stream, as schedd
+  // relays it, and installs the volume only if the digest matches. A
+  // database that already has a volume on this node is refused.
+  rpc ImportDatabaseVolume(stream DatabaseVolumeChunk) returns (ImportDatabaseVolumeResponse);
+  // SyncDatabaseArchive ships the database's archive files this node still
+  // holds to the shared bucket, through dbbackupd, before it moves away.
+  rpc SyncDatabaseArchive(SyncDatabaseArchiveRequest) returns (SyncDatabaseArchiveResponse);
   // StartDatabase cold-boots the database VM and returns once guest-init
   // answers. Database VMs are never snapshotted.
   rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
@@ -2607,6 +2618,10 @@ message DeleteDatabaseVolumeRequest {
   // it to another node when the database's own node is lost, since every
   // node reads and writes the shared bucket.
   bool archive_only = 3;
+  // release_archive deletes the volume of a database that moved to another
+  // node, then ships this node's copy of its archive to the bucket and
+  // drops it there. The bucket keeps the archive.
+  bool release_archive = 4;
 }
 
 message DeleteDatabaseVolumeResponse {}
@@ -2628,6 +2643,32 @@ message DatabaseArchiveBytesRequest {
 message DatabaseArchiveBytesResponse {
   // Bytes by database id; a database this node could not size is absent.
   map<string, int64> bytes = 1;
+}
+
+message ExportDatabaseVolumeRequest {
+  string database_id = 1;
+}
+
+// DatabaseVolumeChunk is one message of a volume transfer. The first
+// carries database_id and size_bytes; each one after it an extent, its
+// bytes zstd-compressed; the last only sha256, the transfer digest.
+message DatabaseVolumeChunk {
+  string database_id = 1;
+  int64 size_bytes = 2;
+  int64 offset = 3;
+  bytes zstd_data = 4;
+  bytes sha256 = 5;
+}
+
+message ImportDatabaseVolumeResponse {}
+
+message SyncDatabaseArchiveRequest {
+  string database_id = 1;
+}
+
+message SyncDatabaseArchiveResponse {
+  // uploaded counts the files shipped by this call.
+  int64 uploaded = 1;
 }
 
 message GrowDatabaseVolumeRequest {

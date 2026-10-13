@@ -41,6 +41,29 @@ type fakeDatabaseRuntime struct {
 	dropErr   error
 	volumes   []dbvm.Volume
 	controlRs dbguest.Response
+	// vols serves ExportVolume and ImportVolume from real volume files.
+	vols *dbvm.Runtime
+}
+
+func (f *fakeDatabaseRuntime) ExportVolume(id string) (*dbvm.VolumeExport, error) {
+	if f.vols == nil {
+		return nil, dbvm.ErrVolumeNotFound
+	}
+	return f.vols.ExportVolume(id)
+}
+func (f *fakeDatabaseRuntime) ImportVolume(id string, size int64) (*dbvm.VolumeImport, error) {
+	if f.vols == nil {
+		return nil, dbvm.ErrVolumeNotFound
+	}
+	return f.vols.ImportVolume(id, size)
+}
+func (f *fakeDatabaseRuntime) SyncArchive(context.Context, string) (int64, error) {
+	f.calls = append(f.calls, "sync_archive")
+	return 3, f.err
+}
+func (f *fakeDatabaseRuntime) ReleaseArchive(context.Context, string) error {
+	f.calls = append(f.calls, "release_archive")
+	return f.err
 }
 
 func (f *fakeDatabaseRuntime) CreateVolume(_ context.Context, _ string, size int64) error {

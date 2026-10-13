@@ -80,6 +80,9 @@ const (
 	Vmmd_GrowDatabaseVolume_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/GrowDatabaseVolume"
 	Vmmd_PruneDatabaseArchive_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PruneDatabaseArchive"
 	Vmmd_DatabaseArchiveBytes_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveBytes"
+	Vmmd_ExportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExportDatabaseVolume"
+	Vmmd_ImportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ImportDatabaseVolume"
+	Vmmd_SyncDatabaseArchive_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/SyncDatabaseArchive"
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
@@ -554,6 +557,17 @@ type VmmdClient interface {
 	// DatabaseArchiveBytes reports the size of each database's archive on
 	// this node, for the restore-history usage meter.
 	DatabaseArchiveBytes(ctx context.Context, in *DatabaseArchiveBytesRequest, opts ...grpc.CallOption) (*DatabaseArchiveBytesResponse, error)
+	// ExportDatabaseVolume streams a stopped database's volume for a move to
+	// another node: a header with its size, its data extents, then the
+	// transfer digest. The database cannot start until the stream ends.
+	ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error)
+	// ImportDatabaseVolume receives an ExportDatabaseVolume stream, as schedd
+	// relays it, and installs the volume only if the digest matches. A
+	// database that already has a volume on this node is refused.
+	ImportDatabaseVolume(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse], error)
+	// SyncDatabaseArchive ships the database's archive files this node still
+	// holds to the shared bucket, through dbbackupd, before it moves away.
+	SyncDatabaseArchive(ctx context.Context, in *SyncDatabaseArchiveRequest, opts ...grpc.CallOption) (*SyncDatabaseArchiveResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error)
@@ -1200,6 +1214,48 @@ func (c *vmmdClient) DatabaseArchiveBytes(ctx context.Context, in *DatabaseArchi
 	return out, nil
 }
 
+func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExportDatabaseVolumeRequest, DatabaseVolumeChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExportDatabaseVolumeClient = grpc.ServerStreamingClient[DatabaseVolumeChunk]
+
+func (c *vmmdClient) ImportDatabaseVolume(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ImportDatabaseVolumeClient = grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]
+
+func (c *vmmdClient) SyncDatabaseArchive(ctx context.Context, in *SyncDatabaseArchiveRequest, opts ...grpc.CallOption) (*SyncDatabaseArchiveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncDatabaseArchiveResponse)
+	err := c.cc.Invoke(ctx, Vmmd_SyncDatabaseArchive_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartDatabaseResponse)
@@ -1232,7 +1288,7 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 
 func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_DatabaseSession_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1711,6 +1767,17 @@ type VmmdServer interface {
 	// DatabaseArchiveBytes reports the size of each database's archive on
 	// this node, for the restore-history usage meter.
 	DatabaseArchiveBytes(context.Context, *DatabaseArchiveBytesRequest) (*DatabaseArchiveBytesResponse, error)
+	// ExportDatabaseVolume streams a stopped database's volume for a move to
+	// another node: a header with its size, its data extents, then the
+	// transfer digest. The database cannot start until the stream ends.
+	ExportDatabaseVolume(*ExportDatabaseVolumeRequest, grpc.ServerStreamingServer[DatabaseVolumeChunk]) error
+	// ImportDatabaseVolume receives an ExportDatabaseVolume stream, as schedd
+	// relays it, and installs the volume only if the digest matches. A
+	// database that already has a volume on this node is refused.
+	ImportDatabaseVolume(grpc.ClientStreamingServer[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]) error
+	// SyncDatabaseArchive ships the database's archive files this node still
+	// holds to the shared bucket, through dbbackupd, before it moves away.
+	SyncDatabaseArchive(context.Context, *SyncDatabaseArchiveRequest) (*SyncDatabaseArchiveResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error)
@@ -1908,6 +1975,15 @@ func (UnimplementedVmmdServer) PruneDatabaseArchive(context.Context, *PruneDatab
 }
 func (UnimplementedVmmdServer) DatabaseArchiveBytes(context.Context, *DatabaseArchiveBytesRequest) (*DatabaseArchiveBytesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseArchiveBytes not implemented")
+}
+func (UnimplementedVmmdServer) ExportDatabaseVolume(*ExportDatabaseVolumeRequest, grpc.ServerStreamingServer[DatabaseVolumeChunk]) error {
+	return status.Error(codes.Unimplemented, "method ExportDatabaseVolume not implemented")
+}
+func (UnimplementedVmmdServer) ImportDatabaseVolume(grpc.ClientStreamingServer[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]) error {
+	return status.Error(codes.Unimplemented, "method ImportDatabaseVolume not implemented")
+}
+func (UnimplementedVmmdServer) SyncDatabaseArchive(context.Context, *SyncDatabaseArchiveRequest) (*SyncDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncDatabaseArchive not implemented")
 }
 func (UnimplementedVmmdServer) StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartDatabase not implemented")
@@ -2910,6 +2986,42 @@ func _Vmmd_DatabaseArchiveBytes_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_ExportDatabaseVolume_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExportDatabaseVolumeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).ExportDatabaseVolume(m, &grpc.GenericServerStream[ExportDatabaseVolumeRequest, DatabaseVolumeChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExportDatabaseVolumeServer = grpc.ServerStreamingServer[DatabaseVolumeChunk]
+
+func _Vmmd_ImportDatabaseVolume_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ImportDatabaseVolume(&grpc.GenericServerStream[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ImportDatabaseVolumeServer = grpc.ClientStreamingServer[DatabaseVolumeChunk, ImportDatabaseVolumeResponse]
+
+func _Vmmd_SyncDatabaseArchive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncDatabaseArchiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).SyncDatabaseArchive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_SyncDatabaseArchive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).SyncDatabaseArchive(ctx, req.(*SyncDatabaseArchiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_StartDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StartDatabaseRequest)
 	if err := dec(in); err != nil {
@@ -3179,6 +3291,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_DatabaseArchiveBytes_Handler,
 		},
 		{
+			MethodName: "SyncDatabaseArchive",
+			Handler:    _Vmmd_SyncDatabaseArchive_Handler,
+		},
+		{
 			MethodName: "StartDatabase",
 			Handler:    _Vmmd_StartDatabase_Handler,
 		},
@@ -3235,6 +3351,16 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "ForwardUDPStream",
 			Handler:       _Vmmd_ForwardUDPStream_Handler,
 			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ExportDatabaseVolume",
+			Handler:       _Vmmd_ExportDatabaseVolume_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ImportDatabaseVolume",
+			Handler:       _Vmmd_ImportDatabaseVolume_Handler,
 			ClientStreams: true,
 		},
 		{
