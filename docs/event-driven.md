@@ -3274,3 +3274,15 @@ Apply migration `20261013220000001_subscription_capacity_commands.sql` before
 upgrading API/scheduler writers and relying on receipts. Downgrade requires retained
 evidence to be pruned first. The implementation does not execute this migration.
 See [ADR-1178](adr/1178-idempotent-subscription-capacity-commands.md).
+
+### Inspect a capacity command without applying it
+
+Use the same command UUID with the read-only lookup:
+
+```sh
+gregale events subscription-capacity-command APP SUBSCRIPTION_ID COMMAND_UUID --timeout 5s
+```
+
+The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
+
+A receipt describes the original successful command, even if later commands changed capacity. A 404 means retained evidence is unavailable for the owned target; it does not establish that the command never ran. Inspect current controls separately before deciding whether a new change is needed.

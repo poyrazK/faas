@@ -120,3 +120,10 @@ func (c *Client) SetEventSubscriptionCapacity(ctx context.Context, app, id strin
 	err := c.do(ctx, http.MethodPut, subscriptionDeliveryControlPath(app, id)+"/capacity", req, &out)
 	return out, err
 }
+
+// GetEventSubscriptionCapacityCommand returns retained original evidence without applying a command.
+func (c *Client) GetEventSubscriptionCapacityCommand(ctx context.Context, app, id, command string) (EventSubscriptionCapacityCommandReceipt, error) {
+	var out EventSubscriptionCapacityCommandReceipt
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/delivery-control/capacity/commands/"+url.PathEscape(command), nil, &out)
+	return out, err
+}

@@ -62,6 +62,7 @@ import type { EventSchema } from '../models/EventSchema.js';
 import type { EventSchemaRolloutRequest } from '../models/EventSchemaRolloutRequest.js';
 import type { EventSchemaRolloutResponse } from '../models/EventSchemaRolloutResponse.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
+import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSubscriptionCapacityCommandReceipt.js';
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
@@ -2883,6 +2884,47 @@ export class EventsService {
         409: `Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
         429: `New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.`,
         504: `Set consumer delivery capacity: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Read retained original capacity-command evidence.
+   * Requires apps:read or admin and MFA. Returns the original successful command request values and outcome without applying a change, consuming receipt capacity, pruning records or extending retention. The fixed retention deadline is thirty days after success. A missing or expired receipt is unavailable evidence and does not prove the command never ran. The receipt does not describe current configuration and does not establish an ordering or execution guarantee.
+   * @returns EventSubscriptionCapacityCommandReceipt Immutable original successful capacity-command receipt. Cache-Control is no-store.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionCapacityCommand({
+    slug,
+    subscriptionId,
+    commandId,
+  }: {
+    /**
+     * Owned application slug.
+     */
+    slug: string,
+    /**
+     * Owned active subscription or retained delivery control identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero hyphenated command UUID.
+     */
+    commandId: string,
+  }): CancelablePromise<EventSubscriptionCapacityCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'commandID': commandId,
+      },
+      errors: {
+        400: `Invalid subscription or command UUID.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.`,
+        504: `Read-only capacity-command lookup timed out.`,
       },
     });
   }

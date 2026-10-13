@@ -35113,6 +35113,53 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionCapacityCommand
+      summary: Read retained original capacity-command evidence.
+      description: Requires apps:read or admin and MFA. Returns the original successful command request values and outcome without applying a change, consuming receipt capacity, pruning records or extending retention. The fixed retention deadline is thirty days after success. A missing or expired receipt is unavailable evidence and does not prove the command never ran. The receipt does not describe current configuration and does not establish an ordering or execution guarantee.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Owned application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned active subscription or retained delivery control identifier.
+          schema: { type: string, format: uuid }
+        - name: commandID
+          in: path
+          required: true
+          description: Original nonzero hyphenated command UUID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Immutable original successful capacity-command receipt. Cache-Control is no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
+        '400':
+          description: Invalid subscription or command UUID.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Read-only capacity-command lookup timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-recoveries/notification-retry-backlog:
     get:
       tags: [events]

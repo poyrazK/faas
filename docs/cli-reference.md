@@ -2671,6 +2671,16 @@ Set a lower live-delivery limit for one subscription
 | `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
 | `--yes` | confirm changing subscription capacity |  |
 
+### events subscription-capacity-command
+
+Read retained original capacity-command evidence without applying a change
+
+`gregale events subscription-capacity-command [--timeout <DURATION>] <app> <subscription-id> <command-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
 ### events subscription-capacity-preview
 
 Preview a proposed subscription capacity limit without changing controls
