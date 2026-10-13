@@ -124,6 +124,9 @@
     # rolling generation, and reject a database host without enough RAM
     # before opening access or activating the joining node.
     - role: postgres_capacity
+      # ADR-1152 §3: Patroni runs a fixed max_connections, so a join never
+      # restarts PostgreSQL.
+      when: not (faas_postgres_ha_enabled | default(false) | bool)
     # The generated control-plane host vars contain the complete manifest
     # allowlists. This renders the canonical nftables policy, including the
     # new compute CIDR and scheduler/API ports.
@@ -132,6 +135,8 @@
     # owns password/bootstrap policy. A join must only update the listener
     # and pg_hba from the already-provisioned control-plane credentials.
     - role: control_plane_peer_access
+      # Under Patroni, postgres_ha renders pg_hba from the same CIDR list.
+      when: not (faas_postgres_ha_enabled | default(false) | bool)
 
   post_tasks:
     - name: Ensure the control-plane peer contract directory exists

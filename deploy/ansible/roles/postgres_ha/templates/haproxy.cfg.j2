@@ -1,0 +1,40 @@
+# Managed by Ansible (postgres_ha). ADR-1152 §3: node-local route to the
+# cell's current PostgreSQL primary (and replicas), chosen by Patroni.
+global
+    log /dev/log local0
+    maxconn 4096
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log global
+    mode tcp
+    retries 2
+    timeout connect 4s
+    # Long-lived pooled and LISTEN connections stay open; Patroni's checks,
+    # not idle timeouts, decide when a backend is gone.
+    timeout client 30m
+    timeout server 30m
+    timeout check 3s
+
+listen postgres_primary
+    bind 127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port }}
+    option httpchk
+    http-check send meth GET uri /primary
+    http-check expect status 200
+    default-server inter 2s fall 2 rise 2 on-marked-down shutdown-sessions
+{% for m in faas_postgres_ha_members %}
+    server {{ m }} {{ hostvars[m].ansible_host }}:{{ faas_postgres_ha_port }} check port {{ faas_postgres_ha_restapi_port }}
+{% endfor %}
+
+listen postgres_replicas
+    bind 127.0.0.1:{{ faas_postgres_ha_haproxy_replica_port }}
+    balance roundrobin
+    option httpchk
+    http-check send meth GET uri /replica
+    http-check expect status 200
+    default-server inter 2s fall 2 rise 2 on-marked-down shutdown-sessions
+{% for m in faas_postgres_ha_members %}
+    server {{ m }} {{ hostvars[m].ansible_host }}:{{ faas_postgres_ha_port }} check port {{ faas_postgres_ha_restapi_port }}
+{% endfor %}

@@ -490,9 +490,17 @@
 # the peer-authenticated Unix socket; a loopback TCP DSN is refused by the
 # hardened PostgreSQL role and otherwise turns every account transaction into
 # a runtime 500 while /healthz still reports liveness.
+#
+# ADR-1152 §3: under Patroni (faas_postgres_ha_enabled) the local member may
+# be a read-only replica, so the daemons must instead reach the primary
+# through the node-local HAProxy, password-authenticated over loopback TCP.
 - name: control_plane_service — validate control-plane database DSN topology
   ansible.builtin.shell: |
+    {% if faas_postgres_ha_enabled | default(false) | bool %}
+    grep -Eq "^DATABASE_URL=['\"]?postgres(ql)?://faas:[^@]+@127\.0\.0\.1:{{ faas_postgres_ha_haproxy_primary_port | default(5433) }}/faas" /etc/faas/sealed.env
+    {% else %}
     grep -Eq "^DATABASE_URL=['\"]?postgres(ql)?:///faas\?host=/run/postgresql" /etc/faas/sealed.env
+    {% endif %}
   args:
     executable: /bin/sh
   register: faas_control_db_url_check
@@ -500,14 +508,21 @@
   failed_when: false
   no_log: true
 
-- name: control_plane_service — refuse a missing or TCP control-plane DSN
+- name: control_plane_service — refuse a control-plane DSN that does not match the Postgres topology
   ansible.builtin.assert:
     that:
       - faas_control_db_url_check.rc == 0
     fail_msg: >-
+      {% if faas_postgres_ha_enabled | default(false) | bool %}
+      /etc/faas/sealed.env must define DATABASE_URL as the password-authenticated
+      DSN of the local HAProxy route to the Patroni primary
+      (postgres://faas:<password>@127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port | default(5433) }}/faas?sslmode=disable);
+      the local socket may reach a read-only replica (ADR-1152).
+      {% else %}
       /etc/faas/sealed.env must define DATABASE_URL with the local
       PostgreSQL Unix-socket DSN (postgres:///faas?host=/run/postgresql...);
       127.0.0.1:5432 is not a valid control-plane database endpoint.
+      {% endif %}
 
 # Status page HTML (spec §12, M8 acceptance). apid reads this file at
 # /status; without it the handler returns the embedded "source

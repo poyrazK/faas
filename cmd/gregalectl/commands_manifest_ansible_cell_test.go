@@ -64,4 +64,21 @@ func TestRenderManifestAnsibleFiles_ThreeControlNodesGetTheirOwnAddresses(t *tes
 	if !strings.Contains(vars["fsn-2"], `faas_gatewayd_apid_loopback: "http://apid.faas:8081"`) {
 		t.Errorf("compute gateway is pinned to one control node instead of apid.faas:\n%s", vars["fsn-2"])
 	}
+	for name, body := range vars {
+		if strings.Contains(body, "faas_postgres_ha_enabled") {
+			t.Errorf("%s enables Postgres HA without manifest postgresql.ha:\n%s", name, body)
+		}
+	}
+
+	// postgresql.ha switches every host to the Patroni cluster.
+	m.PostgreSQL.HA = true
+	files, err = renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles with postgresql.ha: %v", err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file.Path, ".yml") && !strings.Contains(string(file.Body), "faas_postgres_ha_enabled: true") {
+			t.Errorf("%s does not enable Postgres HA under postgresql.ha", file.Path)
+		}
+	}
 }

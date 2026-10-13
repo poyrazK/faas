@@ -50,7 +50,10 @@
   roles:
     - role: postgres_backup
       tags: [postgres_backup, restore-drill]
-      when: not (faas_image_seed | default(false) | bool)
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        # ADR-1152: pgBackRest (postgres_ha) owns backups under Patroni.
+        - not (faas_postgres_ha_enabled | default(false) | bool)
 
 # Issue #252 / M8: make the current Caddy/Cloudflare TLS drill available on
 # the reference control-plane host. The helper is safe to run repeatedly; it

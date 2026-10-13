@@ -1,0 +1,50 @@
+---
+# ADR-1152 §3: PostgreSQL high availability for a cell. The control nodes run
+# etcd, Patroni (which runs PostgreSQL) and pgBackRest; every node runs
+# HAProxy so local daemons reach the current primary at
+# 127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port }}.
+#
+# Run from the control-plane play (members) and the compute play (HAProxy
+# only, faas_postgres_ha_haproxy_only: true).
+
+- name: postgres_ha — require the cell shape and the vaulted credentials
+  ansible.builtin.assert:
+    that:
+      - faas_postgres_ha_members | length == 1 or (faas_postgres_ha_members | length >= 3 and faas_postgres_ha_members | length % 2 == 1)
+      - faas_postgres_ha_superuser_password is defined and faas_postgres_ha_superuser_password | length >= 16
+      - faas_postgres_ha_replication_password is defined and faas_postgres_ha_replication_password | length >= 16
+      - faas_postgres_ha_rewind_password is defined and faas_postgres_ha_rewind_password | length >= 16
+      - faas_postgres_ha_restapi_password is defined and faas_postgres_ha_restapi_password | length >= 16
+    fail_msg: >-
+      postgres_ha needs 1 or an odd number of at least 3 control nodes, and the
+      superuser, replication, rewind and REST API passwords in the vault
+      (at least 16 characters each).
+    quiet: true
+  no_log: true
+
+- name: postgres_ha — HAProxy to the current primary
+  ansible.builtin.include_tasks: haproxy.yml
+
+- name: postgres_ha — cluster members
+  when:
+    - not (faas_postgres_ha_haproxy_only | default(false) | bool)
+    - inventory_hostname in faas_postgres_ha_members
+  block:
+    - name: postgres_ha — every member names its zone
+      ansible.builtin.assert:
+        that:
+          - faas_postgres_ha_members | length == 1 or (faas_host_zone | default('') | length > 0)
+        fail_msg: "{{ inventory_hostname }} needs fleet.hosts[].zone in the manifest (ADR-1152 §2)."
+        quiet: true
+
+    - name: postgres_ha — watchdog
+      ansible.builtin.include_tasks: softdog.yml
+
+    - name: postgres_ha — etcd
+      ansible.builtin.include_tasks: etcd.yml
+
+    - name: postgres_ha — Patroni
+      ansible.builtin.include_tasks: patroni.yml
+
+    - name: postgres_ha — pgBackRest
+      ansible.builtin.include_tasks: pgbackrest.yml

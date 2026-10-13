@@ -751,6 +751,11 @@ type PostgreSQL struct {
 	// `on-boot-offline`). `on-boot-offline` is the single-box dev
 	// default; the multi-box fleet convention is `on-boot`.
 	Policy string `yaml:"policy"`
+	// HA selects the Patroni-managed cluster (ADR-1152 §3, Ansible role
+	// postgres_ha). The primary may then run on another control node, so
+	// control-plane daemons leave the peer socket and reach it through the
+	// node-local HAProxy, with the DSN from sealed.env.
+	HA bool `yaml:"ha,omitempty"`
 }
 
 // Release is the immutable release-tuple anchor. PR-0 only validates

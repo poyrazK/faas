@@ -225,6 +225,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 		}
+		if m.PostgreSQL.HA {
+			// ADR-1152 §3: control nodes run the Patroni cluster and every
+			// node routes to its primary through a local HAProxy.
+			body += "faas_postgres_ha_enabled: true\n"
+		}
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {

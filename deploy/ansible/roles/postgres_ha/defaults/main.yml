@@ -1,0 +1,82 @@
+---
+# ADR-1152 §3: self-run PostgreSQL high availability for one cell (or for the
+# global directory). Off by default: enabling it replaces the single
+# distro-managed cluster (roles postgres, postgres_capacity, postgres_backup)
+# and is a planned migration, see docs/runbooks/PostgresHA.md.
+faas_postgres_ha_enabled: false
+
+# Cluster identity. One name per cell; it scopes the etcd keys and the
+# pgBackRest stanza.
+faas_postgres_ha_cluster: "gregale-{{ faas_cell_name | default('cell') }}"
+# Members are the cell's control nodes, one per zone (manifest validation
+# enforces an odd count of at least three, each with its own zone).
+faas_postgres_ha_members: "{{ groups['control_plane'] | default([]) }}"
+
+faas_postgres_major_version: 16
+faas_postgres_ha_data_dir: "/var/lib/postgresql/{{ faas_postgres_major_version }}/main"
+faas_postgres_ha_config_dir: "/etc/postgresql/{{ faas_postgres_major_version }}/main"
+faas_postgres_ha_bin_dir: "/usr/lib/postgresql/{{ faas_postgres_major_version }}/bin"
+faas_postgres_ha_port: 5432
+faas_postgres_ha_restapi_port: 8008
+
+# Patroni timings. A failed primary is replaced after about ttl plus one
+# loop: 30 to 40 s, inside the 60 s node-loss RTO.
+faas_postgres_ha_ttl: 30
+faas_postgres_ha_loop_wait: 10
+faas_postgres_ha_retry_timeout: 10
+# Never fail over to a replica further behind than this many bytes.
+faas_postgres_ha_maximum_lag_on_failover: 1048576
+
+# Fixed connection ceiling. postgres_capacity raised max_connections as nodes
+# joined, which restarts the postmaster; under Patroni the value is set once,
+# sized for the cell's planned fleet with pgbouncer on compute nodes.
+faas_postgres_ha_max_connections: 600
+faas_postgres_ha_superuser_reserved_connections: 5
+
+# The Linux softdog watchdog makes a primary that stops renewing its leader
+# key reboot before a replica can be promoted, so two primaries never accept
+# writes at once.
+faas_postgres_ha_watchdog_mode: required
+
+# etcd: Patroni's consensus store, one member per control node (owner
+# decision: co-located, own disk and I/O priority). Mount a dedicated disk at
+# faas_etcd_data_dir so a slow Postgres fsync cannot delay etcd heartbeats.
+faas_etcd_client_port: 2379
+faas_etcd_peer_port: 2380
+faas_etcd_data_dir: /var/lib/etcd/gregale
+# Mutual TLS material from the internal CA (one server/peer leaf per member
+# with its overlay address in the SAN, and a client leaf for Patroni).
+faas_etcd_tls_dir: /etc/faas/tls/etcd
+faas_etcd_ca_file: /etc/faas/tls/ca/ca.crt
+
+# Every node (control and compute) reaches the current primary through a
+# local HAProxy that follows Patroni's /primary health check.
+faas_postgres_ha_haproxy_primary_port: 5433
+faas_postgres_ha_haproxy_replica_port: 5434
+
+# Clients allowed to reach the members directly (compute nodes come through
+# their local HAProxy, which connects from the node's own address).
+faas_postgres_ha_allowed_cidrs: "{{ faas_postgres_allowed_cidrs | default([]) }}"
+
+# Role names. Their passwords come from the vault and are asserted:
+#   faas_postgres_ha_superuser_password
+#   faas_postgres_ha_replication_password
+#   faas_postgres_ha_rewind_password
+#   faas_postgres_ha_restapi_password
+faas_postgres_ha_superuser: postgres
+faas_postgres_ha_replication_user: replicator
+faas_postgres_ha_rewind_user: rewind_user
+faas_postgres_ha_restapi_user: patroni
+
+# pgBackRest (ADR-1152 region loss: off-region backups only). repo1 is
+# object storage in the cell's region, repo2 a bucket in a second US region.
+# Credentials come from the host's service account (GCS application default
+# credentials).
+faas_pgbackrest_stanza: "{{ faas_postgres_ha_cluster }}"
+faas_pgbackrest_repo1_bucket: ""
+faas_pgbackrest_repo2_bucket: ""
+faas_pgbackrest_repo_path: "/pgbackrest/{{ faas_postgres_ha_cluster }}"
+faas_pgbackrest_retention_full: 2
+faas_pgbackrest_spool_dir: /var/spool/pgbackrest
+faas_pgbackrest_full_calendar: "Sun *-*-* 03:00:00"
+faas_pgbackrest_diff_calendar: "Mon..Sat *-*-* 03:00:00"

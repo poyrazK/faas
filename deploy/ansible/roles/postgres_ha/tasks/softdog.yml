@@ -1,0 +1,38 @@
+---
+# Patroni's watchdog (mode: required) needs /dev/watchdog, owned by the user
+# Patroni runs as. softdog is the kernel's software watchdog; a primary that
+# stops renewing its leader key is reset before a replica is promoted.
+- name: postgres_ha — check whether softdog is loaded
+  ansible.builtin.command: grep -qw '^softdog' /proc/modules
+  register: faas_postgres_ha_softdog_loaded
+  changed_when: false
+  failed_when: faas_postgres_ha_softdog_loaded.rc not in [0, 1]
+
+- name: postgres_ha — load softdog now
+  ansible.builtin.command: modprobe softdog
+  when: faas_postgres_ha_softdog_loaded.rc != 0
+  changed_when: true
+
+- name: postgres_ha — load softdog at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/softdog.conf
+    content: "softdog\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: postgres_ha — let Patroni open /dev/watchdog
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/61-gregale-watchdog.rules
+    content: |
+      # ADR-1152: Patroni (user postgres) arms the watchdog.
+      KERNEL=="watchdog", OWNER="postgres", GROUP="postgres", MODE="0600"
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_postgres_ha_watchdog_rule
+
+- name: postgres_ha — apply the watchdog rule to the existing device
+  ansible.builtin.command: udevadm trigger --name-match=watchdog
+  when: faas_postgres_ha_watchdog_rule.changed
+  changed_when: true

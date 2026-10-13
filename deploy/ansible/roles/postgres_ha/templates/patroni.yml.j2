@@ -1,0 +1,118 @@
+# Managed by Ansible (postgres_ha). ADR-1152 §3. Local edits are overwritten.
+{% set addr = hostvars[inventory_hostname].ansible_host %}
+scope: {{ faas_postgres_ha_cluster }}
+namespace: /gregale/
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: {{ addr }}:{{ faas_postgres_ha_restapi_port }}
+  connect_address: {{ addr }}:{{ faas_postgres_ha_restapi_port }}
+  authentication:
+    username: {{ faas_postgres_ha_restapi_user }}
+    password: {{ faas_postgres_ha_restapi_password | to_json }}
+
+etcd3:
+  hosts:
+{% for m in faas_postgres_ha_members %}
+    - {{ hostvars[m].ansible_host }}:{{ faas_etcd_client_port }}
+{% endfor %}
+  protocol: https
+  cacert: {{ faas_etcd_ca_file }}
+  cert: {{ faas_etcd_tls_dir }}/client.crt
+  key: {{ faas_etcd_tls_dir }}/client.key
+
+bootstrap:
+  dcs:
+    ttl: {{ faas_postgres_ha_ttl }}
+    loop_wait: {{ faas_postgres_ha_loop_wait }}
+    retry_timeout: {{ faas_postgres_ha_retry_timeout }}
+    maximum_lag_on_failover: {{ faas_postgres_ha_maximum_lag_on_failover }}
+    # One synchronous standby: losing any one member or zone loses no
+    # committed transaction (RPO 0).
+    synchronous_mode: true
+    synchronous_node_count: 1
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: {{ faas_postgres_ha_max_connections }}
+        superuser_reserved_connections: {{ faas_postgres_ha_superuser_reserved_connections }}
+        wal_level: replica
+        wal_log_hints: "on"
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_keep_size: 1GB
+        synchronous_commit: "on"
+        archive_mode: "on"
+        archive_command: "pgbackrest --stanza={{ faas_pgbackrest_stanza }} archive-push %p"
+        archive_timeout: 60s
+        jit: "off"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+postgresql:
+  listen: {{ addr }},127.0.0.1:{{ faas_postgres_ha_port }}
+  connect_address: {{ addr }}:{{ faas_postgres_ha_port }}
+  data_dir: {{ faas_postgres_ha_data_dir }}
+  config_dir: {{ faas_postgres_ha_config_dir }}
+  bin_dir: {{ faas_postgres_ha_bin_dir }}
+  pgpass: /var/lib/postgresql/.pgpass_patroni
+  authentication:
+    superuser:
+      username: {{ faas_postgres_ha_superuser }}
+      password: {{ faas_postgres_ha_superuser_password | to_json }}
+    replication:
+      username: {{ faas_postgres_ha_replication_user }}
+      password: {{ faas_postgres_ha_replication_password | to_json }}
+    rewind:
+      username: {{ faas_postgres_ha_rewind_user }}
+      password: {{ faas_postgres_ha_rewind_password | to_json }}
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast
+  # Same baseline as the single-node postgres role (spec §11), plus the
+  # replication and rewind paths between members. Control-plane daemons now
+  # reach the primary through the local HAProxy over TCP (scram), because
+  # the primary may be on another member.
+  pg_hba:
+    - local all postgres peer
+    - local replication postgres peer
+    - local all faas peer map=faas_map
+    - host faas faas 127.0.0.1/32 scram-sha-256
+    - host faas faas ::1/128 scram-sha-256
+{% for m in faas_postgres_ha_members %}
+    - host replication {{ faas_postgres_ha_replication_user }} {{ hostvars[m].ansible_host }}/32 scram-sha-256
+    - host all {{ faas_postgres_ha_rewind_user }} {{ hostvars[m].ansible_host }}/32 scram-sha-256
+    - host faas faas {{ hostvars[m].ansible_host }}/32 scram-sha-256
+{% endfor %}
+{% for cidr in faas_postgres_ha_allowed_cidrs %}
+    - host faas faas {{ cidr }} scram-sha-256
+{% endfor %}
+    - host all all 127.0.0.1/32 reject
+    - host all all ::1/128 reject
+  pg_ident:
+    - faas_map faas faas
+    - faas_map root faas
+    - faas_map faas-apid faas
+    - faas_map faas-schedd faas
+    - faas_map faas-meterd faas
+    - faas_map faas-githubd faas
+    - faas_map faas-outboundd faas
+    - faas_map faas-bridged faas
+
+watchdog:
+  mode: {{ faas_postgres_ha_watchdog_mode }}
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  zone: {{ faas_host_zone | default('') | to_json }}
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

@@ -1,0 +1,30 @@
+# Managed by Ansible (postgres_ha). ADR-1152 §3: continuous WAL archiving and
+# backups to two repositories. repo1 is in the cell's region; repo2 is in a
+# second US region and is what a region rebuild restores from.
+[global]
+repo1-type=gcs
+repo1-gcs-bucket={{ faas_pgbackrest_repo1_bucket }}
+repo1-gcs-key-type=auto
+repo1-path={{ faas_pgbackrest_repo_path }}
+repo1-retention-full={{ faas_pgbackrest_retention_full }}
+
+repo2-type=gcs
+repo2-gcs-bucket={{ faas_pgbackrest_repo2_bucket }}
+repo2-gcs-key-type=auto
+repo2-path={{ faas_pgbackrest_repo_path }}
+repo2-retention-full={{ faas_pgbackrest_retention_full }}
+
+# Asynchronous archive-push keeps a slow or unreachable repository from
+# stalling WAL recycling; archive_timeout=60s bounds the gap (RPO <= 60 s).
+archive-async=y
+spool-path={{ faas_pgbackrest_spool_dir }}
+process-max=2
+compress-type=zst
+start-fast=y
+log-level-console=info
+log-level-file=detail
+
+[{{ faas_pgbackrest_stanza }}]
+pg1-path={{ faas_postgres_ha_data_dir }}
+pg1-port={{ faas_postgres_ha_port }}
+pg1-socket-path=/var/run/postgresql

@@ -1,0 +1,27 @@
+---
+# Every node reaches the current primary at 127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port }}
+# and the replicas at :{{ faas_postgres_ha_haproxy_replica_port }}. HAProxy follows
+# Patroni's REST API, so a failover moves new connections within seconds and
+# closes those still open to the old primary.
+- name: postgres_ha — install HAProxy
+  ansible.builtin.apt:
+    name: haproxy
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: postgres_ha — HAProxy configuration
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    validate: haproxy -c -f %s
+  notify: reload haproxy
+
+- name: postgres_ha — HAProxy running
+  ansible.builtin.systemd_service:
+    name: haproxy
+    enabled: true
+    state: started

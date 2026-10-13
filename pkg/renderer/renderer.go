@@ -251,6 +251,7 @@ func render(opts RenderOptions) (RenderReport, error) {
 			HostName:    host.Name,
 			HostAddress: host.Address,
 			HostRole:    host.Role,
+			PostgresHA:  m.PostgreSQL.HA,
 		})
 		if err != nil {
 			return report, err

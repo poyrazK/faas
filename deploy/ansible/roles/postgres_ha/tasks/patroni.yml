@@ -1,0 +1,77 @@
+---
+# Patroni runs PostgreSQL on every member, keeps one synchronous standby, and
+# fails over through etcd. On the first run it adopts an existing data
+# directory on the first member (docs/runbooks/PostgresHA.md); the others are
+# rebuilt from it with pg_basebackup.
+- name: postgres_ha — install Patroni and PostgreSQL
+  ansible.builtin.apt:
+    name:
+      - patroni
+      - "postgresql-{{ faas_postgres_major_version }}"
+      - python3-psycopg2
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Patroni starts and stops PostgreSQL itself. The distribution's cluster unit
+# must never start it behind Patroni's back.
+- name: postgres_ha — hand PostgreSQL over to Patroni
+  ansible.builtin.systemd_service:
+    name: "postgresql@{{ faas_postgres_major_version }}-main.service"
+    enabled: false
+    masked: true
+    state: stopped
+
+- name: postgres_ha — Patroni configuration directory
+  ansible.builtin.file:
+    path: /etc/patroni
+    state: directory
+    owner: root
+    group: postgres
+    mode: "0750"
+
+- name: postgres_ha — Patroni member configuration
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: /etc/patroni/config.yml
+    owner: root
+    group: postgres
+    mode: "0640"
+  no_log: true
+  notify: reload patroni
+
+- name: postgres_ha — Patroni running
+  ansible.builtin.systemd_service:
+    name: patroni
+    enabled: true
+    state: started
+
+- name: postgres_ha — find the current primary
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ faas_postgres_ha_restapi_port }}/primary"
+    status_code: [200, 503]
+  register: faas_postgres_ha_primary_probe
+  retries: 12
+  delay: 5
+  until: faas_postgres_ha_primary_probe.status in [200, 503]
+
+# The application role and database. Created on whichever member is primary;
+# an adopted cluster already has them, so these are no-ops there.
+- name: postgres_ha — application role on the primary
+  community.postgresql.postgresql_user:
+    name: faas
+    login_unix_socket: /var/run/postgresql
+    port: "{{ faas_postgres_ha_port }}"
+  become: true
+  become_user: postgres
+  when: faas_postgres_ha_primary_probe.status == 200
+
+- name: postgres_ha — application database on the primary
+  community.postgresql.postgresql_db:
+    name: faas
+    owner: faas
+    login_unix_socket: /var/run/postgresql
+    port: "{{ faas_postgres_ha_port }}"
+  become: true
+  become_user: postgres
+  when: faas_postgres_ha_primary_probe.status == 200

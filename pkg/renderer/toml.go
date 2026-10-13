@@ -65,6 +65,10 @@ type tomlRenderCtx struct {
 	// root-owned systemd EnvironmentFile; embedding it in every daemon
 	// TOML would duplicate a credential into world-readable config.
 	HostRole string
+	// PostgresHA is manifest.postgresql.ha (ADR-1152 §3). The primary may
+	// then be on another control node, so control-plane TOMLs also leave
+	// db_url empty and the daemons take the HAProxy DSN from sealed.env.
+	PostgresHA bool
 }
 
 // controlPlanePostgresSocketDSN is intentionally credential-free. The
@@ -100,6 +104,9 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	dbURL := ctx.DBURL
 	if ctx.HostRole == "control-plane" {
 		dbURL = controlPlanePostgresSocketDSN
+		if ctx.PostgresHA {
+			dbURL = ""
+		}
 	}
 	if ctx.HostRole == "compute-only" {
 		dbURL = ""

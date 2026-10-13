@@ -1,0 +1,24 @@
+---
+# postgres_ha handlers. Patroni rereads its configuration on reload; dynamic
+# PostgreSQL parameters it then applies itself, and restart-only ones it
+# reports as pending_restart for a rolling `patronictl restart`
+# (docs/runbooks/PostgresHA.md), never an uncoordinated restart here.
+
+- name: daemon-reload postgres_ha
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: restart etcd
+  ansible.builtin.systemd_service:
+    name: etcd
+    state: restarted
+
+- name: reload patroni
+  ansible.builtin.systemd_service:
+    name: patroni
+    state: reloaded
+
+- name: reload haproxy
+  ansible.builtin.systemd_service:
+    name: haproxy
+    state: reloaded

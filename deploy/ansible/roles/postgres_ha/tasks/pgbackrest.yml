@@ -1,0 +1,130 @@
+---
+# pgBackRest replaces the cp+rclone archive_command and the nightly
+# pg_basebackup timers. repo1 is in the cell's region; repo2 is in a second
+# US region and is what a region rebuild restores from (ADR-1152).
+- name: postgres_ha — require both backup repositories
+  ansible.builtin.assert:
+    that:
+      - faas_pgbackrest_repo1_bucket | length > 0
+      - faas_pgbackrest_repo2_bucket | length > 0
+      - faas_pgbackrest_repo1_bucket != faas_pgbackrest_repo2_bucket
+    fail_msg: >-
+      Set faas_pgbackrest_repo1_bucket (cell region) and
+      faas_pgbackrest_repo2_bucket (second US region); they must differ.
+    quiet: true
+
+- name: postgres_ha — install pgBackRest
+  ansible.builtin.apt:
+    name: pgbackrest
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: postgres_ha — pgBackRest directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  loop:
+    - "{{ faas_pgbackrest_spool_dir }}"
+    - /var/log/pgbackrest
+
+- name: postgres_ha — pgBackRest configuration
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest.conf
+    owner: root
+    group: postgres
+    mode: "0640"
+
+- name: postgres_ha — helper directory
+  ansible.builtin.file:
+    path: /usr/local/lib/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_ha — backup script (primary only)
+  ansible.builtin.copy:
+    dest: /usr/local/lib/faas/faas-pgbackrest-backup
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Ansible (postgres_ha). ADR-1152: back up only from the
+      # current primary; every member runs this timer and the others exit.
+      set -eu
+      type="${1:?usage: faas-pgbackrest-backup full|diff}"
+      if ! curl -fsS -o /dev/null "http://{{ ansible_host }}:{{ faas_postgres_ha_restapi_port }}/primary"; then
+        echo "not the primary; skipping $type backup"
+        exit 0
+      fi
+      exec pgbackrest --stanza={{ faas_pgbackrest_stanza }} --type="$type" backup
+
+- name: postgres_ha — backup service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-pgbackrest-backup@.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (postgres_ha). ADR-1152.
+      [Unit]
+      Description=pgBackRest %i backup of {{ faas_pgbackrest_stanza }} (primary only)
+      After=patroni.service
+
+      [Service]
+      Type=oneshot
+      User=postgres
+      Group=postgres
+      ExecStart=/usr/local/lib/faas/faas-pgbackrest-backup %i
+  notify: daemon-reload postgres_ha
+
+- name: postgres_ha — backup timers
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/faas-pgbackrest-backup@{{ item.type }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (postgres_ha). ADR-1152.
+      [Unit]
+      Description=pgBackRest {{ item.type }} backup schedule
+
+      [Timer]
+      OnCalendar={{ item.calendar }}
+      RandomizedDelaySec=10min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  loop:
+    - { type: full, calendar: "{{ faas_pgbackrest_full_calendar }}" }
+    - { type: diff, calendar: "{{ faas_pgbackrest_diff_calendar }}" }
+  loop_control:
+    label: "{{ item.type }}"
+  notify: daemon-reload postgres_ha
+
+- name: postgres_ha — flush systemd before enabling the timers
+  ansible.builtin.meta: flush_handlers
+
+- name: postgres_ha — enable backup timers
+  ansible.builtin.systemd_service:
+    name: "faas-pgbackrest-backup@{{ item }}.timer"
+    enabled: true
+    state: started
+  loop: [full, diff]
+
+# Creating the stanza writes repository metadata; run it once from the
+# primary. It is idempotent, so a later run is a no-op.
+- name: postgres_ha — create the pgBackRest stanza on the primary
+  ansible.builtin.command: pgbackrest --stanza={{ faas_pgbackrest_stanza }} stanza-create
+  become: true
+  become_user: postgres
+  register: faas_pgbackrest_stanza_create
+  changed_when: "'completed successfully' in faas_pgbackrest_stanza_create.stdout"
+  when: faas_postgres_ha_primary_probe.status | default(0) == 200

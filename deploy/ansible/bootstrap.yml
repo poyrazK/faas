@@ -105,12 +105,21 @@
     - role: prometheus
     - role: grafana
     # Control-plane-only:
+    # ADR-1152 §3: manifest postgresql.ha selects the Patroni cluster
+    # (postgres_ha) instead of the single distro-managed cluster and its
+    # capacity restarts and pg_basebackup timers.
     - role: postgres
+      when: not (faas_postgres_ha_enabled | default(false) | bool)
     - role: postgres_capacity
+      when: not (faas_postgres_ha_enabled | default(false) | bool)
+    - role: postgres_ha
+      when: faas_postgres_ha_enabled | default(false) | bool
     - role: pgbouncer
       when: faas_pgbouncer_enabled | default(false) | bool
     - role: postgres_backup
-      when: not (faas_image_seed | default(false) | bool)
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        - not (faas_postgres_ha_enabled | default(false) | bool)
     - role: control_plane_service
     - role: gatewayd_public_service
     - role: public_edge
@@ -160,6 +169,12 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    # ADR-1152 §3: compute daemons reach the Patroni primary through a local
+    # HAProxy (127.0.0.1:5433).
+    - role: postgres_ha
+      vars:
+        faas_postgres_ha_haproxy_only: true
+      when: faas_postgres_ha_enabled | default(false) | bool
     # Keep the optional OTLP configuration tripwire consistent on compute nodes.
     - role: otlp_exporter
     - role: nftables
