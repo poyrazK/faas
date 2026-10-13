@@ -9,6 +9,14 @@ import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
 
+function packSDK(sdk, destination) {
+  // The JSON report lists every generated file and can exceed spawnSync's
+  // buffer limit. Request only the filename; the full tarball is still tested.
+  const filename = execFileSync('npm', ['pack', '--ignore-scripts', '--loglevel=error', '--pack-destination', destination], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
+  assert.match(filename, /^[A-Za-z0-9_.-]+\.tgz$/);
+  return filename;
+}
+
 function prepareOfflineStarterInstall(directory) {
   const packagePath = join(directory, 'package.json');
   const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
@@ -28,8 +36,8 @@ test(`${template}: packed SDK installs outside the checkout and serves the brows
   const dest = join(temp, 'feature');
   cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const packedFilename = execFileSync('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
-  cpSync(join(temp, packedFilename), join(dest, 'packages/gregale-sdk.tgz'));
+  const filename = packSDK(sdk, temp);
+  cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
   writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env};
   delete childEnv.NODE_TEST_CONTEXT;
@@ -74,8 +82,8 @@ test('workflow export: packed SDK installs outside the checkout and needs no buc
   const source = fileURLToPath(new URL('../../../examples/customer-operation-workflow-export/', import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const packedFilename = execFileSync('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
-  cpSync(join(temp, packedFilename), join(dest, 'packages/gregale-sdk.tgz'));
+  const filename = packSDK(sdk, temp);
+  cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
   writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
   for (const name of ['GREGALE_STORAGE_TOKEN', 'GREGALE_EXPORT_BUCKET_URI', 'GREGALE_APP_SLUG']) delete childEnv[name];

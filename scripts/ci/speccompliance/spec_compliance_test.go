@@ -29,6 +29,7 @@ import (
 const (
 	serverSrcPath                 = "server.go"
 	dtoFile                       = "dto.go"
+	devBucketsFile                = "dev_buckets.go"
 	eventReplayBackfillFile       = "event_replay_backfill.go"
 	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
 	secretsFile                   = "secrets.go"
@@ -593,13 +594,14 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
-	"EdgeRuleMatchExpr":      true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
-	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
-	"DevBridgeSession":       true,
-	"DevBridgeActivity":      true, // ADR-379 wire observer types live in pkg/devbridge
-	"DevBridgeRequestRecord": true,
-	"DevBridgeCredentials":   true,
-	"DevBridgeWebhookReplay": true,
+	"ObjectStorageReleaseRequirements": true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
+	"EdgeRuleMatchExpr":                true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
+	"DevBridgeScope":                   true, // wire types live in pkg/devbridge; digests never cross the wire
+	"DevBridgeSession":                 true,
+	"DevBridgeActivity":                true, // ADR-379 wire observer types live in pkg/devbridge
+	"DevBridgeRequestRecord":           true,
+	"DevBridgeCredentials":             true,
+	"DevBridgeWebhookReplay":           true,
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
@@ -1063,6 +1065,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
 		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
@@ -1116,6 +1119,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
 		filepath.Join(root, "pkg", "api", "object_notifications.go"),
+		filepath.Join(root, "pkg", "api", "object_compute_triggers.go"),
 		filepath.Join(root, "pkg", "api", "object_version_delete.go"),
 		filepath.Join(root, "pkg", "api", "object_deletion.go"),
 		filepath.Join(root, "pkg", "api", "object_tagging.go"),

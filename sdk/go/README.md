@@ -1226,3 +1226,15 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `NewSecretReloadCoordinator` with `storage.SecretConsumer()` to adopt atomic
+credential snapshots on startup, SIGHUP and manual refresh. Start with the
+workload's lifetime context before serving requests. Opt into
+`ObjectStorageBindingOptions[T]{Retire: ...}` and use `Acquire()`/`Release()`
+through response-body closure to retire old clients safely. Managed bindings
+reject raw `Current()` acquisition. After stopping admission and the coordinator,
+use `WaitForRetirement(ctx)` with a fresh shutdown budget. Without a retirement
+hook, `Current()` keeps caller-owned lifetime behavior. All registered consumers
+must succeed before a revision is ACKed.

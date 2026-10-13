@@ -491,7 +491,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
-		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
+		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
+		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -1536,6 +1539,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithReachableHook(engine.DestroyLostVMs)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
+	// FAAS_HEARTBEAT_FAILURE_THRESHOLD overrides how many consecutive failed
+	// pings fail a node over (default sched.DefaultHeartbeatFailureThreshold;
+	// ADR-191 amendment 2026-10-12). Tests that pin failover latency set 1.
+	if v := os.Getenv("FAAS_HEARTBEAT_FAILURE_THRESHOLD"); v != "" {
+		n, parseErr := strconv.Atoi(v)
+		if parseErr != nil || n <= 0 {
+			log.Error("FAAS_HEARTBEAT_FAILURE_THRESHOLD must be a positive integer", "value", v)
+			return fmt.Errorf("FAAS_HEARTBEAT_FAILURE_THRESHOLD: %s", v)
+		}
+		hb.FailureThreshold = n
+	}
 	if deps.heartbeatInterval > 0 {
 		// Tests inject a sub-second cadence via runDeps to exercise
 		// the wiring without waiting 30s for production cadence.

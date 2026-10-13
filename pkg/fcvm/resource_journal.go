@@ -379,6 +379,20 @@ func (j *ResourceJournal) snapshot() ([]resourceJournalRecord, error) {
 	return items, nil
 }
 
+// RequireEmptyForNativeRecovery permits a native owner to hold the legacy
+// journal's exclusive lock without adopting its records. A surviving legacy
+// lease must be retired by its original recovery path before changing modes.
+func (j *ResourceJournal) RequireEmptyForNativeRecovery() error {
+	records, err := j.snapshot()
+	if err != nil {
+		return err
+	}
+	if len(records) != 0 {
+		return fmt.Errorf("resource journal: %d legacy lease records prevent native recovery", len(records))
+	}
+	return nil
+}
+
 func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()

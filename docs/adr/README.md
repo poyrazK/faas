@@ -795,6 +795,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
+- [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -873,6 +874,23 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
+
+- [ADR-1027: Object storage compute clients and write canaries](1027-object-storage-compute-clients-and-write-canaries.md)
+
+- [ADR-1028: Object storage operation release gates](1028-object-storage-operation-release-gates.md)
+
+- [ADR-1029: Binding preflight against stored release policies](1029-binding-preflight-stored-release-policy.md)
+
+- [ADR-1030: Policy-driven storage canary verification](1030-policy-driven-storage-canary-verification.md)
+
+- [ADR-1031: Node compute secret reload coordinator](1031-node-compute-secret-reload-coordinator.md)
+- [ADR-1032: Go and Python compute secret reload coordinators](1032-go-python-compute-secret-reload-coordinators.md)
+- [ADR-1033: Storage client leases and retirement](1033-storage-client-leases-and-retirement.md)
+
+- [ADR-1034: Managed storage Node compute starter](1034-managed-storage-node-compute-starter.md)
+- [ADR-1035: Managed object storage for developer sessions](1035-developer-managed-object-storage.md)
+
+- [ADR-1036: Declarative bucket triggers for the owning compute app](1036-managed-object-storage-compute-triggers.md)
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)

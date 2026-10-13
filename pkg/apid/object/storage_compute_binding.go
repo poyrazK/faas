@@ -158,11 +158,30 @@ func (s *Service) CreateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	keys := ObjectStorageBindingSecretKeys(req.Prefix)
-	secretRows, err := s.Host.Store().ListAppSecretsInScope(r.Context(), acct.ID, app.ID, bucket.Scope)
+	credential, prob, err := s.newObjectStorageComputeBinding(r.Context(), acct, app, bucket, req, "")
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if err != nil {
 		BucketProblem(w, err)
 		return
+	}
+	s.publishObjectStorageComputeBinding(r.Context(), acct, app, bucket, credential)
+	httpkit.WriteJSON(w, http.StatusCreated, viewObjectStorageComputeBinding(credential))
+}
+
+// newObjectStorageComputeBinding shares sealing, quota and atomic secret custody
+// with the developer workflow. An optional stable ID makes its retries durable.
+func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state.Account, app state.App, bucket state.ObjectBucket, req api.CreateObjectStorageComputeBindingRequest, credentialID string) (state.ObjectS3Credential, *api.Problem, error) {
+	store, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
+	}
+	keys := ObjectStorageBindingSecretKeys(req.Prefix)
+	secretRows, err := s.Host.Store().ListAppSecretsInScope(ctx, acct.ID, app.ID, bucket.Scope)
+	if err != nil {
+		return state.ObjectS3Credential{}, nil, err
 	}
 	keySet := map[string]bool{}
 	for _, row := range secretRows {
@@ -171,54 +190,51 @@ func (s *Service) CreateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 	secretValues := ObjectStorageBindingSecretValues(keys, s.Host.ObjectStorage().PublicEndpoint, s.Host.ObjectStorage().PublicRegion, bucket.Name, "", "")
 	for _, item := range secretValues {
 		if keySet[item.key] {
-			BucketProblem(w, state.ErrConflict)
-			return
+			return state.ObjectS3Credential{}, nil, state.ErrConflict
 		}
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	count, err := s.Host.Store().CountAppSecrets(r.Context(), acct.ID, app.ID)
+	count, err := s.Host.Store().CountAppSecrets(ctx, acct.ID, app.ID)
 	if err != nil {
-		BucketProblem(w, err)
-		return
+		return state.ObjectS3Credential{}, nil, err
 	}
 	if count+len(secretValues) > limits.SecretCountMax {
-		api.WriteProblem(w, api.ErrPlanLimitSecrets(limits, count+len(secretValues)))
-		return
+		return state.ObjectS3Credential{}, api.ErrPlanLimitSecrets(limits, count+len(secretValues)), nil
 	}
 	if !s.ObjectStorageSecretSealReady() {
-		BucketProblem(w, objectstorage.ErrUnavailable)
-		return
+		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
 	recipient := s.Host.SecretRecipient()
 	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
-		BucketProblem(w, objectstorage.ErrUnavailable)
-		return
+		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
 	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
-		BucketProblem(w, objectstorage.ErrUnavailable)
-		return
+		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
-	credentialID := uuid.NewString()
+	if credentialID == "" {
+		credentialID = uuid.NewString()
+	}
 	secretValues = ObjectStorageBindingSecretValues(keys, s.Host.ObjectStorage().PublicEndpoint, s.Host.ObjectStorage().PublicRegion, bucket.Name, accessKeyID, secretAccessKey)
 	secrets, prob := s.SealObjectStorageBindingValues(acct, app, credentialID, bucket.Scope, secretValues, limits)
 	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
+		return state.ObjectS3Credential{}, prob, nil
 	}
-	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+	credential, err := store.CreateObjectS3ComputeBinding(ctx, state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
 		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: recipient.String(), Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
-		BucketProblem(w, err)
-		return
+		return state.ObjectS3Credential{}, nil, err
 	}
-	s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
-	s.Host.EmitAudit(r.Context(), "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": req.Prefix})
-	httpkit.WriteJSON(w, http.StatusCreated, viewObjectStorageComputeBinding(credential))
+	return credential, nil, nil
+}
+
+func (s *Service) publishObjectStorageComputeBinding(ctx context.Context, acct state.Account, app state.App, bucket state.ObjectBucket, credential state.ObjectS3Credential) {
+	s.Host.NotifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "binding_created", bucket.Scope, "")
+	s.Host.EmitAudit(ctx, "object_storage.compute_binding_created", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID, "scope": bucket.Scope, "prefix": credential.ManagedPrefix})
 }
 
 func (s *Service) SealObjectStorageBindingValues(acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) ([]state.AppSecret, *api.Problem) {

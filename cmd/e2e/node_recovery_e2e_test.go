@@ -21,6 +21,9 @@
 package e2e_test
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -36,8 +39,16 @@ import (
 func newNodeRecoveryFixture(t *testing.T, slug string) *normalPathFixture {
 	t.Helper()
 	return newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanHobby,
-		"FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS=2",
+		// Longer than schedd's 30 s heartbeat interval: a shorter window
+		// makes a healthy node look dead between pings, so the reconciler
+		// fails the instance a recovered node has just booted. The faulted
+		// node is still stale at once, because the test backdates its
+		// heartbeat by ten minutes.
+		"FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS=45",
 		"FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS=1",
+		// One failed ping fails the node over, as before the production
+		// default of three (H9-171), so detection fits the 30 s window.
+		"FAAS_HEARTBEAT_FAILURE_THRESHOLD=1",
 	)
 }
 
@@ -93,7 +104,45 @@ func TestE2E_NodeRecovery_StaleHeartbeatIsDetectedAndRecovered(t *testing.T) {
 	// Lifecycle is bookkeeping; serving traffic is the contract. A node that
 	// reads active and still cannot take a wake has recovered on paper only.
 	f.vmmd.SetDefaultVersion("v1")
-	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 60*time.Second)
+	waitForRecoveredNodeResponse(t, f, "normal-path:v1\n", 90*time.Second)
+}
+
+// waitForRecoveredNodeResponse retries until the app answers want. Unlike
+// waitForNormalPathResponse it survives a request the gateway holds for its
+// whole wake budget: since H9-166 a request with no routable target waits
+// that budget (10 s here) rather than failing after 2 s, which is exactly the
+// shared helper's per-request client timeout. The first request after a
+// node recovery can be held that long, so it must not end the test.
+func waitForRecoveredNodeResponse(t *testing.T, f *normalPathFixture, want string, timeout time.Duration) {
+	t.Helper()
+	client := *f.h.HTTPClient()
+	client.Timeout = 0
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.EdgeURL()+"/", nil)
+		if err != nil {
+			cancel()
+			t.Fatalf("new request: %v", err)
+		}
+		req.Host = f.host
+		resp, err := client.Do(req)
+		if err != nil {
+			last = err.Error()
+		} else {
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr == nil && resp.StatusCode == http.StatusOK && string(body) == want {
+				cancel()
+				return
+			}
+			last = resp.Status + " " + string(body)
+		}
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("GET %s/ did not return %q within %s after recovery; last: %s", f.host, want, timeout, last)
 }
 
 // TestE2E_NodeRecovery_DrainedNodeReactivates pins the operator path beside

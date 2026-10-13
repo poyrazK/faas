@@ -90,12 +90,14 @@ def _regen_skip_reason() -> Iterator[None]:
 
 
 @REGEN_MARK
-def test_regen_is_deterministic(_regen_skip_reason: None) -> None:
+def test_regen_is_deterministic(_regen_skip_reason: None, tmp_path: Path) -> None:
     """Regenerating twice produces no diff. The Makefile tripwire
     (`make sdk-gen-python-twice`) is the canonical assertion in CI;
     this pytest is the local dev path for operators who run
     `pytest -m regen`.
     """
+    import os
+    import shutil
     import subprocess
     import sys
     from pathlib import Path
@@ -106,12 +108,31 @@ def test_regen_is_deterministic(_regen_skip_reason: None) -> None:
     if not script.exists():
         pytest.skip("gen.py not present")
 
-    env_args = {"cwd": str(sdk_root)}
+    # Never delete/reformat the package currently imported by this test runner
+    # or by its child workloads. Preserve the same Git cosmetic-drift baseline
+    # in an owned local clone, then copy current (including uncommitted) sources.
+    fixture = tmp_path / "repo"
+    subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", str(repo_root), str(fixture)], check=True)
+    subprocess.run(["git", "-C", str(fixture), "checkout", "HEAD", "--", "sdk/python", "api/openapi.yaml"], check=True)
+    copied_sdk = fixture / "sdk" / "python"
+    shutil.copytree(
+        sdk_root,
+        copied_sdk,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(".venv", "__pycache__", "tests", ".pytest_cache", ".ruff_cache"),
+    )
+    helpers = {
+        name: (copied_sdk / "faas_sdk" / name).read_bytes()
+        for name in ("object_storage_runtime.py", "secret_reload_runtime.py")
+    }
+    script = copied_sdk / "scripts" / "gen.py"
+    env_args = {"cwd": str(copied_sdk), "env": {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}}
     subprocess.run([sys.executable, str(script)], check=True, **env_args)
-    first = generated_snapshot(sdk_root / "faas_sdk")
+    first = generated_snapshot(copied_sdk / "faas_sdk")
     subprocess.run([sys.executable, str(script)], check=True, **env_args)
-    second = generated_snapshot(sdk_root / "faas_sdk")
+    second = generated_snapshot(copied_sdk / "faas_sdk")
     assert first == second, "regen is non-deterministic: the second regen changed generated files"
+    assert {name: (copied_sdk / "faas_sdk" / name).read_bytes() for name in helpers} == helpers
 
 
 def _fixture_generator(tmp_path, monkeypatch):
@@ -125,6 +146,7 @@ def _fixture_generator(tmp_path, monkeypatch):
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
         "faas_sdk/operations_runtime.py": b"# uncommitted runtime authority\n",
+        "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
         "faas_sdk/operations.py": b"# managed operation transaction helper\n",
         "faas_sdk/_operation_contract.py": b"# managed operation wire contract\n",
         "faas_sdk/operation_schema.sql": b"-- managed operation receipt schema\n",

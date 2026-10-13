@@ -804,10 +804,21 @@ const (
 	PostgresCopyWorkerTasksMax               = 64
 	// Selected source databases per private checkpoint admission barrier.
 	// Oversize sets fail before provider or SQL IO; they are never truncated.
-	PostgresCheckpointDatabasesMax = 1024
-	PostgresCopyInventoryMaxBytes  = 4 << 20
-	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
-	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// Private dormant stage credentials retain one bounded encrypted envelope
+	// per durable owner until explicit terminal retirement.
+	PostgresCheckpointCredentialsPerAccountMax     = 4096
+	PostgresCheckpointCredentialCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointCredentialPasswordBytes      = 32
+	PostgresCheckpointActivationPlanMaxBytes       = 16 << 20
+	PostgresCheckpointPublicationMaxBytes          = 24 << 20
+	PostgresCheckpointConnectionCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointConnectionHostMaxBytes       = 253
+	PostgresCheckpointConnectionHostLabelMaxBytes  = 63
+	PostgresCheckpointConnectionDatabaseMaxBytes   = 63
+	PostgresCheckpointDatabasesMax                 = 1024
+	PostgresCopyInventoryMaxBytes                  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes                   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes                 = PostgresCopyEnvelopeMaxBytes + (64 << 10)
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128
@@ -8756,6 +8767,12 @@ const (
 	// per-VM capacity wait, and guest execution. The edge must permit their
 	// worst-case serial composition or it silently becomes the policy owner.
 	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetPlanMax
+	// ProjectApplyTimeout bounds one project apply (POST /v1/projects): the
+	// source upload, re-scan, reconcile and every workload's build enqueue
+	// share that request, so apid's default budget cannot hold it. Hunt #9 on
+	// production-us: the apps committed, then the enqueue failed on the 5 s
+	// deadline and left them undeployed.
+	ProjectApplyTimeout = RequestUploadTimeoutMax + RequestBudgetMax
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
@@ -9769,6 +9786,48 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// Read-only checkpoint object comparison bounds; these grant no storage or IO
+// entitlement. One retained original request exists per private target bucket.
+const ObjectCheckpointVerificationPlanMaxBytes = 16 << 20
+const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40
+
+// Native retirement embeds the bounded original copy plan plus creation metadata.
+const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20
+
+// Bounds for private source compensation plans and native observations.
+const CheckpointSourceCompensationMaxBytes = 16 << 20
+
+// CheckpointCaptureRetirementMaxBytes bounds the complete original capture and
+// source-compensation evidence retained for native artifact cleanup.
+const CheckpointCaptureRetirementMaxBytes = 16 << 20
+
+// Bounds for private PostgreSQL checkpoint target compensation evidence.
+const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20
+
+// Original PostgreSQL copy ownership and permanent retirement observations.
+const PostgresCheckpointCopyRetirementMaxBytes = 2 << 20
+
+// Non-secret original workload ownership and native retirement observations.
+const CheckpointWorkloadRetirementMaxBytes = 2 << 20
+
+// Private recovery pages bound original clone wake dispatch ownership reads.
+const CheckpointWorkloadWakeRecoveryBatchMax = 100
+
+// Private recovery pages bound retained clone migration handoff evidence reads.
+const CheckpointWorkloadMigrationRecoveryBatchMax = 100
+
+// CloneConfigurationOwnershipMaxBytes bounds non-secret original ownership manifests.
+const CloneConfigurationOwnershipMaxBytes = 32 << 10
+
+// CloneCompensationReceiptMaxBytes bounds the private terminal cleanup report.
+const CloneCompensationReceiptMaxBytes = 4 << 10
+
+// Private recovery pages bound retained destination adoption dispatch reads.
+const CheckpointWorkloadMigrationAdoptionRecoveryBatchMax = 100
+
+// Private recovery pages bound retained source cancel/resume dispatch reads.
+const CheckpointWorkloadMigrationResumeRecoveryBatchMax = 100
 
 // App health is a read-only, bounded evidence projection, not a probe loop.
 const (

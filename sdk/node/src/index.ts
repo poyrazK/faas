@@ -375,6 +375,16 @@ export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntity
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
 
+export type { BindingReleasePolicy } from './generated/models/BindingReleasePolicy.js';
+
+export type { SetBindingReleasePolicyRequest } from './generated/models/SetBindingReleasePolicyRequest.js';
+
+export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/models/SetObjectStorageBindingReleasePolicyRequest.js';
+
+export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
+
+export type { BindingCheckReport } from './generated/models/BindingCheckReport.js';
+
 export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDefinition, type DurableEntityRegistry } from './durable-entity-runtime.js';
 
 export { summarizeDurableEntity, observeDurableEntity, type DurableEntityObservation, type DurableEntityFinding } from './durable-entity-visibility.js';

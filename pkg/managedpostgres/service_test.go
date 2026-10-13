@@ -628,3 +628,21 @@ func TestUsageRejectsDuplicateOrNegativeMeters(t *testing.T) {
 		t.Fatalf("invalid usage accepted")
 	}
 }
+
+// TestClosedProvisioningGateIsDistinguishable pins H9-P107: the rollout
+// gate's refusal must stay retryable (ErrUnavailable) yet be told apart
+// from a provider outage.
+func TestClosedProvisioningGateIsDistinguishable(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	service, err := NewService(testRegistry(t, provider, nil), NewMemoryStore(), ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if !errors.Is(err, ErrProvisioningClosed) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("closed gate = %v, want ErrProvisioningClosed wrapping ErrUnavailable", err)
+	}
+	if errors.Is(ErrUnavailable, ErrProvisioningClosed) {
+		t.Fatal("a provider outage matched the closed gate")
+	}
+}

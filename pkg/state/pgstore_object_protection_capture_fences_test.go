@@ -36,6 +36,11 @@ func TestPgObjectProtectionCaptureMigrationRoundTripAndHeldDownRefusal(t *testin
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Test this historical migration against its own UP definition; later
+	// migrations deliberately extend the shared configuration guard.
+	if _, err := tx.Exec(ctx, parts[0]); err != nil {
+		t.Fatal(err)
+	}
 	var before, after string
 	if err := tx.QueryRow(ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)

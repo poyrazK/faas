@@ -260,6 +260,12 @@ change. The workload receives the values through the existing secret staging
 path on its next deploy/wake; values are never returned by the binding API or
 stored in plaintext.
 
+The endpoint accepts Signature Version 4 only. boto3/botocore presigns S3 URLs
+with Signature Version 2 for a custom endpoint unless told otherwise, and those
+URLs fail with 403 `SignatureDoesNotMatch`; create the client with
+`botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"})`
+before calling `generate_presigned_url`.
+
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
 `DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
@@ -305,6 +311,9 @@ omit `scope` and rejects declarations that explicitly name another scope.
 Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.
+
+See [object storage from compute workloads](object-storage-compute.md) for SDK
+runtime helpers, atomic credential reload and permission-aware write canaries.
 
 ### Release gates and staging smoke
 
@@ -493,7 +502,13 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
+`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+document) are not supported: the gateway treats them as anonymous requests and
+answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
+PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
+through `s3.gregale.dev`: the edge normalizes those segments before the gateway
+verifies the signature, so every request for such a key fails with 403
+`SignatureDoesNotMatch`. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
 Ordinary deletion and mutable null-version deletion use durable receipts and
 marker admission; see the deletion recovery limitations below.

@@ -20,6 +20,7 @@ type qualificationRestoreRuntimeVMM struct {
 	restores         int
 	coldBootFallback bool
 	restoreDelay     time.Duration
+	restoreDeadline  time.Time
 	proofs           map[string]state.EnvironmentQualificationRetirement
 	createSpecs      map[string]AppSpec
 	restoreSpecs     map[string]AppSpec
@@ -58,6 +59,7 @@ func (v *qualificationRestoreRuntimeVMM) CreateEnvironmentQualification(ctx cont
 }
 
 func (v *qualificationRestoreRuntimeVMM) RestoreEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, spec AppSpec) (*WakeOutcome, error) {
+	v.restoreDeadline, _ = ctx.Deadline()
 	if v.beforeRestore != nil {
 		if err := v.beforeRestore(frame); err != nil {
 			return nil, err
@@ -212,6 +214,9 @@ func TestEnvironmentQualificationRestoreRuntimeOwnsDistinctTargetAndRetiresIt(t 
 	}); err != nil {
 		t.Fatal("capture fixture:", err)
 	}
+	// Snapshot backing materialization can outlast an ordinary cold boot.
+	// Restore must retain the lease deadline while vmmd bounds guest readiness.
+	engine.bootBudget = func(state.State) time.Duration { return 20 * time.Millisecond }
 	var restored state.Instance
 	err := engine.WithEnvironmentWorkloadQualificationRestoreRuntime(t.Context(), request, func(_ context.Context, ins state.Instance) error {
 		restored = ins
@@ -225,6 +230,9 @@ func TestEnvironmentQualificationRestoreRuntimeOwnsDistinctTargetAndRetiresIt(t 
 	}
 	if vmm.restores != 1 || vmm.lastRetired.InstanceID != restored.ID {
 		t.Fatalf("restore/retirement did not target the distinct runtime: restores=%d retired=%+v target=%s", vmm.restores, vmm.lastRetired, restored.ID)
+	}
+	if vmm.createDeadline != *request.LeaseUntil || vmm.restoreDeadline != *request.LeaseUntil {
+		t.Fatalf("native capture/restore deadlines (%v, %v) differ from claim lease %v", vmm.createDeadline, vmm.restoreDeadline, *request.LeaseUntil)
 	}
 	status, err := store.EnvironmentQualificationExecution(t.Context(), restored.ID)
 	if err != nil || status.Execution.CaptureInstanceID != captured.ID || !status.DispatchStarted || status.RetiredAt == nil || status.Retirement == nil || status.Retirement.Kind != state.QualificationNativeRetired {

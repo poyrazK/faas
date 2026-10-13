@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -278,6 +280,11 @@ func withIncomingCorrelation(ctx context.Context) context.Context {
 // toWakeRequest flattens CreateFromSnapshotRequest into an fcvm.WakeRequest.
 // The caller resolves (app) here; vmmd stores none of it (ADR-014).
 func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -358,6 +365,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
+		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -452,6 +460,11 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 // toColdBootRequest flattens CreateColdBootRequest into an fcvm.WakeRequest
 // with no snapshot. Same validations as toWakeRequest minus snapshot.
 func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -521,6 +534,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
+		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
@@ -935,4 +949,19 @@ func egressPortsFromWire(ports []uint32) []uint16 {
 		}
 	}
 	return out
+}
+
+// maxQuietPauseAfter bounds a caller-supplied quiet pause delay. A longer
+// one is pointless: the reaper parks an idle function long before it.
+const maxQuietPauseAfter = time.Hour
+
+// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-957).
+// Zero, negative and out-of-range values keep the instance running between
+// requests rather than failing the wake.
+func quietPauseAfterFromWire(ms int64) time.Duration {
+	d := time.Duration(ms) * time.Millisecond
+	if ms <= 0 || d > maxQuietPauseAfter {
+		return 0
+	}
+	return d
 }

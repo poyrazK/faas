@@ -180,6 +180,15 @@ upload timeout, performs wake/capacity admission, and only then stamps the
 guest execution budget. This subsumes the previous sync-invoke `DefaultFor`
 carve-out, which returned exactly this value for the same reason.
 
+**Amendment (2026-10-12, hunt #9).** apid's project apply (`POST /v1/projects`)
+is one request carrying the source upload, the re-scan, reconcile and every
+workload's build enqueue. Under the 5 s apid default, production-us committed
+the apps and then failed the enqueue on the deadline, leaving them without a
+deployment. `applyProject` therefore drops the request budget and runs under
+`api.ProjectApplyTimeout` (`RequestUploadTimeoutMax + RequestBudgetMax`),
+detached from client cancellation so a disconnect cannot strand committed apps.
+The edge envelope (`CustomerRequestEnvelopeTimeout`) still exceeds it.
+
 ### Trade-off
 
 A wedged `gatewayd-internal` can now pin a public connection for up to

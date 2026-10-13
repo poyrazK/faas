@@ -2414,6 +2414,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
+	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
