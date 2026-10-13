@@ -586,9 +586,10 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
-    # Green runs on 2026-10-12/13 took 42-43 minutes; the next one was
-    # cancelled at 45 with no failing test.
-    timeout-minutes: 60
+    # Green runs on 2026-10-12/13 took 42-43 minutes. ADR-590's PGClone
+    # checkpoint tests (#4499) then added ~17 minutes to pkg/apid/apidserver,
+    # which crossed go test's 30-minute timeout; it now has 50.
+    timeout-minutes: 80
     permissions:
       contents: read
       id-token: write
@@ -691,7 +692,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=30m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=50m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: upload public API state-adapter coverage
