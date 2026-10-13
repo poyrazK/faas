@@ -491,7 +491,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
-		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
+		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
+		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -629,6 +632,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// owner that created each frame so an abandoned VM remains charged until
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
+	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -1531,7 +1535,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithNodeRegistry(nodeRegistry).
-		WithEvents(eventsPlatform)
+		WithEvents(eventsPlatform).
+		WithReachableHook(engine.DestroyLostVMs)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	if deps.heartbeatInterval > 0 {

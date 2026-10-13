@@ -590,6 +590,9 @@ type Engine struct {
 	// fall back to their legacy in-method decisions when the
 	// arbiter isn't wired (unit-test fixtures; bootstrap window).
 	recoveryArbiter *Arbiter
+	// lostVMs holds the VMs RecreateInstance parked while their node looked
+	// dead; DestroyLostVMs reclaims them when the node answers (H9-171).
+	lostVMs lostVMSet
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -2302,7 +2305,10 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if len(results) == 0 || results[0].AtCapacity {
 		rollbackWake()
 		out.Err = ErrAtCapacity
-		return out, ErrAtCapacity
+		if refusesRequestWake(selected.app, instanceModeForApp(selected.app)) {
+			out.Err = ErrNoRequestListener
+		}
+		return out, out.Err
 	}
 	if lifecycleChanged {
 		latestApp, readErr := e.store.AppByID(leaderCtx, appID)
@@ -2873,8 +2879,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// reused — no new wakeOutcome, no new metric row. The check
 	// fires BEFORE admitGate so the cooldown / reject / min-floor
 	// branches are unreachable for worker-class apps.
-	if !bypassGates && (app.WorkloadClass == state.WorkloadClassWorker ||
-		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)) {
+	if !bypassGates && refusesRequestWake(app, mode) {
 		release()
 		e.IncAtCapacity(appID, "wake")
 		return WakeResult{AtCapacity: true}, nil
@@ -9455,6 +9460,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	// desired-count notification here.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	}
+	// A worker pool has no periodic floor unless it scales on a queue
+	// signal, so a worker parked here never came back: h8-worker sat at
+	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
+	// H9-171).
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
+		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
 	}
 	return true, nil
 }

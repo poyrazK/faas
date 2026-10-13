@@ -506,7 +506,10 @@ When enabled, a new database reservation is admitted only if the account has a
 complete usage coverage for every provider resource and no unresolved accounting
 obligation, with fresh active observations and bounded final correction evidence
 for deleted resources and has not crossed its
-monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
+monthly cost, compute, storage, history (when configured), or egress ceiling. A live
+resource created inside the current, still-open window owes no completed window yet,
+so its missing first observation does not block; once that window closes it needs
+coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the
 plan's database-count allowance, converted to the canonical byte-second meter,
@@ -716,14 +719,14 @@ to refresh it. These checks do not prove application VM reachability, data
 correctness, or application compatibility.
 
 Workloads keep using the source throughout this workflow. The current API has
-no activation operation; scheduler writer draining and atomic publication remain
+no activation operation; complete writer draining and atomic publication remain
 pending. Both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and
 reprepare before retiring those keys. See [ADR-465](adr/465-managed-postgres-cutover-verification.md).
 
-The next cutover prerequisite is an internal, durable app-wide admission fence
+An internal, durable app-wide admission fence
 ([ADR-466](adr/466-managed-postgres-cutover-admission-fence.md)). It requires fresh
 verification and blocks new instance admission and running-state publication,
 including worker, job, mirror, and warm-pool paths. It persists through retries
@@ -739,6 +742,19 @@ resources. Delayed boot RPCs must read the fence again, including after a daemon
 restart. Warm and migration resume/capture operations use the same admission check
 and destruction join. Default-local nodes honor a configured `db_url` or
 `FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
+
+Internal scheduler plumbing can now explicitly request retirement of one fenced
+VM incarnation and persist a native drain receipt ([ADR-993](adr/993-managed-postgres-cutover-drain-receipts.md)).
+The frame pins its cutover, fence timestamp, app owner/revision, deployment, node,
+instance and wake ID. vmmd holds authoritative database locks while joining boot
+and stopping the original native generation. Process exit and resource cleanup
+must both be confirmed in the host journal. schedd commits the receipt with the
+terminal state before releasing capacity. Lost replies, failed cleanup and
+failed database writes leave work pending for bounded recovery. Missing journal
+records, DB-less/legacy hosts, changed ownership and migrated lineage fail closed.
+These per-instance receipts do not prove all app writers, cached routes or
+external SQL sessions stopped. Fleet membership coverage and customer activation
+remain pending, as does physical native KVM qualification for this step.
 See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the

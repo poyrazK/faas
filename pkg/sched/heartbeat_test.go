@@ -331,6 +331,7 @@ func TestHeartbeat_DeadNodeFlipsInactive(t *testing.T) {
 		pingErr: map[string]error{dead.TargetURL: errors.New("vmmd unreachable")},
 	}
 	h := NewHeartbeat(store, dialer, nil, nil)
+	h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 	if err := h.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -535,6 +536,7 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 			pingErr: map[string]error{dead.TargetURL: errors.New("dead")},
 		}
 		h := NewHeartbeat(store, dialer, nil, nil)
+		h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 		if err := h.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -598,6 +600,7 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 			dialErr: map[string]error{dead.TargetURL: errors.New("dial refused")},
 		}
 		h := NewHeartbeat(store, dialer, nil, nil)
+		h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 		if err := h.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -662,6 +665,7 @@ func TestHeartbeat_RecoversNodeItMarkedInactive(t *testing.T) {
 		pingErr: map[string]error{node.TargetURL: errors.New("vmmd restarting")},
 	}
 	h := NewHeartbeat(store, dialer, nil, nil)
+	h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 
 	// Tick 1: the node fails its ping and is taken out of rotation.
 	if err := h.Tick(ctx); err != nil {
@@ -762,6 +766,7 @@ func TestHeartbeat_RecoveryStopsWhenOperatorReactivates(t *testing.T) {
 		pingErr: map[string]error{node.TargetURL: errors.New("down")},
 	}
 	h := NewHeartbeat(store, dialer, nil, nil)
+	h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 	if err := h.Tick(ctx); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -816,6 +821,7 @@ func TestLoop_RunHeartbeatDrivesRecovery(t *testing.T) {
 		pingErr: map[string]error{node.TargetURL: errors.New("vmmd frozen")},
 	}
 	h := NewHeartbeat(store, dialer, nil, nil)
+	h.FailureThreshold = 1 // one failed probe marks the node; TestHeartbeat_FailureThreshold covers the default
 	loop := &Loop{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	loop.WithHeartbeat(h)
 

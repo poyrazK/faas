@@ -3960,6 +3960,33 @@ groups:
           description: "The oldest raw compute heartbeat is more than eight days old, so bounded cleanup is not catching up within its one-day tolerance. Hourly rollups remain the long-term capacity record."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeHeartbeatRetentionStalled.md"
 
+  - name: compute_node_failover
+    interval: 1m
+    rules:
+      - alert: FaasComputeNodeFlapping
+        expr: sum(increase(schedd_recovery_event_emitted_total{kind="failed"}[30m])) >= 3
+        labels:
+          severity: page
+          component: schedd
+          family: compute_node_failover
+          public_status: internal
+        annotations:
+          summary: "Compute nodes keep failing over"
+          description: "Schedd marked compute nodes unavailable at least three times in 30 minutes. Each failover parks every instance on the node. On production-us a starved control plane did this about 22 times per node while the nodes were healthy (hunt #9, H9-171)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeFlapping.md"
+
+      - alert: FaasInstancesRecreatedByRecovery
+        expr: sum(increase(schedd_recreate_decisions_total{outcome="succeeded"}[15m])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: compute_node_failover
+          public_status: internal
+        annotations:
+          summary: "The recovery arbiter parked running instances"
+          description: "Running instances were parked because their node was marked unavailable. Their customers lost in-memory state, and if the node was alive the VMs may still be running behind parked rows."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeFlapping.md"
+
   - name: app_deletion_grace
     interval: 1m
     rules:

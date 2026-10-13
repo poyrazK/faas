@@ -527,3 +527,33 @@ func TestUsageCollectorMetersEveryReadyDatabase(t *testing.T) {
 		})
 	}
 }
+
+// TestNewDatabaseDoesNotMakeItsAccountStale pins H9-P113 through the store:
+// on production-us a freshly created database reported coverage_missing and
+// blocked every further create, restore and resize until its first hourly
+// window was collected. Its snapshot must carry its creation time and stay
+// fresh until that window closes.
+func TestNewDatabaseDoesNotMakeItsAccountStale(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	store := NewMemoryStore()
+	service := testService(t, testRegistry(t, provider, nil), store)
+	database, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := enabledUsagePolicy()
+	snapshot, err := store.UsageSnapshot(context.Background(), database.AccountID, database.CreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Databases) != 1 || !snapshot.Databases[0].CreatedAt.Equal(database.CreatedAt) {
+		t.Fatalf("snapshot progress = %+v, want creation time %s", snapshot.Databases, database.CreatedAt)
+	}
+	if snapshot.Stale(policy, database.CreatedAt.Add(time.Minute)) {
+		t.Fatal("a database created this window made its account stale")
+	}
+	nextWindow := database.CreatedAt.Truncate(policy.Window).Add(policy.Window)
+	if !snapshot.Stale(policy, nextWindow) {
+		t.Fatal("an uncollected database stayed fresh after its first window closed")
+	}
+}

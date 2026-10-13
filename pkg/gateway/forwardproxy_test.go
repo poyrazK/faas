@@ -497,6 +497,10 @@ func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
 }
 
+func (f *fakeVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	panic("RetireManagedPostgresDrain: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
