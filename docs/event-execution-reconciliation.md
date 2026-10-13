@@ -214,6 +214,47 @@ Go exposes `ListEventExecutionLineageRetryJobs`; Node exposes
 `faas_sdk.api.events.list_event_execution_lineage_retry_jobs` with sync and async
 operations. Apply the listing-index migration before enabling this API at scale.
 
+## Watch a bulk retry job
+
+Monitor a discovered or submitted request without changing its work:
+
+```sh
+gregale events subscription-lineage-retry-job-watch APP SUB REQUEST_UUID --timeout 10m --poll-interval 2s
+# Optionally fence the first read to the incarnation you reviewed:
+gregale --json events subscription-lineage-retry-job-watch APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+```
+
+The watcher uses the existing individual GET API and requires read scope. It
+reads immediately, then delays between reads (default 2 seconds, allowed 1 second
+to 1 hour). The total watch timeout defaults to 10 minutes and must be positive;
+each read also has the existing subscription-control timeout. Progress is emitted
+only when job state, processed count or case outcome counts change. Summaries
+include pending, repaired, already-associated, unresolved, conflicting, changed,
+unavailable and cancelled cases. These are recorded results, not live case status.
+
+`--json` emits one compact JSON object per line. Records contain `event`, app,
+subscription/request IDs and the last observed `job` summary when available.
+Events are `progress`, `completed`, `cancelled` or `stopped`; stopped records carry
+`stop_reason` (`timeout`, `interrupted`, `unavailable`, `job_changed`,
+`invalid_response` or `read_failed`). Errors are reported separately on stderr.
+
+Completed returns exit 0, even when recorded cases remain unresolved/conflicting
+or changed/unavailable; inspect counts before deciding whether more repair is
+needed. Cancelled and locally invalid responses return exit 1; unavailable (404)
+returns 4. Other API and transport errors retain the existing CLI exit codes
+(including 3 for timeout/transport failures, 2 for authentication and 6 for
+forbidden access). Ctrl-C returns 130. A 404 means the job or subscription is
+unavailable, including expiry or lost access, and does not prove the job completed or was cancelled.
+After monitoring stops, the last observed counts can be stale. Read errors stop
+the watcher rather than silently retrying; restart it with the same request UUID.
+
+The first successful read pins original creation time, app identity and retention
+for the watch lifetime. A later response with a different incarnation stops
+monitoring. `--expected-created-at` optionally pins the first read too; use the
+original timestamp from the reviewed job. Without that guard a fresh invocation
+can observe a replacement UUID after physical expiry/pruning. Timeout or Ctrl-C
+stops monitoring only; it never submits retries, cancels jobs or changes retention.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that

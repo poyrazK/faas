@@ -2386,6 +2386,18 @@ Cancel unprocessed lineage retries
 |---|---|---|
 | `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
 
+### events subscription-lineage-retry-job-watch
+
+Watch a retained bulk retry job and summarize outcomes
+
+`gregale events subscription-lineage-retry-job-watch [--timeout <DURATION>] [--poll-interval <DURATION>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum watch duration (default 10m) |  |
+| `--poll-interval <DURATION>` | delay between reads (default 2s, between 1s and 1h) |  |
+| `--expected-created-at <TIMESTAMP>` | optional reviewed original RFC3339 creation timestamp |  |
+
 ### events subscription-lineage-retry-job
 
 Inspect durable lineage retry progress
