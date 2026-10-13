@@ -28,6 +28,19 @@ type fakeStripe struct {
 	items       map[string][]string // invoice -> gregale_line values
 	amounts     []string
 	failNextAdd bool
+	// payments maps an invoice ID to the invoice JSON GET /v1/invoices/{id}
+	// returns (ADR-1302); unknown invoices are 404.
+	payments map[string]string
+}
+
+// setPayment sets what Stripe reports for an invoice's payment.
+func (f *fakeStripe) setPayment(invoiceID, invoiceJSON string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.payments == nil {
+		f.payments = map[string]string{}
+	}
+	f.payments[invoiceID] = invoiceJSON
 }
 
 func (f *fakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +53,14 @@ func (f *fakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.ParseForm()
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/invoices/"):
+		invoice, ok := f.payments[strings.TrimPrefix(r.URL.Path, "/v1/invoices/")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"resource_missing","message":"No such invoice"}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, invoice)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoices":
 		_, _ = fmt.Fprint(w, `{"data":[],"has_more":false}`)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/invoices":

@@ -9,7 +9,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
-| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe\|billing-run) |
+| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe\|billing-run\|invoices) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
@@ -717,7 +717,7 @@ gregale start
 
 ## account
 
-Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run)
+Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run|invoices)
 
 `gregale account [<subcommand>]`
 
@@ -848,6 +848,22 @@ gregale account billing-run schedule-set --export stripe --delay-hours 6
 Stop scheduled runs; a started run continues
 
 `gregale account billing-run schedule-delete`
+
+### account invoices
+
+List Stripe invoices drafted from usage statements and whether they were paid
+
+`gregale account invoices [--status <STATUS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted |  |
+
+Examples:
+
+```sh
+gregale account invoices --status overdue
+```
 
 
 ## add

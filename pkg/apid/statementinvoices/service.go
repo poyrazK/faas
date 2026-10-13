@@ -44,6 +44,9 @@ type Host interface {
 	// SealSecret and OpenSecret seal with apid's own age identity.
 	SealSecret(namespace string, plaintext []byte, maxBytes int) ([]byte, error)
 	OpenSecret(blob []byte) (namespace string, plaintext []byte, err error)
+	// SendEmail sends a plain-text notification (ADR-1302); messageID is the
+	// provider idempotency key.
+	SendEmail(ctx context.Context, to, subject, body, messageID string) error
 }
 
 // Service exports finalized usage statements to the account's own Stripe.
@@ -51,6 +54,8 @@ type Host interface {
 type Service struct {
 	Host   Host
 	Stripe *stripeinvoice.Client
+	// Now is the payment sync clock; nil uses time.Now.
+	Now func() time.Time
 }
 
 func (s *Service) stripeInvoiceClient() *stripeinvoice.Client {
@@ -201,7 +206,10 @@ type statementInvoiceSource struct {
 func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
 	out := api.StatementInvoiceExportResponse{StatementID: e.StatementID, Provider: e.Provider, Customer: e.Customer,
 		Status: e.Status, InvoiceID: e.ProviderInvoiceID, Currency: e.Currency, AmountMinor: e.AmountMinor,
-		Livemode: e.Livemode, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt}
+		Livemode: e.Livemode, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
+		SourceKind: e.SourceKind, PaymentStatus: e.PaymentStatus, AmountPaidMinor: e.AmountPaidMinor,
+		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt,
+		HostedInvoiceURL: e.HostedInvoiceURL, StatusSyncedAt: e.StatusSyncedAt, Overdue: e.Overdue(time.Now())}
 	if e.ProviderInvoiceID != "" {
 		out.DashboardURL = stripeinvoice.DashboardURL(e.Livemode, e.ProviderInvoiceID)
 	}

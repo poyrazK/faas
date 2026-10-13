@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -47,6 +49,43 @@ type StatementInvoiceExportResponse struct {
 	Livemode     bool       `json:"livemode"`
 	CreatedAt    time.Time  `json:"created_at"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	// Payment fields follow the Stripe invoice (ADR-1302).
+	SourceKind           string     `json:"source_kind,omitempty"`
+	PaymentStatus        string     `json:"payment_status,omitempty"`
+	AmountPaidMinor      *int64     `json:"amount_paid_minor,omitempty"`
+	AmountRemainingMinor *int64     `json:"amount_remaining_minor,omitempty"`
+	DueAt                *time.Time `json:"due_at,omitempty"`
+	PaidAt               *time.Time `json:"paid_at,omitempty"`
+	HostedInvoiceURL     string     `json:"hosted_invoice_url,omitempty"`
+	Overdue              bool       `json:"overdue"`
+	StatusSyncedAt       *time.Time `json:"status_synced_at,omitempty"`
+}
+
+// StatementInvoiceListResponse pages an account's exported invoices.
+type StatementInvoiceListResponse struct {
+	Invoices   []StatementInvoiceExportResponse `json:"invoices"`
+	NextCursor string                           `json:"next_cursor,omitempty"`
+}
+
+// ListStatementInvoices pages the account's exported invoices; status is a
+// payment status, unpaid, overdue, or empty for all (ADR-1302).
+func (c *Client) ListStatementInvoices(ctx context.Context, status, cursor string, limit int) (StatementInvoiceListResponse, error) {
+	var out StatementInvoiceListResponse
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/account/statement-invoices"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // PutStripeConnection stores or replaces the account's Stripe key.

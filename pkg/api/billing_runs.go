@@ -71,6 +71,9 @@ type BillingRunItemResponse struct {
 	Reason           string    `json:"reason,omitempty"`
 	Attempts         int       `json:"attempts"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	// PaymentStatus is the Stripe invoice status of the item's statement
+	// (ADR-1302).
+	PaymentStatus string `json:"payment_status,omitempty"`
 }
 
 // BillingRunItemListResponse pages a run's items; NextCursor continues it.

@@ -41,6 +41,9 @@ type Host interface {
 	DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string, start, end time.Time) (state.PlatformTenantStatement, *api.Problem)
 	FinalizeTenantStatement(ctx context.Context, acct state.Account, tenantID, statementID string) (state.PlatformTenantStatement, *api.Problem)
 	ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement) (state.StatementInvoiceExport, *api.Problem)
+	// SendEmail sends a plain-text notification (ADR-1302); messageID is the
+	// provider idempotency key.
+	SendEmail(ctx context.Context, to, subject, body, messageID string) error
 }
 
 // Service serves billing run endpoints and runs the worker. Now is the
@@ -288,7 +291,7 @@ func itemResponse(item state.BillingRunItem) api.BillingRunItemResponse {
 	out := api.BillingRunItemResponse{SourceKind: item.SourceKind, ExternalRef: item.ExternalRef, Outcome: item.Outcome,
 		StatementID: item.StatementID, Revision: item.Revision, Currency: item.Currency, Completeness: item.Completeness,
 		InvoiceID: item.InvoiceID, ExportedInvoices: item.ExportedCount, Reason: item.Reason, Attempts: item.Attempts,
-		UpdatedAt: item.UpdatedAt.UTC()}
+		UpdatedAt: item.UpdatedAt.UTC(), PaymentStatus: item.PaymentStatus}
 	if item.SourceKind == state.StatementSourceAppConsumer {
 		out.AppID, out.ConsumerID = item.AppID, item.SourceID
 	} else {

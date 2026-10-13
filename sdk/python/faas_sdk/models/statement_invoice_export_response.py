@@ -8,9 +8,17 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.statement_invoice_export_response_payment_status import (
+    StatementInvoiceExportResponsePaymentStatus,
+    check_statement_invoice_export_response_payment_status,
+)
 from ..models.statement_invoice_export_response_provider import (
     StatementInvoiceExportResponseProvider,
     check_statement_invoice_export_response_provider,
+)
+from ..models.statement_invoice_export_response_source_kind import (
+    StatementInvoiceExportResponseSourceKind,
+    check_statement_invoice_export_response_source_kind,
 )
 from ..models.statement_invoice_export_response_status import (
     StatementInvoiceExportResponseStatus,
@@ -38,6 +46,19 @@ class StatementInvoiceExportResponse:
     invoice_id: str | Unset = UNSET
     dashboard_url: str | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
+    source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
+    payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
+    """The Stripe invoice's status as last read by Gregale (ADR-1302); deleted means Stripe no longer has the
+    draft. Absent until the first sync."""
+    amount_paid_minor: int | Unset = UNSET
+    amount_remaining_minor: int | Unset = UNSET
+    due_at: datetime.datetime | Unset = UNSET
+    paid_at: datetime.datetime | Unset = UNSET
+    hosted_invoice_url: str | Unset = UNSET
+    """Stripe's customer-facing invoice page once the invoice is finalized."""
+    overdue: bool | Unset = UNSET
+    """Open, past its due date, with an amount remaining."""
+    status_synced_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +86,34 @@ class StatementInvoiceExportResponse:
         if not isinstance(self.completed_at, Unset):
             completed_at = self.completed_at.isoformat()
 
+        source_kind: str | Unset = UNSET
+        if not isinstance(self.source_kind, Unset):
+            source_kind = self.source_kind
+
+        payment_status: str | Unset = UNSET
+        if not isinstance(self.payment_status, Unset):
+            payment_status = self.payment_status
+
+        amount_paid_minor = self.amount_paid_minor
+
+        amount_remaining_minor = self.amount_remaining_minor
+
+        due_at: str | Unset = UNSET
+        if not isinstance(self.due_at, Unset):
+            due_at = self.due_at.isoformat()
+
+        paid_at: str | Unset = UNSET
+        if not isinstance(self.paid_at, Unset):
+            paid_at = self.paid_at.isoformat()
+
+        hosted_invoice_url = self.hosted_invoice_url
+
+        overdue = self.overdue
+
+        status_synced_at: str | Unset = UNSET
+        if not isinstance(self.status_synced_at, Unset):
+            status_synced_at = self.status_synced_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -85,6 +134,24 @@ class StatementInvoiceExportResponse:
             field_dict["dashboard_url"] = dashboard_url
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
+        if source_kind is not UNSET:
+            field_dict["source_kind"] = source_kind
+        if payment_status is not UNSET:
+            field_dict["payment_status"] = payment_status
+        if amount_paid_minor is not UNSET:
+            field_dict["amount_paid_minor"] = amount_paid_minor
+        if amount_remaining_minor is not UNSET:
+            field_dict["amount_remaining_minor"] = amount_remaining_minor
+        if due_at is not UNSET:
+            field_dict["due_at"] = due_at
+        if paid_at is not UNSET:
+            field_dict["paid_at"] = paid_at
+        if hosted_invoice_url is not UNSET:
+            field_dict["hosted_invoice_url"] = hosted_invoice_url
+        if overdue is not UNSET:
+            field_dict["overdue"] = overdue
+        if status_synced_at is not UNSET:
+            field_dict["status_synced_at"] = status_synced_at
 
         return field_dict
 
@@ -118,6 +185,49 @@ class StatementInvoiceExportResponse:
         else:
             completed_at = datetime.datetime.fromisoformat(_completed_at)
 
+        _source_kind = d.pop("source_kind", UNSET)
+        source_kind: StatementInvoiceExportResponseSourceKind | Unset
+        if isinstance(_source_kind, Unset):
+            source_kind = UNSET
+        else:
+            source_kind = check_statement_invoice_export_response_source_kind(_source_kind)
+
+        _payment_status = d.pop("payment_status", UNSET)
+        payment_status: StatementInvoiceExportResponsePaymentStatus | Unset
+        if isinstance(_payment_status, Unset):
+            payment_status = UNSET
+        else:
+            payment_status = check_statement_invoice_export_response_payment_status(_payment_status)
+
+        amount_paid_minor = d.pop("amount_paid_minor", UNSET)
+
+        amount_remaining_minor = d.pop("amount_remaining_minor", UNSET)
+
+        _due_at = d.pop("due_at", UNSET)
+        due_at: datetime.datetime | Unset
+        if isinstance(_due_at, Unset):
+            due_at = UNSET
+        else:
+            due_at = datetime.datetime.fromisoformat(_due_at)
+
+        _paid_at = d.pop("paid_at", UNSET)
+        paid_at: datetime.datetime | Unset
+        if isinstance(_paid_at, Unset):
+            paid_at = UNSET
+        else:
+            paid_at = datetime.datetime.fromisoformat(_paid_at)
+
+        hosted_invoice_url = d.pop("hosted_invoice_url", UNSET)
+
+        overdue = d.pop("overdue", UNSET)
+
+        _status_synced_at = d.pop("status_synced_at", UNSET)
+        status_synced_at: datetime.datetime | Unset
+        if isinstance(_status_synced_at, Unset):
+            status_synced_at = UNSET
+        else:
+            status_synced_at = datetime.datetime.fromisoformat(_status_synced_at)
+
         statement_invoice_export_response = cls(
             statement_id=statement_id,
             provider=provider,
@@ -130,6 +240,15 @@ class StatementInvoiceExportResponse:
             invoice_id=invoice_id,
             dashboard_url=dashboard_url,
             completed_at=completed_at,
+            source_kind=source_kind,
+            payment_status=payment_status,
+            amount_paid_minor=amount_paid_minor,
+            amount_remaining_minor=amount_remaining_minor,
+            due_at=due_at,
+            paid_at=paid_at,
+            hosted_invoice_url=hosted_invoice_url,
+            overdue=overdue,
+            status_synced_at=status_synced_at,
         )
 
         statement_invoice_export_response.additional_properties = d

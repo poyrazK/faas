@@ -122,3 +122,10 @@ func (h billingRunsHost) ExportTenantStatement(ctx context.Context, acct state.A
 	statement state.PlatformTenantStatement) (state.StatementInvoiceExport, *api.Problem) {
 	return h.s.statementInvoices.ExportPlatformTenant(ctx, acct, tenant, statement, "")
 }
+
+func (h billingRunsHost) SendEmail(ctx context.Context, to, subject, body, messageID string) error {
+	if h.s.mailer == nil || to == "" {
+		return errors.New("send email: no mailer or recipient")
+	}
+	return h.s.mailer.Send(ctx, Message{To: []string{to}, Subject: subject, TextBody: body, MessageID: messageID})
+}

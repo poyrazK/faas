@@ -189,14 +189,14 @@ func billingRunShow(ctx context.Context, client *api.Client, runID, outcome stri
 	printBillingRun(run)
 	_, _ = fmt.Fprintln(osStdout)
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "KIND\tCUSTOMER\tOUTCOME\tAMOUNT\tINVOICE\tREASON")
+	_, _ = fmt.Fprintln(tw, "KIND\tCUSTOMER\tOUTCOME\tAMOUNT\tINVOICE\tPAYMENT\tREASON")
 	for _, item := range items {
 		amount := "-"
 		if item.AmountMillicents != nil {
 			amount = formatMillicents(item.Currency, *item.AmountMillicents)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, item.ExternalRef, item.Outcome, amount,
-			dashIfEmpty(item.InvoiceID), item.Reason)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, item.ExternalRef, item.Outcome, amount,
+			dashIfEmpty(item.InvoiceID), dashIfEmpty(item.PaymentStatus), item.Reason)
 	}
 	_ = tw.Flush()
 	return 0

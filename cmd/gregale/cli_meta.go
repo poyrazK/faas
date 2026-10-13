@@ -511,7 +511,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run)",
+		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run|invoices)",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -552,6 +552,9 @@ var cliCommands = []cliCommand{
 				}, Examples: []string{"gregale account billing-run schedule-set --export stripe --delay-hours 6"}},
 				{Name: "schedule-delete", Short: "Stop scheduled runs; a started run continues"},
 			}},
+			{Name: "invoices", Short: "List Stripe invoices drafted from usage statements and whether they were paid", Flags: []cliFlag{
+				{Name: "status", Short: "unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted", Value: "STATUS"},
+			}, Examples: []string{"gregale account invoices --status overdue"}},
 		},
 	},
 	{

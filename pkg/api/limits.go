@@ -188,6 +188,30 @@ const (
 	BillingRunItemListMax     = 500
 )
 
+// Payment status of exported statement invoices (ADR-1302).
+const (
+	// A completed export is first synced after StatementInvoiceFirstSyncDelay,
+	// then polled by status until paid, void or deleted.
+	StatementInvoiceFirstSyncDelay            = time.Hour
+	StatementInvoiceDraftSyncInterval         = 6 * time.Hour
+	StatementInvoiceOpenSyncInterval          = time.Hour
+	StatementInvoiceOverdueSyncInterval       = 6 * time.Hour
+	StatementInvoiceUncollectibleSyncInterval = 24 * time.Hour
+	// A failed sync retries after StatementInvoiceSyncRetry; a key Stripe
+	// rejects after StatementInvoiceSyncKeyRetry.
+	StatementInvoiceSyncRetry    = 15 * time.Minute
+	StatementInvoiceSyncKeyRetry = 6 * time.Hour
+	// Workers claim a batch per tick and hold each claim for the lease.
+	StatementInvoiceSyncTickInterval = time.Minute
+	StatementInvoiceSyncLease        = 5 * time.Minute
+	StatementInvoiceSyncBatchSize    = 50
+	// The daily overdue email lists at most this many invoices.
+	StatementInvoiceOverdueDigestMax = 20
+	// List page sizes.
+	StatementInvoiceListDefault = 50
+	StatementInvoiceListMax     = 200
+)
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int

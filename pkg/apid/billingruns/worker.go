@@ -51,7 +51,63 @@ func (s *Service) RunOnce(ctx context.Context) error {
 	if err := s.startDueSchedules(ctx, store); err != nil {
 		return err
 	}
-	return s.advanceRun(ctx, store)
+	if err := s.advanceRun(ctx, store); err != nil {
+		return err
+	}
+	return s.notifyRuns(ctx)
+}
+
+// notifyRuns emails the account about completed runs that need attention,
+// and about every scheduled run (ADR-1302). A run is marked notified only
+// after the mailer accepts the message; a failed send retries next tick.
+func (s *Service) notifyRuns(ctx context.Context) error {
+	store, ok := s.Host.Store().(state.BillingRunNotificationStore)
+	if !ok {
+		return nil
+	}
+	runs, err := store.ListBillingRunsToNotify(ctx, api.BillingRunBatchSize)
+	if err != nil {
+		return fmt.Errorf("list billing runs to notify: %w", err)
+	}
+	for _, run := range runs {
+		attention := run.Counts[state.BillingRunItemHeld] + run.Counts[state.BillingRunItemFailed]
+		if attention > 0 || run.Trigger == state.BillingRunTriggerSchedule {
+			acct, err := s.Host.Store().AccountByID(ctx, run.AccountID)
+			if err != nil {
+				continue
+			}
+			subject, body := runNotification(run, attention)
+			if err := s.Host.SendEmail(ctx, acct.Email, subject, body, "billing-run-"+run.ID); err != nil {
+				continue
+			}
+		}
+		if err := store.MarkBillingRunNotified(ctx, run.ID, s.now()); err != nil {
+			return fmt.Errorf("mark billing run notified: %w", err)
+		}
+	}
+	return nil
+}
+
+func runNotification(run state.BillingRun, attention int) (string, string) {
+	month := run.PeriodStart.Format("2006-01")
+	subject := fmt.Sprintf("Billing run for %s completed", month)
+	if attention > 0 {
+		subject = fmt.Sprintf("Billing run for %s needs attention: %d held, %d failed", month,
+			run.Counts[state.BillingRunItemHeld], run.Counts[state.BillingRunItemFailed])
+	}
+	c := run.Counts
+	body := fmt.Sprintf("Gregale finished billing %s (%s run %s).\n\n"+
+		"  exported %d · finalized %d · drafted %d · up to date %d\n  held %d · skipped %d · failed %d\n\n",
+		month, run.Trigger, run.ID, c[state.BillingRunItemExported], c[state.BillingRunItemFinalized], c[state.BillingRunItemDrafted],
+		c[state.BillingRunItemUpToDate], c[state.BillingRunItemHeld], c[state.BillingRunItemSkipped], c[state.BillingRunItemFailed])
+	if attention > 0 {
+		body += fmt.Sprintf("See who needs attention: gregale account billing-run show %s --outcome held\n"+
+			"and: gregale account billing-run show %s --outcome failed\n"+
+			"Fix the cause, then start another run for %s; it bills only what is still open.\n", run.ID, run.ID, month)
+	} else {
+		body += fmt.Sprintf("Details: gregale account billing-run show %s\n", run.ID)
+	}
+	return subject, body
 }
 
 func (s *Service) startDueSchedules(ctx context.Context, store state.BillingRunStore) error {

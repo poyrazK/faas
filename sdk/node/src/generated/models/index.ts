@@ -1928,6 +1928,7 @@ export type { Slug } from './Slug.js';
 export type { SourceRefDeployRequest } from './SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './SourceTarballDeployRequest.js';
 export type { StatementInvoiceExportResponse } from './StatementInvoiceExportResponse.js';
+export type { StatementInvoiceListResponse } from './StatementInvoiceListResponse.js';
 export type { StatusIncident } from './StatusIncident.js';
 export type { StatusPage } from './StatusPage.js';
 export type { StatusUptimeBucket } from './StatusUptimeBucket.js';

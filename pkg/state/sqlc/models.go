@@ -1257,6 +1257,7 @@ type BillingRun struct {
 	CreatedAt      pgtype.Timestamptz
 	StartedAt      pgtype.Timestamptz
 	CompletedAt    pgtype.Timestamptz
+	NotifiedAt     pgtype.Timestamptz
 }
 
 // One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.
@@ -8764,6 +8765,16 @@ type UsageStatementInvoiceExport struct {
 	Livemode          bool
 	CreatedAt         pgtype.Timestamptz
 	CompletedAt       pgtype.Timestamptz
+	// Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.
+	PaymentStatus        pgtype.Text
+	AmountPaidMinor      pgtype.Int8
+	AmountRemainingMinor pgtype.Int8
+	DueAt                pgtype.Timestamptz
+	PaidAt               pgtype.Timestamptz
+	HostedInvoiceUrl     pgtype.Text
+	StatusSyncedAt       pgtype.Timestamptz
+	NextStatusSyncAt     pgtype.Timestamptz
+	OverdueNotifiedAt    pgtype.Timestamptz
 }
 
 type WarmHint struct {

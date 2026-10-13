@@ -7972,6 +7972,36 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/statement-invoices:
+    get:
+      tags: [account]
+      operationId: listStatementInvoices
+      summary: List Stripe invoices drafted from usage statements, with their payment status (ADR-1302).
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "`unpaid` (draft, open or uncollectible), `overdue` (open and past due), or one payment status."
+          schema: { type: string, enum: [unpaid, overdue, draft, open, paid, void, uncollectible, deleted] }
+        - name: cursor
+          in: query
+          required: false
+          description: The `next_cursor` of the previous invoice page.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Invoices to return (1–200, default 50).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Exported invoices, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /v1/account/billing-runs:
     get:
       tags: [account]
@@ -79071,6 +79101,28 @@ components:
         livemode: { type: boolean }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        payment_status:
+          type: string
+          enum: [draft, open, paid, void, uncollectible, deleted]
+          description: "The Stripe invoice's status as last read by Gregale (ADR-1302); deleted means Stripe no longer has the draft. Absent until the first sync."
+        amount_paid_minor: { type: integer, format: int64, minimum: 0 }
+        amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
+        due_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time }
+        hosted_invoice_url: { type: string, format: uri, description: "Stripe's customer-facing invoice page once the invoice is finalized." }
+        overdue: { type: boolean, description: "Open, past its due date, with an amount remaining." }
+        status_synced_at: { type: string, format: date-time }
+
+    StatementInvoiceListResponse:
+      description: "One page of an account's exported Stripe invoices, newest first."
+      type: object
+      required: [invoices]
+      properties:
+        invoices:
+          type: array
+          items: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        next_cursor: { type: string, description: "Pass as cursor for the next invoice page; absent on the last page." }
 
     CreateBillingRunRequest:
       description: "A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
@@ -79163,6 +79215,10 @@ components:
         reason: { type: string, description: "Why the customer was held, skipped or failed, or why a retry is pending." }
         attempts: { type: integer, minimum: 0 }
         updated_at: { type: string, format: date-time }
+        payment_status:
+          type: string
+          enum: [draft, open, paid, void, uncollectible, deleted]
+          description: "Payment status of the Stripe invoice exported for the item's statement (ADR-1302)."
 
     BillingRunItemListResponse:
       description: "One page of a billing run's customers, ordered by kind and ID."

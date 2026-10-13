@@ -224,3 +224,47 @@ func (c *Client) ExportedLines(ctx context.Context, key, invoiceID string) (map[
 	}
 	return nil, fmt.Errorf("stripe invoice %s has too many items", invoiceID)
 }
+
+// InvoiceState is the payment state of an invoice (ADR-1302). Deleted is
+// true when Stripe no longer has the invoice (a deleted draft).
+type InvoiceState struct {
+	Status          string
+	AmountPaid      int64
+	AmountRemaining int64
+	DueDate         *time.Time
+	PaidAt          *time.Time
+	HostedURL       string
+	Deleted         bool
+}
+
+// GetInvoice reads an invoice's payment state.
+func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (InvoiceState, error) {
+	var out struct {
+		Status            string `json:"status"`
+		AmountPaid        int64  `json:"amount_paid"`
+		AmountRemaining   int64  `json:"amount_remaining"`
+		DueDate           *int64 `json:"due_date"`
+		HostedInvoiceURL  string `json:"hosted_invoice_url"`
+		StatusTransitions struct {
+			PaidAt *int64 `json:"paid_at"`
+		} `json:"status_transitions"`
+	}
+	err := c.do(ctx, key, http.MethodGet, "/v1/invoices/"+url.PathEscape(invoiceID), "", nil, &out)
+	var stripeErr *Error
+	if errors.As(err, &stripeErr) && stripeErr.Status == http.StatusNotFound {
+		return InvoiceState{Deleted: true}, nil
+	}
+	if err != nil {
+		return InvoiceState{}, err
+	}
+	state := InvoiceState{Status: out.Status, AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL}
+	if out.DueDate != nil {
+		due := time.Unix(*out.DueDate, 0).UTC()
+		state.DueDate = &due
+	}
+	if out.StatusTransitions.PaidAt != nil {
+		paid := time.Unix(*out.StatusTransitions.PaidAt, 0).UTC()
+		state.PaidAt = &paid
+	}
+	return state, nil
+}

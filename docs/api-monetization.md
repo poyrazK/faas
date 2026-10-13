@@ -256,6 +256,18 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   same draft invoice and never adds an item twice.
 - **Currencies.** Only two-decimal currencies are supported, such as EUR, USD
   and GBP.
+- **Payment status.** Gregale checks each exported invoice in Stripe until it
+  is paid, voided or deleted. It checks drafts every 6 hours and open
+  invoices every hour. List what is still owed:
+
+  ```bash
+  gregale account invoices --status unpaid
+  gregale account invoices --status overdue
+  ```
+
+  Each invoice shows whether it was paid, how much remains, and its due date.
+  Once a day, Gregale emails you a list of invoices that became overdue,
+  reporting each invoice only once.
 
 ### Bill a month for every customer
 
@@ -309,6 +321,9 @@ current month:
 gregale account billing-run schedule-set --export stripe --delay-hours 6
 ```
 
+Gregale emails you when a run finishes with held or failed customers, and
+after every scheduled run.
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a
@@ -343,11 +358,11 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   step the month ends in is not available.
 - Customer-wide (platform tenant) cards support free requests and tiers but
   not route weights or plans.
-- Usage is recorded when a request finishes. If the gateway crashes before the
-  record is written to disk, that request can be lost. The completeness check
-  finds such losses only while request telemetry still holds the period
-  (14 days) and only where telemetry was not sampled. Reconcile with your own
-  records before closing a high-value invoice.
+- A billable request's usage is written to disk before the client receives
+  the end of the response. A gateway crash can therefore no longer lose a
+  served request. A request whose usage can't be recorded is not completed
+  for the client and isn't billed. The completeness check still compares
+  billed requests with request telemetry, to catch other gaps.
 - Gregale records the handoff to your billing system, or creates a draft
   invoice in your own Stripe, but never charges your customers.
 
@@ -359,8 +374,10 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-954](adr/954-api-consumer-usage-completeness.md),
 [ADR-849](adr/849-api-consumer-usage-alerts.md),
 [ADR-975](adr/975-platform-tenant-allowances-and-tiers.md),
-[ADR-1300](adr/1300-stripe-statement-invoice-exports.md), and
-[ADR-1301](adr/1301-month-end-billing-runs.md) for the billing rules.
+[ADR-1300](adr/1300-stripe-statement-invoice-exports.md),
+[ADR-1301](adr/1301-month-end-billing-runs.md),
+[ADR-1302](adr/1302-statement-invoice-payment-status.md), and
+[ADR-1303](adr/1303-usage-durable-before-response-completes.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

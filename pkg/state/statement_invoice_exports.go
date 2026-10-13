@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Statement invoice export constants (ADR-1300).
@@ -51,6 +53,23 @@ type StatementInvoiceExport struct {
 	Livemode          bool
 	CreatedAt         time.Time
 	CompletedAt       *time.Time
+	// Payment fields mirror the provider invoice (ADR-1302); PaymentStatus is
+	// empty until the first sync, and NextStatusSyncAt is nil once final.
+	PaymentStatus        string
+	AmountPaidMinor      *int64
+	AmountRemainingMinor *int64
+	DueAt                *time.Time
+	PaidAt               *time.Time
+	HostedInvoiceURL     string
+	StatusSyncedAt       *time.Time
+	NextStatusSyncAt     *time.Time
+	OverdueNotifiedAt    *time.Time
+}
+
+// Overdue reports whether an open invoice is past due with an amount left.
+func (e StatementInvoiceExport) Overdue(now time.Time) bool {
+	return e.PaymentStatus == InvoicePaymentOpen && e.DueAt != nil && e.DueAt.Before(now) &&
+		(e.AmountRemainingMinor == nil || *e.AmountRemainingMinor > 0)
 }
 
 // StatementInvoiceExportStore persists billing connections and exports.
@@ -183,7 +202,9 @@ func (m *MemStore) CompleteStatementInvoiceExport(_ context.Context, accountID, 
 	}
 	if e.Status != StatementInvoiceExportCompleted {
 		now := time.Now().UTC()
+		next := now.Add(api.StatementInvoiceFirstSyncDelay)
 		e.Status, e.CompletedAt = StatementInvoiceExportCompleted, &now
+		e.PaymentStatus, e.NextStatusSyncAt = InvoicePaymentDraft, &next
 		m.statementInvoiceExports[exportID] = e
 	}
 	return e, nil
@@ -248,12 +269,16 @@ func (s *PgStore) DeleteBillingConnection(ctx context.Context, accountID, provid
 }
 
 const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, provider, customer, status,
-	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at`
+	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
+	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
+	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
 	err := row.Scan(&e.ID, &e.AccountID, &e.SourceKind, &e.StatementID, &e.Provider, &e.Customer, &e.Status,
-		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt)
+		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
+		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
+		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
@@ -315,9 +340,11 @@ func (s *PgStore) SetStatementInvoiceExportInvoice(ctx context.Context, accountI
 
 func (s *PgStore) CompleteStatementInvoiceExport(ctx context.Context, accountID, exportID string) (StatementInvoiceExport, error) {
 	e, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `update usage_statement_invoice_exports
-		   set status = 'completed', completed_at = coalesce(completed_at, now())
+		   set status = 'completed', completed_at = coalesce(completed_at, now()),
+		       payment_status = coalesce(payment_status, 'draft'),
+		       next_status_sync_at = case when payment_status is null then $3::timestamptz else next_status_sync_at end
 		 where id = $1::uuid and account_id = $2::uuid and provider_invoice_id is not null
-		returning `+statementInvoiceExportCols, exportID, accountID))
+		returning `+statementInvoiceExportCols, exportID, accountID, time.Now().Add(api.StatementInvoiceFirstSyncDelay)))
 	if errors.Is(err, ErrNotFound) {
 		return StatementInvoiceExport{}, ErrConflict
 	}

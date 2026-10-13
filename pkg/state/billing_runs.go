@@ -72,7 +72,10 @@ type BillingRun struct {
 	CreatedAt    time.Time
 	StartedAt    *time.Time
 	CompletedAt  *time.Time
-	Counts       map[string]int
+	// NotifiedAt is when the account was told about the completed run
+	// (ADR-1302).
+	NotifiedAt *time.Time
+	Counts     map[string]int
 }
 
 // BillingRunItem is one customer of a run. SourceID is the consumer or
@@ -95,6 +98,8 @@ type BillingRunItem struct {
 	Attempts         int
 	NextAttemptAt    time.Time
 	UpdatedAt        time.Time
+	// PaymentStatus is read from the statement's invoice export (ADR-1302).
+	PaymentStatus string
 }
 
 // Key orders items within a run and is the item list cursor.
@@ -228,7 +233,7 @@ func (m *MemStore) insertBillingRunLocked(run BillingRun) (BillingRun, error) {
 	}
 	run.ID, run.Status, run.CreatedAt = uuid.NewString(), BillingRunQueued, time.Now().UTC()
 	run.Sources = slices.Clone(run.Sources)
-	run.DiscoveredAt, run.StartedAt, run.CompletedAt, run.LeaseOwner, run.LeaseUntil = nil, nil, nil, "", nil
+	run.DiscoveredAt, run.StartedAt, run.CompletedAt, run.NotifiedAt, run.LeaseOwner, run.LeaseUntil = nil, nil, nil, nil, "", nil
 	m.billingRuns[run.ID] = run
 	m.billingRunItems[run.ID] = map[string]BillingRunItem{}
 	return m.billingRunWithCountsLocked(run), nil
@@ -287,6 +292,11 @@ func (m *MemStore) ListBillingRunItems(_ context.Context, accountID, runID, outc
 	out := []BillingRunItem{}
 	for _, item := range m.billingRunItems[runID] {
 		if (outcome == "" || item.Outcome == outcome) && item.Key() > after {
+			for _, e := range m.statementInvoiceExports {
+				if item.StatementID != "" && e.SourceKind == item.SourceKind && e.StatementID == item.StatementID {
+					item.PaymentStatus = e.PaymentStatus
+				}
+			}
 			out = append(out, item)
 		}
 	}
@@ -544,4 +554,51 @@ func (m *MemStore) StartScheduledBillingRun(_ context.Context, schedule BillingR
 	current.NextPeriodStart, current.NextRunAt, current.LastPeriodStart, current.UpdatedAt = next.NextPeriodStart, next.NextRunAt, &last, time.Now().UTC()
 	m.billingRunSchedules[schedule.AccountID] = current
 	return created, nil
+}
+
+// BillingRunNotificationStore records which completed runs the account was
+// told about (ADR-1302).
+type BillingRunNotificationStore interface {
+	// ListBillingRunsToNotify returns completed runs not yet notified,
+	// oldest completion first.
+	ListBillingRunsToNotify(ctx context.Context, limit int) ([]BillingRun, error)
+	MarkBillingRunNotified(ctx context.Context, runID string, at time.Time) error
+}
+
+var (
+	_ BillingRunNotificationStore = (*MemStore)(nil)
+	_ BillingRunNotificationStore = (*PgStore)(nil)
+)
+
+func (m *MemStore) ListBillingRunsToNotify(_ context.Context, limit int) ([]BillingRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingRunMapsLocked()
+	out := []BillingRun{}
+	for _, run := range m.billingRuns {
+		if run.Status == BillingRunCompleted && run.NotifiedAt == nil {
+			out = append(out, m.billingRunWithCountsLocked(run))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CompletedAt.Before(*out[j].CompletedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) MarkBillingRunNotified(_ context.Context, runID string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingRunMapsLocked()
+	run, ok := m.billingRuns[runID]
+	if !ok {
+		return ErrNotFound
+	}
+	if run.NotifiedAt == nil {
+		notified := at.UTC()
+		run.NotifiedAt = &notified
+		m.billingRuns[runID] = run
+	}
+	return nil
 }

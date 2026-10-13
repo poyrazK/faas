@@ -26,6 +26,7 @@ import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunSchedu
 import type { PutStripeConnectionRequest } from '../models/PutStripeConnectionRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
+import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -627,6 +628,43 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List Stripe invoices drafted from usage statements, with their payment status (ADR-1302).
+   * @returns StatementInvoiceListResponse Exported invoices, newest first.
+   * @throws ApiError
+   */
+  public static listStatementInvoices({
+    status,
+    cursor,
+    limit,
+  }: {
+    /**
+     * `unpaid` (draft, open or uncollectible), `overdue` (open and past due), or one payment status.
+     */
+    status?: 'unpaid' | 'overdue' | 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted',
+    /**
+     * The `next_cursor` of the previous invoice page.
+     */
+    cursor?: string,
+    /**
+     * Invoices to return (1–200, default 50).
+     */
+    limit?: number,
+  }): CancelablePromise<StatementInvoiceListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/statement-invoices',
+      query: {
+        'status': status,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
       },
     });
   }

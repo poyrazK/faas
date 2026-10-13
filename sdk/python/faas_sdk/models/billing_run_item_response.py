@@ -16,6 +16,10 @@ from ..models.billing_run_item_response_outcome import (
     BillingRunItemResponseOutcome,
     check_billing_run_item_response_outcome,
 )
+from ..models.billing_run_item_response_payment_status import (
+    BillingRunItemResponsePaymentStatus,
+    check_billing_run_item_response_payment_status,
+)
 from ..models.billing_run_item_response_source_kind import (
     BillingRunItemResponseSourceKind,
     check_billing_run_item_response_source_kind,
@@ -52,6 +56,8 @@ class BillingRunItemResponse:
     """The last Stripe invoice this run created for the customer."""
     reason: str | Unset = UNSET
     """Why the customer was held, skipped or failed, or why a retry is pending."""
+    payment_status: BillingRunItemResponsePaymentStatus | Unset = UNSET
+    """Payment status of the Stripe invoice exported for the item's statement (ADR-1302)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,6 +103,10 @@ class BillingRunItemResponse:
 
         reason = self.reason
 
+        payment_status: str | Unset = UNSET
+        if not isinstance(self.payment_status, Unset):
+            payment_status = self.payment_status
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -129,6 +139,8 @@ class BillingRunItemResponse:
             field_dict["invoice_id"] = invoice_id
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if payment_status is not UNSET:
+            field_dict["payment_status"] = payment_status
 
         return field_dict
 
@@ -192,6 +204,13 @@ class BillingRunItemResponse:
 
         reason = d.pop("reason", UNSET)
 
+        _payment_status = d.pop("payment_status", UNSET)
+        payment_status: BillingRunItemResponsePaymentStatus | Unset
+        if isinstance(_payment_status, Unset):
+            payment_status = UNSET
+        else:
+            payment_status = check_billing_run_item_response_payment_status(_payment_status)
+
         billing_run_item_response = cls(
             source_kind=source_kind,
             external_ref=external_ref,
@@ -209,6 +228,7 @@ class BillingRunItemResponse:
             completeness=completeness,
             invoice_id=invoice_id,
             reason=reason,
+            payment_status=payment_status,
         )
 
         billing_run_item_response.additional_properties = d

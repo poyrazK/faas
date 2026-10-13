@@ -51,3 +51,10 @@ func (statementInvoicesHost) OpenSecret(blob []byte) (string, []byte, error) {
 	}
 	return secretbox.OpenBytesMulti(identities, blob)
 }
+
+func (h statementInvoicesHost) SendEmail(ctx context.Context, to, subject, body, messageID string) error {
+	if h.s.mailer == nil || to == "" {
+		return errors.New("send email: no mailer or recipient")
+	}
+	return h.s.mailer.Send(ctx, Message{To: []string{to}, Subject: subject, TextBody: body, MessageID: messageID})
+}

@@ -10,12 +10,12 @@ import (
 )
 
 const billingRunCols = `id::text, account_id::text, period_start, period_end, sources, finalize, export_provider, hold_on_gaps,
-	trigger, status, discovered_at, coalesce(lease_owner, ''), lease_until, created_at, started_at, completed_at`
+	trigger, status, discovered_at, coalesce(lease_owner, ''), lease_until, created_at, started_at, completed_at, notified_at`
 
 func scanBillingRun(row pgx.Row) (BillingRun, error) {
 	var r BillingRun
 	err := row.Scan(&r.ID, &r.AccountID, &r.PeriodStart, &r.PeriodEnd, &r.Sources, &r.Finalize, &r.Export, &r.HoldOnGaps,
-		&r.Trigger, &r.Status, &r.DiscoveredAt, &r.LeaseOwner, &r.LeaseUntil, &r.CreatedAt, &r.StartedAt, &r.CompletedAt)
+		&r.Trigger, &r.Status, &r.DiscoveredAt, &r.LeaseOwner, &r.LeaseUntil, &r.CreatedAt, &r.StartedAt, &r.CompletedAt, &r.NotifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingRun{}, ErrNotFound
 	}
@@ -24,7 +24,9 @@ func scanBillingRun(row pgx.Row) (BillingRun, error) {
 
 const billingRunItemCols = `run_id::text, source_kind, source_id::text, coalesce(app_id::text, ''), external_ref, outcome,
 	coalesce(statement_id::text, ''), coalesce(revision, 0), coalesce(currency, ''), coalesce(amount_millicents, 0),
-	coalesce(completeness, ''), coalesce(invoice_id, ''), exported_count, coalesce(reason, ''), attempts, next_attempt_at, updated_at`
+	coalesce(completeness, ''), coalesce(invoice_id, ''), exported_count, coalesce(reason, ''), attempts, next_attempt_at, updated_at,
+	coalesce((select e.payment_status from usage_statement_invoice_exports e
+	           where e.source_kind = billing_run_items.source_kind and e.statement_id = billing_run_items.statement_id), '')`
 
 func scanBillingRunItems(rows pgx.Rows) ([]BillingRunItem, error) {
 	defer rows.Close()
@@ -33,7 +35,7 @@ func scanBillingRunItems(rows pgx.Rows) ([]BillingRunItem, error) {
 		var i BillingRunItem
 		if err := rows.Scan(&i.RunID, &i.SourceKind, &i.SourceID, &i.AppID, &i.ExternalRef, &i.Outcome, &i.StatementID, &i.Revision,
 			&i.Currency, &i.AmountMillicents, &i.Completeness, &i.InvoiceID, &i.ExportedCount, &i.Reason, &i.Attempts,
-			&i.NextAttemptAt, &i.UpdatedAt); err != nil {
+			&i.NextAttemptAt, &i.UpdatedAt, &i.PaymentStatus); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
@@ -411,4 +413,37 @@ func (s *PgStore) StartScheduledBillingRun(ctx context.Context, sched BillingRun
 		return BillingRun{}, err
 	}
 	return s.billingRunWithCounts(ctx, created)
+}
+
+func (s *PgStore) ListBillingRunsToNotify(ctx context.Context, limit int) ([]BillingRun, error) {
+	rows, err := s.pool.Query(ctx, `select `+billingRunCols+` from billing_runs
+		where status = 'completed' and notified_at is null order by completed_at limit $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list billing runs to notify: %w", err)
+	}
+	runs := []BillingRun{}
+	for rows.Next() {
+		run, err := scanBillingRun(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return runs, s.fillBillingRunCounts(ctx, runs)
+}
+
+func (s *PgStore) MarkBillingRunNotified(ctx context.Context, runID string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx, `update billing_runs set notified_at = coalesce(notified_at, $2) where id = $1::uuid`, runID, at)
+	if err != nil {
+		return fmt.Errorf("mark billing run notified: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

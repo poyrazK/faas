@@ -1097,6 +1097,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/billing-run-schedule":                                                  "GetBillingRunSchedule",
 	"PUT /v1/account/billing-run-schedule":                                                  "PutBillingRunSchedule",
 	"DELETE /v1/account/billing-run-schedule":                                               "DeleteBillingRunSchedule",
+	"GET /v1/account/statement-invoices":                                                    "ListStatementInvoices",
 	"GET /v1/account/platform-tenants/{id}/webhooks":                                        "ListPlatformTenantWebhooks",
 	"POST /v1/account/platform-tenants/{id}/webhooks":                                       "CreatePlatformTenantWebhook",
 	"GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}":                           "GetPlatformTenantWebhook",

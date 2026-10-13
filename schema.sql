@@ -17414,6 +17414,7 @@ CREATE TABLE public.billing_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
     completed_at timestamp with time zone,
+    notified_at timestamp with time zone,
     CONSTRAINT billing_runs_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
     CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text]))),
     CONSTRAINT billing_runs_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
@@ -18880,8 +18881,20 @@ CREATE TABLE public.usage_statement_invoice_exports (
     livemode boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
+    payment_status text,
+    amount_paid_minor bigint,
+    amount_remaining_minor bigint,
+    due_at timestamp with time zone,
+    paid_at timestamp with time zone,
+    hosted_invoice_url text,
+    status_synced_at timestamp with time zone,
+    next_status_sync_at timestamp with time zone,
+    overdue_notified_at timestamp with time zone,
     CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
     CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
     CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = 'stripe'::text)),
     CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
     CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
@@ -18893,6 +18906,13 @@ CREATE TABLE public.usage_statement_invoice_exports (
 --
 
 COMMENT ON TABLE public.usage_statement_invoice_exports IS 'One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.';
+
+
+--
+-- Name: COLUMN usage_statement_invoice_exports.payment_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.usage_statement_invoice_exports.payment_status IS 'Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.';
 
 
 --
@@ -39923,6 +39943,13 @@ CREATE INDEX billing_runs_claim_idx ON public.billing_runs USING btree (created_
 
 
 --
+-- Name: billing_runs_notify_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_notify_idx ON public.billing_runs USING btree (completed_at) WHERE ((status = 'completed'::text) AND (notified_at IS NULL));
+
+
+--
 -- Name: billing_runs_one_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -45345,6 +45372,20 @@ CREATE INDEX usage_minutes_org_id_idx ON public.usage_minutes USING btree (org_i
 --
 
 CREATE INDEX usage_statement_invoice_exports_account_idx ON public.usage_statement_invoice_exports USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: usage_statement_invoice_exports_overdue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_overdue_idx ON public.usage_statement_invoice_exports USING btree (due_at) WHERE ((payment_status = 'open'::text) AND (overdue_notified_at IS NULL));
+
+
+--
+-- Name: usage_statement_invoice_exports_sync_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_sync_idx ON public.usage_statement_invoice_exports USING btree (next_status_sync_at) WHERE (next_status_sync_at IS NOT NULL);
 
 
 --

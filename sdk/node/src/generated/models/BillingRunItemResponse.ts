@@ -40,5 +40,9 @@ export type BillingRunItemResponse = {
   reason?: string;
   attempts: number;
   updated_at: string;
+  /**
+   * Payment status of the Stripe invoice exported for the item's statement (ADR-1302).
+   */
+  payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
 };
 

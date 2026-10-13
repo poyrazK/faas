@@ -77,3 +77,32 @@ func TestClientRequestsAndErrors(t *testing.T) {
 		t.Fatalf("publishable key accepted: %v", err)
 	}
 }
+
+// adr: 1302
+func TestGetInvoicePaymentState(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/invoices/in_open":
+			_, _ = fmt.Fprint(w, `{"id":"in_open","status":"open","amount_paid":0,"amount_remaining":375,"due_date":1790000000,"hosted_invoice_url":"https://invoice.stripe.com/i/x","status_transitions":{"paid_at":null}}`)
+		case "/v1/invoices/in_paid":
+			_, _ = fmt.Fprint(w, `{"id":"in_paid","status":"paid","amount_paid":375,"amount_remaining":0,"due_date":null,"status_transitions":{"paid_at":1790001000}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","code":"resource_missing","message":"No such invoice"}}`)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	open, err := c.GetInvoice(context.Background(), "rk_test_x", "in_open")
+	if err != nil || open.Status != "open" || open.AmountRemaining != 375 || open.DueDate == nil || open.DueDate.Unix() != 1790000000 ||
+		open.PaidAt != nil || open.HostedURL == "" {
+		t.Fatalf("open = %+v, %v", open, err)
+	}
+	paid, err := c.GetInvoice(context.Background(), "rk_test_x", "in_paid")
+	if err != nil || paid.Status != "paid" || paid.PaidAt == nil || paid.DueDate != nil {
+		t.Fatalf("paid = %+v, %v", paid, err)
+	}
+	if gone, err := c.GetInvoice(context.Background(), "rk_test_x", "in_gone"); err != nil || !gone.Deleted {
+		t.Fatalf("deleted = %+v, %v", gone, err)
+	}
+}
