@@ -70,6 +70,10 @@ reports them serving when their selected route already receives traffic. It
 stores one route generation per app, retries notifications
 after restart, and records a receipt after every registered gateway acknowledges
 every route. A gateway roster change requires fresh generations and acks.
+The PostgreSQL completion guard checks the exact registered gateway names, not
+only the acknowledgement count. A stale roster supplied to preparation is
+rejected; a registry change before completion leaves the receipt pending until
+preparation resets its route generations and obtains fresh acknowledgements.
 Database guards require the current lease and exact prepared graph member;
 activated candidate artifacts cannot be rewritten. Generic deployment promotion,
 direct live-status changes, rollback,
