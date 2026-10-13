@@ -23,9 +23,10 @@ type EventExecutionLineageCasesStore interface {
 	RetryEventExecutionLineageCase(context.Context, string, string, string, int64, api.RetryEventExecutionLineageCaseRequest) (api.EventExecutionLineageCase, error)
 }
 type lineageCaseRetry struct {
-	expected int64
-	result   []byte
-	retain   time.Time
+	diagnostic string
+	expected   int64
+	result     []byte
+	retain     time.Time
 }
 
 func lineageCasePageLimit(limit int) (int, error) {
@@ -45,10 +46,16 @@ func validLineageRetry(id int64, r api.RetryEventExecutionLineageCaseRequest) er
 	if err != nil || u == uuid.Nil {
 		return ErrInvalidArgument
 	}
+	if r.ExpectedDiagnosticID != "" {
+		u, e := uuid.Parse(r.ExpectedDiagnosticID)
+		if e != nil || u == uuid.Nil {
+			return ErrInvalidArgument
+		}
+	}
 	return nil
 }
 func lineageCaseFromRow(r sqlc.EventExecutionLineageCase) api.EventExecutionLineageCase {
-	return api.EventExecutionLineageCase{SubscriptionID: uuidString(r.SubscriptionID), AppID: uuidString(r.AppID), OutboxID: r.OutboxID, AcceptedAt: timeFromPgtype(r.AcceptedAt), RootInvocationID: r.RootInvocationID, RootCreatedAt: timestamptzToTimePtr(r.RootCreatedAt), Status: r.Status, Reason: r.Reason, Revision: r.Revision, RetryCount: r.RetryCount, RecordedAt: timeFromPgtype(r.RecordedAt), RetainUntil: timeFromPgtype(r.RetainUntil)}
+	return api.EventExecutionLineageCase{DiagnosticID: uuidString(r.DiagnosticID), SubscriptionID: uuidString(r.SubscriptionID), AppID: uuidString(r.AppID), OutboxID: r.OutboxID, AcceptedAt: timeFromPgtype(r.AcceptedAt), RootInvocationID: r.RootInvocationID, RootCreatedAt: timestamptzToTimePtr(r.RootCreatedAt), Status: r.Status, Reason: r.Reason, Revision: r.Revision, RetryCount: r.RetryCount, RecordedAt: timeFromPgtype(r.RecordedAt), RetainUntil: timeFromPgtype(r.RetainUntil)}
 }
 func recordLineageCaseTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow, outcome string) error {
 	status := lineageOutcomeStatus(outcome)
@@ -111,6 +118,9 @@ func (s *PgStore) RetryEventExecutionLineageCase(ctx context.Context, account, a
 	if err := validLineageRetry(id, req); err != nil {
 		return out, err
 	}
+	if req.ExpectedDiagnosticID != "" {
+		req.ExpectedDiagnosticID = canonicalMemUUID(req.ExpectedDiagnosticID)
+	}
 	sub = canonicalMemUUID(sub)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -163,10 +173,16 @@ func retryEventExecutionLineageCaseTx(ctx context.Context, tx pgx.Tx, account, a
 		if err = json.Unmarshal(prior.Result, &out); err != nil {
 			return out, err
 		}
+		if out.DiagnosticID != req.ExpectedDiagnosticID {
+			return api.EventExecutionLineageCase{}, ErrConflict
+		}
 		return out, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
+	}
+	if uuidString(c.DiagnosticID) != req.ExpectedDiagnosticID {
+		return out, ErrConflict
 	}
 	if c.Revision != req.ExpectedRevision || c.Revision == math.MaxInt64 || c.RetryCount == math.MaxInt64 {
 		return out, ErrConflict
@@ -233,7 +249,7 @@ func (m *MemStore) recordLineageCaseLocked(account, app, sub string, r *Publishe
 		return
 	}
 	now := time.Now().UTC()
-	item := api.EventExecutionLineageCase{SubscriptionID: sub, AppID: app, OutboxID: r.ID, AcceptedAt: r.CreatedAt, Status: status, Reason: lineageOutcomeReason(outcome), Revision: previous.Revision + 1, RetryCount: previous.RetryCount, RecordedAt: now, RetainUntil: now.Add(api.EventExecutionLedgerRetention), RootCreatedAt: cloneEventReceiptTime(previous.RootCreatedAt)}
+	item := api.EventExecutionLineageCase{SubscriptionID: sub, AppID: app, OutboxID: r.ID, AcceptedAt: r.CreatedAt, Status: status, Reason: lineageOutcomeReason(outcome), Revision: previous.Revision + 1, RetryCount: previous.RetryCount, RecordedAt: now, RetainUntil: now.Add(api.EventExecutionLedgerRetention), RootCreatedAt: cloneEventReceiptTime(previous.RootCreatedAt), DiagnosticID: previous.DiagnosticID}
 	var e eventcontract.Envelope
 	if json.Unmarshal(r.Payload, &e) == nil {
 		recipient, _ := lineageRepairRecipient(r, app, sub)
@@ -297,6 +313,9 @@ func (m *MemStore) RetryEventExecutionLineageCase(ctx context.Context, account, 
 	if err := validLineageRetry(id, req); err != nil {
 		return out, err
 	}
+	if req.ExpectedDiagnosticID != "" {
+		req.ExpectedDiagnosticID = canonicalMemUUID(req.ExpectedDiagnosticID)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.retryEventExecutionLineageCaseLocked(account, app, sub, id, req, nil)
@@ -318,11 +337,14 @@ func (m *MemStore) retryEventExecutionLineageCaseLocked(account, app, sub string
 	}
 	key := strconv.FormatInt(id, 10) + ":" + canonicalMemUUID(req.RequestID)
 	if prior, ok := c.retries[key]; ok && prior.retain.After(now) {
-		if prior.expected != req.ExpectedRevision {
+		if prior.expected != req.ExpectedRevision || prior.diagnostic != req.ExpectedDiagnosticID {
 			return out, ErrConflict
 		}
 		err := json.Unmarshal(prior.result, &out)
 		return out, err
+	}
+	if item.DiagnosticID != req.ExpectedDiagnosticID {
+		return out, ErrConflict
 	}
 	if item.Revision != req.ExpectedRevision || item.Revision == math.MaxInt64 || item.RetryCount == math.MaxInt64 {
 		return out, ErrConflict
@@ -379,7 +401,7 @@ func (m *MemStore) retryEventExecutionLineageCaseLocked(account, app, sub string
 	if c.retries == nil {
 		c.retries = map[string]lineageCaseRetry{}
 	}
-	c.retries[key] = lineageCaseRetry{expected: req.ExpectedRevision, result: raw, retain: item.RetainUntil}
+	c.retries[key] = lineageCaseRetry{expected: req.ExpectedRevision, diagnostic: req.ExpectedDiagnosticID, result: raw, retain: item.RetainUntil}
 	m.eventExecutionCoverage[sub] = c
 	return cloneLineageCase(item), nil
 }

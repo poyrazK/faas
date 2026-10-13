@@ -184,6 +184,11 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 			return retentionDeleted, 0, err
 		}
 	}
+	if backfill, ok := r.store.(state.EventExecutionLineageCaseBackfillStore); ok {
+		if _, err := backfill.AdvanceEventExecutionLineageCaseBackfills(ctx, api.EventExecutionLineageCaseBackfillBatch); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
 	if reconciliation, ok := r.store.(state.EventExecutionReconciliationStore); ok {
 		if _, err := reconciliation.AdvanceEventExecutionReconciliations(ctx, api.EventExecutionReconciliationBatch); err != nil {
 			return retentionDeleted, 0, err

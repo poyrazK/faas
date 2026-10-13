@@ -18,7 +18,7 @@ func writeLineageCaseError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no retained lineage case or subscription")
 	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(409, "event_lineage_case_changed", "Lineage case changed", "refresh the case revision; a request UUID may only be reused with its original guard"))
+		api.WriteProblem(w, api.NewProblem(409, "event_lineage_case_changed", "Lineage case changed", "refresh the case revision and diagnostic identity; a request UUID may only be reused with its original guards"))
 	case errors.Is(err, context.DeadlineExceeded):
 		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage request timed out", "retry with the same request UUID and expected revision"))
 	case err != nil:

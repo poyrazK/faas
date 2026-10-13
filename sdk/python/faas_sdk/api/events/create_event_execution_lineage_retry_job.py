@@ -106,12 +106,13 @@ def sync_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Submit a fixed reviewed lineage retry selection.
 
-     Requires deploy/write scope. At most 200 unique cases with expected revisions and original
-    acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID
-    and normalized selection returns current job progress; another selection returns 409. Scheduler
-    evaluations and checkpoints commit together. Changed or unavailable cases are reported individually.
-    Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30
-    days after submission; use a new UUID after expiry and refresh case guards.
+     Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance
+    timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the
+    same retained UUID and normalized selection returns current job progress; another selection returns
+    409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are
+    reported individually. Repairs lineage only, without handler execution or historical outcome
+    reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case
+    guards.
 
     Args:
         slug (str):
@@ -148,12 +149,13 @@ def sync(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Submit a fixed reviewed lineage retry selection.
 
-     Requires deploy/write scope. At most 200 unique cases with expected revisions and original
-    acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID
-    and normalized selection returns current job progress; another selection returns 409. Scheduler
-    evaluations and checkpoints commit together. Changed or unavailable cases are reported individually.
-    Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30
-    days after submission; use a new UUID after expiry and refresh case guards.
+     Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance
+    timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the
+    same retained UUID and normalized selection returns current job progress; another selection returns
+    409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are
+    reported individually. Repairs lineage only, without handler execution or historical outcome
+    reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case
+    guards.
 
     Args:
         slug (str):
@@ -185,12 +187,13 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Submit a fixed reviewed lineage retry selection.
 
-     Requires deploy/write scope. At most 200 unique cases with expected revisions and original
-    acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID
-    and normalized selection returns current job progress; another selection returns 409. Scheduler
-    evaluations and checkpoints commit together. Changed or unavailable cases are reported individually.
-    Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30
-    days after submission; use a new UUID after expiry and refresh case guards.
+     Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance
+    timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the
+    same retained UUID and normalized selection returns current job progress; another selection returns
+    409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are
+    reported individually. Repairs lineage only, without handler execution or historical outcome
+    reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case
+    guards.
 
     Args:
         slug (str):
@@ -225,12 +228,13 @@ async def asyncio(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Submit a fixed reviewed lineage retry selection.
 
-     Requires deploy/write scope. At most 200 unique cases with expected revisions and original
-    acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID
-    and normalized selection returns current job progress; another selection returns 409. Scheduler
-    evaluations and checkpoints commit together. Changed or unavailable cases are reported individually.
-    Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30
-    days after submission; use a new UUID after expiry and refresh case guards.
+     Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance
+    timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the
+    same retained UUID and normalized selection returns current job progress; another selection returns
+    409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are
+    reported individually. Repairs lineage only, without handler execution or historical outcome
+    reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case
+    guards.
 
     Args:
         slug (str):

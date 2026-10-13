@@ -33561,6 +33561,100 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill:
+    get:
+      tags: [events]
+      operationId: getEventExecutionLineageCaseBackfill
+      summary: Inspect the latest bounded lineage diagnostic scan.
+      description: Requires read scope. Reports the latest scan only, or not_requested. Counters describe examined retained receipts, not live blockers or complete history. Existing case revisions and forward repair progress are preserved. Expiry is visible immediately after the 30-day work deadline.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Latest scan status and counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or scan guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Latest scan changed or is active; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request timed out; repeat the same request UUID and previous-request guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [events]
+      operationId: requestEventExecutionLineageCaseBackfill
+      summary: Backfill missing lineage cases from retained admission evidence.
+      description: Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '202':
+          description: Durably accepted active diagnostic scan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '200':
+          description: Previously completed or expired scan, or an empty retained range.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or scan guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Latest scan changed or is active; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request timed out; repeat the same request UUID and previous-request guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview:
     get:
       tags: [events]
@@ -33621,7 +33715,7 @@ paths:
       tags: [events]
       operationId: createEventExecutionLineageRetryJob
       summary: Submit a fixed reviewed lineage retry selection.
-      description: Requires deploy/write scope. At most 200 unique cases with expected revisions and original acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+      description: Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -33831,7 +33925,7 @@ paths:
       tags: [events]
       operationId: retryEventExecutionLineageCase
       summary: Recheck one reviewed lineage case with an idempotent guard.
-      description: Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+      description: Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -62680,6 +62774,34 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
 
+    RequestEventExecutionLineageCaseBackfillRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id: { type: string, format: uuid }
+        expected_previous_request_id: { type: string, format: uuid, description: Omit for the first request; otherwise use the latest completed or expired request UUID. Repeated submissions preserve their original guard. }
+    EventExecutionLineageCaseBackfill:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, status, through_outbox_id, cursor, scanned, recorded, existing, associated, unresolved, conflicts]
+      properties:
+        request_id: { type: string, format: uuid }
+        previous_request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_requested, pending, waiting_for_retry_jobs, completed, expired] }
+        through_outbox_id: { type: integer, format: int64, minimum: 0 }
+        cursor: { type: integer, format: int64, minimum: 0 }
+        scanned: { type: integer, format: int64, minimum: 0 }
+        recorded: { type: integer, format: int64, minimum: 0 }
+        existing: { type: integer, format: int64, minimum: 0 }
+        associated: { type: integer, format: int64, minimum: 0 }
+        unresolved: { type: integer, format: int64, minimum: 0 }
+        conflicts: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time, description: Work deadline; latest scan metadata remains available while its coverage row exists. }
     CancelEventExecutionLineageRetryJobRequest:
       type: object
       additionalProperties: false
@@ -62691,6 +62813,7 @@ components:
       additionalProperties: false
       required: [outbox_id, expected_revision, accepted_at]
       properties:
+        expected_diagnostic_id: { type: string, format: uuid, description: Required when the reviewed case has diagnostic_id; omit for legacy cases. }
         outbox_id: { type: integer, format: int64, minimum: 1 }
         expected_revision: { type: integer, format: int64, minimum: 1 }
         accepted_at: { type: string, format: date-time, description: Exact original acceptance timestamp from the reviewed case. }
@@ -62737,6 +62860,7 @@ components:
       additionalProperties: false
       required: [subscription_id, app_id, outbox_id, accepted_at, status, reason, revision, retry_count, recorded_at, retain_until]
       properties:
+        diagnostic_id: { type: string, format: uuid, description: Unique incarnation of a diagnostically created case; required in its retry guards. }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         outbox_id: { type: integer, format: int64, minimum: 1 }
@@ -62763,6 +62887,7 @@ components:
       additionalProperties: false
       required: [request_id, expected_revision]
       properties:
+        expected_diagnostic_id: { type: string, format: uuid, description: Required when the reviewed case has diagnostic_id; omit for legacy cases. }
         request_id: { type: string, format: uuid }
         expected_revision: { type: integer, format: int64, minimum: 1 }
 

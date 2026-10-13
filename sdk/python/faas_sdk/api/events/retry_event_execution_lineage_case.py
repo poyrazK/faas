@@ -104,10 +104,10 @@ def sync_detailed(
 ) -> Response[EventExecutionLineageCase | Problem]:
     """Recheck one reviewed lineage case with an idempotent guard.
 
-     Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate
-    requests return the original result for 30 days. Reuses authoritative evidence checks and does not
-    reset scan progress or established coverage. Known receipt acceptance and root incarnation remain
-    guarded. No event payloads or handler errors are returned.
+     Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each
+    evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence
+    checks and does not reset scan progress or established coverage. Known receipt acceptance and root
+    incarnation remain guarded. No event payloads or handler errors are returned.
 
     Args:
         slug (str):
@@ -147,10 +147,10 @@ def sync(
 ) -> EventExecutionLineageCase | Problem | None:
     """Recheck one reviewed lineage case with an idempotent guard.
 
-     Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate
-    requests return the original result for 30 days. Reuses authoritative evidence checks and does not
-    reset scan progress or established coverage. Known receipt acceptance and root incarnation remain
-    guarded. No event payloads or handler errors are returned.
+     Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each
+    evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence
+    checks and does not reset scan progress or established coverage. Known receipt acceptance and root
+    incarnation remain guarded. No event payloads or handler errors are returned.
 
     Args:
         slug (str):
@@ -185,10 +185,10 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionLineageCase | Problem]:
     """Recheck one reviewed lineage case with an idempotent guard.
 
-     Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate
-    requests return the original result for 30 days. Reuses authoritative evidence checks and does not
-    reset scan progress or established coverage. Known receipt acceptance and root incarnation remain
-    guarded. No event payloads or handler errors are returned.
+     Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each
+    evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence
+    checks and does not reset scan progress or established coverage. Known receipt acceptance and root
+    incarnation remain guarded. No event payloads or handler errors are returned.
 
     Args:
         slug (str):
@@ -226,10 +226,10 @@ async def asyncio(
 ) -> EventExecutionLineageCase | Problem | None:
     """Recheck one reviewed lineage case with an idempotent guard.
 
-     Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate
-    requests return the original result for 30 days. Reuses authoritative evidence checks and does not
-    reset scan progress or established coverage. Known receipt acceptance and root incarnation remain
-    guarded. No event payloads or handler errors are returned.
+     Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each
+    evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence
+    checks and does not reset scan progress or established coverage. Known receipt acceptance and root
+    incarnation remain guarded. No event payloads or handler errors are returned.
 
     Args:
         slug (str):

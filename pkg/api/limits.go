@@ -10402,3 +10402,6 @@ const EventExecutionLineageRetryJobMaxCases = 200
 const EventExecutionLineageRetryJobBatch = 100
 const EventExecutionLineageRetryJobBodyMaxBytes = 65536
 const EventExecutionLineageRetryReasonMaxBytes = 128
+
+// Diagnostic lineage case backfills share a global bounded receipt budget per sweep.
+const EventExecutionLineageCaseBackfillBatch = 100

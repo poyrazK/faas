@@ -200,7 +200,7 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source
  OR EXISTS(SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id AND r.subscription_id=sqlc.arg(subscription_id)::text AND r.recipient->>'app_id'=sqlc.arg(app_id)::uuid::text))) AS ambiguous;
 
 -- name: SaveEventExecutionLineageRepairProgress :exec
-UPDATE event_execution_coverage SET lineage_repair_progress=sqlc.arg(progress)::jsonb || jsonb_build_object('last_scan',clock_timestamp())
+UPDATE event_execution_coverage SET lineage_repair_progress=lineage_repair_progress || (sqlc.arg(progress)::jsonb - 'case_backfill') || jsonb_build_object('last_scan',clock_timestamp())
 WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid;
 
 -- name: EventExecutionLineageCaseReceipt :many
@@ -290,3 +290,52 @@ SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(accou
 SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid AND retain_until>clock_timestamp()
 FOR UPDATE;
+
+-- name: EventExecutionLineageBackfillReceipts :many
+-- Admission roots include settled receipts and materialized backfill recipients.
+SELECT o.payload, o.id AS outbox_id,o.created_at AS accepted_at,o.source,o.event_id,
+ coalesce(o.payload->>'accountid',o.payload->>'account_id',o.account_id::text)::text AS invocation_account_id
+FROM event_fanout_outbox o
+CROSS JOIN LATERAL (
+ SELECT captured.recipient,'acceptance'::text AS origin FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) captured(recipient)
+ UNION ALL
+ SELECT added.recipient,'backfill'::text FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND s.recipient->>'app_id'=sqlc.arg(app_id)::uuid::text
+ AND s.recipient->>'id'=sqlc.arg(subscription_id)::text AND NOT s.recipient ? 'workflow' AND NOT s.recipient ? 'object_notification'
+ AND CASE WHEN s.origin='backfill' OR o.recipient_claims THEN coalesce(r.state,o.recipient_progress->(s.recipient->>'id')->>'state','pending') ELSE coalesce(o.recipient_progress->(s.recipient->>'id')->>'state','pending') END='enqueued'
+ AND o.id>sqlc.arg(after_outbox_id)::bigint AND o.id<=sqlc.arg(through_outbox_id)::bigint
+ORDER BY o.id ASC LIMIT sqlc.arg(root_limit)::integer FOR SHARE OF o;
+
+
+-- name: GetEventExecutionLineageBackfillProgress :one
+SELECT lineage_repair_progress FROM event_execution_coverage WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid;
+
+-- name: EventExecutionLineageBackfillUpper :one
+SELECT coalesce(max(id),0)::bigint FROM event_fanout_outbox WHERE account_id=sqlc.arg(account_id)::uuid;
+
+-- name: SaveEventExecutionLineageBackfill :exec
+UPDATE event_execution_coverage SET lineage_repair_progress=jsonb_set(lineage_repair_progress,'{case_backfill}',sqlc.arg(backfill)::jsonb,true)
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid;
+
+-- name: EventExecutionLineageBackfillJobs :many
+SELECT c.subscription_id,c.account_id,c.app_id,c.lineage_repair_progress FROM event_execution_coverage c
+JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+WHERE c.lineage_repair_progress->'case_backfill'->>'status' IN ('pending','waiting_for_retry_jobs')
+ORDER BY (c.lineage_repair_progress->'case_backfill'->>'updated_at')::timestamptz,c.subscription_id
+FOR UPDATE OF c SKIP LOCKED LIMIT sqlc.arg(job_limit)::integer;
+
+-- name: EventExecutionLineageBackfillRetryPending :one
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND state='pending' AND retain_until>clock_timestamp());
+
+-- name: EventExecutionLineageBackfillCaseExists :one
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_cases WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND outbox_id=sqlc.arg(outbox_id)::bigint);
+
+-- name: EventExecutionLineageBackfillAssociated :one
+SELECT EXISTS(SELECT 1 FROM event_execution_roots WHERE root_invocation_id=sqlc.arg(invocation_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND outbox_id=sqlc.arg(outbox_id)::bigint AND accepted_at=sqlc.arg(accepted_at)::timestamptz);
+
+-- name: InsertEventExecutionLineageBackfillCase :execrows
+INSERT INTO event_execution_lineage_cases(diagnostic_id,subscription_id,outbox_id,account_id,app_id,accepted_at,root_invocation_id,root_created_at,status,reason,recorded_at,retain_until)
+VALUES(sqlc.arg(diagnostic_id)::uuid,sqlc.arg(subscription_id)::uuid,sqlc.arg(outbox_id)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(accepted_at)::timestamptz,sqlc.arg(root_invocation_id)::text,sqlc.narg(root_created_at)::timestamptz,sqlc.arg(status)::text,sqlc.arg(reason)::text,clock_timestamp(),clock_timestamp()+make_interval(secs=>sqlc.arg(retention_seconds)::integer))
+ON CONFLICT(subscription_id,outbox_id) DO NOTHING;

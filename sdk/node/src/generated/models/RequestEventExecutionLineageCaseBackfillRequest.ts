@@ -1,0 +1,12 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+export type RequestEventExecutionLineageCaseBackfillRequest = {
+  request_id: string;
+  /**
+   * Omit for the first request; otherwise use the latest completed or expired request UUID. Repeated submissions preserve their original guard.
+   */
+  expected_previous_request_id?: string;
+};
+

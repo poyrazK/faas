@@ -34,6 +34,13 @@ func normalizeLineageRetryJob(req api.CreateEventExecutionLineageRetryJobRequest
 		if c.OutboxID <= 0 || c.ExpectedRevision <= 0 || c.AcceptedAt.IsZero() || (i > 0 && req.Cases[i-1].OutboxID == c.OutboxID) {
 			return req, ErrInvalidArgument
 		}
+		if c.ExpectedDiagnosticID != "" {
+			id, e := uuid.Parse(c.ExpectedDiagnosticID)
+			if e != nil || id == uuid.Nil {
+				return req, ErrInvalidArgument
+			}
+			req.Cases[i].ExpectedDiagnosticID = id.String()
+		}
 		req.Cases[i].AcceptedAt = c.AcceptedAt.UTC()
 	}
 	return req, nil
@@ -45,7 +52,7 @@ func sameLineageJobSelection(job api.EventExecutionLineageRetryJob, req api.Crea
 	for i, item := range job.Items {
 		c := req.Cases[i]
 		s := item.Selection
-		if s.OutboxID != c.OutboxID || s.ExpectedRevision != c.ExpectedRevision || !s.AcceptedAt.Equal(c.AcceptedAt) {
+		if s.OutboxID != c.OutboxID || s.ExpectedRevision != c.ExpectedRevision || s.ExpectedDiagnosticID != c.ExpectedDiagnosticID || !s.AcceptedAt.Equal(c.AcceptedAt) {
 			return false
 		}
 	}
@@ -191,7 +198,7 @@ func (s *PgStore) CreateEventExecutionLineageRetryJob(ctx context.Context, accou
 		if e != nil {
 			return out, e
 		}
-		if c.Revision != selected.ExpectedRevision || !timeFromPgtype(c.AcceptedAt).Equal(selected.AcceptedAt) || (c.Status != "unresolved" && c.Status != "conflict") {
+		if uuidString(c.DiagnosticID) != selected.ExpectedDiagnosticID || c.Revision != selected.ExpectedRevision || !timeFromPgtype(c.AcceptedAt).Equal(selected.AcceptedAt) || (c.Status != "unresolved" && c.Status != "conflict") {
 			return out, ErrConflict
 		}
 	}
@@ -238,7 +245,7 @@ func finishLineageRetryJobItem(job *api.EventExecutionLineageRetryJob, result ap
 func lineageJobCaseRequest(job api.EventExecutionLineageRetryJob, c api.EventExecutionLineageRetrySelection) api.RetryEventExecutionLineageCaseRequest {
 	// Separate namespace from customer request IDs and stable across process restarts.
 	key := job.SubscriptionID + ":" + job.RequestID + ":" + strconv.FormatInt(c.OutboxID, 10)
-	return api.RetryEventExecutionLineageCaseRequest{RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("gregale-lineage-bulk:"+key)).String(), ExpectedRevision: c.ExpectedRevision}
+	return api.RetryEventExecutionLineageCaseRequest{RequestID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("gregale-lineage-bulk:"+key)).String(), ExpectedRevision: c.ExpectedRevision, ExpectedDiagnosticID: c.ExpectedDiagnosticID}
 }
 func (s *PgStore) advanceLineageRetryJobItem(ctx context.Context) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -260,6 +267,22 @@ func (s *PgStore) advanceLineageRetryJobItem(ctx context.Context) (bool, error) 
 	}
 	if job.Processed < 0 || job.Processed >= len(job.Items) {
 		return false, ErrInvalidArgument
+	}
+	// Recheck retention after acquiring coverage: a diagnostic backfill may have
+	// held it while this job's retention deadline passed.
+	_, err = q.LockEventExecutionLineageCoverage(ctx, tx, sqlc.LockEventExecutionLineageCoverageParams{AccountID: row.AccountID, AppID: row.AppID, SubscriptionID: row.SubscriptionID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = q.GetEventExecutionLineageRetryJob(ctx, tx, sqlc.GetEventExecutionLineageRetryJobParams{AccountID: row.AccountID, AppID: row.AppID, SubscriptionID: row.SubscriptionID, RequestID: row.RequestID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	c := job.Items[job.Processed].Selection
 	result, retryErr := retryEventExecutionLineageCaseTx(ctx, tx, uuidString(row.AccountID), uuidString(row.AppID), uuidString(row.SubscriptionID), c.OutboxID, lineageJobCaseRequest(job, c), &c.AcceptedAt)
@@ -374,7 +397,7 @@ func (m *MemStore) CreateEventExecutionLineageRetryJob(ctx context.Context, acco
 		if !ok || !c.RetainUntil.After(time.Now()) {
 			return out, ErrNotFound
 		}
-		if c.Revision != selected.ExpectedRevision || !c.AcceptedAt.Equal(selected.AcceptedAt) || (c.Status != "unresolved" && c.Status != "conflict") {
+		if c.DiagnosticID != selected.ExpectedDiagnosticID || c.Revision != selected.ExpectedRevision || !c.AcceptedAt.Equal(selected.AcceptedAt) || (c.Status != "unresolved" && c.Status != "conflict") {
 			return out, ErrConflict
 		}
 	}

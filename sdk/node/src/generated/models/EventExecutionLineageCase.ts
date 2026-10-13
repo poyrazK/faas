@@ -3,6 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 export type EventExecutionLineageCase = {
+  /**
+   * Unique incarnation of a diagnostically created case; required in its retry guards.
+   */
+  diagnostic_id?: string;
   subscription_id: string;
   app_id: string;
   outbox_id: number;

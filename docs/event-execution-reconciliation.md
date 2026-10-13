@@ -199,3 +199,93 @@ Cancellation leaves existing lineage repairs applied and does not extend the
 change scan/history evidence. Apply the cancellation state migration before
 running the updated API. Downgrading requires physically pruning cancelled job
 rows first; the old CHECK rejects them without restarting work.
+
+## Backfill missing diagnostics for older scans
+
+Older aggregate-only repair scans have counters but no individual cases. A
+separate diagnostic scan can create missing unresolved/conflicting case records
+from retained ordinary enqueued receipts:
+
+```sh
+gregale --json events subscription-lineage-case-backfill APP SUB
+gregale --json events subscription-lineage-case-backfill-request APP SUB --request-id NEW_UUID
+```
+
+The API uses GET/POST `execution-reconciliation/case-backfill`. Reads require read
+scope; requests require deploy/write scope. Go exposes
+`GetEventExecutionLineageCaseBackfill` and
+`RequestEventExecutionLineageCaseBackfill`, with matching Node and Python operations.
+POST accepts `request_id` and optional `expected_previous_request_id`. It requires
+an existing execution coverage row from admissions or reconciliation; absent
+coverage returns 404 without altering health baselines. GET returns `not_requested`
+when no diagnostic request exists.
+
+The request captures an upper retained receipt ID and persists its own cursor.
+The scheduler examines at most 100 receipt candidates across diagnostic scans per
+normal sweep. New case rows and progress commit together; restarts resume the
+checkpoint. Existing cases are left unchanged, including their revisions and
+retention deadlines. Rows awaiting physical expiry cleanup are skipped too.
+Authoritatively associated admissions are counted without creating a gap case,
+even if their invocation has expired. A proven root missing its association is
+recorded as unresolved with reason `lineage_association_missing`; use the existing
+guarded retry workflow after reviewing that case.
+
+Status becomes `waiting_for_retry_jobs` while a retained pending bulk lineage
+retry job exists for this subscription. Its queued case guards remain protected;
+once those jobs finish, are cancelled or expire, scanning can continue. The
+30-day diagnostic work deadline still applies while waiting. `expired` is visible
+immediately at that deadline. The latest small scan metadata remains available
+while its coverage row exists; there is no history of superseded scan requests.
+
+`scanned` is the number of examined receipt candidates. It equals `recorded` plus
+`existing` plus `associated`; `recorded` equals `unresolved` plus `conflicts`.
+These counters describe observations and newly inserted cases, not current
+execution readiness or complete history. The upper ID is fixed, but receipt
+membership and retention remain live. Membership added on an already-passed ID,
+late-committing receipts, or evidence removed during the scan can be missed. A
+completed scan means its retained range was traversed, not that all historical
+gaps are known or resolved.
+
+Reuse the same UUID and original previous-request guard after a lost response.
+The server returns current progress. To deliberately rescan after completion or
+expiry, review the latest request UUID and use a new UUID with that guard:
+
+```sh
+gregale --json events subscription-lineage-case-backfill-request APP SUB --request-id NEW_UUID --expected-previous-request-id LATEST_UUID
+```
+
+Replacing an active scan or submitting a stale guard returns 409 with code
+`event_lineage_case_backfill_changed`. Superseded requests do not restart work.
+After expired cases are physically pruned, a later scan can create fresh records
+from retained evidence. Review the current case and choose a new retry UUID;
+old diagnostic identities fail against that fresh lifetime, even if the numeric
+revision repeats.
+
+Diagnostic scans never associate roots, invoke handlers, backfill execution
+outcomes, overwrite existing case records, move the forward repair cursor/counters,
+clear loss markers or alter collection boundaries. Lost source evidence stays
+unavailable. Apply the diagnostic-ID migration and deploy the updated API and scheduler writers
+together before requesting scans; older workers can discard JSON fields they do
+not understand, and older API binaries do not enforce diagnostic-ID guards.
+
+Newly backfilled cases include a unique `diagnostic_id`. Copy it into
+`expected_diagnostic_id` for both individual retry bodies and bulk job selections.
+The CLI supports this guard for individual retries:
+
+```sh
+gregale --json events subscription-lineage-retry APP SUB OUTBOX_ID --request-id NEW_UUID --expected-revision CURRENT_REVISION --expected-diagnostic-id CURRENT_DIAGNOSTIC_ID
+```
+
+For a bulk request, add `"expected_diagnostic_id": "CURRENT_DIAGNOSTIC_ID"` to each
+selection whose reviewed case has `diagnostic_id`. Use the actual UUID, not the
+placeholder. Missing or changed identities return 409 before evaluation. Repeating
+an individual retry or bulk submission must preserve this guard along with the
+other original fields. Existing legacy cases without a diagnostic ID keep their
+previous request contract. Older SDKs can still retry those legacy cases; upgrade
+or include the new field explicitly when retrying backfilled diagnostics.
+
+A recreated diagnostic case receives a fresh identity after pruning. This prevents
+an old retry from matching a reset numeric revision or a changed root incarnation.
+Case listing and retry results expose identifiers and reason codes only; no event
+payload is added. Downgrading the column migration requires stopping diagnostic
+requests and physically pruning guarded cases and retry jobs first.

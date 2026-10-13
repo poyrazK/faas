@@ -17,6 +17,7 @@ import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecut
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
 import type { EventExecutionLineageCase } from '../models/EventExecutionLineageCase.js';
+import type { EventExecutionLineageCaseBackfill } from '../models/EventExecutionLineageCaseBackfill.js';
 import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
 import type { EventExecutionLineageRetryJob } from '../models/EventExecutionLineageRetryJob.js';
 import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
@@ -75,6 +76,7 @@ import type { ReplayEventFanoutFailureRequest } from '../models/ReplayEventFanou
 import type { ReplayEventFanoutFailureResponse } from '../models/ReplayEventFanoutFailureResponse.js';
 import type { ReplayRetryableEventFanoutFailuresRequest } from '../models/ReplayRetryableEventFanoutFailuresRequest.js';
 import type { ReplayRetryableEventFanoutFailuresResponse } from '../models/ReplayRetryableEventFanoutFailuresResponse.js';
+import type { RequestEventExecutionLineageCaseBackfillRequest } from '../models/RequestEventExecutionLineageCaseBackfillRequest.js';
 import type { RetryEventExecutionLineageCaseRequest } from '../models/RetryEventExecutionLineageCaseRequest.js';
 import type { SetWorkflowRecoveryPolicyRequest } from '../models/SetWorkflowRecoveryPolicyRequest.js';
 import type { SuppressWorkflowRecoveryAutomaticActionRequest } from '../models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
@@ -1500,6 +1502,82 @@ export class EventsService {
     });
   }
   /**
+   * Inspect the latest bounded lineage diagnostic scan.
+   * Requires read scope. Reports the latest scan only, or not_requested. Counters describe examined retained receipts, not live blockers or complete history. Existing case revisions and forward repair progress are preserved. Expiry is visible immediately after the 30-day work deadline.
+   * @returns EventExecutionLineageCaseBackfill Latest scan status and counters.
+   * @throws ApiError
+   */
+  public static getEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid identifier or scan guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed.`,
+        504: `Request timed out; repeat the same request UUID and previous-request guard.`,
+      },
+    });
+  }
+  /**
+   * Backfill missing lineage cases from retained admission evidence.
+   * Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+   * @returns EventExecutionLineageCaseBackfill Previously completed or expired scan, or an empty retained range.
+   * @throws ApiError
+   */
+  public static requestEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    requestBody: RequestEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or scan guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed.`,
+        504: `Request timed out; repeat the same request UUID and previous-request guard.`,
+      },
+    });
+  }
+  /**
    * Preview unresolved or conflicting retained lineage cases.
    * Requires read scope. Optional exact reason filter; live pagination, not a reserved selection. Review case acceptance timestamps and revisions before submitting a fixed job selection.
    * @returns EventExecutionLineageCases Retained eligible cases.
@@ -1557,7 +1635,7 @@ export class EventsService {
   }
   /**
    * Submit a fixed reviewed lineage retry selection.
-   * Requires deploy/write scope. At most 200 unique cases with expected revisions and original acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+   * Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
    * @returns EventExecutionLineageRetryJob Previously completed or cancelled job.
    * @throws ApiError
    */
@@ -1736,7 +1814,7 @@ export class EventsService {
   }
   /**
    * Recheck one reviewed lineage case with an idempotent guard.
-   * Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+   * Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
    * @returns EventExecutionLineageCase Retained cases or the saved guarded retry result.
    * @throws ApiError
    */

@@ -100,6 +100,7 @@ func (c *Client) RequestEventExecutionReconciliation(ctx context.Context, app, i
 }
 
 type EventExecutionLineageCase struct {
+	DiagnosticID     string     `json:"diagnostic_id,omitempty"`
 	SubscriptionID   string     `json:"subscription_id"`
 	AppID            string     `json:"app_id"`
 	OutboxID         int64      `json:"outbox_id"`
@@ -118,8 +119,9 @@ type EventExecutionLineageCases struct {
 	NextAfter int64                       `json:"next_after,omitempty"`
 }
 type RetryEventExecutionLineageCaseRequest struct {
-	RequestID        string `json:"request_id"`
-	ExpectedRevision int64  `json:"expected_revision"`
+	ExpectedDiagnosticID string `json:"expected_diagnostic_id,omitempty"`
+	RequestID            string `json:"request_id"`
+	ExpectedRevision     int64  `json:"expected_revision"`
 }
 
 func (c *Client) ListEventExecutionLineageCases(ctx context.Context, app, sub string, after int64, limit int) (EventExecutionLineageCases, error) {
@@ -135,9 +137,10 @@ func (c *Client) RetryEventExecutionLineageCase(ctx context.Context, app, sub st
 
 // EventExecutionLineageRetrySelection fences both the case revision and original receipt acceptance.
 type EventExecutionLineageRetrySelection struct {
-	OutboxID         int64     `json:"outbox_id"`
-	ExpectedRevision int64     `json:"expected_revision"`
-	AcceptedAt       time.Time `json:"accepted_at"`
+	ExpectedDiagnosticID string    `json:"expected_diagnostic_id,omitempty"`
+	OutboxID             int64     `json:"outbox_id"`
+	ExpectedRevision     int64     `json:"expected_revision"`
+	AcceptedAt           time.Time `json:"accepted_at"`
 }
 type CreateEventExecutionLineageRetryJobRequest struct {
 	RequestID string                                `json:"request_id"`
@@ -185,5 +188,40 @@ type CancelEventExecutionLineageRetryJobRequest struct {
 func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string, req CancelEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID)+"/cancel", req, &out)
+	return out, err
+}
+
+// EventExecutionLineageCaseBackfill reports the latest bounded diagnostic scan.
+type EventExecutionLineageCaseBackfill struct {
+	RequestID         string     `json:"request_id,omitempty"`
+	PreviousRequestID string     `json:"previous_request_id,omitempty"`
+	SubscriptionID    string     `json:"subscription_id"`
+	AppID             string     `json:"app_id"`
+	Status            string     `json:"status"`
+	ThroughOutboxID   int64      `json:"through_outbox_id"`
+	Cursor            int64      `json:"cursor"`
+	Scanned           int64      `json:"scanned"`
+	Recorded          int64      `json:"recorded"`
+	Existing          int64      `json:"existing"`
+	Associated        int64      `json:"associated"`
+	Unresolved        int64      `json:"unresolved"`
+	Conflicts         int64      `json:"conflicts"`
+	CreatedAt         *time.Time `json:"created_at,omitempty"`
+	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
+	RetainUntil       *time.Time `json:"retain_until,omitempty"`
+}
+type RequestEventExecutionLineageCaseBackfillRequest struct {
+	RequestID                 string `json:"request_id"`
+	ExpectedPreviousRequestID string `json:"expected_previous_request_id,omitempty"`
+}
+
+func (c *Client) GetEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string) (EventExecutionLineageCaseBackfill, error) {
+	var out EventExecutionLineageCaseBackfill
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill", nil, &out)
+	return out, err
+}
+func (c *Client) RequestEventExecutionLineageCaseBackfill(ctx context.Context, app, sub string, req RequestEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
+	var out EventExecutionLineageCaseBackfill
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/case-backfill", req, &out)
 	return out, err
 }

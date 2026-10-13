@@ -2838,6 +2838,7 @@ type EventExecutionLineageCase struct {
 	OutboxID         int64
 	AccountID        pgtype.UUID
 	AppID            pgtype.UUID
+	DiagnosticID     pgtype.UUID
 	AcceptedAt       pgtype.Timestamptz
 	RootInvocationID string
 	RootCreatedAt    pgtype.Timestamptz

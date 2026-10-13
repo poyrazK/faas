@@ -18,12 +18,13 @@ import (
 )
 
 type lineageRepairProgress struct {
-	Cursor     int64      `json:"cursor"`
-	Scanned    int64      `json:"scanned"`
-	Repaired   int64      `json:"repaired"`
-	Unresolved int64      `json:"unresolved"`
-	Conflicts  int64      `json:"conflicts"`
-	LastScan   *time.Time `json:"last_scan,omitempty"`
+	CaseBackfill *api.EventExecutionLineageCaseBackfill `json:"case_backfill,omitempty"`
+	Cursor       int64                                  `json:"cursor"`
+	Scanned      int64                                  `json:"scanned"`
+	Repaired     int64                                  `json:"repaired"`
+	Unresolved   int64                                  `json:"unresolved"`
+	Conflicts    int64                                  `json:"conflicts"`
+	LastScan     *time.Time                             `json:"last_scan,omitempty"`
 }
 
 func decodeLineageRepairProgress(raw []byte) (lineageRepairProgress, error) {
@@ -126,11 +127,24 @@ func (s *PgStore) repairEventExecutionLineage(ctx context.Context, limit int) er
 	return tx.Commit(ctx)
 }
 func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow, expected ...*time.Time) (string, error) {
+	return evaluateEventExecutionLineageRow(ctx, q, tx, job, row, true, expected...)
+}
+func evaluateEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow, associate bool, expected ...*time.Time) (string, error) {
+
 	var envelope eventcontract.Envelope
 	if json.Unmarshal(row.Payload, &envelope) != nil || envelope.ID != row.EventID || envelope.Source != row.Source || envelope.AccountID != row.InvocationAccountID {
 		return "unresolved:invalid_receipt", nil
 	}
 	id := PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, uuidString(job.SubscriptionID))
+	if !associate {
+		known, err := q.EventExecutionLineageBackfillAssociated(ctx, tx, sqlc.EventExecutionLineageBackfillAssociatedParams{InvocationID: mustPgUUID(id), AccountID: job.AccountID, AppID: job.AppID, SubscriptionID: job.SubscriptionID, OutboxID: row.OutboxID, AcceptedAt: row.AcceptedAt})
+		if err != nil {
+			return "", err
+		}
+		if known {
+			return "already_associated", nil
+		}
+	}
 	inv, err := q.EventExecutionLineageRepairRoot(ctx, tx, sqlc.EventExecutionLineageRepairRootParams{InvocationID: mustPgUUID(id), AccountID: job.AccountID, AppID: job.AppID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "unresolved:missing_root", nil
@@ -163,6 +177,9 @@ func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx
 	}
 	if ambiguous {
 		return "conflict:competing_receipts", nil
+	}
+	if !associate {
+		return "unresolved:lineage_association_missing", nil
 	}
 	associated, err := q.AssociateEventExecutionRoot(ctx, tx, sqlc.AssociateEventExecutionRootParams{InvocationID: inv.ID, SubscriptionID: job.SubscriptionID, AccountID: job.AccountID, AppID: job.AppID, AcceptedAt: row.AcceptedAt, OutboxID: row.OutboxID, RetentionSeconds: int32(api.EventExecutionLedgerRetention / time.Second)})
 	if err != nil {
@@ -242,6 +259,10 @@ func (m *MemStore) repairEventExecutionLineageLocked(account, app, sub string, b
 	return len(receipts)
 }
 func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string, receipt *PublishedEventWork, expected ...*time.Time) string {
+	return m.evaluateEventExecutionLineageRowLocked(account, app, sub, receipt, true, expected...)
+}
+func (m *MemStore) evaluateEventExecutionLineageRowLocked(account, app, sub string, receipt *PublishedEventWork, associate bool, expected ...*time.Time) string {
+
 	var envelope eventcontract.Envelope
 	if json.Unmarshal(receipt.Payload, &envelope) != nil {
 		return "unresolved:invalid_receipt"
@@ -251,6 +272,13 @@ func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string
 		return "unresolved:incompatible_execution"
 	}
 	id := PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, recipient.ID)
+	if !associate {
+		for key, root := range m.eventExecutionRoots {
+			if key.id == id && sameMemUUID(root.account, account) && sameMemUUID(root.app, app) && sameMemUUID(root.subscription, sub) && root.outbox == receipt.ID && root.accepted.Equal(receipt.CreatedAt) {
+				return "already_associated"
+			}
+		}
+	}
 	inv, ok := m.invocations[id]
 	if !ok {
 		return "unresolved:missing_root"
@@ -290,6 +318,9 @@ func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string
 				return "conflict:competing_receipts"
 			}
 		}
+	}
+	if !associate {
+		return "unresolved:lineage_association_missing"
 	}
 	if m.eventExecutionRoots == nil {
 		m.eventExecutionRoots = map[executionLedgerRootKey]executionLedgerRoot{}

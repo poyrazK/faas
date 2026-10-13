@@ -1112,6 +1112,8 @@ from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
 from .event_execution_lineage_case import EventExecutionLineageCase
+from .event_execution_lineage_case_backfill import EventExecutionLineageCaseBackfill
+from .event_execution_lineage_case_backfill_status import EventExecutionLineageCaseBackfillStatus
 from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
 from .event_execution_lineage_cases import EventExecutionLineageCases
 from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
@@ -3182,6 +3184,7 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
@@ -5138,6 +5141,8 @@ __all__ = (
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
     "EventExecutionLineageCase",
+    "EventExecutionLineageCaseBackfill",
+    "EventExecutionLineageCaseBackfillStatus",
     "EventExecutionLineageCases",
     "EventExecutionLineageCaseStatus",
     "EventExecutionLineageRetryJob",
@@ -7056,6 +7061,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="RetryEventExecutionLineageCaseRequest")
 
 
@@ -13,11 +15,17 @@ T = TypeVar("T", bound="RetryEventExecutionLineageCaseRequest")
 class RetryEventExecutionLineageCaseRequest:
     request_id: UUID
     expected_revision: int
+    expected_diagnostic_id: UUID | Unset = UNSET
+    """Required when the reviewed case has diagnostic_id; omit for legacy cases."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)
 
         expected_revision = self.expected_revision
+
+        expected_diagnostic_id: str | Unset = UNSET
+        if not isinstance(self.expected_diagnostic_id, Unset):
+            expected_diagnostic_id = str(self.expected_diagnostic_id)
 
         field_dict: dict[str, Any] = {}
 
@@ -27,6 +35,8 @@ class RetryEventExecutionLineageCaseRequest:
                 "expected_revision": expected_revision,
             }
         )
+        if expected_diagnostic_id is not UNSET:
+            field_dict["expected_diagnostic_id"] = expected_diagnostic_id
 
         return field_dict
 
@@ -37,9 +47,17 @@ class RetryEventExecutionLineageCaseRequest:
 
         expected_revision = d.pop("expected_revision")
 
+        _expected_diagnostic_id = d.pop("expected_diagnostic_id", UNSET)
+        expected_diagnostic_id: UUID | Unset
+        if isinstance(_expected_diagnostic_id, Unset):
+            expected_diagnostic_id = UNSET
+        else:
+            expected_diagnostic_id = UUID(_expected_diagnostic_id)
+
         retry_event_execution_lineage_case_request = cls(
             request_id=request_id,
             expected_revision=expected_revision,
+            expected_diagnostic_id=expected_diagnostic_id,
         )
 
         return retry_event_execution_lineage_case_request

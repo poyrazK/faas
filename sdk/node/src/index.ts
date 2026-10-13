@@ -396,3 +396,6 @@ export type { EventExecutionLineageRetryJobItem } from './generated/models/Event
 export type { EventExecutionLineageRetryJob } from './generated/models/EventExecutionLineageRetryJob.js';
 
 export type { CancelEventExecutionLineageRetryJobRequest } from './generated/models/CancelEventExecutionLineageRetryJobRequest.js';
+
+export type { EventExecutionLineageCaseBackfill } from './generated/models/EventExecutionLineageCaseBackfill.js';
+export type { RequestEventExecutionLineageCaseBackfillRequest } from './generated/models/RequestEventExecutionLineageCaseBackfillRequest.js';

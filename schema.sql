@@ -56915,6 +56915,7 @@ CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_executio
 CREATE TABLE IF NOT EXISTS event_execution_lineage_cases (
  subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
  outbox_id bigint NOT NULL CHECK(outbox_id>0), account_id uuid NOT NULL, app_id uuid NOT NULL,
+ diagnostic_id uuid CHECK(diagnostic_id IS NULL OR diagnostic_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  accepted_at timestamptz NOT NULL, root_invocation_id text NOT NULL DEFAULT '', root_created_at timestamptz,
  status text NOT NULL CHECK(status IN ('unresolved','conflict','repaired','already_associated')),
  reason text NOT NULL, revision bigint NOT NULL DEFAULT 1 CHECK(revision>0), retry_count bigint NOT NULL DEFAULT 0 CHECK(retry_count>=0),

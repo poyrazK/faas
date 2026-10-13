@@ -2282,6 +2282,23 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-case-backfill
+
+Inspect latest lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill <app> <subscription-id>`
+
+### events subscription-lineage-case-backfill-request
+
+Backfill missing lineage diagnostics from retained evidence
+
+`gregale events subscription-lineage-case-backfill-request [--request-id <UUID>] [--expected-previous-request-id <UUID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable scan identity |  |
+| `--expected-previous-request-id <UUID>` | reviewed completed or expired scan identity |  |
+
 ### events subscription-lineage-retry-preview
 
 Preview retained unresolved lineage cases
@@ -2335,12 +2352,13 @@ List retained lineage repair cases
 
 Retry one reviewed lineage case
 
-`gregale events subscription-lineage-retry [--request-id <UUID>] [--expected-revision <N>] <app> <subscription-id> <outbox-id>`
+`gregale events subscription-lineage-retry [--request-id <UUID>] [--expected-revision <N>] [--expected-diagnostic-id <UUID>] <app> <subscription-id> <outbox-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--request-id <UUID>` | stable request identity |  |
 | `--expected-revision <N>` | reviewed case revision |  |
+| `--expected-diagnostic-id <UUID>` | incarnation guard for a backfilled case |  |
 
 ### events subscription-execution-reconciliation
 

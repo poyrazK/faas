@@ -562,6 +562,7 @@ export type { EventConsumerWaitingReasons } from './EventConsumerWaitingReasons.
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
 export type { EventExecutionLineageCase } from './EventExecutionLineageCase.js';
+export type { EventExecutionLineageCaseBackfill } from './EventExecutionLineageCaseBackfill.js';
 export type { EventExecutionLineageCases } from './EventExecutionLineageCases.js';
 export type { EventExecutionLineageRetryJob } from './EventExecutionLineageRetryJob.js';
 export type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
@@ -1681,6 +1682,7 @@ export type { RequestAnalyticsTimeseriesResponse } from './RequestAnalyticsTimes
 export type { RequestAnalyticsTimeseriesSeries } from './RequestAnalyticsTimeseriesSeries.js';
 export type { RequestAuditListResponse } from './RequestAuditListResponse.js';
 export type { RequestAuditRecord } from './RequestAuditRecord.js';
+export type { RequestEventExecutionLineageCaseBackfillRequest } from './RequestEventExecutionLineageCaseBackfillRequest.js';
 export type { ResizeManagedPostgresDatabaseRequest } from './ResizeManagedPostgresDatabaseRequest.js';
 export type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
 export type { ResourceProfile } from './ResourceProfile.js';

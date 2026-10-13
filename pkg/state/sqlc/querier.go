@@ -727,6 +727,13 @@ type Querier interface {
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
 	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
 	EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg EventExecutionLedgerWindowParams) (EventExecutionLedgerWindowRow, error)
+	EventExecutionLineageBackfillAssociated(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillAssociatedParams) (bool, error)
+	EventExecutionLineageBackfillCaseExists(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillCaseExistsParams) (bool, error)
+	EventExecutionLineageBackfillJobs(ctx context.Context, db DBTX, jobLimit int32) ([]EventExecutionLineageBackfillJobsRow, error)
+	// Admission roots include settled receipts and materialized backfill recipients.
+	EventExecutionLineageBackfillReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillReceiptsParams) ([]EventExecutionLineageBackfillReceiptsRow, error)
+	EventExecutionLineageBackfillRetryPending(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillRetryPendingParams) (bool, error)
+	EventExecutionLineageBackfillUpper(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Admission roots include settled receipts and materialized backfill recipients.
 	EventExecutionLineageCaseReceipt(ctx context.Context, db DBTX, arg EventExecutionLineageCaseReceiptParams) ([]EventExecutionLineageCaseReceiptRow, error)
 	EventExecutionLineageRepairAmbiguous(ctx context.Context, db DBTX, arg EventExecutionLineageRepairAmbiguousParams) (bool, error)
@@ -1135,6 +1142,7 @@ type Querier interface {
 	GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg GetEnvironmentGitRevisionApprovalParams) (EnvironmentGitRevisionApproval, error)
 	GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetEnvironmentGitSourceParams) (EnvironmentGitSource, error)
 	GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error)
+	GetEventExecutionLineageBackfillProgress(ctx context.Context, db DBTX, arg GetEventExecutionLineageBackfillProgressParams) ([]byte, error)
 	GetEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error)
 	GetEventExecutionReconciliation(ctx context.Context, db DBTX, arg GetEventExecutionReconciliationParams) (GetEventExecutionReconciliationRow, error)
 	GetEventWorkflowReceipt(ctx context.Context, db DBTX, arg GetEventWorkflowReceiptParams) (pgtype.UUID, error)
@@ -1412,6 +1420,7 @@ type Querier interface {
 	InsertEnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationConfigReceiptParams) (EnvironmentQualificationConfigReceipt, error)
 	InsertEnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error)
 	InsertEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadServingReceiptParams) (int64, error)
+	InsertEventExecutionLineageBackfillCase(ctx context.Context, db DBTX, arg InsertEventExecutionLineageBackfillCaseParams) (int64, error)
 	InsertEventWorkflowReceipt(ctx context.Context, db DBTX, arg InsertEventWorkflowReceiptParams) error
 	InsertEventWorkflowRun(ctx context.Context, db DBTX, arg InsertEventWorkflowRunParams) error
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
@@ -3518,6 +3527,7 @@ type Querier interface {
 	SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error
 	SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error
 	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
+	SaveEventExecutionLineageBackfill(ctx context.Context, db DBTX, arg SaveEventExecutionLineageBackfillParams) error
 	SaveEventExecutionLineageRepairProgress(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRepairProgressParams) error
 	SaveEventExecutionLineageRetry(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryParams) error
 	SaveEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryJobParams) error

@@ -28,6 +28,8 @@ class EventExecutionLineageCase:
     retry_count: int
     recorded_at: datetime.datetime
     retain_until: datetime.datetime
+    diagnostic_id: UUID | Unset = UNSET
+    """Unique incarnation of a diagnostically created case; required in its retry guards."""
     root_invocation_id: UUID | Unset = UNSET
     root_created_at: datetime.datetime | Unset = UNSET
 
@@ -51,6 +53,10 @@ class EventExecutionLineageCase:
         recorded_at = self.recorded_at.isoformat()
 
         retain_until = self.retain_until.isoformat()
+
+        diagnostic_id: str | Unset = UNSET
+        if not isinstance(self.diagnostic_id, Unset):
+            diagnostic_id = str(self.diagnostic_id)
 
         root_invocation_id: str | Unset = UNSET
         if not isinstance(self.root_invocation_id, Unset):
@@ -76,6 +82,8 @@ class EventExecutionLineageCase:
                 "retain_until": retain_until,
             }
         )
+        if diagnostic_id is not UNSET:
+            field_dict["diagnostic_id"] = diagnostic_id
         if root_invocation_id is not UNSET:
             field_dict["root_invocation_id"] = root_invocation_id
         if root_created_at is not UNSET:
@@ -106,6 +114,13 @@ class EventExecutionLineageCase:
 
         retain_until = datetime.datetime.fromisoformat(d.pop("retain_until"))
 
+        _diagnostic_id = d.pop("diagnostic_id", UNSET)
+        diagnostic_id: UUID | Unset
+        if isinstance(_diagnostic_id, Unset):
+            diagnostic_id = UNSET
+        else:
+            diagnostic_id = UUID(_diagnostic_id)
+
         _root_invocation_id = d.pop("root_invocation_id", UNSET)
         root_invocation_id: UUID | Unset
         if isinstance(_root_invocation_id, Unset):
@@ -131,6 +146,7 @@ class EventExecutionLineageCase:
             retry_count=retry_count,
             recorded_at=recorded_at,
             retain_until=retain_until,
+            diagnostic_id=diagnostic_id,
             root_invocation_id=root_invocation_id,
             root_created_at=root_created_at,
         )
