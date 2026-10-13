@@ -375,8 +375,11 @@ type server struct {
 	// appTaskAPIEnabled is the fail-closed public admission gate for commands
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
-	appTaskAPIEnabled       bool
-	outboundProbeGatewayURL string
+	appTaskAPIEnabled bool
+	// interactiveAppTasksEnabled additionally admits ADR-1037 interactive
+	// sessions (`gregale app exec -it`). It requires appTaskAPIEnabled.
+	interactiveAppTasksEnabled bool
+	outboundProbeGatewayURL    string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -759,6 +762,13 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+// WithInteractiveAppTasksEnabled attaches the boot-time gate for ADR-1037
+// interactive app-task admission.
+func (s *server) WithInteractiveAppTasksEnabled(enabled bool) *server {
+	s.interactiveAppTasksEnabled = enabled
 	return s
 }
 
@@ -2824,6 +2834,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportUserUsage)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListBudgetAlerts)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListRequestLog)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
+	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
+	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-content-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutContentPolicy)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/probe-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOutboundProbePolicy))))
@@ -3827,6 +3841,11 @@ func (s *server) handler() http.Handler {
 	// handlers_oauth_code_callback.go for the full rationale on
 	// why this is a separate route from /oauth/callback.
 	mux.Handle("GET "+oauthCodeCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCodeCallback))))
+	mux.Handle("POST /v1/gitlab/connect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.startGitLabOAuth)))))
+	mux.Handle("GET "+gitLabOAuthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.finishGitLabOAuth))))
+	mux.Handle("GET /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitLabOAuthConnection))))
+	mux.Handle("DELETE /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.deleteGitLabOAuthConnection)))))
+	mux.Handle("POST /v1/gitlab/disconnect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.disconnectGitLabOAuthFromDashboard)))))
 	// /dashboard/install/connect mints the CSRF state cookie and
 	// redirects the dashboard's "Connect GitHub" button to GitHub's
 	// authorize URL. POST so it can't be triggered by an opportunistic

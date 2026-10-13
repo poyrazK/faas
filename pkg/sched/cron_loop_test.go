@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -137,7 +138,7 @@ type recordingSynth struct {
 	invokeErr      error
 }
 
-type claimLosingStore struct{ state.Store }
+type claimLosingStore struct{ Store state.Store }
 
 func (s claimLosingStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (state.Invocation, error) {
 	if _, err := s.Store.ClaimInvocation(ctx, id, instanceID, leaseSeconds); err != nil {
@@ -507,10 +508,10 @@ func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
 	base := state.NewMemStore()
 	store := claimLosingStore{Store: base}
 	ctx := context.Background()
-	acct, _ := store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
-	_, cron := newAppAndCron(t, store, acct.ID, true)
+	acct, _ := store.Store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
+	_, cron := newAppAndCron(t, statetest.NewStore(store), acct.ID, true)
 	vmm := &fakeWakeVMM{}
-	eng, _ := makeEngine(t, store, vmm)
+	eng, _ := makeEngine(t, statetest.NewStore(store), vmm)
 	synth := &recordingSynth{}
 	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
 
@@ -768,12 +769,12 @@ func TestCronDispatch_CronFiredAuditFailureDoesNotRollback(t *testing.T) {
 
 	wrapped := &failingEventStore{Store: inner}
 	vmm := &fakeWakeVMM{}
-	eng, _ := makeEngine(t, wrapped, vmm)
+	eng, _ := makeEngine(t, statetest.NewStore(wrapped), vmm)
 	synth := &recordingSynth{}
 	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
 	loop := NewLoop(nil, eng, slog.Default()).
 		WithGatewaySynth(synth).
-		WithAudit(audit.New(wrapped, slog.Default(), nil, "schedd")).
+		WithAudit(audit.New(statetest.NewStore(wrapped), slog.Default(), nil, "schedd")).
 		WithClock(func() time.Time { return now })
 
 	loop.runCronTick(ctx)

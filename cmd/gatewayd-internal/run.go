@@ -3469,6 +3469,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
 	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log))
+	// ADR-1037: interactive app-task attach is compute-owned too. The
+	// handler dials the task node's vmmd, which apid must never do.
+	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
+		attachMux := http.NewServeMux()
+		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
+			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
+	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3821,7 +3829,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-977: opt-in wake-ahead along service edges measured by this
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
-		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,

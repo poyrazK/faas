@@ -11,10 +11,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type admissionSpecFailureStore struct {
-	state.Store
+	Store      state.Store
 	secretErr  error
 	sidecarErr error
 }
@@ -53,7 +54,7 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 				}
 				store := &admissionSpecFailureStore{Store: mem}
 				vmm := &fakeVMM{}
-				e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+				e := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
 				injected := errors.New("temporary boot-spec read failure")
 				if failure == "secrets" {
 					store.secretErr = injected

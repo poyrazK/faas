@@ -753,7 +753,12 @@ const (
 	// per million tokens; cost limits are millicents per UTC day or month.
 	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
 	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
-	OutboundAIPriceEntriesMax                 = 64
+	// Media prices (ADR-997): the ceiling of a per-image and a per-audio-
+	// minute price. Character prices are per million characters and share
+	// the per-million-token ceiling.
+	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
+	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
+	OutboundAIPriceEntriesMax                        = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -777,13 +782,50 @@ const (
 	OutboundAIBudgetAlertFullPercent            = 100
 	// Per-end-user attribution (ADR-994): the distinct X-Gregale-AI-User
 	// values rolled up per integration and UTC day (later ones aggregate
-	// under "~other" and only integration and app budgets limit them), how
-	// long those rollups stay, the page size of their listing and the
+	// under "~other"; with per-user limits set they are refused, ADR-996),
+	// how long those rollups stay, the page size of their listing and the
 	// longest end-user or session ID.
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
 	OutboundAIUserIDMaxBytes         = 64
+	// Opt-in content capture (ADR-996): the bytes kept of each logged
+	// call's request and response body, the captures per integration and
+	// UTC day, and how long they stay.
+	OutboundAIRequestContentMaxBytes      = 32 << 10
+	OutboundAIContentCapturesPerDay       = 1_000
+	OutboundAIRequestContentRetentionDays = 3
+	// Media metering (ADR-997): the images one call may reserve, the output
+	// tokens reserved per image when a model is not priced per image, the
+	// audio bitrate and audio tokens per second used to reserve an upload
+	// before its duration is known, and the response tail read for usage
+	// when a JSON response is larger than the parse limit.
+	OutboundAIImagesPerCallMax                  = 10
+	OutboundAIImageReserveOutputTokens    int64 = 8_192
+	OutboundAIAudioReserveBytesPerSecond  int64 = 2_000
+	OutboundAIAudioReserveTokensPerSecond int64 = 50
+	OutboundAIUsageTailBytes                    = 64 << 10
+	// The start of a multipart upload larger than the buffer that is read
+	// for its model field, and the size reserved for an audio upload of
+	// unknown length.
+	OutboundAIFormPrefixMaxBytes         = 64 << 10
+	OutboundAIAudioReserveMaxBytes int64 = 25 << 20
+	// Content guardrails (ADR-997): the blocked terms one integration may
+	// list and the longest term, and the bytes past a capture's limit that
+	// are scanned so a secret cut at the limit is still redacted.
+	OutboundAIBlockedTermsMax         = 32
+	OutboundAIBlockedTermMaxBytes     = 128
+	OutboundAICaptureRedactSlackBytes = 4 << 10
+	// Replay and compare (ADR-997): targets per replay, replays per
+	// integration and UTC day, how long replays stay, the output text kept
+	// per result, the deadline of one replayed call, and how long a replay
+	// may run before it is failed as interrupted.
+	OutboundAIReplayTargetsMax              = 5
+	OutboundAIReplaysPerDay                 = 100
+	OutboundAIReplayRetentionDays           = 3
+	OutboundAIReplayOutputTextMaxBytes      = 4 << 10
+	OutboundAIReplayCallTimeoutSeconds      = 120
+	OutboundAIReplayInterruptedAfterMinutes = 15
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -9615,6 +9657,17 @@ const (
 	ServiceWakeAheadWakeTimeout = 30 * time.Second
 	// The opt-in setting and fleet residency are cached this long.
 	ServiceWakeAheadCacheTTL = 30 * time.Second
+)
+
+// RouteEvidenceWindow is how far back apid reads gateway-measured route
+// feature outcomes (wake-ahead, priority queue) for customers (ADR-1152).
+// RouteAdviceMinShed is how many requests the queue must have turned away or
+// displaced in that window before the advisor suggests route priorities.
+const (
+	RouteEvidenceWindow = 24 * time.Hour
+	RouteAdviceMinShed  = 10
+	// A priority suggestion proposes at most this many critical routes.
+	RouteAdviceMaxCriticalRoutes = 3
 )
 
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
