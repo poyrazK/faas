@@ -9894,6 +9894,7 @@
       "builder_seconds",
       "cold_boot_count",
       "cpu_usec",
+      "execution_id",
       "instance_id",
       "job_execution_class",
       "job_id",

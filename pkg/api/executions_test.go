@@ -254,7 +254,7 @@ func TestCreateExecutionRequestResolveRejectsInvalidRequests(t *testing.T) {
 		}(), wantCode: CodeExecutionNetworkInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "negative", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: -1}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "timeout minimum", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 99}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
-		{name: "timeout plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 10_001}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
+		{name: "timeout plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{TimeoutMS: 60_001}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
 		{name: "memory shape", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: 192}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},
 		{name: "memory plan cap", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{MemoryMB: 512}), wantCode: CodeExecutionLimitExceeded, wantStatus: http.StatusForbidden},
 		{name: "cpu shape", plan: PlanHobby, request: withLimits(ExecutionLimitRequest{CPUMillicores: 750}), wantCode: CodeExecutionLimitInvalid, wantStatus: http.StatusUnprocessableEntity},

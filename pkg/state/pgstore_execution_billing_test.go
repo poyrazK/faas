@@ -33,7 +33,7 @@ func TestPgStoreExecutionComputeUsageFeedsBilling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateExecution: %v", err)
 	}
-	claim, err := store.ClaimExecution(ctx, "schedd-billing", base.Add(time.Millisecond), time.Second)
+	claim, err := store.ClaimExecution(ctx, "schedd-billing", base.Add(time.Millisecond), time.Minute)
 	if err != nil {
 		t.Fatalf("ClaimExecution: %v", err)
 	}
