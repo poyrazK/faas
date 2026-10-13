@@ -9240,17 +9240,21 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation, provider)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
        $6::text, $7::text, $8::boolean,
-       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0),
+       $9::text
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
-WHERE p.account_id = $9::uuid AND p.id = $10::uuid
-  AND e.slug = $11::text
-  AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE p.account_id = $10::uuid AND p.id = $11::uuid
+  AND e.slug = $12::text
+  AND (($9::text = 'github' AND p.repo_full_name = $3::text
+       AND p.install_id = $2::bigint)
+    OR ($9::text = 'gitlab' AND EXISTS (
+       SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -9262,6 +9266,7 @@ type CreateEnvironmentGitSourceParams struct {
 	Mode            string
 	ApprovalPolicy  string
 	Prune           bool
+	Provider        string
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
@@ -9277,6 +9282,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		arg.Mode,
 		arg.ApprovalPolicy,
 		arg.Prune,
+		arg.Provider,
 		arg.AccountID,
 		arg.ProjectID,
 		arg.EnvironmentSlug,
@@ -9308,6 +9314,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -11658,6 +11665,18 @@ func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db D
 	return err
 }
 
+const deleteGitLabOAuthConnection = `-- name: DeleteGitLabOAuthConnection :execrows
+DELETE FROM gitlab_oauth_connections WHERE account_id=$1::uuid
+`
+
+func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteGitLabOAuthConnection, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -13651,7 +13670,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -13685,6 +13704,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -19844,7 +19864,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -19885,12 +19905,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -19922,6 +19943,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -19974,6 +19996,26 @@ func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFea
 		&i.Actor,
 		&i.RestoredFrom,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getGitLabOAuthConnection = `-- name: GetGitLabOAuthConnection :one
+SELECT account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at FROM gitlab_oauth_connections WHERE account_id = $1::uuid
+`
+
+func (q *Queries) GetGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, getGitLabOAuthConnection, accountID)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -42239,7 +42281,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -42278,6 +42320,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -57486,6 +57529,46 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.Schedule,
 		&i.Variables,
 		&i.JobID,
+	)
+	return i, err
+}
+
+const putGitLabOAuthConnection = `-- name: PutGitLabOAuthConnection :one
+INSERT INTO gitlab_oauth_connections (account_id, gitlab_user_id, username, credentials_sealed, expires_at)
+VALUES ($1::uuid, $2::bigint,
+        $3::text, $4::bytea, $5::timestamptz)
+ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id=EXCLUDED.gitlab_user_id,
+    username=EXCLUDED.username, credentials_sealed=EXCLUDED.credentials_sealed,
+    expires_at=EXCLUDED.expires_at, version=gitlab_oauth_connections.version+1, updated_at=now()
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type PutGitLabOAuthConnectionParams struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, putGitLabOAuthConnection,
+		arg.AccountID,
+		arg.GitlabUserID,
+		arg.Username,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -72800,6 +72883,41 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 	return result.RowsAffected(), nil
 }
 
+const rotateGitLabOAuthConnection = `-- name: RotateGitLabOAuthConnection :one
+UPDATE gitlab_oauth_connections SET credentials_sealed=$1::bytea,
+    expires_at=$2::timestamptz, version=version+1, updated_at=now()
+WHERE account_id=$3::uuid AND version=$4::bigint
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type RotateGitLabOAuthConnectionParams struct {
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	ExpectedVersion   int64
+}
+
+func (q *Queries) RotateGitLabOAuthConnection(ctx context.Context, db DBTX, arg RotateGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, rotateGitLabOAuthConnection,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const routeCustomerHealthObservation = `-- name: RouteCustomerHealthObservation :one
 WITH selected AS (
  SELECT value->>'method' AS method, value->>'path' AS path,
@@ -74813,7 +74931,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -74851,6 +74969,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -77260,7 +77379,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -77306,6 +77425,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }

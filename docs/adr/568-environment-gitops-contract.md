@@ -4229,6 +4229,12 @@ drift, reconciliation repairs them under the current lease, creates new route
 generations and requires fresh gateway acknowledgements; old acks cannot survive
 a traffic change.
 
+PostgreSQL serving completion also compares the receipt roster with the current
+registered serving gateways and requires exact acknowledgement names for each
+route. The preparation transaction rejects a caller's stale roster. A registry
+change therefore cannot complete a pending receipt merely because old and new
+rosters have equal cardinality; the next preparation resets route generations.
+
 Request/service graphs without queue bindings, push-worker graphs and request
 graphs for HTTP functions with reviewed push bindings can enter this phase.
 Activation requires both route acknowledgements and a completed named-queue

@@ -105,7 +105,15 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 	}
 	var result apptaskproto.Result
 	var err error
-	if streaming, ok := s.router.(interface {
+	if request.Interactive != nil {
+		interactive, ok := s.router.(interface {
+			ExecuteInteractiveAppTask(context.Context, string, string, apptaskproto.Request, AppTaskAttachSpec) (apptaskproto.Result, error)
+		})
+		if !ok {
+			return AppTaskOutcome{}, errors.New("sched: app task router does not support interactive sessions")
+		}
+		result, err = interactive.ExecuteInteractiveAppTask(ctx, s.nodeID, s.instance, wireReq, *request.Interactive)
+	} else if streaming, ok := s.router.(interface {
 		ExecuteAppTaskWithOutput(context.Context, string, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 	}); ok {
 		result, err = streaming.ExecuteAppTaskWithOutput(ctx, s.nodeID, s.instance, wireReq, nil)
@@ -117,6 +125,9 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 	}
 	return appTaskOutcomeFromProtocol(result), nil
 }
+
+// NodeID names the compute node whose vmmd owns the task VM.
+func (s *routedVmmdAppTaskSession) NodeID() string { return s.nodeID }
 
 func (s *routedVmmdAppTaskSession) Destroy(ctx context.Context) error {
 	if err := s.router.Destroy(ctx, s.nodeID, s.instance); err != nil {

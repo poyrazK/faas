@@ -8,10 +8,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type rotatingRuntimeValuesStore struct {
-	state.Store
+	Store     state.Store
 	afterRead func()
 	reads     int
 }
@@ -75,7 +76,7 @@ func TestBuildAppSpecForMigrationUsesOneOwnedValuesSnapshot(t *testing.T) {
 	write("default", "production")
 	write("stage", "before")
 	store := &rotatingRuntimeValuesStore{Store: mem, afterRead: func() { write("stage", "after") }}
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewStore(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	spec, err := engine.BuildAppSpecForMigration(ctx, instance.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func TestBuildAppSpecForMigrationUsesOneOwnedValuesSnapshot(t *testing.T) {
 }
 
 type staleSecretPolicyStore struct {
-	state.Store
+	Store       state.Store
 	policyReads int
 }
 
@@ -127,7 +128,7 @@ func TestEngineWakeSnapshotPolicyUsesOwnedValues(t *testing.T) {
 	}
 	store := &staleSecretPolicyStore{Store: mem}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := engine.Wake(ctx, app.ID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func stageReaperPolicyDeployment(t *testing.T, f stageSnapshotFixture, scope string, settings state.ProjectEnvironmentWorkloadSettings) state.Deployment {
@@ -161,7 +162,7 @@ func TestReaperEnvironmentSelectorsNeverCountSiblingReplicas(t *testing.T) {
 	}
 }
 
-type unavailableReaperPolicyStore struct{ *state.MemStore }
+type unavailableReaperPolicyStore struct{ MemStore *state.MemStore }
 
 func (s unavailableReaperPolicyStore) RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error) {
 	return state.RuntimeAppValuesSnapshot{}, state.ErrConflict
@@ -173,7 +174,7 @@ func TestReaperPolicyFailureAndLostLifetimeDoNotAuthorizeScaleIn(t *testing.T) {
 			f := seedStageSnapshotPolicy(t, 0, false)
 			var store state.Store = f.store
 			if reason == "read-failure" {
-				store = unavailableReaperPolicyStore{f.store}
+				store = statetest.NewMem(unavailableReaperPolicyStore{f.store})
 			} else {
 				f.recreateStage(t.Context(), t)
 			}
@@ -243,7 +244,7 @@ func TestStageIdleParkDoesNotStampProductionScaleIn(t *testing.T) {
 	}
 }
 
-type stageReaperPrewarmStore struct{ *state.MemStore }
+type stageReaperPrewarmStore struct{ MemStore *state.MemStore }
 
 func (s stageReaperPrewarmStore) ActivePrewarmFloor(context.Context, string, time.Time) (int, error) {
 	return 3, nil
@@ -257,7 +258,7 @@ func TestRunReaperPrewarmAppliesAgainstPinnedProductionFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, stageReaperPrewarmStore{f.store}, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(stageReaperPrewarmStore{f.store}), vmm, &fakeNotifier{}, "1.10.0")
 	productionIDs := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
 		wake, err := engine.AdmitInstance(ctx, f.app.ID, f.prod.ID, "production", "")

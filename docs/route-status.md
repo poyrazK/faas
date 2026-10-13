@@ -34,6 +34,7 @@ health.
 | `traffic_outside_contract` | The route has traffic but the captured contract does not declare it. |
 | `contract_route_without_traffic` | The contract declares the route but no traffic was observed. |
 | `rollback_needs_error_budget` | The monitor rolls back, but this route only has a latency budget. |
+| `advice_available` | The [route advisor](route-advisor.md) has a suggestion for this route. |
 
 The latest production incident and its automatic rollback decision are listed
 below the table. The command only reads. Each source is read separately: if

@@ -555,13 +555,13 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 		return pick, nil, true, &ConcurrencyQueueAdmissionError{Err: queueErr, RetryAfter: policy.MaxWait}
 	}
 	if !ok {
-		h.metrics.IncRoutePriorityQueue(class.String(), "rejected")
+		h.metrics.IncRoutePriorityQueue(app.ID, class.String(), "rejected")
 		return pick, nil, true, &ConcurrencyQueueFullError{Depth: depth, Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
 	}
 	if ticket.displacedOther {
-		h.metrics.IncRoutePriorityQueue(class.String(), "displacing")
+		h.metrics.IncRoutePriorityQueue(app.ID, class.String(), "displacing")
 	} else {
-		h.metrics.IncRoutePriorityQueue(class.String(), "queued")
+		h.metrics.IncRoutePriorityQueue(app.ID, class.String(), "queued")
 	}
 	queuedAt := time.Now()
 	defer func() {
@@ -571,7 +571,7 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	}()
 	if err := ticket.wait(ctx); err != nil {
 		if errors.Is(err, errConcurrencyQueueDisplaced) {
-			h.metrics.IncRoutePriorityQueue(class.String(), "displaced")
+			h.metrics.IncRoutePriorityQueue(app.ID, class.String(), "displaced")
 			return pick, nil, true, &ConcurrencyQueueFullError{Depth: h.vmConcurrency.queueDepth(app.ID), Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
 		}
 		if errors.Is(err, context.DeadlineExceeded) {

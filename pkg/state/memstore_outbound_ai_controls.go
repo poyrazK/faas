@@ -153,3 +153,36 @@ func (m *MemStore) SeedOutboundAIRequestLog(integrationID string, entries ...Out
 	}
 	m.outboundAIRequestLog[integrationID] = append(m.outboundAIRequestLog[integrationID], entries...)
 }
+
+var _ OutboundAIContentStore = (*MemStore)(nil)
+
+// GetOutboundAIRequestContent mirrors the PgStore read of a captured call
+// (ADR-996).
+func (m *MemStore) GetOutboundAIRequestContent(_ context.Context, accountID, integrationID, logID string) (OutboundAIRequestContent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.memOutboundIntegrationOwned(accountID, integrationID) {
+		return OutboundAIRequestContent{}, ErrNotFound
+	}
+	content, ok := m.outboundAIRequestContent[integrationID+"/"+logID]
+	if !ok {
+		return OutboundAIRequestContent{}, ErrNotFound
+	}
+	return content, nil
+}
+
+// SeedOutboundAIRequestContent stands in for outboundd's capture in tests
+// and marks the logged call as captured.
+func (m *MemStore) SeedOutboundAIRequestContent(integrationID string, content OutboundAIRequestContent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.outboundAIRequestContent == nil {
+		m.outboundAIRequestContent = make(map[string]OutboundAIRequestContent)
+	}
+	m.outboundAIRequestContent[integrationID+"/"+content.LogID] = content
+	for i, entry := range m.outboundAIRequestLog[integrationID] {
+		if entry.ID == content.LogID {
+			m.outboundAIRequestLog[integrationID][i].ContentCaptured = true
+		}
+	}
+}

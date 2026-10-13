@@ -1905,6 +1905,32 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
+	data.GitLabOAuthAvailable = gitLabOAuthConfig().Valid()
+	if data.GitLabOAuthAvailable {
+		gitLabConnectTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, gitLabConnectAction, view.ID, gitLabConnectCSRFCookie)
+		if err != nil {
+			renderProblem(w, log, err)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: gitLabConnectCSRFCookie, Value: gitLabConnectTok,
+			Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
+			MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+		data.GitLabConnectConfirmToken = gitLabConnectTok
+	}
+	if gitlabStore, ok := s.store.(state.GitLabOAuthStore); ok {
+		if connection, err := gitlabStore.GitLabOAuthConnection(r.Context(), view.ID); err == nil {
+			data.GitLabUsername = connection.Username
+			disconnectTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, gitLabDisconnectAction, view.ID, gitLabDisconnectCSRFCookie)
+			if err != nil {
+				renderProblem(w, log, err)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: gitLabDisconnectCSRFCookie, Value: disconnectTok,
+				Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
+				MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+			data.GitLabDisconnectConfirmToken = disconnectTok
+		}
+	}
 	if view.DeletionRequestedAt != nil {
 		restoreUntil := view.DeletionRequestedAt.Add(state.DeletionGraceDuration()).
 			UTC().Format(time.RFC3339)
@@ -1935,6 +1961,16 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		data.FlashSurface = "GitHub is connected. Choose a repository below to create your first app."
 	case "connect-forbidden":
 		data.FlashSurface = "That GitHub connect form expired. Reload the page and try again."
+	}
+	switch r.URL.Query().Get("gitlab") {
+	case "connected":
+		data.FlashSurface = "GitLab.com is connected. You can bind a report-mode environment Git source."
+	case "connect-forbidden":
+		data.FlashSurface = "That GitLab connect form expired. Reload the page and try again."
+	case "disconnected":
+		data.FlashSurface = "GitLab.com is disconnected. Bound GitLab sources will report an access outage until you reconnect."
+	case "disconnect-forbidden":
+		data.FlashSurface = "That GitLab disconnect form expired. Reload the page and try again."
 	}
 	// Issue #695 / ADR-080: per-account apps-auth-default
 	// grand-father banner. Renders when the account has at

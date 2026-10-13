@@ -76,12 +76,15 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 	flags, positional := splitArgsForFlags(args, "prune")
 	fs := newFlagSet("environment-gitops-bind", flag.ContinueOnError)
 	manifest := fs.String("manifest-path", "", "Git path to the environment definition")
+	provider := fs.String("provider", "github", "github or gitlab")
+	repository := fs.String("repository", "", "GitLab.com group/project path")
 	ref := fs.String("ref", "", "Git ref (defaults to the project production branch)")
 	mode := fs.String("mode", "report", "report (enforce unavailable in preview)")
 	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
-	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || *mode != "report" || (*approval != "manual" && *approval != "protected_branch") {
-		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--ref REF] [--mode report] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
+	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || *mode != "report" || (*approval != "manual" && *approval != "protected_branch") ||
+		(*provider != "github" && *provider != "gitlab") || (*provider == "gitlab" && (*repository == "" || *ref == "" || *approval != "manual" || *prune)) || (*provider == "github" && *repository != "") {
+		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--provider github|gitlab] [--repository GROUP/PROJECT] [--ref REF] [--mode report] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -89,7 +92,7 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	source, err := client.CreateEnvironmentGitSource(context.Background(), positional[0], positional[1], api.CreateEnvironmentGitSourceRequest{
-		Ref: *ref, ManifestPath: *manifest, Mode: *mode, ApprovalPolicy: *approval, Prune: *prune,
+		Provider: *provider, Repository: *repository, Ref: *ref, ManifestPath: *manifest, Mode: *mode, ApprovalPolicy: *approval, Prune: *prune,
 	})
 	return environmentGitOpsOutput(source, err)
 }
@@ -97,7 +100,7 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 func cmdEnvironmentGitOpsReview(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("environment-gitops-review", flag.ContinueOnError)
-	commit := fs.String("commit", "", "immutable lowercase GitHub commit SHA")
+	commit := fs.String("commit", "", "immutable lowercase Git commit SHA")
 	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || len(*commit) != 40 {
 		PrintUsage(os.Stderr, environmentGitOpsUsage+" --commit SHA", "projects environments")
 		return 1

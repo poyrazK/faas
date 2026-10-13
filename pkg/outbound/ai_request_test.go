@@ -17,7 +17,7 @@ func aiRequestFor(t *testing.T, provider, path, contentType, body string) (*aiRe
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPost, "http://gateway.test/i/x"+path, strings.NewReader(body))
 	r.Header.Set("Content-Type", contentType)
-	ai, err := readAIRequest(r, Integration{AIProvider: provider}, path)
+	ai, _, err := readAIRequest(r, Integration{AIProvider: provider}, path)
 	if err != nil {
 		t.Fatal(err)
 	}
