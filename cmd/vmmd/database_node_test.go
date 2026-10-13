@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -52,5 +53,33 @@ func TestDatabaseNodeAdmitsOnlySchedulerAndProxy(t *testing.T) {
 func TestRunDatabaseNodeRequiresDatabaseVMs(t *testing.T) {
 	if err := runDatabaseNode(context.Background(), &Config{}, nil, nil, runDeps{}); err == nil {
 		t.Fatal("a database node without [database_vms] started")
+	}
+}
+
+// Every database RPC the service declares is served on a database node:
+// one left off the list fails there with Unimplemented, which tests that
+// call the handlers directly never see.
+func TestDatabaseNodeServesEveryDatabaseRPC(t *testing.T) {
+	desc := vmmdpb.Vmmd_ServiceDesc
+	names := make([]string, 0, len(desc.Methods)+len(desc.Streams))
+	for _, m := range desc.Methods {
+		names = append(names, m.MethodName)
+	}
+	for _, s := range desc.Streams {
+		names = append(names, s.StreamName)
+	}
+	served := 0
+	for _, name := range names {
+		if !strings.Contains(name, "Database") {
+			continue
+		}
+		full := "/" + desc.ServiceName + "/" + name
+		if !databaseMethods[full] {
+			t.Errorf("%s is a database RPC that database nodes refuse", full)
+		}
+		served++
+	}
+	if served != len(databaseMethods) {
+		t.Errorf("%d database RPCs declared, %d allowed", served, len(databaseMethods))
 	}
 }

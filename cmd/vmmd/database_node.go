@@ -25,6 +25,10 @@ import (
 var databaseMethods = map[string]bool{
 	vmmdpb.Vmmd_CreateDatabaseVolume_FullMethodName: true,
 	vmmdpb.Vmmd_DeleteDatabaseVolume_FullMethodName: true,
+	vmmdpb.Vmmd_ListDatabaseVolumes_FullMethodName:  true,
+	vmmdpb.Vmmd_GrowDatabaseVolume_FullMethodName:   true,
+	vmmdpb.Vmmd_PruneDatabaseArchive_FullMethodName: true,
+	vmmdpb.Vmmd_DatabaseArchiveBytes_FullMethodName: true,
 	vmmdpb.Vmmd_StartDatabase_FullMethodName:        true,
 	vmmdpb.Vmmd_StopDatabase_FullMethodName:         true,
 	vmmdpb.Vmmd_DatabaseControl_FullMethodName:      true,
