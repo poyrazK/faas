@@ -458,6 +458,18 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		if held < 0 {
 			return true
 		}
+		if ProbeEvidenceAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on synthetic probe evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"candidate_probes", observation.Candidate.ProbeRequests,
+				"candidate_probe_5xx", observation.Candidate.ProbeServerErrors,
+				"stable_probes", observation.Stable.ProbeRequests,
+				"stable_probe_5xx", observation.Stable.ProbeServerErrors)
+			stats.ProbeEvidenceAdvanced++
+			p.recordCircuitBreakerEvent("advance_probe_evidence")
+			return true
+		}
 		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
 			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
 				"deployment_id", row.ID,
@@ -633,6 +645,7 @@ type Stats struct {
 	CircuitBreakerAborted  int
 	SkippedCircuitBreaker  int
 	LowTrafficAdvanced     int
+	ProbeEvidenceAdvanced  int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

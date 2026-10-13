@@ -403,6 +403,47 @@ func TestProgressionOnce_CircuitBreakerBoundsLowTrafficHold(t *testing.T) {
 	}
 }
 
+// adr: 1160
+// Clean probe evidence advances a quiet stage at its boundary instead of
+// after api.CanaryLowTrafficMaxHold.
+func TestProgressionOnce_ProbeEvidenceAdvancesAtStageBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                "00000000-0000-0000-0000-000000000001",
+			AppID:             "00000000-0000-0000-0000-000000000002",
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-(2*time.Minute + time.Second)),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: 1, ProbeRequests: 20},
+			Stable:                    HealthWindow{Requests: 2, ProbeRequests: 20},
+			StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
+			DependencySignalAvailable: true,
+		},
+	}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, &stubAPID{}, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.ProbeEvidenceAdvanced != 1 || stats.LowTrafficAdvanced != 0 || stats.SkippedCircuitBreaker != 0 {
+		t.Fatalf("stats = %+v; want one probe-evidence advance at the stage boundary", stats)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("advance_probe_evidence")); got != 1 {
+		t.Fatalf("advance_probe_evidence metric = %g, want 1", got)
+	}
+}
+
 func TestProgressionOnce_CircuitBreakerMissingStoreAdapterExportsEvent(t *testing.T) {
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	store := &baseOnlyStore{rows: []CanaryRow{{

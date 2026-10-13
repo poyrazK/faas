@@ -2,9 +2,9 @@
 
 - **Status:** accepted; drills passed on the n2 metal node 2026-10-10 (see Rollout)
 - **Date:** 2026-10-09
-- **Amends:** [ADR-200](200-auto-rollback-on-every-plan.md) ("the opt-in stays off by default"), [ADR-122](122-safe-releases.md) canary progression
+- **Amends:** [ADR-200](200-auto-rollback-on-every-plan.md) ("the opt-in stays off by default"), [ADR-122](122-safe-releases.md) canary progression, [ADR-847](847-synthetic-route-probes.md) (probes are opt-in)
 - **Follows:** [ADR-199](199-rollouts-on-every-plan.md), [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md)
-- **Decision:** A production release of an app that already serves traffic rolls out behind the balanced health-gated canary with first-wake 5xx rollback unless the deploy or the app says otherwise. A canary stage held only because too few requests arrived advances after a bounded wait when no negative evidence was observed.
+- **Decision:** A production release of an app that already serves traffic rolls out behind the balanced health-gated canary with first-wake 5xx rollback unless the deploy or the app says otherwise. A canary stage held only because too few requests arrived is judged on synthetic probes of `/` against the candidate and its predecessor, and otherwise advances after a bounded wait when no negative evidence was observed.
 - **Why:** The API-hosting roadmap names "one opinionated production path with automatic health gates and rollback enabled by default" as the highest-priority release-safety gap. Every piece already exists (canary ladder, always-on circuit breaker, ADR-625 rollback), but only customers who know to type `--safe` get them, and GitHub App pushes could not ask for them at all.
 - **Rejected alternatives:** A CLI-only default leaves GitHub pushes, the API, Terraform, and the Action unprotected. Rejecting a deploy when the canary worker is down turns a safety default into an outage during the incidents where a hotfix matters most. Keeping the unbounded sample-size hold would strand most scale-to-zero apps at 1% forever.
 
@@ -182,12 +182,56 @@ After the final stage the release keeps its ADR-625 first-wake 5xx window,
 which opens when the release first sees traffic. A low-traffic app is
 therefore still protected when its traffic does arrive.
 
+### Probe-backed low-traffic stages
+
+The bounded advance moves a quiet release on the absence of errors, which on
+a scale-to-zero app usually means no evidence at all. While a canary of a
+request-mode, non-preview app on the `safe` release policy is in flight in
+the default scope, apid therefore probes it with the ADR-847 machinery, no
+route health gate required:
+
+- **What.** `GET /` (`release.DefaultProbePath`), the path the
+  post-readiness hosting smoke already checks once, sent
+  `RouteHealthProbeRequestsPerMinute` (10) times a minute to the candidate
+  and to its one serving predecessor. Probes go through the public edge with
+  exact-deployment routing and the upstream-only response proof, keep every
+  customer auth gate, never reach request telemetry or usage, and are
+  recorded in `route_probe_observations` under path `/`. An app that already
+  probes `GET /` through ADR-847 is not probed twice.
+- **Evidence.** meterd adds the stage's probe responses (the default probe
+  and any ADR-847 route probes) to the 5xx sample only while organic traffic
+  is below `CircuitBreakerMinRequests` on either side. Responses the app
+  rejected with 401 or 403 are excluded, and a side where at least half the
+  probes were rejected contributes nothing (the ADR-847 "unknown" rule).
+  Probes never feed latency, cold-boot, CPU, or dependency comparisons.
+- **Abort.** The 5xx rules run on organic plus probe responses: the decisive
+  small-sample rule, and the rate regression rule once both sides reach the
+  floor. The abort records `abort_5xx`, and its reason ends with "synthetic
+  probes included".
+- **Advance.** When organic plus probe responses meet the floor on both sides
+  with no 5xx regression, and the OOM and liveness signals are readable and
+  clean, the stage advances at its boundary instead of after
+  `CanaryLowTrafficMaxHold`, exported as `advance_probe_evidence`. The
+  bounded no-news advance stays as the fallback (no probe origin, an
+  auth-gated app, probes the gateway could not attribute) and now also
+  requires zero candidate probe 5xx.
+- **Off.** `release_policy: immediate`, a deploy with `canary: none`, or the
+  operator kill switch `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` turns the
+  default probe off. Without `FAAS_ROUTE_PROBE_URL` no probes run at all.
+
+Probes wake the candidate and its predecessor for the canary's duration, and
+that running time is billed like any request-triggered wake (ADR-847). On the
+balanced ladder a quiet release now finishes in about 8 to 10 minutes rather
+than about 21, so the added time is at most that window for two deployments:
+about 0.09 GB-h for a 256 MB Hobby app.
+
 ## Consequences
 
 - A flag-free `gregale deploy` of a live app returns once the candidate is
   live at 1% and names the opt-outs; `gregale deployment wait --rollout`
   follows it. A healthy low-traffic release reaches 100% in roughly
-  `3 × (2 + 5)` minutes on the balanced ladder instead of never.
+  `3 × (2 + 1)` minutes on probe evidence, or `3 × (2 + 5)` minutes through
+  the bounded advance when probes are unavailable, instead of never.
 - Each in-flight rollout uses the ADR-199 `RolloutConcurrencyGrant` (+1
   instance) for its duration. That cost already existed for `--safe`.
 - Progressive rollouts move to `beta` in the product registry on the
@@ -200,7 +244,9 @@ Enable in staging first, then run and record, under `docs/drills/`:
 
 1. a bad release (5xx and latency regression) aborts and restores the
    predecessor;
-2. a low-traffic app reaches 100% through `advance_low_traffic`;
+2. a low-traffic app reaches 100% through `advance_probe_evidence` (or
+   `advance_low_traffic` without probes), and a quiet release that starts
+   failing `/` after its hosting smoke aborts on probe evidence;
 3. a defaulted deploy with meterd stopped falls back to an immediate cutover;
 4. rollback recovery p95 ≤ 60 s (API-hosting scorecard).
 

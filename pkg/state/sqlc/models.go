@@ -2042,6 +2042,7 @@ type Deployment struct {
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
+	RollbackPreparedAt         pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -2154,6 +2155,23 @@ type DeploymentRevisionPin struct {
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollback struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Scope              string
+	TargetDeploymentID pgtype.UUID
+	FromDeploymentID   pgtype.UUID
+	Trigger            string
+	Status             string
+	RequestedAt        pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	RecoveryMs         pgtype.Int8
+	AuditID            pgtype.Int8
+	ErrorCode          string
+	Error              string
 }
 
 type DeploymentRollbackOperation struct {

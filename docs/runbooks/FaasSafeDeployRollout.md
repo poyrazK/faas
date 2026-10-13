@@ -135,7 +135,17 @@ these staging checks against an app with a known-good predecessor:
   signal, confirm the stage advances and
   `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
   increases. Send a single candidate 5xx in a fresh rollout and confirm it
-  keeps holding instead.
+  keeps holding instead. This path runs only when probes give no evidence.
+- **Probe-backed low traffic (ADR-1160):** with `FAAS_ROUTE_PROBE_URL` set on
+  apid, a quiet safe-policy canary gets `GET /` probes on both revisions.
+  Confirm `route_probe_observations` gains rows with path `/` for the
+  candidate and the predecessor, and that each stage advances at its boundary
+  with `canary_progression_circuit_breaker_total{event="advance_probe_evidence"}`.
+  A candidate whose `/` starts failing after its hosting smoke must abort with
+  `abort_5xx` and a reason ending in "synthetic probes included". If a quiet
+  canary still waits the 5-minute bound, check that the probes are
+  attributed: an auth-gated `/` (401/403 on at least half the probes) or a
+  missing probe origin falls back to `advance_low_traffic`.
 - **Smoke verifier prerequisite (ADR-1160):** confirm imaged has
   `FAAS_API_HOSTING_SMOKE_URL` before relying on the default. Without it every
   canary deployment, including a defaulted one, fails with

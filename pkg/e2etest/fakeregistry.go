@@ -240,6 +240,13 @@ func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-livez")
 }
 
+// DelayedRootFailureImageAboveBase is HelloImageAboveBase whose / answers 500
+// after its first few requests, so the release passes the post-readiness
+// smoke and then fails / under synthetic probes (ADR-1160).
+func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root-after-requests", "3")
+}
+
 // CPUBoundImage returns a single-layer image whose entrypoint is hello-server
 // in -spin mode: it serves as usual and burns one CPU in a goroutine. Used by the cpu-fairness e2e
 // (cmd/e2e/cpu_fairness_test.go, issue #301 / ADR-044) to drive a

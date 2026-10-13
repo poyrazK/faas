@@ -204,3 +204,53 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 		}
 	})
 }
+
+// adr: 1160
+// Probe totals join the breaker input only when both sides were probed and
+// fewer than half of either side's probes hit the app's own auth.
+func TestCanaryHealthAddsProbeEvidence(t *testing.T) {
+	since := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	until := since.Add(3 * time.Minute)
+	tests := []struct {
+		name                      string
+		candidate, stable         state.RouteProbeObservation
+		wantCandidate, wantStable [2]int64
+	}{
+		{name: "both sides probed",
+			candidate:     state.RouteProbeObservation{Requests: 20, ServerErrors: 3, Unauthenticated: 2},
+			stable:        state.RouteProbeObservation{Requests: 20},
+			wantCandidate: [2]int64{18, 3}, wantStable: [2]int64{20, 0}},
+		{name: "auth-rejected probes are unknown",
+			candidate: state.RouteProbeObservation{Requests: 20, Unauthenticated: 10},
+			stable:    state.RouteProbeObservation{Requests: 20}},
+		{name: "an unprobed predecessor adds nothing",
+			candidate: state.RouteProbeObservation{Requests: 20, ServerErrors: 20}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			appID, candidateID, stableID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			rows := []state.RouteProbeObservation{}
+			for id, o := range map[string]state.RouteProbeObservation{candidateID: tc.candidate, stableID: tc.stable} {
+				if o.Requests > 0 {
+					o.DeploymentID, o.Method, o.Path, o.WindowStart = id, "GET", "/", since
+					rows = append(rows, o)
+				}
+			}
+			if err := store.RecordRouteProbeObservations(context.Background(), uuid.NewString(), appID, rows); err != nil {
+				t.Fatal(err)
+			}
+			out := canary.CircuitBreakerObservation{StableDeploymentID: stableID}
+			adapter := &canaryStoreAdapter{store: store}
+			if err := adapter.addProbeEvidence(context.Background(), canary.CanaryRow{ID: candidateID, AppID: appID}, since, until, &out); err != nil {
+				t.Fatal(err)
+			}
+			if got := [2]int64{out.Candidate.ProbeRequests, out.Candidate.ProbeServerErrors}; got != tc.wantCandidate {
+				t.Fatalf("candidate probe evidence = %v, want %v", got, tc.wantCandidate)
+			}
+			if got := [2]int64{out.Stable.ProbeRequests, out.Stable.ProbeServerErrors}; got != tc.wantStable {
+				t.Fatalf("stable probe evidence = %v, want %v", got, tc.wantStable)
+			}
+		})
+	}
+}

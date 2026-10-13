@@ -76,6 +76,13 @@ type HealthWindow struct {
 	CPUUsec              int64
 	DependencyCalls      int64
 	DependencyErrors     int64
+	// ProbeRequests and ProbeServerErrors are synthetic probe responses
+	// attributed to this deployment over the stage (ADR-1160), excluding
+	// responses rejected by the app's own auth. They join the 5xx sample only
+	// while organic traffic is below the request floor and never feed
+	// latency, cold-boot, CPU, or dependency comparisons.
+	ProbeRequests     int64
+	ProbeServerErrors int64
 }
 
 // CircuitBreakerObservation compares the candidate with its currently
@@ -133,21 +140,15 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 		return decision
 	}
 	if o.Candidate.Requests < CircuitBreakerMinRequests || o.Stable.Requests < CircuitBreakerMinRequests {
+		if decision, ok := probeBacked5xx(o); ok {
+			return decision
+		}
 		return CircuitBreakerDecision{Action: CircuitBreakerHold, Reason: fmt.Sprintf(
 			"insufficient request samples (candidate=%d stable=%d; need %d each)",
 			o.Candidate.Requests, o.Stable.Requests, CircuitBreakerMinRequests)}
 	}
-	candidateErrorPct := 100 * float64(o.Candidate.ServerErrors) / float64(o.Candidate.Requests)
-	stableErrorPct := 100 * float64(o.Stable.ServerErrors) / float64(o.Stable.Requests)
-	errorThreshold := math.Max(circuitBreakerErrorRateFloorPct, stableErrorPct*circuitBreakerErrorRateFactor)
-	if o.Candidate.ServerErrors >= 2 &&
-		candidateErrorPct >= errorThreshold &&
-		candidateErrorPct >= stableErrorPct+circuitBreakerErrorRateDeltaPct {
-		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
-			"5xx regression (candidate %.1f%%, stable %.1f%%; %d/%d vs %d/%d requests)",
-			candidateErrorPct, stableErrorPct,
-			o.Candidate.ServerErrors, o.Candidate.Requests,
-			o.Stable.ServerErrors, o.Stable.Requests)}
+	if decision, ok := serverErrorRegression(o.Candidate, o.Stable, ""); ok {
+		return decision
 	}
 
 	if o.Candidate.P95LatencyMS >= o.Stable.P95LatencyMS*circuitBreakerLatencyFactor &&
@@ -229,8 +230,73 @@ func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservat
 		!strings.HasPrefix(d.Reason, "insufficient CPU/request samples") {
 		return false
 	}
-	return o.Candidate.ServerErrors == 0 && o.OOMSignalAvailable && o.OOMKills == 0 &&
-		o.LivenessSignalAvailable && o.CandidateLivenessRestarts == 0
+	// A probe 5xx is negative evidence too; the probe path below decides once
+	// enough probes arrive.
+	return o.Candidate.ServerErrors == 0 && o.Candidate.ProbeServerErrors == 0 && quietSignalsClean(o)
+}
+
+// ProbeEvidenceAdvanceAllowed reports whether synthetic probes cover a
+// request-sample hold (ADR-1160): organic plus probe responses meet the
+// request floor on both sides, the candidate shows no 5xx regression against
+// its predecessor, and the OOM and liveness signals are readable and clean.
+// The canary then advances at the stage boundary on evidence instead of
+// waiting api.CanaryLowTrafficMaxHold for traffic that may never come.
+func ProbeEvidenceAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservation) bool {
+	if d.Action != CircuitBreakerHold || !strings.HasPrefix(d.Reason, "insufficient request samples") {
+		return false
+	}
+	if o.Candidate.ProbeRequests == 0 || o.Stable.ProbeRequests == 0 {
+		return false
+	}
+	c, s := withProbes(o.Candidate), withProbes(o.Stable)
+	if c.Requests < CircuitBreakerMinRequests || s.Requests < CircuitBreakerMinRequests {
+		return false
+	}
+	if _, regressed := serverErrorRegression(c, s, ""); regressed {
+		return false
+	}
+	return quietSignalsClean(o)
+}
+
+func quietSignalsClean(o CircuitBreakerObservation) bool {
+	return o.OOMSignalAvailable && o.OOMKills == 0 && o.LivenessSignalAvailable && o.CandidateLivenessRestarts == 0
+}
+
+// withProbes is the 5xx sample of one side with its probe responses added.
+func withProbes(w HealthWindow) HealthWindow {
+	return HealthWindow{Requests: w.Requests + w.ProbeRequests, ServerErrors: w.ServerErrors + w.ProbeServerErrors}
+}
+
+// probeBacked5xx applies the 5xx rules to organic plus probe responses while
+// organic traffic is below the request floor (ADR-1160), so a quiet canary
+// that fails its probes aborts before it is promoted.
+func probeBacked5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) {
+	if o.Candidate.ProbeRequests == 0 && o.Stable.ProbeRequests == 0 {
+		return CircuitBreakerDecision{}, false
+	}
+	combined := CircuitBreakerObservation{Candidate: withProbes(o.Candidate), Stable: withProbes(o.Stable)}
+	if decision, ok := decisiveSmallSample5xx(combined); ok {
+		decision.Reason += "; synthetic probes included"
+		return decision, true
+	}
+	if combined.Candidate.Requests < CircuitBreakerMinRequests || combined.Stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	return serverErrorRegression(combined.Candidate, combined.Stable, "; synthetic probes included")
+}
+
+// serverErrorRegression is the 5xx rate comparison for two samples that
+// already meet the request floor.
+func serverErrorRegression(c, s HealthWindow, note string) (CircuitBreakerDecision, bool) {
+	candidateErrorPct := 100 * float64(c.ServerErrors) / float64(c.Requests)
+	stableErrorPct := 100 * float64(s.ServerErrors) / float64(s.Requests)
+	errorThreshold := math.Max(circuitBreakerErrorRateFloorPct, stableErrorPct*circuitBreakerErrorRateFactor)
+	if c.ServerErrors < 2 || candidateErrorPct < errorThreshold || candidateErrorPct < stableErrorPct+circuitBreakerErrorRateDeltaPct {
+		return CircuitBreakerDecision{}, false
+	}
+	return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+		"5xx regression (candidate %.1f%%, stable %.1f%%; %d/%d vs %d/%d requests%s)",
+		candidateErrorPct, stableErrorPct, c.ServerErrors, c.Requests, s.ServerErrors, s.Requests, note)}, true
 }
 
 // cpuLoadComparable reports whether the candidate carried enough of the

@@ -72,6 +72,8 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	bad := registry.AddImage("library/sr-bad", badImg)
 	crashImg, _ := e2etest.FailingLivenessImageAboveBase("library/sr-crash", safeReleaseDrillBody)
 	crash := registry.AddImage("library/sr-crash", crashImg)
+	lateImg, _ := e2etest.DelayedRootFailureImageAboveBase("library/sr-late", safeReleaseDrillBody)
+	late := registry.AddImage("library/sr-late", lateImg)
 
 	prom := newSafeReleasePromStub(t)
 	operator := freeTCPAddr(t)
@@ -86,6 +88,14 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 	)
 	prom.setTargets(h.ScheddMetricsURL, h.GatewayControlURL+"/metrics")
+	// ADR-1160 default probes enter through the same edge as the hosting
+	// smoke. apid starts before the gateway, so point it there and restart.
+	if err := h.SetAPIDEnv("FAAS_ROUTE_PROBE_URL", h.GatewayURL); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.RestartAPID(); err != nil {
+		t.Fatalf("restart apid with route probes: %v", err)
+	}
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -107,19 +117,30 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		}
 	})
 
-	t.Run("clean low-traffic canary advances past the bound and rollback recovers", func(t *testing.T) {
+	t.Run("clean low-traffic canary advances on probe evidence and rollback recovers", func(t *testing.T) {
 		d.createApp(t, "sr-quiet")
 		stable := d.deployLive(t, "sr-quiet", api.CreateDeploymentRequest{Image: v1})
 		candidate := d.deployLive(t, "sr-quiet", api.CreateDeploymentRequest{Image: v2, Canary: customCanary("1", "30s")})
 		started := time.Now()
-		// No traffic: the stage can only pass through the bounded hold.
+		// No customer traffic: only the default probes of / give evidence.
 		got := d.waitDeployment(t, candidate.ID, 30*time.Second+api.CanaryLowTrafficMaxHold+3*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
 		})
 		if got.RolloutState != "complete" || got.TrafficPercent != 100 {
 			t.Fatalf("quiet candidate = state:%q traffic:%d reason:%q, want complete at 100%%", got.RolloutState, got.TrafficPercent, got.RolloutAbortedReason)
 		}
-		t.Logf("DRILL low_traffic_advance seconds=%.0f", time.Since(started).Seconds())
+		elapsed := time.Since(started)
+		c, s, err := d.store.RouteProbeTotals(context.Background(), candidate.AppID, candidate.ID, stable.ID, started.Add(-time.Minute), time.Now())
+		t.Logf("DRILL low_traffic_advance seconds=%.0f candidate_probes=%d/%d stable_probes=%d/%d err=%v",
+			elapsed.Seconds(), c.ServerErrors, c.Requests, s.ServerErrors, s.Requests, err)
+		if err != nil || c.Requests == 0 || s.Requests == 0 {
+			t.Fatalf("probe totals = candidate %+v stable %+v (err %v); want both sides probed", c, s, err)
+		}
+		// The bounded no-news advance cannot fire before the stage plus
+		// CanaryLowTrafficMaxHold, so an earlier advance came from probes.
+		if elapsed >= 30*time.Second+api.CanaryLowTrafficMaxHold {
+			t.Fatalf("quiet candidate advanced after %s; want probe evidence before the %s bound", elapsed, api.CanaryLowTrafficMaxHold)
+		}
 
 		rollbackStarted := time.Now()
 		raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-quiet/rollback", map[string]any{})
@@ -179,6 +200,26 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		d.waitDeployment(t, stable.ID, time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
+	})
+
+	t.Run("quiet release that fails after its smoke aborts on probe evidence", func(t *testing.T) {
+		d.createApp(t, "sr-late")
+		stable := d.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: v1})
+		candidate := d.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: late, Canary: customCanary("1", "30s")})
+		started := time.Now()
+		got := d.waitDeployment(t, candidate.ID, 30*time.Second+api.CanaryLowTrafficMaxHold+3*time.Minute, func(dep state.Deployment) bool {
+			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
+		})
+		t.Logf("DRILL probe_abort seconds=%.0f state=%q reason=%q", time.Since(started).Seconds(), got.RolloutState, got.RolloutAbortedReason)
+		if got.RolloutState != "aborted" || !strings.Contains(got.RolloutAbortedReason, "5xx error rate regression") {
+			t.Fatalf("late-failing candidate = state:%q reason:%q, want a 5xx abort from probe evidence", got.RolloutState, got.RolloutAbortedReason)
+		}
+		restored := d.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool {
+			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
+		})
+		if restored.TrafficPercent != 100 {
+			t.Fatalf("predecessor traffic = %d, want 100", restored.TrafficPercent)
+		}
 	})
 
 	t.Run("crash-looping release aborts on liveness restarts", func(t *testing.T) {

@@ -19556,6 +19556,36 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id
  AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
 ORDER BY window_start, method, path;
 
+-- name: ListDefaultRouteProbeTargets :many
+-- ADR-1160: request apps on the safe release policy with an in-flight
+-- default-scope canary and a serving predecessor. apid probes the default
+-- path on both so a quiet canary is judged on evidence. An app with several
+-- serving predecessors returns several rows and is skipped by the caller.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
+ d.id::text AS candidate_id, s.id::text AS stable_id
+FROM apps a
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
+ AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
+WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
+ AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ORDER BY a.id, d.id, s.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: RouteProbeTotalsByDeployment :many
+-- ADR-1160: probe totals per deployment over a canary stage, for meterd's
+-- circuit breaker.
+SELECT deployment_id::text AS deployment_id, sum(requests)::bigint AS requests,
+ sum(server_errors)::bigint AS server_errors, sum(unauthenticated)::bigint AS unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+GROUP BY deployment_id;
+
 -- name: PruneRouteProbeObservations :exec
 DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 

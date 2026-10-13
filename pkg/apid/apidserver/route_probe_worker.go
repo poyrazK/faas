@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
@@ -60,10 +61,11 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 	if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
 		s.log.Warn("route probe prune failed", "err", err)
 	}
-	targets, err := store.ListRouteProbeTargets(ctx)
+	gated, err := store.ListRouteProbeTargets(ctx)
 	if err != nil {
 		return err
 	}
+	targets := release.MergeProbeTargets(gated, s.defaultRouteProbeTargets(ctx))
 	minute := now.Truncate(time.Minute)
 	for _, target := range targets {
 		if ctx.Err() != nil {
@@ -80,6 +82,21 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 		cancel()
 	}
 	return nil
+}
+
+// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1160
+// default probe. A failed read only skips default probes this minute.
+func (s *server) defaultRouteProbeTargets(ctx context.Context) []state.RouteProbeTarget {
+	store, ok := s.store.(state.DefaultRouteProbeStore)
+	if !ok || !release.DefaultProbesEnabled() {
+		return nil
+	}
+	targets, err := store.ListDefaultRouteProbeTargets(ctx)
+	if err != nil {
+		s.log.Warn("default route probe targets unavailable", "err", err)
+		return nil
+	}
+	return targets
 }
 
 type routeProbePlan struct {
@@ -101,24 +118,12 @@ func routeProbePlans(gate api.RouteHealthGate, report api.RouteHealthReport) []r
 	return plans
 }
 
-func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RouteProbeStore, target state.RouteProbeTarget, minute time.Time) error {
-	health, ok := s.store.(state.RouteHealthStore)
-	if !ok {
-		return nil
-	}
-	gate, err := health.GetRouteHealthGate(ctx, target.AccountID, target.AppID)
-	if err != nil {
+func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RouteProbeStore, target release.ProbeTarget, minute time.Time) error {
+	plans, stableID, err := s.routeProbeRound(ctx, target)
+	if err != nil || len(plans) == 0 || stableID == "" {
 		return err
 	}
-	report, err := health.GetRouteHealthReport(ctx, target.AccountID, target.AppID, target.CandidateID)
-	if err != nil {
-		return err
-	}
-	plans := routeProbePlans(gate, report)
-	if len(plans) == 0 || report.StableDeploymentID == "" {
-		return nil
-	}
-	deployments := []string{target.CandidateID, report.StableDeploymentID}
+	deployments := []string{target.CandidateID, stableID}
 	tokens := map[string]string{}
 	for _, deployment := range deployments {
 		token, err := routeprobe.NewToken()
@@ -146,6 +151,37 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 	}
 	observations := s.sendRouteProbes(ctx, target.Slug, plans, deployments, tokens, minute)
 	return store.RecordRouteProbeObservations(ctx, target.AccountID, target.AppID, observations)
+}
+
+// routeProbeRound picks one round's probes: ADR-847 selectors whose organic
+// evidence is sparse, plus the ADR-1160 default probe for a safe-policy
+// canary, and the predecessor to probe beside the candidate.
+func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget) ([]routeProbePlan, string, error) {
+	plans, stableID := []routeProbePlan{}, target.StableID
+	if health, ok := s.store.(state.RouteHealthStore); ok && target.Gated {
+		gate, err := health.GetRouteHealthGate(ctx, target.AccountID, target.AppID)
+		if err != nil {
+			return nil, "", err
+		}
+		report, err := health.GetRouteHealthReport(ctx, target.AccountID, target.AppID, target.CandidateID)
+		if err != nil {
+			return nil, "", err
+		}
+		plans = routeProbePlans(gate, report)
+		if stableID == "" {
+			stableID = report.StableDeploymentID
+		}
+	}
+	if target.Default {
+		route := release.DefaultProbeRoute()
+		for _, p := range plans {
+			if p.selector.Method == route.Method && p.selector.Probe.Path == route.Probe.Path {
+				return plans, stableID, nil
+			}
+		}
+		plans = append(plans, routeProbePlan{selector: route})
+	}
+	return plans, stableID, nil
 }
 
 // sendRouteProbes sends RouteHealthProbeRequestsPerMinute probes per route

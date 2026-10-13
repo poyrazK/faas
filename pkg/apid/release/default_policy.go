@@ -85,8 +85,12 @@ func ApplyDefault(ctx context.Context, store any, log *slog.Logger, app state.Ap
 // DefaultEnabledEnv is the operator kill switch for the default (ADR-1160). Unset or any value other than "false" keeps it on.
 const DefaultEnabledEnv = "FAAS_SAFE_RELEASE_DEFAULT_ENABLED"
 
+func defaultEnabled() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv(DefaultEnabledEnv)), "false")
+}
+
 func defaultEligible(app state.App, req *api.CreateDeploymentRequest) bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv(DefaultEnabledEnv)), "false") {
+	if !defaultEnabled() {
 		return false
 	}
 	if app.Manifest.ReleasePolicy == api.ReleasePolicyImmediate || app.PreviewOfSlug != "" {

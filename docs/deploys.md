@@ -182,12 +182,23 @@ service, worker, and job apps, which keep their own rollout behavior.
 `gregale deploy` returns once the candidate is live at 1% and prints how to
 follow the rollout. Use `--safe` to wait for 100% instead.
 
-A quiet app may not send enough requests to compare the two revisions. If a
-stage's only problem is too few samples, Gregale waits up to 5 minutes past
-the stage duration and then advances, provided the new revision returned no
-5xx responses, had no OOM kills, and was never restarted by its liveness
-probe. The first-wake 5xx rollback still protects the release once real
-traffic arrives.
+A quiet app may not send enough requests to compare the two revisions, so
+while the rollout runs Gregale sends `GET /` ten times a minute to both the
+new and the previous revision. These probes go through your app's normal
+routing and auth, are not counted in your request analytics, and wake both
+revisions for the rollout, which is billed like any other running time
+(about 10 minutes for a quiet app on the `balanced` ladder). If the new
+revision answers the probes with 5xx more often than the previous one, the
+rollout is aborted and traffic returns to the previous revision. If the probes
+are clean, each stage advances when its duration ends.
+
+When probes cannot give an answer (for example, `/` requires a login), a
+stage whose only problem is too few samples waits up to 5 minutes past its
+duration and then advances, provided the new revision returned no 5xx
+responses, had no OOM kills, and was never restarted by its liveness probe.
+The first-wake 5xx rollback still protects the release once real traffic
+arrives. Set `release_policy: immediate` to turn both the rollout and its
+probes off.
 
 A new revision that its liveness probe restarts twice (and more than twice as
 often as the release it replaces) is treated as crash-looping: the rollout is
