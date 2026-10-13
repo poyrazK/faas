@@ -107,6 +107,9 @@ type Integration struct {
 	BindingAIGuardrails map[string]AIGuardrails
 	// AIRequestLogEnabled records per-call metadata at settlement.
 	AIRequestLogEnabled bool
+	// AIRequestLogContent also keeps the start of each logged call's
+	// request and response bodies (ADR-996).
+	AIRequestLogContent bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
@@ -217,6 +220,9 @@ func (i Integration) Validate() error {
 	}
 	if i.AIRequestLogEnabled && i.AIProvider == "" {
 		return fmt.Errorf("%w: the AI request log requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
+		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)
 	}
 	if !api.ValidOutboundAIUserLimits(i.AIProvider, i.AIUserDailyTokenLimit, i.AIUserDailyCostLimit) {
 		return fmt.Errorf("%w: per-end-user AI limits are invalid", ErrInvalidIntegration)

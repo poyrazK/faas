@@ -31,6 +31,9 @@ func (b *observedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 {
 		_, _ = b.observer.Write(p[:n])
+		if b.observer.capture != nil {
+			b.observer.capture.Write(p[:n])
+		}
 	}
 	return n, err
 }
@@ -83,6 +86,9 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
+	if integration.AIRequestLogEnabled && integration.AIRequestLogContent {
+		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
+	}
 	resp.Body = &observedBody{ReadCloser: resp.Body, observer: observer}
 	if ai != nil && ai.usageInjected && streamingMediaType(resp.Header.Get("Content-Type")) {
 		// ADR-990: the caller never asked for the usage chunk; hide it after
@@ -160,6 +166,9 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
+		if observer.capture != nil {
+			record.Log.Content = &observer.capture.content
+		}
 	}
 	if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
 		alerts, err := alerter.RecordAIUsageAlerts(recordCtx, record)

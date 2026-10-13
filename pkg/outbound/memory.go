@@ -59,7 +59,9 @@ type memoryState struct {
 	bindingTokenLimits map[string]*int64
 	aiAlerts           []AIBudgetAlert
 	aiRequestLog       []AIUsageRecord
-	initialized        bool
+	// contentCaptures counts today's captured calls (ADR-996).
+	contentCaptures int
+	initialized     bool
 }
 
 // memoryAIRequestLogMax bounds the in-process request log.
@@ -496,6 +498,7 @@ func (s *memoryState) rollDay(today string) {
 		s.bindingAITokenCounts = make(map[string]int64)
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
 		s.userUsage = make(map[string]AIUserUsageTotals)
+		s.contentCaptures = 0
 		return
 	}
 	if s.userUsage == nil {
@@ -590,6 +593,17 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		recorded = append(recorded, alert)
 	}
 	if record.Log != nil {
+		if record.Log.Content != nil {
+			// The log keeps the record, so drop content past the day's cap
+			// without touching the caller's copy.
+			logged := *record.Log
+			if state.contentCaptures >= api.OutboundAIContentCapturesPerDay {
+				logged.Content = nil
+			} else {
+				state.contentCaptures++
+			}
+			record.Log = &logged
+		}
 		state.aiRequestLog = append(state.aiRequestLog, record)
 		if len(state.aiRequestLog) > memoryAIRequestLogMax {
 			state.aiRequestLog = state.aiRequestLog[len(state.aiRequestLog)-memoryAIRequestLogMax:]

@@ -354,7 +354,8 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 }
 
 // OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-991).
-// Caller is an app ID or "runs". No request or response content is kept.
+// Caller is an app ID or "runs". Its bodies are kept only when the
+// integration opted in to content capture (ADR-996).
 type OutboundAIRequestLogEntry struct {
 	ID                string    `json:"id"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -373,6 +374,34 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int       `json:"attempts"`
 	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
 	EndUser *string `json:"end_user"`
+	// ContentCaptured reports that the call's bodies can be read (ADR-996).
+	ContentCaptured bool `json:"content_captured"`
+}
+
+// Encodings of a captured body: text that is valid UTF-8, or base64.
+const (
+	OutboundAIContentEncodingUTF8   = "utf-8"
+	OutboundAIContentEncodingBase64 = "base64"
+)
+
+// OutboundAIContentBody is the start of one captured body. Truncated
+// reports that the body was longer than the capture keeps, or that the
+// gateway streamed it without buffering.
+type OutboundAIContentBody struct {
+	Body        string  `json:"body"`
+	Encoding    string  `json:"encoding"`
+	Truncated   bool    `json:"truncated"`
+	ContentType *string `json:"content_type"`
+}
+
+// OutboundAIRequestContent is one logged call's captured bodies as the
+// gateway sent them to the provider and read them back, never headers
+// (ADR-996).
+type OutboundAIRequestContent struct {
+	RequestID string                `json:"request_id"`
+	CreatedAt time.Time             `json:"created_at"`
+	Request   OutboundAIContentBody `json:"request"`
+	Response  OutboundAIContentBody `json:"response"`
 }
 
 // Per-end-user attribution and key affinity headers (ADR-994). An app sets

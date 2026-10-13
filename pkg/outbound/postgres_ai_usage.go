@@ -302,19 +302,57 @@ func insertAIRequestLog(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID,
 		routeID = &parsed
 	}
 	usage := record.Usage
-	_, err := tx.Exec(ctx, `
+	var logID uuid.UUID
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
 		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''))`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''))
+		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser)
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser).Scan(&logID); err != nil {
+		return err
+	}
+	return insertAIRequestContent(ctx, tx, integrationID, logID, record.Log.Content)
+}
+
+// insertAIRequestContent stores a logged call's captured bodies while the
+// integration has fewer than the day's capped captures (ADR-996). A
+// transaction lock per integration keeps concurrent settlements from
+// overshooting the cap; it is the transaction's last statement, so the lock
+// is never held while waiting on another.
+func insertAIRequestContent(ctx context.Context, tx pgx.Tx, integrationID, logID uuid.UUID, content *AIRequestContent) error {
+	if content == nil {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('outbound-ai-content:' || $1::uuid::text, 0))`,
+		integrationID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO outbound_ai_request_content
+		    (log_id, integration_id, request_body, request_truncated, response_body, response_truncated, response_content_type)
+		SELECT $1, $2, $3, $4, $5, $6, NULLIF($7, '')
+		 WHERE (SELECT count(*) FROM (SELECT 1 FROM outbound_ai_request_content
+		                               WHERE integration_id = $2
+		                                 AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+		                               LIMIT $8) captured) < $8`,
+		logID, integrationID, nonNilBytes(content.Request), content.RequestTruncated, nonNilBytes(content.Response),
+		content.ResponseTruncated, content.ResponseContentType, api.OutboundAIContentCapturesPerDay)
 	return err
 }
 
+func nonNilBytes(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
+}
+
 // PruneAIUsage deletes UTC-day AI usage rollups and budget alerts older
-// than the rollup retention, and request-log rows older than theirs. It is
+// than the rollup retention, and request-log rows and captured content
+// older than theirs. It is
 // idempotent, so every outboundd replica may run it.
 func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 	var total int64
@@ -325,6 +363,13 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		// ADR-996: captured content expires sooner, and an integration that
+		// turned capture off loses what it captured within one prune.
+		{`DELETE FROM outbound_ai_request_content content
+		   WHERE content.created_at < now() - make_interval(days => $1::int)
+		      OR NOT EXISTS (SELECT 1 FROM outbound_integrations integration
+		                      WHERE integration.id = content.integration_id AND integration.ai_request_log_content)`,
+			api.OutboundAIRequestContentRetentionDays},
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-995: end users' alerts follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},

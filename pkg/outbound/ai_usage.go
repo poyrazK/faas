@@ -53,8 +53,8 @@ type AIUsageRecord struct {
 	EndUser string
 }
 
-// AIRequestLog is the non-usage metadata of one logged AI call. It never
-// holds request or response content.
+// AIRequestLog is the non-usage metadata of one logged AI call. It holds
+// content only when the integration opted in to capture (ADR-996).
 type AIRequestLog struct {
 	RouteID    string
 	Status     int
@@ -62,6 +62,55 @@ type AIRequestLog struct {
 	// TTFBMS is nil when no response byte arrived.
 	TTFBMS   *int64
 	Attempts int
+	// Content is the call's captured bodies, or nil.
+	Content *AIRequestContent
+}
+
+// AIRequestContent is the start of one logged call's bodies as the gateway
+// sent them to the provider and read them back: at most
+// api.OutboundAIRequestContentMaxBytes each, never headers (ADR-996). A
+// request body the gateway streamed without buffering is empty and
+// truncated.
+type AIRequestContent struct {
+	Request             []byte
+	RequestTruncated    bool
+	Response            []byte
+	ResponseTruncated   bool
+	ResponseContentType string
+}
+
+// aiContentCapture keeps the first bytes of a response as the gateway
+// forwards it.
+type aiContentCapture struct {
+	content AIRequestContent
+}
+
+func newAIContentCapture(ai *aiRequest, contentType string) *aiContentCapture {
+	capture := &aiContentCapture{content: AIRequestContent{RequestTruncated: true, ResponseContentType: contentType}}
+	if ai != nil {
+		capture.content.Request = bytes.Clone(ai.body[:min(len(ai.body), api.OutboundAIRequestContentMaxBytes)])
+		capture.content.RequestTruncated = len(ai.body) > api.OutboundAIRequestContentMaxBytes
+	}
+	if len(contentType) > aiContentTypeMaxBytes || strings.IndexFunc(contentType, func(r rune) bool { return r < ' ' || r > '~' }) >= 0 {
+		capture.content.ResponseContentType = ""
+	}
+	return capture
+}
+
+func (c *aiContentCapture) Write(p []byte) {
+	room := api.OutboundAIRequestContentMaxBytes - len(c.content.Response)
+	if len(p) > room {
+		p = p[:room]
+		c.content.ResponseTruncated = true
+	}
+	c.content.Response = append(c.content.Response, p...)
+}
+
+const aiContentTypeMaxBytes = 128
+
+func validateAIRequestContent(content *AIRequestContent) bool {
+	return content == nil || (len(content.Request) <= api.OutboundAIRequestContentMaxBytes &&
+		len(content.Response) <= api.OutboundAIRequestContentMaxBytes && len(content.ResponseContentType) <= aiContentTypeMaxBytes)
 }
 
 func newAIRequestLog(settlement aiSettlement, timeToFirstByte time.Duration, now time.Time) *AIRequestLog {
@@ -82,7 +131,7 @@ func validateAIRequestLog(log *AIRequestLog) error {
 	}
 	if log.Status < 100 || log.Status > 599 || log.DurationMS < 0 || log.DurationMS > 1<<31-1 ||
 		(log.TTFBMS != nil && (*log.TTFBMS < 0 || *log.TTFBMS > 1<<31-1)) || log.Attempts < 0 || log.Attempts > 100 ||
-		(log.RouteID != "" && !validUUID(log.RouteID)) {
+		(log.RouteID != "" && !validUUID(log.RouteID)) || !validateAIRequestContent(log.Content) {
 		return fmt.Errorf("%w: AI request log entry is out of range", ErrInvalidIntegration)
 	}
 	return nil
@@ -335,6 +384,9 @@ type aiUsageObserver struct {
 	dataOverflow  bool
 	raw           aiRawUsage
 	model         string
+	// capture keeps the call's bodies when the integration opted in
+	// (ADR-996); observedBody feeds it.
+	capture *aiContentCapture
 }
 
 // newAIUsageObserver observes a call in the provider's default format.

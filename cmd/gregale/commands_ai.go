@@ -125,12 +125,13 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
 	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off] " +
-	"[--user-daily-tokens N|none] [--user-daily-cost EUR|none]"
+	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost EUR|none]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
 	provider := fs.String("provider", "", "AI provider: openai, anthropic, gemini, azure_openai, bedrock, vertex, or off")
 	requestLog := fs.String("request-log", "", "log per-call metadata for 7 days: on or off")
+	requestLogContent := fs.String("request-log-content", "", "also keep the first 32 KiB of each logged call's bodies for 3 days: on or off")
 	dailyTokens := fs.String("daily-tokens", "", "UTC-day input+output token limit, or none")
 	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in EUR, or none")
 	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
@@ -150,7 +151,7 @@ func cmdAIPolicy(args []string) int {
 	req := api.PutOutboundAIPolicyRequest{AIProvider: current.AIProvider, DailyTokenLimit: current.AIDailyTokenLimit,
 		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
 		RequestLogEnabled: current.AIRequestLogEnabled, UserDailyTokenLimit: current.AIUserDailyTokenLimit,
-		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents}
+		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents, RequestLogContent: current.AIRequestLogContent}
 	switch *provider {
 	case "":
 	case "off":
@@ -163,9 +164,18 @@ func cmdAIPolicy(args []string) int {
 	case "on":
 		req.RequestLogEnabled = true
 	case "off":
-		req.RequestLogEnabled = false
+		req.RequestLogEnabled, req.RequestLogContent = false, false
 	default:
 		return printErr("Invalid --request-log", errors.New("use on or off"))
+	}
+	switch *requestLogContent {
+	case "":
+	case "on":
+		req.RequestLogContent = true
+	case "off":
+		req.RequestLogContent = false
+	default:
+		return printErr("Invalid --request-log-content", errors.New("use on or off"))
 	}
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
 		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {
@@ -178,7 +188,7 @@ func cmdAIPolicy(args []string) int {
 		}
 	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits need a provider; tokens 1..1e11, costs up to EUR 10,000,000")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits need a provider; tokens 1..1e11, costs up to EUR 10,000,000; content capture needs the request log")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)

@@ -24604,6 +24604,24 @@ CREATE TABLE public.outbound_ai_price_lists (
 
 
 --
+-- Name: outbound_ai_request_content; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_request_content (
+    log_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_body bytea NOT NULL,
+    request_truncated boolean NOT NULL,
+    response_body bytea NOT NULL,
+    response_truncated boolean NOT NULL,
+    response_content_type text,
+    CONSTRAINT outbound_ai_request_content_size_chk CHECK (((octet_length(request_body) <= 32768) AND (octet_length(response_body) <= 32768))),
+    CONSTRAINT outbound_ai_request_content_type_chk CHECK (((response_content_type IS NULL) OR (((length(response_content_type) >= 1) AND (length(response_content_type) <= 128)) AND (response_content_type ~ '^[ -~]+$'::text))))
+);
+
+
+--
 -- Name: outbound_ai_request_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24843,11 +24861,13 @@ CREATE TABLE public.outbound_integrations (
     ai_request_log_enabled boolean DEFAULT false NOT NULL,
     ai_user_daily_token_limit bigint,
     ai_user_daily_cost_limit_millicents bigint,
+    ai_request_log_content boolean DEFAULT false NOT NULL,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_ai_cost_limits_chk CHECK ((((ai_daily_cost_limit_millicents IS NULL) AND (ai_monthly_cost_limit_millicents IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_daily_cost_limit_millicents IS NULL) OR ((ai_daily_cost_limit_millicents >= 1) AND (ai_daily_cost_limit_millicents <= '1000000000000'::bigint))) AND ((ai_monthly_cost_limit_millicents IS NULL) OR ((ai_monthly_cost_limit_millicents >= 1) AND (ai_monthly_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
     CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text, 'gemini'::text, 'azure_openai'::text, 'bedrock'::text, 'vertex'::text])))),
     CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
+    CONSTRAINT outbound_integrations_ai_request_log_content_chk CHECK (((NOT ai_request_log_content) OR ai_request_log_enabled)),
     CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
@@ -34071,6 +34091,14 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 
 --
+-- Name: outbound_ai_request_content outbound_ai_request_content_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_content
+    ADD CONSTRAINT outbound_ai_request_content_pkey PRIMARY KEY (log_id);
+
+
+--
 -- Name: outbound_ai_request_log outbound_ai_request_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41387,6 +41415,20 @@ CREATE INDEX outbound_ai_budget_alerts_recent_idx ON public.outbound_ai_budget_a
 --
 
 CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_request_content_daily_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_content_daily_idx ON public.outbound_ai_request_content USING btree (integration_id, created_at);
+
+
+--
+-- Name: outbound_ai_request_content_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_content_prune_idx ON public.outbound_ai_request_content USING btree (created_at);
 
 
 --
@@ -52590,6 +52632,22 @@ ALTER TABLE ONLY public.outbound_ai_price_entries
 
 ALTER TABLE ONLY public.outbound_ai_price_lists
     ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_request_content outbound_ai_request_content_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_content
+    ADD CONSTRAINT outbound_ai_request_content_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_request_content outbound_ai_request_content_log_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_content
+    ADD CONSTRAINT outbound_ai_request_content_log_id_fkey FOREIGN KEY (log_id) REFERENCES public.outbound_ai_request_log(id) ON DELETE CASCADE;
 
 
 --

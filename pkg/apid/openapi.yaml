@@ -822,7 +822,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIRequestLog
       summary: Page the opt-in AI request log.
-      description: Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
+      description: Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata. content_captured marks calls whose bodies were captured (ADR-996).
       parameters:
         - name: limit
           in: query
@@ -840,6 +840,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIRequestLogList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/content:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRequestContent
+      summary: Read one logged AI call's captured bodies.
+      description: Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call without one is not found.
+      responses:
+        '200':
+          description: The captured bodies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRequestContent' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -51469,7 +51497,10 @@ components:
           description: Calendar-month cost limit priced from the integration's price list (ADR-990).
         ai_request_log_enabled:
           type: boolean
-          description: Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
+          description: Whether every settled AI call writes one metadata row to the request log (ADR-991).
+        ai_request_log_content:
+          type: boolean
+          description: Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -51546,6 +51577,9 @@ components:
         request_log_enabled:
           type: boolean
           description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
+        request_log_content:
+          type: boolean
+          description: Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -51937,8 +51971,8 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIBudgetAlert' }
     OutboundAIRequestLogEntry:
       type: object
-      description: One settled AI call's metadata (ADR-991). No request or response content is kept.
-      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user]
+      description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured]
       properties:
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -51956,6 +51990,25 @@ components:
         ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
         attempts: { type: integer, minimum: 0 }
         end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
+        content_captured: { type: boolean, description: Whether the call's bodies can be read from its content endpoint (ADR-996). }
+    OutboundAIContentBody:
+      type: object
+      description: The start of one captured body.
+      required: [body, encoding, truncated, content_type]
+      properties:
+        body: { type: string, description: 'The captured bytes as text, or base64 when they are not UTF-8.' }
+        encoding: { type: string, enum: [utf-8, base64] }
+        truncated: { type: boolean, description: 'True when the body was longer than the 32 KiB kept, or streamed without buffering.' }
+        content_type: { type: [string, 'null'], description: The response Content-Type; null for requests. }
+    OutboundAIRequestContent:
+      type: object
+      description: One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers (ADR-996).
+      required: [request_id, created_at, request, response]
+      properties:
+        request_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        request: { $ref: '#/components/schemas/OutboundAIContentBody' }
+        response: { $ref: '#/components/schemas/OutboundAIContentBody' }
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.

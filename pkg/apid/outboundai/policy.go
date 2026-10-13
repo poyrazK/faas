@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -56,7 +56,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		Provider: req.AIProvider, DailyTokenLimit: req.DailyTokenLimit,
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
-		UserDailyCostLimit: req.UserDailyCostLimitMillicents,
+		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }

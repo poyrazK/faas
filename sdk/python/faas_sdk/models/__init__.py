@@ -2573,9 +2573,12 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_content_body import OutboundAIContentBody
+from .outbound_ai_content_body_encoding import OutboundAIContentBodyEncoding
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
@@ -6483,9 +6486,12 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIContentBody",
+    "OutboundAIContentBodyEncoding",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",

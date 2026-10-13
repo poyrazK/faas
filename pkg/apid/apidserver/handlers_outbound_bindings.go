@@ -39,6 +39,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		// ADR-994 per-end-user limits.
 		AIUserDailyTokenLimit:          copyOutboundDailyLimit(offer.AIUserDailyTokenLimit),
 		AIUserDailyCostLimitMillicents: copyOutboundDailyLimit(offer.AIUserDailyCostLimit),
+		AIRequestLogContent:            offer.AIRequestLogContent,
 	}
 }
 

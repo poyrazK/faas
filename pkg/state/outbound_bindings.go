@@ -42,6 +42,8 @@ type OutboundIntegrationOffer struct {
 	// Per-end-user UTC-day limits (ADR-994).
 	AIUserDailyTokenLimit *int64
 	AIUserDailyCostLimit  *int64
+	// AIRequestLogContent also captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -89,13 +91,16 @@ type OutboundAIPolicy struct {
 	// X-Gregale-AI-User per UTC day (ADR-994).
 	UserDailyTokenLimit *int64
 	UserDailyCostLimit  *int64
+	// RequestLogContent also captures logged calls' bodies; it requires
+	// the request log (ADR-996).
+	RequestLogContent bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
-		(!p.RequestLogEnabled || p.Provider != "")
+		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled)
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

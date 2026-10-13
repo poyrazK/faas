@@ -48,7 +48,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled bool
+	var aiRequestLogEnabled, aiRequestLogContent bool
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
@@ -63,7 +63,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
 		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
 		       integration.ai_request_log_enabled,
-		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0)
+		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
+		       integration.ai_request_log_content
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
@@ -71,7 +72,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
-			&aiUserTokenLimitValue, &aiUserCostLimitValue)
+			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -204,7 +205,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		ProviderAuthMode:               providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider,
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
-		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled,
+		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}

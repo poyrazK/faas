@@ -6654,6 +6654,20 @@
     "kind": "configuration"
   },
   {
+    "table": "outbound_ai_request_content",
+    "columns": [
+      "created_at",
+      "integration_id",
+      "log_id",
+      "request_body",
+      "request_truncated",
+      "response_body",
+      "response_content_type",
+      "response_truncated"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_request_log",
     "columns": [
       "attempts",
@@ -6814,6 +6828,7 @@
       "ai_daily_token_limit",
       "ai_monthly_cost_limit_millicents",
       "ai_provider",
+      "ai_request_log_content",
       "ai_request_log_enabled",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",

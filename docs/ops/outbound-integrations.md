@@ -433,7 +433,10 @@ Usage comes from the provider's own response:
 - JSON responses up to 1 MiB are parsed; larger ones count as unknown usage.
 - Streaming OpenAI chat completions include usage only when the request sets
   `"stream_options": {"include_usage": true}`. Without it, the call counts as
-  unknown usage and adds no tokens.
+  unknown usage.
+- A generation or embeddings call with unknown usage settles at its admission
+  reservation, not at zero (ADR-996). Token counting and other free calls
+  with unknown usage add nothing.
 - Non-2xx responses count as errors with no tokens.
 - One integration records at most 32 distinct models per day; later ones are
   grouped as `other`.
@@ -696,7 +699,7 @@ string or an array of strings:
 embeddings model per route: vectors from a fallback target with another model
 are not comparable. `X-Gregale-AI-Route-Target` names the target that served.
 Vertex embeddings report token counts and count toward budgets. Gemini
-embeddings report none, so they settle as usage unknown.
+embeddings report none, so they settle as usage unknown at their reservation.
 
 Callers see OpenAI JSON and `chat.completion.chunk` events, with a usage chunk
 only when they ask for one. `n` above 1 gets
@@ -706,6 +709,23 @@ could not be translated.
 Point any OpenAI SDK at `$GREGALE_OUTBOUND_URL/r/<route-id>/v1`. Usage and cost
 are still read from each provider's native response.
 `outbound_ai_translations_total` counts translated attempts.
+
+**Responses API.** openai-format routes also accept `POST …/v1/responses`
+(ADR-996):
+
+- OpenAI receives it as is, and Azure OpenAI at `/openai/v1/responses`.
+- Other targets get it as a chat completion. The reply comes back as a
+  Responses object, or as Responses stream events from `response.created` to
+  `response.completed`.
+- Translated targets are stateless: send the whole conversation in `input`.
+  `previous_response_id`, `conversation`, stored prompts, `background`,
+  OpenAI-hosted tools and file inputs get
+  `400 outbound_ai_translation_unsupported`.
+
+**Forced tool choice.** Claude Fable 5.1, Mythos 5.1, Opus 5.5 and Sonnet 5.5
+reject a forced `tool_choice`. For these models a route sends `auto` plus a
+system instruction to call the tool, so the model usually calls it but may
+answer in text. Check `finish_reason` before reading `tool_calls`.
 
 ## Built-in price catalog
 
@@ -751,8 +771,11 @@ integration and app budgets.
 
 `gregale ai users <id> [--date D] [--user ID]` (or
 `GET .../ai-usage/users`) lists a day's end users by cost. Each integration
-tracks up to 10,000 distinct end users per UTC day. Later ones are counted
-under `~other`, and per-user caps do not apply to them.
+tracks up to 10,000 distinct end users per UTC day. With per-user limits set,
+a new end user after that gets `429` with
+`X-Gregale-Outbound-Rejection: user_tracking_full` until the next UTC day;
+users already tracked that day are unaffected (ADR-996). Without per-user
+limits, later users are counted under `~other`.
 
 **Alerts.** With per-user limits set, an end user's day alerts at 80% and 100%
 of each limit, once per user, day and threshold:
@@ -830,9 +853,31 @@ AI call write one metadata row:
 - usage outcome, tokens and cost;
 - duration, time to first byte and attempts.
 
-Prompts, completions and headers are never stored, and cache hits are not
-logged. `gregale ai logs <id>` (or `GET .../ai-requests`) pages the rows
-newest first. They are kept for 7 days.
+Headers are never stored, and cache hits are not logged. `gregale ai logs
+<id>` (or `GET .../ai-requests`) pages the rows newest first. They are kept for
+7 days.
+
+**Content capture.** `gregale ai policy <id> --request-log-content on`
+(`request_log_content`, which needs the request log) also keeps, for each
+logged call (ADR-996):
+
+- the first 32 KiB of the request body the gateway sent to the provider;
+- the first 32 KiB of the response body it read back, with its
+  `Content-Type`.
+
+On a translated route these are the provider's formats, not the caller's. A
+request body over 4 MiB is streamed unbuffered and stored empty, marked
+truncated. At most 1,000 calls per integration and UTC day are captured;
+later calls are logged without content.
+
+`gregale ai logs show <id> <request-id>` (or
+`GET .../ai-requests/{request-id}/content`) prints both bodies, as text or
+base64. `gregale ai logs` marks captured calls in its CONTENT column.
+
+Captures are kept for 3 days. Turning capture off deletes them within an
+hour, and deleting the integration deletes them at once. They are stored
+unencrypted, like app logs, so do not turn capture on for traffic you may not
+store.
 
 **Dashboard.** `deploy/grafana/ai-gateway.json` charts:
 

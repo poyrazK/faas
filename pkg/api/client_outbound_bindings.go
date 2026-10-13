@@ -115,6 +115,14 @@ func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID str
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetOutboundAIRequestContent reads one logged call's captured bodies
+// (ADR-996).
+func (c *Client) GetOutboundAIRequestContent(ctx context.Context, integrationID, requestID string) (OutboundAIRequestContent, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests/" + url.PathEscape(requestID) + "/content"
+	var out OutboundAIRequestContent
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetOutboundAIPriceCatalog lists a provider's built-in prices, or with a
 // model the entry that would price it (ADR-994).
 func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model string) (OutboundAIPriceCatalogResponse, error) {

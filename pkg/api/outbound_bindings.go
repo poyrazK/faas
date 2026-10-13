@@ -65,6 +65,8 @@ type OutboundIntegrationOffer struct {
 	// Per-end-user UTC-day limits (ADR-994).
 	AIUserDailyTokenLimit          *int64 `json:"ai_user_daily_token_limit"`
 	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
+	// AIRequestLogContent captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool `json:"ai_request_log_content"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -109,8 +111,11 @@ type PutOutboundAIPolicyRequest struct {
 	DailyTokenLimit            *int64 `json:"daily_token_limit"`
 	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
 	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
-	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
+	// RequestLogEnabled stores per-call metadata (ADR-991).
 	RequestLogEnabled bool `json:"request_log_enabled"`
+	// RequestLogContent also keeps the start of each logged call's request
+	// and response bodies; it requires the request log (ADR-996).
+	RequestLogContent bool `json:"request_log_content,omitempty"`
 	// UserDailyTokenLimit and UserDailyCostLimitMillicents cap each end
 	// user named by X-Gregale-AI-User per UTC day (ADR-994).
 	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
@@ -122,7 +127,7 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
 		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
-		(!r.RequestLogEnabled || r.AIProvider != "")
+		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled)
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is

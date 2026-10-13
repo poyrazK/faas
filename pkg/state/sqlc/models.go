@@ -5714,6 +5714,17 @@ type OutboundAiPriceList struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type OutboundAiRequestContent struct {
+	LogID               pgtype.UUID
+	IntegrationID       pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	RequestBody         []byte
+	RequestTruncated    bool
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType pgtype.Text
+}
+
 type OutboundAiRequestLog struct {
 	ID                pgtype.UUID
 	IntegrationID     pgtype.UUID
@@ -5836,6 +5847,7 @@ type OutboundIntegration struct {
 	AiRequestLogEnabled            bool
 	AiUserDailyTokenLimit          pgtype.Int8
 	AiUserDailyCostLimitMillicents pgtype.Int8
+	AiRequestLogContent            bool
 }
 
 type OutboundIntegrationApp struct {

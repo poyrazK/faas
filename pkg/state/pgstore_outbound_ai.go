@@ -29,12 +29,12 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
 		       ai_daily_cost_limit_millicents = $5, ai_monthly_cost_limit_millicents = $6,
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
-		       ai_user_daily_cost_limit_millicents = $9, updated_at = now()
+		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, updated_at = now()
 		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer'
 		   AND provider_auth_mode = 'managed' AND enabled`,
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
-		policy.UserDailyTokenLimit, policy.UserDailyCostLimit)
+		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent)
 	if err != nil {
 		return mapErr(err)
 	}

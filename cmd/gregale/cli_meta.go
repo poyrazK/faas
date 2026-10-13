@@ -773,6 +773,7 @@ var cliCommands = []cliCommand{
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
+			"gregale ai logs show <integration-id> <request-id>",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
@@ -781,6 +782,7 @@ var cliCommands = []cliCommand{
 				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
 				{Name: "request-log", Short: "log per-call metadata for 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "request-log-content", Short: "also keep the first 32 KiB of each logged call's bodies for 3 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
 			}},
@@ -824,7 +826,7 @@ var cliCommands = []cliCommand{
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
-			{Name: "logs", Short: "Page the opt-in AI request log, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "logs", Short: "Page the opt-in AI request log, newest first, or show one call's captured bodies", Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},
 				{Name: "before", Short: "show calls before this RFC 3339 time", Value: "TIME"},
 			}},

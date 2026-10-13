@@ -37,7 +37,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&requestPolicy.CircuitBreakerFailureThreshold, &requestPolicy.CircuitBreakerOpenSeconds,
 		&requestPolicy.RetryBudgetPerMinute, &offer.AIProvider, &aiDailyTokenLimit,
 		&aiDailyCostLimit, &aiMonthlyCostLimit, &offer.AIRequestLogEnabled,
-		&aiUserDailyTokenLimit, &aiUserDailyCostLimit); err != nil {
+		&aiUserDailyTokenLimit, &aiUserDailyCostLimit, &offer.AIRequestLogContent); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
 	offer.AIUserDailyTokenLimit = outboundAITokenLimit(aiUserDailyTokenLimit)
@@ -131,7 +131,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       COALESCE(integration.ai_provider, ''), integration.ai_daily_token_limit,
 		       integration.ai_daily_cost_limit_millicents, integration.ai_monthly_cost_limit_millicents,
 		       integration.ai_request_log_enabled,
-		       integration.ai_user_daily_token_limit, integration.ai_user_daily_cost_limit_millicents
+		       integration.ai_user_daily_token_limit, integration.ai_user_daily_cost_limit_millicents,
+		       integration.ai_request_log_content
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential
