@@ -8806,6 +8806,46 @@ $$;
 
 
 --
+-- Name: guard_issue_group_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_issue_group_link() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF EXISTS (SELECT 1 FROM issue_group_links WHERE issue_id=NEW.canonical_issue_id)
+ OR EXISTS (SELECT 1 FROM issue_group_links WHERE canonical_issue_id=NEW.issue_id) THEN
+  RAISE EXCEPTION 'issue links must reference a canonical root' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_issue_split_rule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_issue_split_rule() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM app_issues WHERE id=NEW.source_issue_id AND split_source_issue_id IS NOT NULL)
+ OR NOT EXISTS(SELECT 1 FROM app_issues WHERE id=NEW.target_issue_id AND split_source_issue_id=NEW.source_issue_id) THEN
+  RAISE EXCEPTION 'split rules require an original source and its derived branch' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.id,NEW.app_id,NEW.environment,NEW.source_issue_id,NEW.target_issue_id,NEW.priority,NEW.exception_type,NEW.error_code,NEW.route,NEW.source_kind,NEW.initial_moved_event_count,NEW.unavailable_history_event_count,NEW.created_at)
+ IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.environment,OLD.source_issue_id,OLD.target_issue_id,OLD.priority,OLD.exception_type,OLD.error_code,OLD.route,OLD.source_kind,OLD.initial_moved_event_count,OLD.unavailable_history_event_count,OLD.created_at) THEN
+  RAISE EXCEPTION 'split rule definitions are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15974,6 +16014,7 @@ CREATE TABLE public.app_issues (
     fixed_deployment_id uuid,
     fixed_deployment_created_at timestamp with time zone,
     ignored_until timestamp with time zone,
+    split_source_issue_id uuid,
     CONSTRAINT app_issues_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_issues_event_count_check CHECK ((event_count >= 0)),
     CONSTRAINT app_issues_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -22037,7 +22078,7 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
 );
 
@@ -22059,9 +22100,81 @@ CREATE TABLE public.issue_events (
     attribution_checked_at timestamp with time zone DEFAULT now() NOT NULL,
     verified_consumer_id uuid,
     verified_platform_tenant_id uuid,
+    original_issue_id uuid,
     CONSTRAINT issue_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 65536))),
     CONSTRAINT issue_events_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text))
 );
+
+
+--
+-- Name: issue_group_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_group_links (
+    issue_id uuid NOT NULL,
+    canonical_issue_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    linked_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_group_links_check CHECK ((issue_id <> canonical_issue_id)),
+    CONSTRAINT issue_group_links_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: issue_group_assignments; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_group_assignments AS
+ SELECT i.id AS original_issue_id,
+    i.id AS canonical_issue_id
+   FROM public.app_issues i
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.issue_group_links l
+          WHERE (l.issue_id = i.id))))
+UNION ALL
+ SELECT issue_group_links.issue_id AS original_issue_id,
+    issue_group_links.canonical_issue_id
+   FROM public.issue_group_links;
+
+
+--
+-- Name: issue_group_rollups; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_group_rollups AS
+ SELECT i.id,
+    i.account_id,
+    i.app_id,
+    i.environment,
+    i.fingerprint,
+    i.grouping_version,
+    i.title,
+    i.state,
+    i.assignee_account_id,
+    totals.first_seen_at,
+    totals.last_seen_at,
+    totals.event_count,
+    totals.regression_count,
+    i.resolved_at,
+    i.fixed_deployment_id,
+    i.fixed_deployment_created_at,
+    i.ignored_until,
+    i.split_source_issue_id
+   FROM (public.app_issues i
+     CROSS JOIN LATERAL ( SELECT min(m.first_seen_at) AS first_seen_at,
+            max(m.last_seen_at) AS last_seen_at,
+            (sum(m.event_count))::bigint AS event_count,
+            (sum(m.regression_count))::bigint AS regression_count
+           FROM public.app_issues m
+          WHERE (m.id IN ( SELECT i.id
+                UNION ALL
+                 SELECT issue_group_links.issue_id
+                   FROM public.issue_group_links
+                  WHERE (issue_group_links.canonical_issue_id = i.id)))) totals)
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.issue_group_links l
+          WHERE (l.issue_id = i.id))));
 
 
 --
@@ -22111,6 +22224,40 @@ CREATE TABLE public.issue_resolutions (
     fixed_deployment_id uuid NOT NULL,
     resolved_at timestamp with time zone NOT NULL,
     actor_account_id uuid NOT NULL
+);
+
+
+--
+-- Name: issue_split_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_split_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    source_issue_id uuid NOT NULL,
+    target_issue_id uuid NOT NULL,
+    priority integer NOT NULL,
+    exception_type text DEFAULT ''::text NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    route text DEFAULT ''::text NOT NULL,
+    source_kind text DEFAULT ''::text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    initial_moved_event_count bigint DEFAULT 0 NOT NULL,
+    unavailable_history_event_count bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_split_rules_check CHECK ((source_issue_id <> target_issue_id)),
+    CONSTRAINT issue_split_rules_check1 CHECK (((exception_type <> ''::text) OR (error_code <> ''::text) OR (route <> ''::text) OR (source_kind <> ''::text))),
+    CONSTRAINT issue_split_rules_enabled_check CHECK ((enabled = ANY (ARRAY[true, false]))),
+    CONSTRAINT issue_split_rules_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT issue_split_rules_error_code_check CHECK ((octet_length(error_code) <= 256)),
+    CONSTRAINT issue_split_rules_exception_type_check CHECK ((octet_length(exception_type) <= 256)),
+    CONSTRAINT issue_split_rules_initial_moved_event_count_check CHECK ((initial_moved_event_count >= 0)),
+    CONSTRAINT issue_split_rules_priority_check CHECK (((priority >= 1) AND (priority <= 8))),
+    CONSTRAINT issue_split_rules_route_check CHECK ((octet_length(route) <= 256)),
+    CONSTRAINT issue_split_rules_source_kind_check CHECK ((source_kind = ANY (ARRAY[''::text, 'exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))),
+    CONSTRAINT issue_split_rules_unavailable_history_event_count_check CHECK ((unavailable_history_event_count >= 0))
 );
 
 
@@ -34112,6 +34259,14 @@ ALTER TABLE ONLY public.issue_events
 
 
 --
+-- Name: issue_group_links issue_group_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_pkey PRIMARY KEY (issue_id);
+
+
+--
 -- Name: issue_ingest_tokens issue_ingest_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34141,6 +34296,38 @@ ALTER TABLE ONLY public.issue_releases
 
 ALTER TABLE ONLY public.issue_resolutions
     ADD CONSTRAINT issue_resolutions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_source_issue_id_exception_type_error_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_source_issue_id_exception_type_error_code_key UNIQUE (source_issue_id, exception_type, error_code, route, source_kind);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_source_issue_id_priority_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_source_issue_id_priority_key UNIQUE (source_issue_id, priority);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_target_issue_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_target_issue_id_key UNIQUE (target_issue_id);
 
 
 --
@@ -38538,6 +38725,13 @@ CREATE INDEX app_issues_list_idx ON public.app_issues USING btree (app_id, last_
 
 
 --
+-- Name: app_issues_scope_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_issues_scope_identity_idx ON public.app_issues USING btree (app_id, environment, id);
+
+
+--
 -- Name: app_log_drain_delivery_analytics_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41678,6 +41872,13 @@ CREATE INDEX issue_events_list_idx ON public.issue_events USING btree (issue_id,
 --
 
 CREATE INDEX issue_events_retention_idx ON public.issue_events USING btree (app_id, received_at);
+
+
+--
+-- Name: issue_group_links_canonical_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_group_links_canonical_idx ON public.issue_group_links USING btree (canonical_issue_id, issue_id);
 
 
 --
@@ -47134,6 +47335,20 @@ CREATE TRIGGER invocations_schedule_occurrence AFTER UPDATE OF state ON public.i
 
 
 --
+-- Name: issue_group_links issue_group_link_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_group_link_guard BEFORE INSERT OR UPDATE ON public.issue_group_links FOR EACH ROW EXECUTE FUNCTION public.guard_issue_group_link();
+
+
+--
+-- Name: issue_split_rules issue_split_rule_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_split_rule_guard BEFORE INSERT OR UPDATE ON public.issue_split_rules FOR EACH ROW EXECUTE FUNCTION public.guard_issue_split_rule();
+
+
+--
 -- Name: jobs job_run_image_snapshot_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -49693,6 +49908,14 @@ ALTER TABLE ONLY public.app_issues
 
 ALTER TABLE ONLY public.app_issues
     ADD CONSTRAINT app_issues_assignee_account_id_fkey FOREIGN KEY (assignee_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_issues app_issues_split_source_scope_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_split_source_scope_fkey FOREIGN KEY (app_id, environment, split_source_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
 
 
 --
@@ -52952,6 +53175,38 @@ ALTER TABLE ONLY public.issue_events
 
 
 --
+-- Name: issue_events issue_events_original_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_original_issue_id_fkey FOREIGN KEY (original_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_environment_canonical_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_environment_canonical_issue_id_fkey FOREIGN KEY (app_id, environment, canonical_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_environment_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_environment_issue_id_fkey FOREIGN KEY (app_id, environment, issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issue_ingest_tokens issue_ingest_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52989,6 +53244,30 @@ ALTER TABLE ONLY public.issue_releases
 
 ALTER TABLE ONLY public.issue_resolutions
     ADD CONSTRAINT issue_resolutions_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_environment_source_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_environment_source_issue_id_fkey FOREIGN KEY (app_id, environment, source_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_environment_target_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_environment_target_issue_id_fkey FOREIGN KEY (app_id, environment, target_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

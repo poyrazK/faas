@@ -41,6 +41,13 @@ sql:
         rename:
           id: "ID"
           boot_id: "BootID"
+        # Aggregate timestamps in the issue rollup view are timestamptz in
+        # PostgreSQL; sqlc cannot infer min/max return types in view definitions.
+        overrides:
+          - column: "issue_group_rollups.first_seen_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
+          - column: "issue_group_rollups.last_seen_at"
+            go_type: { import: "github.com/jackc/pgx/v5/pgtype", type: "Timestamptz" }
 
   # Independent stored-data reads and fixed server-quoted COPY commands.
   - engine: "postgresql"

@@ -1,3 +1,4 @@
+import {writePackedSDKRuntimeLock} from './fixtures/packed-sdk-runtime-lock.mjs';
 // Exercise the shipped SDK and starter outside the checkout. Source imports
 // and mocked SDK classes cannot establish that a generated feature starts.
 import test from 'node:test';
@@ -37,9 +38,10 @@ test(`${template}: packed SDK installs outside the checkout and serves the brows
   prepareOfflineStarterInstall(dest);
   const filename = packSDK(sdk, temp);
   cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env};
   delete childEnv.NODE_TEST_CONTEXT;
-  execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
+  execFileSync('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
   const checked = execFileSync('npm', ['test'], {cwd: dest, env: childEnv, encoding: 'utf8', timeout: 30000});
   assert.ok(Number(checked.match(/tests (\d+)/)?.[1]) >= minimumTests, 'starter behavior tests did not run');
   assert.match(checked, /fail 0/);
@@ -82,9 +84,10 @@ test('workflow export: packed SDK installs outside the checkout and needs no buc
   prepareOfflineStarterInstall(dest);
   const filename = packSDK(sdk, temp);
   cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
   for (const name of ['GREGALE_STORAGE_TOKEN', 'GREGALE_EXPORT_BUCKET_URI', 'GREGALE_APP_SLUG']) delete childEnv[name];
-  execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
+  execFileSync('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
   const checked = execFileSync('npm', ['test'], {cwd: dest, env: childEnv, encoding: 'utf8', timeout: 30000});
   assert.ok(Number(checked.match(/tests (\d+)/)?.[1]) >= 8); assert.match(checked, /fail 0/);
   assert.doesNotMatch(readFileSync(join(dest,'server.mjs'),'utf8'), /managedBucketWriter|GREGALE_STORAGE_TOKEN|GREGALE_EXPORT_BUCKET_URI/);

@@ -104,3 +104,27 @@ func (c *Client) IngestIssueEvent(ctx context.Context, slug string, in IssueEven
 func (c *Client) IngestIssueOTLP(ctx context.Context, slug, signal string, in any) error {
 	return c.do(ctx, "POST", issueAppPath(slug)+"/issue-events/otlp/"+url.PathEscape(signal), in, nil)
 }
+
+// PreviewIssueSplit evaluates retained evidence without changing grouping.
+func (c *Client) PreviewIssueSplit(ctx context.Context, slug, id string, in IssueSplitMatcher) (IssueSplitPreview, error) {
+	var out IssueSplitPreview
+	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/"+url.PathEscape(id)+"/split-preview", in, &out)
+	return out, err
+}
+
+func (c *Client) CreateIssueSplitRule(ctx context.Context, slug, source string, matcher IssueSplitMatcher) (IssueSplitRule, error) {
+	var out IssueSplitRule
+	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/"+url.PathEscape(source)+"/split-rules", matcher, &out)
+	return out, err
+}
+func (c *Client) UpdateIssueSplitRule(ctx context.Context, slug, source, id string, in IssueSplitRuleUpdate) (IssueSplitRule, error) {
+	var out IssueSplitRule
+	err := c.do(ctx, "PATCH", issueAppPath(slug)+"/issues/"+url.PathEscape(source)+"/split-rules/"+url.PathEscape(id), in, &out)
+	return out, err
+}
+
+func (c *Client) UndoIssueSplitRule(ctx context.Context, slug, source, id string, in IssueSplitRuleUndoRequest) (IssueSplitRule, error) {
+	var out IssueSplitRule
+	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/"+url.PathEscape(source)+"/split-rules/"+url.PathEscape(id)+"/undo", in, &out)
+	return out, err
+}

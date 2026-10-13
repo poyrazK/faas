@@ -664,6 +664,7 @@
       "last_seen_at",
       "regression_count",
       "resolved_at",
+      "split_source_issue_id",
       "state",
       "title"
     ],
@@ -4518,11 +4519,23 @@
       "id",
       "issue_id",
       "occurred_at",
+      "original_issue_id",
       "payload",
       "payload_hash",
       "received_at",
       "verified_consumer_id",
       "verified_platform_tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_group_links",
+    "columns": [
+      "app_id",
+      "canonical_issue_id",
+      "environment",
+      "issue_id",
+      "linked_at"
     ],
     "kind": "operational"
   },
@@ -4563,6 +4576,27 @@
       "id",
       "issue_id",
       "resolved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_split_rules",
+    "columns": [
+      "app_id",
+      "created_at",
+      "enabled",
+      "environment",
+      "error_code",
+      "exception_type",
+      "id",
+      "initial_moved_event_count",
+      "priority",
+      "route",
+      "source_issue_id",
+      "source_kind",
+      "target_issue_id",
+      "unavailable_history_event_count",
+      "updated_at"
     ],
     "kind": "operational"
   },
