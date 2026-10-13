@@ -1592,10 +1592,19 @@ from .issue_action_request_action import IssueActionRequestAction
 from .issue_activity import IssueActivity
 from .issue_activity_details import IssueActivityDetails
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
+from .issue_cause import IssueCause
+from .issue_cause_frame_order import IssueCauseFrameOrder
 from .issue_detail import IssueDetail
 from .issue_event import IssueEvent
+from .issue_event_frame_order import IssueEventFrameOrder
+from .issue_event_grouping_strategy import IssueEventGroupingStrategy
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
+from .issue_grouping_explanation import IssueGroupingExplanation
+from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
+from .issue_grouping_explanation_discriminator_kind import IssueGroupingExplanationDiscriminatorKind
+from .issue_grouping_explanation_strategy import IssueGroupingExplanationStrategy
+from .issue_grouping_frame import IssueGroupingFrame
 from .issue_impact import IssueImpact
 from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
@@ -1605,6 +1614,13 @@ from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_split_matcher import IssueSplitMatcher
+from .issue_split_matcher_source_kind import IssueSplitMatcherSourceKind
+from .issue_split_preview import IssueSplitPreview
+from .issue_split_preview_application_status import IssueSplitPreviewApplicationStatus
+from .issue_split_rule import IssueSplitRule
+from .issue_split_rule_undo_request import IssueSplitRuleUndoRequest
+from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
@@ -5604,10 +5620,19 @@ __all__ = (
     "IssueActivity",
     "IssueActivityDetails",
     "IssueBrowserCSRFTokenAction",
+    "IssueCause",
+    "IssueCauseFrameOrder",
     "IssueDetail",
     "IssueEvent",
+    "IssueEventFrameOrder",
+    "IssueEventGroupingStrategy",
     "IssueEventResponse",
     "IssueFrame",
+    "IssueGroupingExplanation",
+    "IssueGroupingExplanationBasis",
+    "IssueGroupingExplanationDiscriminatorKind",
+    "IssueGroupingExplanationStrategy",
+    "IssueGroupingFrame",
     "IssueImpact",
     "IssueImpactAlertPolicy",
     "IssueImpactSummary",
@@ -5617,6 +5642,13 @@ __all__ = (
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueSplitMatcher",
+    "IssueSplitMatcherSourceKind",
+    "IssueSplitPreview",
+    "IssueSplitPreviewApplicationStatus",
+    "IssueSplitRule",
+    "IssueSplitRuleUndoRequest",
+    "IssueSplitRuleUpdate",
     "IssueState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",

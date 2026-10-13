@@ -1072,6 +1072,12 @@ Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted n
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
 
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
 Managed compute storage client loading and rotation are described in the
 [object storage compute guide](../../docs/object-storage-compute.md).
 Use `faas_sdk.secret_reload_runtime.SecretReloadCoordinator` with

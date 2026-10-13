@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectRetirementTestStore struct {
@@ -106,7 +107,7 @@ func checkpointObjectRetirementFixture(t *testing.T) (*cloneCoordinatorFixture, 
 	t.Helper()
 	f, base, plan := checkpointObjectWithdrawalFixture(t)
 	store := &checkpointObjectRetirementTestStore{checkpointObjectVerificationTestStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	d := &checkpointObjectRetirementTestDriver{t: t, f: f, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectRetirementObservation{}}
 	return f, store, d, plan
 }
@@ -290,7 +291,7 @@ func TestPGCloneCheckpointObjectRetirementOwnership(t *testing.T) {
 				}
 			}
 			if failure != "published" {
-				if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+				if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -352,7 +353,7 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 			f, store, target := checkpointTargetFixture(t)
 			var err error
 			if phase == "planned-creation" {
-				views, err := store.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
+				views, err := store.PgStore.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -362,7 +363,7 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 						if err = f.pool.QueryRow(t.Context(), "select target_bucket_id::text from project_environment_clone_object_manifests where operation_id=$1 and source_bucket_id=$2", f.lease.Operation.ID, b.ID).Scan(&id); err != nil {
 							t.Fatal(err)
 						}
-						if _, err = store.ReserveProjectEnvironmentCloneCheckpointObjectTarget(t.Context(), f.lease, view.AppID, b.ID, id); err != nil {
+						if _, err = store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectTarget(t.Context(), f.lease, view.AppID, b.ID, id); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -378,7 +379,7 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 				if phase == "planned-copy" {
 					for _, r := range f.lease.Operation.Resources {
 						if r.Kind == "object_storage" {
-							if _, err = store.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, r.SourceID); err != nil {
+							if _, err = store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, r.SourceID); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -394,7 +395,7 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 			// Capturing workers have no native retirement authority.
 			for _, r := range f.lease.Operation.Resources {
 				if r.Kind == "object_storage" {
-					if _, err = store.ReserveProjectEnvironmentCloneCheckpointObjectRetirement(t.Context(), f.lease, r.SourceID); !errors.Is(err, state.ErrConflict) {
+					if _, err = store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectRetirement(t.Context(), f.lease, r.SourceID); !errors.Is(err, state.ErrConflict) {
 						t.Fatal("capturing cleanup", err)
 					}
 					break
@@ -428,7 +429,7 @@ func TestPGCloneCheckpointObjectRetirementUnpublishedRequests(t *testing.T) {
 
 func TestPGCloneCheckpointObjectRetirementClaimRollback(t *testing.T) {
 	f, store, _, plan := checkpointObjectRetirementFixture(t)
-	if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal(err)
 	}
 	b := plan.Buckets[0]
@@ -472,7 +473,7 @@ func TestPGCloneCheckpointObjectRetirementMigration(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal(err)
 	}
 	b := plan.Buckets[0]
@@ -557,7 +558,7 @@ func TestPGCloneCheckpointObjectRetirementForeignUnpublishedCredential(t *testin
 	if _, err = f.pool.Exec(t.Context(), "insert into object_storage_s3_credentials(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,revoked_at) values($1,$2,$3,$4,$5,'kid','foreign','read','revoked',clock_timestamp())", uuid.NewString(), f.lease.Operation.AccountID, resource.TargetID, access, []byte("opaque")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.ReserveProjectEnvironmentCloneCheckpointObjectRetirement(t.Context(), f.lease, resource.SourceID); !errors.Is(err, state.ErrConflict) {
+	if _, err = store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectRetirement(t.Context(), f.lease, resource.SourceID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("foreign revoked credential authorized native cleanup", err)
 	}
 }

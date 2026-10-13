@@ -21,7 +21,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrNotFound) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrNotFound) || out.SHA256 != "" {
 		t.Fatal("unverified reservation", err)
 	}
 	f.lease, err = f.srv.verifyCheckpointObjects(t.Context(), f.lease, d)
@@ -36,7 +36,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), `create function reject_checkpoint_credential_ids() returns trigger language plpgsql as $$ begin raise exception 'injected commit failure' using errcode='40001'; end $$; create trigger reject_checkpoint_credential_ids before insert on project_environment_clone_checkpoint_object_credential_ids for each row execute function reject_checkpoint_credential_ids()`); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); err == nil || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); err == nil || out.SHA256 != "" {
 		t.Fatal("failed insert returned identities", err)
 	}
 	var count int
@@ -50,7 +50,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), `create function expire_checkpoint_credential_worker() returns trigger language plpgsql as $$ begin update project_environment_clone_operations set lease_until=clock_timestamp()-interval '1 second' where id=NEW.operation_id; return NEW; end $$; create trigger expire_checkpoint_credential_worker after insert on project_environment_clone_checkpoint_object_credential_ids for each row execute function expire_checkpoint_credential_worker()`); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("late worker expiry returned identities", err)
 	}
 	if err = f.pool.QueryRow(t.Context(), "select count(*) from project_environment_clone_checkpoint_object_credential_ids").Scan(&count); err != nil || count != 0 {
@@ -60,20 +60,20 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Discard the first response to simulate a committed reservation's lost reply.
-	if _, err = s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); err != nil {
+	if _, err = s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); err != nil {
 		t.Fatal(err)
 	}
-	original, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
+	original, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
 	if err != nil || len(original.Members) == 0 {
 		t.Fatal("reservation", err)
 	}
-	again, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
+	again, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
 	if err != nil || !reflect.DeepEqual(original, again) {
 		t.Fatal("retry reallocated identities", err)
 	}
 	old := f.lease
 	reclaimCommonCheckpointWorker(t, f)
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("stale worker returned identities", err)
 	}
 	f.lease, _, err = f.srv.checkpointObjectTargetsForLease(t.Context(), f.lease, d)
@@ -84,20 +84,20 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err = s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
+	again, err = s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
 	if err != nil || !reflect.DeepEqual(original, again) {
 		t.Fatal("handoff reallocated identities", err)
 	}
 	expired := retention
 	expired.RetainedUntil = time.Now()
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, expired); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, expired); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("expired retention replay", err)
 	}
 	target := original.Inputs.Buckets[0].Target.TargetBucketID
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set public_read=true where id=$1", target); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("public target replay returned identities", err)
 	}
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set public_read=false where id=$1", target); err != nil {
@@ -121,7 +121,7 @@ func TestPGCloneCheckpointObjectCredentialReservationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update project_environment_clone_checkpoint_object_credential_ids set plan_sha256=repeat('a',64) where operation_id=$1", f.lease.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("tampered journal returned identities", err)
 	}
 }

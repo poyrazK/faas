@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectVerificationTestStore struct {
@@ -82,7 +83,7 @@ func checkpointObjectVerificationFixture(t *testing.T, setup ...func(*cloneCoord
 		t.Fatal(err)
 	}
 	store := &checkpointObjectVerificationTestStore{checkpointTargetLostReplyStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	driver := &checkpointObjectVerificationTestDriver{checkpointTargetTestDriver: target, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectVerificationObservation{}}
 	copyDriver := &checkpointObjectCopyTestDriver{checkpointTargetTestDriver: target, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectCopyObservation{}}
 	f.lease, err = f.srv.copyCheckpointObjects(t.Context(), f.lease, copyDriver)

@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type verificationWorkerFailureStore struct {
@@ -110,7 +111,7 @@ func cloneVerificationWorkerFixture(t *testing.T) *verificationWorkerFixture {
 	x := f.db.x
 	v := &verificationWorkerFixture{f: f, store: &verificationWorkerFailureStore{importWorkerFailureStore: f.store},
 		cfg: cloneContentsReadConfig(t)}
-	x.f.srv.store = v.store
+	x.f.srv.store = statetest.NewPg(v.store)
 	x.f.srv.clonePostgresContentsReadPool = v.cfg.ReadPool
 	if _, err := x.f.srv.projectEnvironmentClonePostgresContentsFromReader(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID,
 		api.PostgresCopyCiphertextMaxBytes, contentsWorkerLimits(), v.cfg); err != nil {
@@ -145,15 +146,15 @@ func (v *verificationWorkerFixture) installVerificationReadConnector(t *testing.
 		if selected != f.target.DatabaseName {
 			return nil, managedpostgres.ErrConflict
 		}
-		owner, err := v.store.ProjectEnvironmentClonePostgresVerificationForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		owner, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err != nil || owner.State != "verifying" {
 			return nil, errors.New("verification child borrow preceded durable claim")
 		}
-		history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err != nil || len(history) > 0 && history[len(history)-1].State != "verifying" {
 			return nil, errors.New("verification child borrow preceded current attempt claim")
 		}
-		budget, err := v.store.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		budget, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +193,7 @@ func (v *verificationWorkerFixture) run(t *testing.T) (state.ProjectEnvironmentC
 func (v *verificationWorkerFixture) owner(t *testing.T) state.ProjectEnvironmentClonePostgresVerification {
 	t.Helper()
 	f, x := v.f, v.f.db.x
-	o, err := v.store.ProjectEnvironmentClonePostgresVerificationForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	o, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +229,11 @@ func (v *verificationWorkerFixture) handoff(t *testing.T) state.ProjectEnvironme
 	t.Helper()
 	x := v.f.db.x
 	previous := x.f.lease
-	if err := v.store.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
+	if err := v.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
-	x.f.lease, err = v.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
+	x.f.lease, err = v.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestPGClonePostgresVerificationLostCommittedProofAndClosureRecoverWithoutDa
 			if phase == "closure" && (!got.NativeClosedAt.Equal(first.NativeClosedAt) || !got.VerifiedAt.Equal(first.VerifiedAt)) {
 				t.Fatal("closure recovery changed original timestamps")
 			}
-			if _, err := v.store.ProjectEnvironmentClonePostgresVerificationForLease(t.Context(), previous, x.source.source.ID, v.f.sourceOID); !errors.Is(err, state.ErrConflict) {
+			if _, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationForLease(t.Context(), previous, x.source.source.ID, v.f.sourceOID); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("stale worker obtained retained proof", err)
 			}
 			v.cfg.SpoolDir = spoolDir

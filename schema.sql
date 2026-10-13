@@ -1628,6 +1628,31 @@ $$;
 
 
 --
+-- Name: current_managed_postgres_drain_plan(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.current_managed_postgres_drain_plan(app uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE authority apps%ROWTYPE; selected uuid;
+BEGIN
+ -- Lock even when no plan is visible yet. A parked/terminal INSERT that was
+ -- admitted before reservation must wait, then observe the committed plan.
+ SELECT * INTO authority FROM apps WHERE id=app FOR SHARE;
+ IF authority.managed_postgres_admission_cutover_id IS NOT NULL
+  AND current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'drain membership requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ SELECT id INTO selected FROM managed_postgres_cutover_drain_plans
+ WHERE app_id=app AND cutover_id=authority.managed_postgres_admission_cutover_id
+  AND fenced_at=authority.managed_postgres_admission_fenced_at
+  AND owner_node_id=authority.node_id AND owner_revision=authority.scaling_policy_revision;
+ RETURN selected;
+END;
+$$;
+
+
+--
 -- Name: customer_operation_subject_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3993,7 +4018,7 @@ SELECT EXISTS (
         AND deployment.scope=environment.slug
     JOIN invocations invocation ON invocation.id=target_invocation AND invocation.app_id=target_app
         AND invocation.source='queue' AND invocation.state='completed'
-        AND invocation.completed_at IS NOT NULL AND invocation.deployment_scope=environment.slug
+        AND invocation.completed_at>=release.created_at AND invocation.deployment_scope=environment.slug
         AND invocation.queue_binding_id=target_binding
     CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
     CROSS JOIN LATERAL jsonb_each(coalesce(graph_member.value->'queue_bindings','{}'::jsonb)) AS queue_binding(name,value)
@@ -4176,13 +4201,108 @@ $$;
 CREATE FUNCTION public.environment_workload_serving_ready(target_graph uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-SELECT environment_workload_serving_ready_without_scheduled_jobs(target_graph)
-    AND EXISTS (
-        SELECT 1 FROM environment_workload_serving_receipts receipt
-        JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
-        WHERE receipt.graph_id=target_graph
-            AND environment_workload_scheduled_jobs_ready(target_graph,release.id)
-    )
+SELECT EXISTS (
+    SELECT 1
+    FROM environment_workload_serving_receipts receipt
+    JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
+    JOIN active_environment_git_sources source ON source.id=receipt.source_id
+    JOIN project_environments environment ON environment.id=source.environment_id
+    JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+    WHERE receipt.graph_id=target_graph AND source.mode='enforce' AND NOT source.suspended
+        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+        AND source.approved_revision_id=graph.revision_id
+        AND environment_workload_graph_serving_supported(graph.id)
+        AND (SELECT count(*) FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)=(
+            SELECT count(*) FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+                AND NOT EXISTS (
+                    SELECT 1 FROM environment_workload_serving_routes route
+                    JOIN project_release_members release_member ON release_member.release_id=release.id
+                        AND release_member.app_id=route.app_id AND release_member.deployment_id=route.deployment_id
+                    WHERE route.graph_id=graph.id AND route.app_id::text=graph_member.value->>'app_id'
+                        AND ((route.cutover_required AND route.deployment_id::text=graph_member.value->>'candidate_deployment_id') OR
+                            (NOT route.cutover_required AND nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? route.deployment_id::text))
+                )
+        )
+        AND (NOT EXISTS (SELECT 1 FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)
+            OR cardinality(receipt.expected_gateways)>0)
+        AND NOT EXISTS (
+            SELECT 1 FROM environment_workload_serving_routes route
+            WHERE route.graph_id=graph.id AND (SELECT count(*) FROM environment_workload_serving_route_acks ack
+                WHERE ack.graph_id=route.graph_id AND ack.route_generation=route.route_generation)<>cardinality(receipt.expected_gateways)
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (binding.id IS NULL OR binding.app_id::text<>graph_member.value->>'app_id'
+                    OR binding.account_id<>source.account_id
+                    OR binding.environment_id<>source.environment_id OR binding.deployment_scope<>environment.slug
+                    OR binding.name<>queue_binding.name OR binding.queue_name<>queue_binding.value->'contract'->>'queue_name'
+                    OR binding.mode<>queue_binding.value->'contract'->>'mode'
+                    OR binding.workload_class<>queue_binding.value->'contract'->>'workload_class'
+                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
+                    OR binding.max_concurrency::text<>queue_binding.value->'contract'->>'max_concurrency'
+                    OR coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)<>binding.retry_policy
+                    OR binding.retired_at IS NOT NULL
+                    OR (binding.mode='push' AND NOT EXISTS (
+                        SELECT 1 FROM triggers queue_trigger
+                        WHERE queue_trigger.id::text=queue_binding.value->>'trigger_id'
+                            AND queue_trigger.app_id=binding.app_id AND queue_trigger.queue_binding_id=binding.id
+                            AND queue_trigger.account_id=source.account_id
+                            AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
+                            AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
+                            AND queue_trigger.queue_binding_scope=environment.slug
+                            AND queue_trigger.queue_binding_environment_id=source.environment_id
+                    ))
+                    OR (binding.mode='pull' AND coalesce(queue_binding.value->>'trigger_id','')<>'')
+                    OR binding.mode NOT IN ('push','pull'))
+        )
+        AND (SELECT count(*) FROM environment_workload_serving_queue_acks ack WHERE ack.graph_id=graph.id)=(
+            SELECT count(*)
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN environment_workload_serving_queue_acks ack ON ack.graph_id=graph.id
+                AND ack.binding_id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (ack.graph_id IS NULL OR ack.mode<>queue_binding.value->'contract'->>'mode'
+                    OR NOT environment_workload_queue_serving_ack_authorized(ack.graph_id,ack.binding_id,ack.mode,
+                        ack.trigger_id,ack.app_id,ack.deployment_id,ack.invocation_id)
+                    OR ack.app_id::text<>graph_member.value->>'app_id'
+                    OR (ack.mode='push' AND ack.trigger_id::text<>queue_binding.value->>'trigger_id')
+                    OR (ack.mode='pull' AND ack.trigger_id IS NOT NULL)
+                    OR NOT EXISTS (
+                        SELECT 1 FROM project_release_members release_member
+                        JOIN deployments deployment ON deployment.id=release_member.deployment_id
+                            AND deployment.app_id=release_member.app_id AND deployment.status='live'
+                            AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
+                        WHERE release_member.release_id=release.id AND release_member.app_id=ack.app_id
+                            AND release_member.deployment_id=ack.deployment_id
+                            AND (graph_member.value->>'candidate_deployment_id'=ack.deployment_id::text OR
+                                (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                    AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? ack.deployment_id::text))
+                    ))
+        )
+)
 $$;
 
 
@@ -8089,6 +8209,40 @@ END $$;
 
 
 --
+-- Name: guard_environment_workload_image_full_rootfs(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_image_full_rootfs() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE reviewed_source jsonb;
+BEGIN
+ IF NEW.environment_workload_runtime IS NULL OR NEW.kind <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ SELECT w.source INTO reviewed_source
+ FROM app_environment_workload_intents w
+ JOIN project_environments e ON e.id=w.environment_id
+ WHERE w.app_id=NEW.app_id AND e.slug=NEW.scope;
+ IF reviewed_source IS NULL OR reviewed_source->>'kind' <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ IF NEW.environment_workload_runtime->'source' IS DISTINCT FROM reviewed_source OR
+    coalesce(reviewed_source->>'full_rootfs','false') NOT IN ('true','false') THEN
+  RAISE EXCEPTION 'frozen image source differs from reviewed workload intent' USING ERRCODE='23514';
+ END IF;
+ IF reviewed_source->>'full_rootfs'='true' THEN
+  IF NEW.full_rootfs_override IS DISTINCT FROM true THEN
+   RAISE EXCEPTION 'reviewed image requires full-rootfs opt-in' USING ERRCODE='23514';
+  END IF;
+ ELSIF NOT (NEW.environment_workload_runtime ? 'deployment_inputs') AND NEW.full_rootfs_override IS NOT NULL THEN
+  RAISE EXCEPTION 'image full-rootfs override is not reviewed' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_instance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8806,6 +8960,46 @@ $$;
 
 
 --
+-- Name: guard_issue_group_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_issue_group_link() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF EXISTS (SELECT 1 FROM issue_group_links WHERE issue_id=NEW.canonical_issue_id)
+ OR EXISTS (SELECT 1 FROM issue_group_links WHERE canonical_issue_id=NEW.issue_id) THEN
+  RAISE EXCEPTION 'issue links must reference a canonical root' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_issue_split_rule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_issue_split_rule() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM app_issues WHERE id=NEW.source_issue_id AND split_source_issue_id IS NOT NULL)
+ OR NOT EXISTS(SELECT 1 FROM app_issues WHERE id=NEW.target_issue_id AND split_source_issue_id=NEW.source_issue_id) THEN
+  RAISE EXCEPTION 'split rules require an original source and its derived branch' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.id,NEW.app_id,NEW.environment,NEW.source_issue_id,NEW.target_issue_id,NEW.priority,NEW.exception_type,NEW.error_code,NEW.route,NEW.source_kind,NEW.initial_moved_event_count,NEW.unavailable_history_event_count,NEW.created_at)
+ IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.environment,OLD.source_issue_id,OLD.target_issue_id,OLD.priority,OLD.exception_type,OLD.error_code,OLD.route,OLD.source_kind,OLD.initial_moved_event_count,OLD.unavailable_history_event_count,OLD.created_at) THEN
+  RAISE EXCEPTION 'split rule definitions are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8993,6 +9187,83 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_database_has_bindings';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'cutover drain plans are immutable' USING ERRCODE='23514';
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_inventory(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_inventory() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE selected uuid;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  selected := current_managed_postgres_drain_plan(NEW.app_id);
+ ELSIF TG_OP='DELETE' THEN
+  selected := current_managed_postgres_drain_plan(OLD.app_id);
+  IF selected IS NULL THEN RETURN OLD; END IF;
+  IF EXISTS (SELECT 1 FROM managed_postgres_cutover_drain_plan_members m
+   JOIN managed_postgres_cutover_drain_plans p ON p.id=m.plan_id
+   JOIN managed_postgres_cutover_drains d ON d.id=m.drain_id
+   WHERE m.plan_id=selected AND m.instance_id=OLD.id AND d.state='retired'
+    AND d.cutover_id=p.cutover_id AND d.app_id=p.app_id AND d.owner_node_id=p.owner_node_id
+    AND d.owner_revision=p.owner_revision AND d.fenced_at=p.fenced_at
+    AND d.instance_id=OLD.id AND d.deployment_id=OLD.deployment_id AND d.node_id=OLD.node_id AND d.wake_id=OLD.wake_id
+    AND OLD.state='stopped') THEN RETURN OLD; END IF;
+ ELSE
+  -- Ordinary runtime counters and terminal transitions do not change catalog
+  -- membership. Avoid adding an app lock to those hot paths.
+  IF ROW(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.kind,NEW.mode,NEW.migrated_from_node_id)
+    IS NOT DISTINCT FROM ROW(OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.kind,OLD.mode,OLD.migrated_from_node_id)
+    AND (NEW.state <> 'migrating' OR NEW.state=OLD.state) THEN RETURN NEW; END IF;
+  selected := current_managed_postgres_drain_plan(OLD.app_id);
+  IF selected IS NULL AND NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+   selected := current_managed_postgres_drain_plan(NEW.app_id);
+  END IF;
+ END IF;
+ IF selected IS NOT NULL THEN
+  RAISE EXCEPTION 'cutover drain inventory is fenced' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_inventory_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_inventory_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ -- TRUNCATE covers every app, including fenced apps created after a stale
+ -- transaction snapshot. Reject stale isolation before consulting that snapshot.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'drain inventory truncation requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ IF EXISTS (SELECT 1 FROM apps a JOIN managed_postgres_cutover_drain_plans p ON p.app_id=a.id
+  AND p.cutover_id=a.managed_postgres_admission_cutover_id AND p.fenced_at=a.managed_postgres_admission_fenced_at
+  AND p.owner_node_id=a.node_id AND p.owner_revision=a.scaling_policy_revision) THEN
+  RAISE EXCEPTION 'cutover drain inventory is fenced' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NULL;
 END;
 $$;
 
@@ -10627,6 +10898,8 @@ CREATE FUNCTION public.lock_clone_deployment_cleanup_borrower_writers() RETURNS 
     AS $$ BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
+ -- Retained PostgreSQL receipts and blocked plan members also borrow deployments.
+ LOCK TABLE managed_postgres_cutover_drains,managed_postgres_cutover_drain_plan_members IN SHARE MODE;
 END $$;
 
 
@@ -15959,6 +16232,7 @@ CREATE TABLE public.app_issues (
     fixed_deployment_id uuid,
     fixed_deployment_created_at timestamp with time zone,
     ignored_until timestamp with time zone,
+    split_source_issue_id uuid,
     CONSTRAINT app_issues_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_issues_event_count_check CHECK ((event_count >= 0)),
     CONSTRAINT app_issues_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -22022,7 +22296,7 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
 );
 
@@ -22044,9 +22318,81 @@ CREATE TABLE public.issue_events (
     attribution_checked_at timestamp with time zone DEFAULT now() NOT NULL,
     verified_consumer_id uuid,
     verified_platform_tenant_id uuid,
+    original_issue_id uuid,
     CONSTRAINT issue_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 65536))),
     CONSTRAINT issue_events_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text))
 );
+
+
+--
+-- Name: issue_group_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_group_links (
+    issue_id uuid NOT NULL,
+    canonical_issue_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    linked_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_group_links_check CHECK ((issue_id <> canonical_issue_id)),
+    CONSTRAINT issue_group_links_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: issue_group_assignments; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_group_assignments AS
+ SELECT i.id AS original_issue_id,
+    i.id AS canonical_issue_id
+   FROM public.app_issues i
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.issue_group_links l
+          WHERE (l.issue_id = i.id))))
+UNION ALL
+ SELECT issue_group_links.issue_id AS original_issue_id,
+    issue_group_links.canonical_issue_id
+   FROM public.issue_group_links;
+
+
+--
+-- Name: issue_group_rollups; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_group_rollups AS
+ SELECT i.id,
+    i.account_id,
+    i.app_id,
+    i.environment,
+    i.fingerprint,
+    i.grouping_version,
+    i.title,
+    i.state,
+    i.assignee_account_id,
+    totals.first_seen_at,
+    totals.last_seen_at,
+    totals.event_count,
+    totals.regression_count,
+    i.resolved_at,
+    i.fixed_deployment_id,
+    i.fixed_deployment_created_at,
+    i.ignored_until,
+    i.split_source_issue_id
+   FROM (public.app_issues i
+     CROSS JOIN LATERAL ( SELECT min(m.first_seen_at) AS first_seen_at,
+            max(m.last_seen_at) AS last_seen_at,
+            (sum(m.event_count))::bigint AS event_count,
+            (sum(m.regression_count))::bigint AS regression_count
+           FROM public.app_issues m
+          WHERE (m.id IN ( SELECT i.id
+                UNION ALL
+                 SELECT issue_group_links.issue_id
+                   FROM public.issue_group_links
+                  WHERE (issue_group_links.canonical_issue_id = i.id)))) totals)
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.issue_group_links l
+          WHERE (l.issue_id = i.id))));
 
 
 --
@@ -22096,6 +22442,40 @@ CREATE TABLE public.issue_resolutions (
     fixed_deployment_id uuid NOT NULL,
     resolved_at timestamp with time zone NOT NULL,
     actor_account_id uuid NOT NULL
+);
+
+
+--
+-- Name: issue_split_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_split_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    source_issue_id uuid NOT NULL,
+    target_issue_id uuid NOT NULL,
+    priority integer NOT NULL,
+    exception_type text DEFAULT ''::text NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    route text DEFAULT ''::text NOT NULL,
+    source_kind text DEFAULT ''::text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    initial_moved_event_count bigint DEFAULT 0 NOT NULL,
+    unavailable_history_event_count bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_split_rules_check CHECK ((source_issue_id <> target_issue_id)),
+    CONSTRAINT issue_split_rules_check1 CHECK (((exception_type <> ''::text) OR (error_code <> ''::text) OR (route <> ''::text) OR (source_kind <> ''::text))),
+    CONSTRAINT issue_split_rules_enabled_check CHECK ((enabled = ANY (ARRAY[true, false]))),
+    CONSTRAINT issue_split_rules_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT issue_split_rules_error_code_check CHECK ((octet_length(error_code) <= 256)),
+    CONSTRAINT issue_split_rules_exception_type_check CHECK ((octet_length(exception_type) <= 256)),
+    CONSTRAINT issue_split_rules_initial_moved_event_count_check CHECK ((initial_moved_event_count >= 0)),
+    CONSTRAINT issue_split_rules_priority_check CHECK (((priority >= 1) AND (priority <= 8))),
+    CONSTRAINT issue_split_rules_route_check CHECK ((octet_length(route) <= 256)),
+    CONSTRAINT issue_split_rules_source_kind_check CHECK ((source_kind = ANY (ARRAY[''::text, 'exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))),
+    CONSTRAINT issue_split_rules_unavailable_history_event_count_check CHECK ((unavailable_history_event_count >= 0))
 );
 
 
@@ -22685,6 +23065,53 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_verified_at_check CHECK (((verified_at IS NULL) OR (state = 'sealed'::text)))
+);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_drain_plan_members (
+    plan_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    deployment_id uuid,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    instance_kind text NOT NULL,
+    instance_mode text NOT NULL,
+    observed_state text NOT NULL,
+    deployment_scope text NOT NULL,
+    migrated_from_node_id uuid,
+    qualification_live boolean NOT NULL,
+    drain_id uuid,
+    blocker_code text NOT NULL,
+    CONSTRAINT managed_postgres_cutover_drain_plan_member_observed_state_check CHECK ((observed_state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_blocker_code_check CHECK ((blocker_code = ANY (ARRAY[''::text, 'instance_identity_incomplete'::text, 'unsupported_instance_kind'::text, 'migration_lineage_unproven'::text, 'qualification_cleanup_required'::text, 'parked_instance_unproven'::text, 'undispatched_instance_unproven'::text, 'unsupported_instance_state'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_check CHECK (((drain_id IS NULL) = (blocker_code <> ''::text))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_instance_kind_check CHECK ((instance_kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_instance_mode_check CHECK ((instance_mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text])))
+);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_drain_plans (
+    id uuid NOT NULL,
+    cutover_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    owner_node_id uuid NOT NULL,
+    owner_revision bigint NOT NULL,
+    fenced_at timestamp with time zone NOT NULL,
+    inventory_count integer NOT NULL,
+    blocker_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_cutover_drain_plans_blocker_code_check CHECK ((blocker_code = ANY (ARRAY[''::text, 'inventory_empty'::text, 'inventory_limit_exceeded'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plans_check CHECK (((blocker_code <> ''::text) OR (inventory_count > 0))),
+    CONSTRAINT managed_postgres_cutover_drain_plans_inventory_count_check CHECK ((inventory_count >= 0)),
+    CONSTRAINT managed_postgres_cutover_drain_plans_owner_revision_check CHECK ((owner_revision > 0))
 );
 
 
@@ -34101,6 +34528,14 @@ ALTER TABLE ONLY public.issue_events
 
 
 --
+-- Name: issue_group_links issue_group_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_pkey PRIMARY KEY (issue_id);
+
+
+--
 -- Name: issue_ingest_tokens issue_ingest_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34130,6 +34565,38 @@ ALTER TABLE ONLY public.issue_releases
 
 ALTER TABLE ONLY public.issue_resolutions
     ADD CONSTRAINT issue_resolutions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_source_issue_id_exception_type_error_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_source_issue_id_exception_type_error_code_key UNIQUE (source_issue_id, exception_type, error_code, route, source_kind);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_source_issue_id_priority_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_source_issue_id_priority_key UNIQUE (source_issue_id, priority);
+
+
+--
+-- Name: issue_split_rules issue_split_rules_target_issue_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_target_issue_id_key UNIQUE (target_issue_id);
 
 
 --
@@ -34333,11 +34800,35 @@ ALTER TABLE ONLY public.managed_postgres_cutover_credentials
 
 
 --
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_cutover_drai_cutover_id_owner_node_id_owne_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plans
+    ADD CONSTRAINT managed_postgres_cutover_drai_cutover_id_owner_node_id_owne_key UNIQUE (cutover_id, owner_node_id, owner_revision, fenced_at);
+
+
+--
 -- Name: managed_postgres_cutover_drains managed_postgres_cutover_drain_identity_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_cutover_drains
     ADD CONSTRAINT managed_postgres_cutover_drain_identity_key UNIQUE (cutover_id, instance_id, node_id, wake_id, owner_node_id, owner_revision, fenced_at);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_pkey PRIMARY KEY (plan_id, instance_id);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_cutover_drain_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plans
+    ADD CONSTRAINT managed_postgres_cutover_drain_plans_pkey PRIMARY KEY (id);
 
 
 --
@@ -38527,6 +39018,13 @@ CREATE INDEX app_issues_list_idx ON public.app_issues USING btree (app_id, last_
 
 
 --
+-- Name: app_issues_scope_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_issues_scope_identity_idx ON public.app_issues USING btree (app_id, environment, id);
+
+
+--
 -- Name: app_log_drain_delivery_analytics_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41670,6 +42168,13 @@ CREATE INDEX issue_events_retention_idx ON public.issue_events USING btree (app_
 
 
 --
+-- Name: issue_group_links_canonical_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_group_links_canonical_idx ON public.issue_group_links USING btree (canonical_issue_id, issue_id);
+
+
+--
 -- Name: issue_ingest_tokens_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -42129,6 +42634,13 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_drain_plans_app_idx ON public.managed_postgres_cutover_drain_plans USING btree (app_id);
 
 
 --
@@ -46962,6 +47474,13 @@ CREATE TRIGGER guard_environment_workload_hold_state BEFORE INSERT OR UPDATE ON 
 
 
 --
+-- Name: deployments guard_environment_workload_image_full_rootfs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_image_full_rootfs BEFORE INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_image_full_rootfs();
+
+
+--
 -- Name: instances guard_environment_workload_instance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -47130,6 +47649,20 @@ CREATE TRIGGER invocations_schedule_occurrence AFTER UPDATE OF state ON public.i
 
 
 --
+-- Name: issue_group_links issue_group_link_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_group_link_guard BEFORE INSERT OR UPDATE ON public.issue_group_links FOR EACH ROW EXECUTE FUNCTION public.guard_issue_group_link();
+
+
+--
+-- Name: issue_split_rules issue_split_rule_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_split_rule_guard BEFORE INSERT OR UPDATE ON public.issue_split_rules FOR EACH ROW EXECUTE FUNCTION public.guard_issue_split_rule();
+
+
+--
 -- Name: jobs job_run_image_snapshot_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -47295,6 +47828,48 @@ CREATE TRIGGER managed_postgres_cutover_drain_guard BEFORE UPDATE ON public.mana
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_evidence_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_drain_plans FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: instances managed_postgres_drain_plan_inventory_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_inventory_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_inventory();
+
+
+--
+-- Name: instances managed_postgres_drain_plan_inventory_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_inventory_truncate_guard BEFORE TRUNCATE ON public.instances FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_inventory_truncate();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_drain_plan_member_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_member_evidence_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_drain_plan_members FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_drain_plan_member_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_member_truncate_guard BEFORE TRUNCATE ON public.managed_postgres_cutover_drain_plan_members FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_truncate_guard BEFORE TRUNCATE ON public.managed_postgres_cutover_drain_plans FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
 
 
 --
@@ -49689,6 +50264,14 @@ ALTER TABLE ONLY public.app_issues
 
 ALTER TABLE ONLY public.app_issues
     ADD CONSTRAINT app_issues_assignee_account_id_fkey FOREIGN KEY (assignee_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_issues app_issues_split_source_scope_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_split_source_scope_fkey FOREIGN KEY (app_id, environment, split_source_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
 
 
 --
@@ -52948,6 +53531,38 @@ ALTER TABLE ONLY public.issue_events
 
 
 --
+-- Name: issue_events issue_events_original_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_original_issue_id_fkey FOREIGN KEY (original_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_environment_canonical_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_environment_canonical_issue_id_fkey FOREIGN KEY (app_id, environment, canonical_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_environment_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_environment_issue_id_fkey FOREIGN KEY (app_id, environment, issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_group_links issue_group_links_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_group_links
+    ADD CONSTRAINT issue_group_links_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issue_ingest_tokens issue_ingest_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52985,6 +53600,30 @@ ALTER TABLE ONLY public.issue_releases
 
 ALTER TABLE ONLY public.issue_resolutions
     ADD CONSTRAINT issue_resolutions_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_environment_source_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_environment_source_issue_id_fkey FOREIGN KEY (app_id, environment, source_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_environment_target_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_environment_target_issue_id_fkey FOREIGN KEY (app_id, environment, target_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_split_rules issue_split_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_split_rules
+    ADD CONSTRAINT issue_split_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -53185,6 +53824,22 @@ ALTER TABLE ONLY public.managed_postgres_cutover_credentials
 
 ALTER TABLE ONLY public.managed_postgres_cutover_credentials
     ADD CONSTRAINT managed_postgres_cutover_credentials_source_binding_id_fkey FOREIGN KEY (source_binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.managed_postgres_cutover_drains(id);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.managed_postgres_cutover_drain_plans(id);
 
 
 --

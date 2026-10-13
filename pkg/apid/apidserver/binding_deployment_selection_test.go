@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func seedBindingCandidate(t *testing.T, e testEnv, app state.App, scope string) state.Deployment {
@@ -178,10 +179,10 @@ func TestBindingDeploymentSelectionUsesTargetScopeAndRequiresManagedBinding(t *t
 	}
 }
 
-type supersedingBindingAdmissionStore struct{ *state.MemStore }
+type supersedingBindingAdmissionStore struct{ MemStore *state.MemStore }
 
 func (s *supersedingBindingAdmissionStore) CreateAppTask(ctx context.Context, p state.CreateAppTaskParams) (state.AppTask, error) {
-	if err := s.UpdateDeploymentStatus(ctx, p.DeploymentID, state.DeploySuperseded, ""); err != nil {
+	if err := s.MemStore.UpdateDeploymentStatus(ctx, p.DeploymentID, state.DeploySuperseded, ""); err != nil {
 		return state.AppTask{}, err
 	}
 	return s.MemStore.CreateAppTask(ctx, p)
@@ -192,7 +193,7 @@ func TestBindingDeploymentSelectionRechecksLiveStatusAtAdmission(t *testing.T) {
 	enableAppTaskAPIForTest(&e)
 	app, dep := seedAppTaskDeployment(t, e, "target-race")
 	readyVerificationBinding(t, e, app)
-	e.s.store = &supersedingBindingAdmissionStore{MemStore: e.store}
+	e.s.store = statetest.NewMem(&supersedingBindingAdmissionStore{MemStore: e.store})
 	r := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{Command: []string{api.AppTaskPostgresBindingProbeCommand, "DATABASE_URL"}, VerificationDeploymentID: dep.ID}, nil)
 	if r.Code != 409 {
 		t.Fatalf("superseded during admission: %d %s", r.Code, r.Body.String())

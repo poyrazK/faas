@@ -56,6 +56,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
+| 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
+| 1112 | [Verified issue grouping explanations](1112-issue-grouping-explanations.md) | accepted | Retained occurrences expose selected sanitized evidence only when it reproduces the saved group fingerprint |
+| 1111 | [Opt-in failure-site issue grouping](1111-issue-failure-site-grouping.md) | accepted | Version 2 groups the nearest application frame with a stable code or normalized message; version 1 identities remain unchanged |
+
 | 992 | [Combined managed PostgreSQL rollout readiness](992-managed-postgres-combined-rollout-readiness.md) | accepted; native execution pending | Offline provider/durable and native guest evidence bound to one clean source revision and independently approved qualification bundle; optional staging enforcement |
 | 831 | [Edge WAF signatures, bot challenge, and client certificates](831-edge-waf-bot-challenge-mtls.md) | proposed | Sequenced plan: Coraza + OWASP CRS `kind=waf` first (observe-only preview, latency gate), then a proof-of-work `kind=challenge`, then custom-domain-only mTLS on demand |
 | 830 | [Platform security headers on customer app responses](830-customer-response-security-headers.md) | accepted | Customer responses keep app-set security headers; platform fills defaults only when absent, drops `includeSubDomains` on custom domains, and stops forcing `X-Frame-Options`/`Permissions-Policy` on customer apps |
@@ -855,6 +860,15 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-868: Durable entity generated clients](868-durable-entity-generated-clients.md)
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
+
+
+- [ADR-1115: Issue occurrence split preview](1115-issue-occurrence-split-preview.md)
+
+- [ADR-1116: Durable issue occurrence split rules](1116-durable-issue-occurrence-split-rules.md)
+
+- [ADR-1117 · Cause-aware issue grouping](1117-cause-aware-issue-grouping.md)
+
+- [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)

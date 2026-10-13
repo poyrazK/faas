@@ -716,6 +716,7 @@ type AppIssue struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 }
 
 type AppIssueImpactAlertPolicy struct {
@@ -3871,6 +3872,41 @@ type IssueEvent struct {
 	AttributionCheckedAt     pgtype.Timestamptz
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
+}
+
+type IssueGroupAssignment struct {
+	OriginalIssueID  pgtype.UUID
+	CanonicalIssueID pgtype.UUID
+}
+
+type IssueGroupLink struct {
+	IssueID          pgtype.UUID
+	CanonicalIssueID pgtype.UUID
+	AppID            pgtype.UUID
+	Environment      string
+	LinkedAt         pgtype.Timestamptz
+}
+
+type IssueGroupRollup struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Environment              string
+	Fingerprint              string
+	GroupingVersion          int32
+	Title                    string
+	State                    string
+	AssigneeAccountID        pgtype.UUID
+	FirstSeenAt              pgtype.Timestamptz
+	LastSeenAt               pgtype.Timestamptz
+	EventCount               int64
+	RegressionCount          int64
+	ResolvedAt               pgtype.Timestamptz
+	FixedDeploymentID        pgtype.UUID
+	FixedDeploymentCreatedAt pgtype.Timestamptz
+	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 }
 
 type IssueIngestToken struct {
@@ -3902,6 +3938,24 @@ type IssueResolution struct {
 	FixedDeploymentID pgtype.UUID
 	ResolvedAt        pgtype.Timestamptz
 	ActorAccountID    pgtype.UUID
+}
+
+type IssueSplitRule struct {
+	ID                           pgtype.UUID
+	AppID                        pgtype.UUID
+	Environment                  string
+	SourceIssueID                pgtype.UUID
+	TargetIssueID                pgtype.UUID
+	Priority                     int32
+	ExceptionType                string
+	ErrorCode                    string
+	Route                        string
+	SourceKind                   string
+	Enabled                      bool
+	InitialMovedEventCount       int64
+	UnavailableHistoryEventCount int64
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
 }
 
 type Job struct {
@@ -4295,6 +4349,34 @@ type ManagedPostgresCutoverDrain struct {
 	KernelBootID     pgtype.UUID
 	RetiredAt        pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverDrainPlan struct {
+	ID             pgtype.UUID
+	CutoverID      pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerNodeID    pgtype.UUID
+	OwnerRevision  int64
+	FencedAt       pgtype.Timestamptz
+	InventoryCount int32
+	BlockerCode    string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverDrainPlanMember struct {
+	PlanID             pgtype.UUID
+	InstanceID         pgtype.UUID
+	DeploymentID       pgtype.UUID
+	NodeID             pgtype.UUID
+	WakeID             pgtype.UUID
+	InstanceKind       string
+	InstanceMode       string
+	ObservedState      string
+	DeploymentScope    string
+	MigratedFromNodeID pgtype.UUID
+	QualificationLive  bool
+	DrainID            pgtype.UUID
+	BlockerCode        string
 }
 
 type ManagedPostgresDatabase struct {

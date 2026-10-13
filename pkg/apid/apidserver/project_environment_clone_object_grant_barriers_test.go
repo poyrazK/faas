@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorage/grantrevocation"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneGrantBarrierStore struct {
@@ -45,25 +46,25 @@ func newCloneGrantBarrierFixture(t *testing.T) cloneGrantBarrierFixture {
 	out := cloneGrantBarrierFixture{cloneCoordinatorFixture: f, pg: pg, buckets: buckets,
 		store:  &cloneGrantBarrierStore{cloneGrantRevocationFailureStore: &cloneGrantRevocationFailureStore{PgStore: store.PgStore}},
 		native: &cloneGrantRevocationProvider{Provider: f.objects, revoked: true}}
-	out.srv.store = out.store
+	out.srv.store = statetest.NewPg(out.store)
 	configureCloneGrantProvider(t, out.srv, out.native)
 	pg.drained = true
 	var err error
-	out.request, err = out.store.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationRequest)
+	out.request, err = out.store.PgStore.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := out.store.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationNativeGrant); err != nil {
+		if _, err := out.store.PgStore.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationNativeGrant); err != nil {
 			t.Fatal(err)
 		}
 	}
 	out.native.beforeRevoke = func(plan grantrevocation.Plan) {
-		objects, err := out.store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), out.lease)
+		objects, err := out.store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), out.lease)
 		if err != nil || len(objects) != 2 {
 			t.Fatalf("retirement dispatched before all object holds: %v", err)
 		}
-		postgres, err := out.store.ProjectEnvironmentClonePostgresWriteFencesForLease(t.Context(), out.lease)
+		postgres, err := out.store.PgStore.ProjectEnvironmentClonePostgresWriteFencesForLease(t.Context(), out.lease)
 		if err != nil || len(postgres) != 1 {
 			t.Fatalf("retirement dispatched before PostgreSQL hold: %v", err)
 		}
@@ -77,11 +78,11 @@ func newCloneGrantBarrierFixture(t *testing.T) cloneGrantBarrierFixture {
 func (f *cloneGrantBarrierFixture) handoff(t *testing.T) state.ProjectEnvironmentCloneLease {
 	t.Helper()
 	old := f.lease
-	if err := f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
+	if err := f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
-	f.lease, err = f.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = f.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil || f.lease.Operation.ID != old.Operation.ID {
 		t.Fatalf("replacement worker failed to claim original operation: %v", err)
 	}
@@ -93,7 +94,7 @@ func (f *cloneGrantBarrierFixture) compensate(t *testing.T) {
 	t.Helper()
 	op := f.lease.Operation
 	var err error
-	f.lease.Operation, err = f.store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID,
+	f.lease.Operation, err = f.store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID,
 		op.Status, state.CloneOperationCompensating, op.Revision, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +129,7 @@ func TestPGCloneGrantBarriersRecoverRetirementAcknowledgements(t *testing.T) {
 				!reflect.DeepEqual(f.native.journal, original) || result.objects[0].NativeGrants != 0 || result.objects[0].Requests != 1 {
 				t.Fatalf("barriers failed original retirement recovery: %+v %v", result, err)
 			}
-			if err := f.store.FinishObjectBucketMutation(t.Context(), f.request); err != nil {
+			if err := f.store.PgStore.FinishObjectBucketMutation(t.Context(), f.request); err != nil {
 				t.Fatal(err)
 			}
 			calls := f.native.revokes
@@ -169,7 +170,7 @@ func TestPGCloneGrantBarriersReobserveLocallyDrainedRetirements(t *testing.T) {
 			if err != nil || len(result.objectRetirements) != 1 || !result.objectRetirements[0].Drained() {
 				t.Fatalf("initial retirement failed: %v", err)
 			}
-			if err := f.store.FinishObjectBucketMutation(t.Context(), f.request); err != nil {
+			if err := f.store.PgStore.FinishObjectBucketMutation(t.Context(), f.request); err != nil {
 				t.Fatal(err)
 			}
 			f.handoff(t)
@@ -185,7 +186,7 @@ func TestPGCloneGrantBarriersReobserveLocallyDrainedRetirements(t *testing.T) {
 			if err == nil || !reflect.DeepEqual(result, cloneCaptureBarrierObservation{}) || f.native.revokes != calls || f.native.reads != reads+1 {
 				t.Fatalf("local zero counts hid invalid provider evidence: %+v %v", result, err)
 			}
-			fences, err := f.store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
+			fences, err := f.store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
 			if err != nil || len(fences) != 2 || fences[0].NativeGrants != 0 {
 				t.Fatalf("failed observation discarded holds: %+v %v", fences, err)
 			}
@@ -207,11 +208,11 @@ func TestPGCloneGrantBarriersPreflightUnsupportedNativeCapabilities(t *testing.T
 			if !errors.Is(err, objectstorage.ErrUnsupported) || f.pg.roles != 0 || f.pg.closes != 0 || f.native.revokes != 0 {
 				t.Fatalf("unsupported native capability dispatched provider work: %v", err)
 			}
-			fences, err := f.store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
+			fences, err := f.store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
 			if err != nil || len(fences) != 2 || fences[0].NativeGrants != 2 || fences[0].Requests != 1 {
 				t.Fatalf("preflight failure discarded source holds: %+v %v", fences, err)
 			}
-			if _, err := f.store.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, f.buckets[0].ID); !errors.Is(err, state.ErrNotFound) {
+			if _, err := f.store.PgStore.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, f.buckets[0].ID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("unsupported capability persisted retirement intent: %v", err)
 			}
 		})
@@ -236,7 +237,7 @@ func TestPGCloneGrantBarriersRecoverPartiallyRetiredBucketRoster(t *testing.T) {
 	second := &cloneGrantRevocationProvider{Provider: f.objects, revoked: true, fault: "revoke_reply"}
 	provider := &cloneMultipleGrantProvider{Provider: f.objects, byBucket: map[string]*cloneGrantRevocationProvider{f.buckets[0].ID: f.native, f.buckets[1].ID: second}}
 	configureCloneGrantProvider(t, f.srv, provider)
-	if _, err := f.store.BeginObjectBucketMutation(t.Context(), f.buckets[1], state.ObjectBucketMutationNativeGrant); err != nil {
+	if _, err := f.store.PgStore.BeginObjectBucketMutation(t.Context(), f.buckets[1], state.ObjectBucketMutationNativeGrant); err != nil {
 		t.Fatal(err)
 	}
 	var result cloneCaptureBarrierObservation
@@ -272,7 +273,7 @@ func TestPGCloneGrantBarrierAbandonmentResumesOnlyDispatchedRetirement(t *testin
 			}
 			original := f.native.journal.Clone()
 			f.compensate(t)
-			if err := f.store.UpsertAppEnvInScope(t.Context(), f.lease.Operation.AccountID, f.buckets[0].AppID, "production", "CAPTURED", "edited-during-abandonment"); err != nil {
+			if err := f.store.PgStore.UpsertAppEnvInScope(t.Context(), f.lease.Operation.AccountID, f.buckets[0].AppID, "production", "CAPTURED", "edited-during-abandonment"); err != nil {
 				t.Fatal(err)
 			}
 			f.handoff(t)
@@ -280,7 +281,7 @@ func TestPGCloneGrantBarrierAbandonmentResumesOnlyDispatchedRetirement(t *testin
 			if !errors.Is(err, errCloneCompensationUnavailable) || !reflect.DeepEqual(f.native.journal, original) {
 				t.Fatalf("busy compensation replaced or settled original intent: %v", err)
 			}
-			fences, err := f.store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
+			fences, err := f.store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
 			if err != nil || len(fences) != 2 || fences[0].NativeGrants != 2 {
 				t.Fatalf("busy compensation released part of the source roster: %+v %v", fences, err)
 			}
@@ -295,14 +296,14 @@ func TestPGCloneGrantBarrierAbandonmentResumesOnlyDispatchedRetirement(t *testin
 			if err != nil || f.native.revokes != calls || f.native.reads != reads {
 				t.Fatalf("released source replay initiated more native work: %v", err)
 			}
-			barrier, err := f.store.AcquireObjectBucketWriteFence(t.Context(), f.buckets[0], uuid.NewString())
+			barrier, err := f.store.PgStore.AcquireObjectBucketWriteFence(t.Context(), f.buckets[0], uuid.NewString())
 			if err != nil || barrier.NativeGrants != 0 || barrier.Requests != 1 {
 				t.Fatalf("compensation erased synchronous request: %+v %v", barrier, err)
 			}
-			if err := f.store.ReleaseObjectBucketWriteFence(t.Context(), f.buckets[0], barrier.Token); err != nil {
+			if err := f.store.PgStore.ReleaseObjectBucketWriteFence(t.Context(), f.buckets[0], barrier.Token); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := f.store.BeginObjectBucketMutation(t.Context(), f.buckets[0], state.ObjectBucketMutationRequest); err != nil {
+			if _, err := f.store.PgStore.BeginObjectBucketMutation(t.Context(), f.buckets[0], state.ObjectBucketMutationRequest); err != nil {
 				t.Fatalf("drained abandonment did not reopen source admission: %v", err)
 			}
 		})
@@ -320,13 +321,13 @@ func TestPGCloneGrantBarrierAbandonmentDoesNotStartReservedRetirement(t *testing
 				if !errors.Is(err, objectstorage.ErrUnavailable) {
 					t.Fatalf("retirement was not interrupted before dispatch: %v", err)
 				}
-				intent, err := f.store.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, f.buckets[0].ID)
+				intent, err := f.store.PgStore.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, f.buckets[0].ID)
 				if err != nil || intent.State != "reserved" || !intent.RequestStartedAt.IsZero() {
 					t.Fatalf("retirement was already dispatched: %+v %v", intent, err)
 				}
 			} else {
 				for _, b := range f.buckets {
-					if _, err := f.store.AcquireProjectEnvironmentCloneObjectWriteFence(t.Context(), f.lease, b.ID); err != nil {
+					if _, err := f.store.PgStore.AcquireProjectEnvironmentCloneObjectWriteFence(t.Context(), f.lease, b.ID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -338,11 +339,11 @@ func TestPGCloneGrantBarrierAbandonmentDoesNotStartReservedRetirement(t *testing
 			if err != nil || f.native.revokes != 0 || f.native.reads != 0 {
 				t.Fatalf("abandonment initiated native retirement: %v", err)
 			}
-			barrier, err := f.store.AcquireObjectBucketWriteFence(t.Context(), f.buckets[0], uuid.NewString())
+			barrier, err := f.store.PgStore.AcquireObjectBucketWriteFence(t.Context(), f.buckets[0], uuid.NewString())
 			if err != nil || barrier.NativeGrants != 2 || barrier.Requests != 1 {
 				t.Fatalf("undispatched abandonment consumed original writers: %+v %v", barrier, err)
 			}
-			if err := f.store.ReleaseObjectBucketWriteFence(t.Context(), f.buckets[0], barrier.Token); err != nil {
+			if err := f.store.PgStore.ReleaseObjectBucketWriteFence(t.Context(), f.buckets[0], barrier.Token); err != nil {
 				t.Fatal(err)
 			}
 		})

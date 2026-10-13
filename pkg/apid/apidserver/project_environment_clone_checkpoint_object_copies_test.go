@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectCopyTestStore struct {
@@ -82,7 +83,7 @@ func checkpointObjectCopyFixture(t *testing.T) (*cloneCoordinatorFixture, *check
 		t.Fatal(err)
 	}
 	store := &checkpointObjectCopyTestStore{checkpointTargetLostReplyStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	driver := &checkpointObjectCopyTestDriver{checkpointTargetTestDriver: target, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectCopyObservation{}}
 	return f, store, driver
 }
@@ -226,10 +227,10 @@ func TestPGCloneCheckpointObjectCopyGatesVerificationAndDeadline(t *testing.T) {
 			break
 		}
 	}
-	if _, err := s.ReserveProjectEnvironmentCloneCheckpointObjectVerification(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
+	if _, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectVerification(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("verification before copy", err)
 	}
-	in, err := s.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, id)
+	in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +254,7 @@ func TestPGCloneCheckpointObjectCopyGatesVerificationAndDeadline(t *testing.T) {
 	if _, dispatch, err := s.ClaimProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, id, retention); !errors.Is(err, state.ErrConflict) || dispatch {
 		t.Fatal("planned write window extended", err, dispatch)
 	}
-	in, err = s.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, id)
+	in, err = s.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCopy(t.Context(), f.lease, id)
 	if err != nil || !in.Plan.WriteUntil.Equal(original) {
 		t.Fatal("original deadline changed", err)
 	}

@@ -13445,6 +13445,147 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Original fingerprint identity within this app, including a linked member.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: previewIssueSplit
+      summary: Preview exact occurrence matches without changing grouping.
+      description: Read-only snapshot of all retained evidence for one original identity. Missing lifetime evidence remains unclassified. Every populated matcher must equal the sanitized stored value.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitMatcher' }
+      responses:
+        '200':
+          description: Retained match counts, unavailable history, and bounded matching IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the original fingerprint source; derived branches cannot have nested rules.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createIssueSplitRule
+      summary: Split retained matches and route future matching captures.
+      description: Creates an immutable ordered rule and an open branch with the source canonical owner. Repeating the same source and matcher returns the existing rule without replaying evidence. At most eight rules, including disabled rules, per source. Branches count toward issue storage limits.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitMatcher' }
+      responses:
+        '200':
+          description: Rule and branch created with actor-attributed activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the original source owning the routing rule whose enabled state should change.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: rule_id
+        description: Immutable rule UUID belonging to the source issue.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [apps]
+      operationId: updateIssueSplitRule
+      summary: Enable or disable an existing occurrence routing rule.
+      description: Changes future routing only. Existing evidence, prior retry destinations, matcher, and priority remain unchanged.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitRuleUpdate' }
+      responses:
+        '200':
+          description: Rule state returned; changes append actor-attributed activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Original source issue UUID owning the rule to undo.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: rule_id
+        description: Rule UUID to disable and combine with its reviewed source group.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: undoIssueSplitRule
+      summary: Disable a split rule and merge its isolated branch atomically.
+      description: Requires the reviewed canonical source ID. Rejects changed destinations and unrelated branch links. Destination owner and lifecycle win. Existing occurrence provenance and original counters remain intact. Other enabled rules continue routing by priority. A repeated completed undo is a no-op.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitRuleUndoRequest' }
+      responses:
+        '200':
+          description: Disabled rule; its branch is combined with the reviewed source group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issues/{issue_id}/actions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -70312,8 +70453,13 @@ components:
         ADR-962 match condition, ANDed with the rule's fixed selectors. A node
         is exactly one of all, any, not, or a field/op leaf. Fields: method,
         path, host, client_ip, country, asn (ADR-966: the client IP's
-        autonomous system, e.g. 13335 or AS13335), header:<name>,
-        cookie:<name>, query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
+        User-Agent's family, one of browser, mobile, bot, tool, other),
+        verified_bot (ADR-973: a known crawler confirmed by forward-confirmed
+        reverse DNS of the client IP, one of googlebot, bingbot, applebot,
+        yandexbot, baiduspider, yahoo, petalbot; absent otherwise),
+        header:<name>, cookie:<name>, query:<name>. ua_family and
+        verified_bot take eq, ne, in, not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
         exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
         list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256
@@ -81510,7 +81656,7 @@ components:
 
 
     IssueFrame:
-      description: "A sanitized application stack frame used by grouping version 1."
+      description: "A sanitized stack frame. Grouping excludes line numbers; in_app selects application evidence."
       type: object
       required: [file, function, in_app]
       properties:
@@ -81519,11 +81665,24 @@ components:
         line: { type: integer }
         in_app: { type: boolean }
 
+    IssueCause:
+      description: "One sanitized linear cause, ordered immediate to deepest; bounds are UTF-8 bytes."
+      type: object
+      required: [exception_type, message]
+      properties:
+        exception_type: { type: string, maxLength: 256 }
+        message: { type: string, maxLength: 2048 }
+        error_code: { type: string, maxLength: 256 }
+        frames: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/IssueFrame' } }
+        frame_order: { type: string, enum: [newest-first, oldest-first] }
+
     IssueEvent:
       description: "Structured exception evidence; credential-derived account and deployment identity cannot be overridden."
       type: object
       required: [event_id, occurred_at, exception_type, message]
       properties:
+        causes: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IssueCause' } }
+        causes_incomplete: { type: boolean, description: "Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause." }
         event_id: { type: string, format: uuid }
         occurred_at: { type: string, format: date-time }
         exception_type: { type: string }
@@ -81531,6 +81690,18 @@ components:
         stack_trace: { type: string }
         frames: { type: array, items: { $ref: '#/components/schemas/IssueFrame' } }
         fingerprint_override: { type: string }
+        grouping_strategy:
+          type: string
+          enum: [legacy, failure-site-v1, cause-chain-v1]
+          description: "Defaults to unchanged version 1. failure-site-v1 selects version 2 and creates separate groups without migrating existing history. cause-chain-v1 selects version 3 using the deepest complete reported cause."
+        frame_order:
+          type: string
+          enum: [newest-first, oldest-first]
+          description: "For failure-site-v1, structured frames default to newest-first. Parsed Node/Python stacks infer order when omitted."
+        error_code:
+          type: string
+          maxLength: 256
+          description: "Stable application error code, bounded to 256 UTF-8 bytes and sanitized. In failure-site-v1 it replaces the normalized message discriminator; ignored by legacy grouping."
         trace_id: { type: string }
         span_id: { type: string }
         request_id: { type: string, description: "Bounded opaque gateway request ID, sanitized before persistence." }
@@ -81545,6 +81716,7 @@ components:
       type: object
       required: [id, app_id, environment, fingerprint, grouping_version, title, state, first_seen_at, last_seen_at, event_count, regression_count]
       properties:
+        split_source_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint source for a branch created by an occurrence split rule. }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         environment: { type: string }
@@ -81572,6 +81744,32 @@ components:
         observed_events: { type: integer }
         unattributed_events: { type: integer }
 
+    IssueGroupingFrame:
+      description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
+      type: object
+      required: [frame_index, file, function]
+      properties:
+        frame_index: { type: integer, minimum: 0 }
+        file: { type: string }
+        function: { type: string }
+
+    IssueGroupingExplanation:
+      description: "Read-only evidence reconstructed from a retained sanitized occurrence using the saved group version. Present only when its identity reproduces the saved fingerprint. Unsupported versions or mismatches omit the explanation."
+      type: object
+      required: [grouping_version, strategy, basis, source_kind, exception_type, discriminator_kind]
+      properties:
+        cause_index: { type: integer, minimum: 0, maximum: 7, description: "Zero-based selected cause index; absent when grouping uses the outer exception." }
+        grouping_version: { type: integer }
+        strategy: { type: string, enum: [legacy, failure-site-v1, cause-chain-v1] }
+        basis: { type: string, enum: [override, application-frames, failure-site, fallback] }
+        source_kind: { type: string }
+        exception_type: { type: string }
+        frames: { type: array, items: { $ref: '#/components/schemas/IssueGroupingFrame' } }
+        route: { type: string }
+        http_status: { type: integer }
+        discriminator_kind: { type: string, enum: [none, override, error-code, message] }
+        discriminator_value: { type: string, description: "Selected sanitized override, stable error code, or normalized message. May be empty for an empty message." }
+
     IssueOccurrence:
       description: "Retained sanitized occurrence with verified platform attribution and optional debugger correlation."
       allOf:
@@ -81580,12 +81778,14 @@ components:
           required: [deployment_id, received_at, attribution]
           properties:
             id: { type: string, format: uuid }
+            original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
             verified_platform_tenant_id: { type: string, format: uuid }
             debug_request_id: { type: string, format: uuid }
             attribution: { type: string }
+            grouping_explanation: { $ref: '#/components/schemas/IssueGroupingExplanation' }
 
     IssueRelease:
       description: "Immutable deployment metadata and aggregate observations for one issue."
@@ -81600,12 +81800,13 @@ components:
         last_seen_at: { type: string, format: date-time }
 
     IssueActivity:
-      description: "An audited issue lifecycle or ownership transition."
+      description: "An audited issue lifecycle, ownership, or manual regrouping transition."
       type: object
       required: [id, action, created_at, details]
       properties:
         id: { type: string, format: uuid }
         action: { type: string }
+        original_issue_id: { type: string, format: uuid, readOnly: true }
         actor_account_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         details: { type: object, additionalProperties: { type: string } }
@@ -81659,11 +81860,13 @@ components:
         rules: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/IssueOwnershipRule' } }
 
     IssueDetail:
-      description: "Issue metadata and independently paginated occurrence, release, and activity collections."
+      description: "Canonical issue metadata and independently paginated combined history. Linked IDs resolve to their current canonical issue; original identities and counters appear in group_members."
       type: object
       required: [issue, events, releases, activity, impact]
       properties:
+        split_rules: { type: array, maxItems: 256, description: Routing rules associated with the displayed original identities or derived branches; lower priority wins per source., items: { $ref: '#/components/schemas/IssueSplitRule' } }
         issue: { $ref: '#/components/schemas/Issue' }
+        group_members: { type: array, minItems: 2, maxItems: 32, description: Original fingerprint identities with their own lifetime counters., items: { $ref: '#/components/schemas/Issue' } }
         events: { type: array, items: { $ref: '#/components/schemas/IssueOccurrence' } }
         releases: { type: array, items: { $ref: '#/components/schemas/IssueRelease' } }
         activity: { type: array, items: { $ref: '#/components/schemas/IssueActivity' } }
@@ -81690,12 +81893,77 @@ components:
         duplicate: { type: boolean }
         regressed: { type: boolean }
 
+    IssueSplitMatcher:
+      description: Exact equality against sanitized stored evidence; every populated field must match. At least one nonempty selector is required. Empty fields are wildcards.
+      type: object
+      additionalProperties: false
+      properties:
+        exception_type: { type: string, maxLength: 256 }
+        error_code: { type: string, maxLength: 256 }
+        route: { type: string, maxLength: 256 }
+        source_kind: { type: string, enum: ['', exception, http, runtime, worker] }
+
+    IssueSplitPreview:
+      description: Read-only counts for one original fingerprint, across all retained evidence. Unavailable lifetime history cannot be classified; no split or routing change is performed.
+      type: object
+      required: [original_issue_id, canonical_issue_id, matcher, lifetime_event_count, retained_event_count, matching_event_count, nonmatching_event_count, unavailable_history_event_count, matching_event_ids]
+      properties:
+        eligible_event_count: { type: integer, format: int64, minimum: 0, readOnly: true, description: Current retained matches a new rule would move; zero when application_status is not new-rule. }
+        shadowed_event_count: { type: integer, format: int64, minimum: 0, readOnly: true, description: Retained selector matches claimed by already enabled rules. }
+        eligible_event_ids: { type: array, maxItems: 10, readOnly: true, items: { type: string, format: uuid }, description: Newest eligible occurrence IDs after rule priority exclusions. }
+        application_status: { type: string, enum: [new-rule, existing-rule, derived-branch, rule-limit], readOnly: true, description: Whether this matcher can create a new rule in the current snapshot; plan capacity is checked during application. }
+        existing_rule_id: { type: string, format: uuid, readOnly: true, description: Existing exact matcher returned by repeat creation without replay or re-enable. }
+        existing_target_issue_id: { type: string, format: uuid, readOnly: true, description: Stable branch of the existing exact matcher. }
+        original_issue_id: { type: string, format: uuid }
+        canonical_issue_id: { type: string, format: uuid }
+        matcher: { $ref: '#/components/schemas/IssueSplitMatcher' }
+        lifetime_event_count: { type: integer, format: int64, minimum: 0 }
+        retained_event_count: { type: integer, format: int64, minimum: 0 }
+        matching_event_count: { type: integer, format: int64, minimum: 0 }
+        nonmatching_event_count: { type: integer, format: int64, minimum: 0 }
+        unavailable_history_event_count: { type: integer, format: int64, minimum: 0 }
+        matching_event_ids: { type: array, maxItems: 10, description: Newest matching occurrence IDs, bounded independently of total matches., items: { type: string, format: uuid } }
+
+    IssueSplitRule:
+      description: Immutable exact-match routing rule. Creating it moves eligible retained matches still assigned to the original source into an open branch. Earlier enabled rules take priority. Expired history remains on the source. Toggling affects future captures only; retries retain their existing routing identity.
+      type: object
+      required: [id, source_issue_id, target_issue_id, priority, matcher, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_issue_id: { type: string, format: uuid }
+        target_issue_id: { type: string, format: uuid }
+        priority: { type: integer, minimum: 1, maximum: 8 }
+        matcher: { $ref: '#/components/schemas/IssueSplitMatcher' }
+        enabled: { type: boolean }
+        initial_moved_event_count: { type: integer, format: int64, minimum: 0 }
+        unavailable_history_event_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    IssueSplitRuleUndoRequest:
+      description: Reviewed canonical destination required for atomic split-rule undo; a changed destination rejects the operation without disabling the rule.
+      type: object
+      additionalProperties: false
+      required: [canonical_source_issue_id]
+      properties:
+        canonical_source_issue_id: { type: string, format: uuid }
+
+    IssueSplitRuleUpdate:
+      description: Enable or disable routing for future captures without moving existing occurrences or changing the immutable rule definition.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+
     IssueActionRequest:
-      description: "Desired ownership or lifecycle action, validated within the app scope."
+      description: "Desired ownership, lifecycle, or reversible regrouping action within the app. Merge adopts the destination owner/state; split opens one linked original group. Merge/split responses identify the remaining canonical issue."
       type: object
       required: [action]
       properties:
-        action: { type: string, enum: [assign,resolve,reopen,ignore] }
+        action: { type: string, enum: [assign,resolve,reopen,ignore,merge,split] }
+        target_issue_id: { type: string, format: uuid, description: Required only for merge; destination in the same app and environment. }
+        member_issue_id: { type: string, format: uuid, description: Required only for split; linked original identity to detach. }
         assignee_account_id: { type: string, format: uuid }
         fixed_deployment_id: { type: string, format: uuid }
         ignored_until: { type: string, format: date-time }

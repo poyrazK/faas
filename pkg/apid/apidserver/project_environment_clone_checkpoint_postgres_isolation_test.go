@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"reflect"
 	"strings"
 	"testing"
@@ -80,7 +81,7 @@ func checkpointIsolationFixture(t *testing.T) (*cloneCoordinatorFixture, *checkp
 	t.Helper()
 	f, base, restore, id := checkpointPostgresRestoreFixture(t)
 	store := &checkpointIsolationFailureStore{checkpointPostgresRestoreFailureStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	driver := &checkpointIsolationTestDriver{checkpointPostgresRestoreTestDriver: restore, f: f}
 	var err error
 	f.lease, _, err = f.srv.restoreCheckpointPostgres(t.Context(), f.lease, driver, 10)
@@ -91,7 +92,7 @@ func checkpointIsolationFixture(t *testing.T) (*cloneCoordinatorFixture, *checkp
 }
 func assertCheckpointIsolationPrivate(t *testing.T, f *cloneCoordinatorFixture, store *checkpointIsolationFailureStore, id string, adopted bool) {
 	t.Helper()
-	fork, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
+	fork, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}

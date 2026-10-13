@@ -4642,7 +4642,10 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		// uses this to enforce compute_nodes.vcpu_budget per node;
 		// absent or zero is treated as 0 by the chooser (the
 		// per-node budget is the gate, not the absolute number).
-		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
+		usedVCPU[n.ID] = int64(e.ledger.EffectiveVCPUForNode(n.ID, n.VCPUBudget))
+		// ADR-957: under quiet pause admission both CPU gates count only
+		// active instances, as Admit does; without it these are bookings.
+		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
 	}
 	return placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,

@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func entityOutboxHook(t *testing.T, e entityHTTPEnv, app state.App) state.AppWebhook {
@@ -47,8 +48,8 @@ func seedAPIOutbox(t *testing.T, e entityHTTPEnv, app state.App, request api.Dur
 }
 
 type lostEntityOutboxAcceptanceStore struct {
-	*state.MemStore
-	lose atomic.Bool
+	MemStore *state.MemStore
+	lose     atomic.Bool
 }
 
 func (s *lostEntityOutboxAcceptanceStore) AcceptEntityOutboxDelivery(ctx context.Context, in state.AppWebhookDelivery) (string, error) {
@@ -75,7 +76,7 @@ func TestDurableEntityOutboxRestartsAfterLostAcceptanceAcknowledgement(t *testin
 	work := seedAPIOutbox(t, e, app, request, hook.ID)
 	store := &lostEntityOutboxAcceptanceStore{MemStore: e.store}
 	store.lose.Store(true)
-	(*e.s.Store()) = store
+	(*e.s.Store()) = statetest.NewMem(store)
 	if err := (*e.s.Durable()).DeliverOutbox(t.Context(), work); err == nil {
 		t.Fatal("lost acceptance ACK reported success")
 	}
