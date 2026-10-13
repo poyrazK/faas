@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,6 +38,9 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			available = s.executionAPIEnabled
 		case "object-storage":
 			available = s.object.ObjectStorageProvisioningReady()
+		case outbound.AIGatewayCapability:
+			// ADR-998: the platform gate and the staged rollout.
+			available = s.aiGatewayEnabled && s.aiGatewayRollout.Allows(acct.ID)
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())

@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -74,7 +75,8 @@ type server struct {
 	appEvents                              appevents.Service // ADR-977; Host wired in newServer
 	featureFlagsEnabled                    bool
 	aiGatewayEnabled                       bool
-	outboundAI                             outboundai.Service // ADR-977; Host wired in newServer
+	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
+	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
 	flagsWorkloadVerifier                  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard

@@ -5926,6 +5926,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
 			WithDocs(docsBase + "/plans#analytics")
 	}
+	if feature == "ai_gateway" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI gateway",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
+			WithDocs(docsBase + "/ai-gateway#plans")
+	}
 	if feature == "sync_invoke" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include synchronous invocation",

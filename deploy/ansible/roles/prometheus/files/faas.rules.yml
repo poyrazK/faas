@@ -2288,6 +2288,34 @@ groups:
           description: "outboundd has failed closed while admitting integration {{ $labels.integration_id }} for 5m. Check Postgres connectivity, pool saturation, and the outbound_admission_state/leases tables."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
 
+      # ADR-998: AI settlement is what makes token and cost caps hard. A
+      # failing settlement still returns the provider's answer, so the only
+      # sign is this counter: until it recovers, usage, cost and budgets
+      # under-count.
+      - alert: FaasAIGatewaySettlementFailing
+        expr: sum(rate(outbound_ai_usage_record_events_total{event=~"state_error|unavailable"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "AI gateway usage is not being settled"
+          description: "outboundd has failed to record AI usage for 10m. Calls still succeed, but token and cost caps, usage reports and alerts under-count until settlement recovers. Check Postgres for outboundd; close the AI gateway if it does not recover."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      - alert: FaasAIGatewayProviderErrors
+        expr: (sum(rate(outbound_ai_requests_total{outcome="error"}[15m])) / sum(rate(outbound_ai_requests_total[15m])) > 0.5) and sum(rate(outbound_ai_requests_total[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "Most AI gateway calls are failing at the provider"
+          description: "More than half of AI calls returned provider errors for 15m. Check provider status, key pool cooldowns and circuit breaker events before suspecting the gateway."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
