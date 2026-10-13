@@ -30,6 +30,7 @@ func (c *Client) ListIssues(ctx context.Context, slug, state, environment, curso
 }
 
 type IssueListOptions struct {
+	Team                                       string
 	Tag                                        string
 	State, Environment, Assignee, Sort, Cursor string
 	MinCustomers                               int64
@@ -45,6 +46,7 @@ func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environmen
 func (c *Client) ListIssuesWithOptions(ctx context.Context, slug string, options IssueListOptions) (ListIssuesResponse, error) {
 	q := url.Values{}
 	q.Set("state", options.State)
+	q.Set("team", options.Team)
 	if options.Tag != "" {
 		q.Set("tag", options.Tag)
 	}
@@ -194,4 +196,30 @@ func (c *Client) ListIssuesForSavedView(ctx context.Context, slug, key, cursor s
 	var out ListIssuesResponse
 	err = c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err
+}
+
+func (c *Client) ListIssueTeams(ctx context.Context, slug string) (ListIssueTeamsResponse, error) {
+	var out ListIssueTeamsResponse
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-teams", nil, &out)
+	return out, err
+}
+func (c *Client) GetIssueTeam(ctx context.Context, slug, key string) (IssueTeam, error) {
+	var out IssueTeam
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), nil, &out)
+	return out, err
+}
+func (c *Client) PutIssueTeam(ctx context.Context, slug, key string, in PutIssueTeamRequest) (IssueTeam, error) {
+	var out IssueTeam
+	err := c.do(ctx, "PUT", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), in, &out)
+	return out, err
+}
+func (c *Client) DeleteIssueTeam(ctx context.Context, slug, key string) error {
+	return c.do(ctx, "DELETE", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), nil, nil)
+}
+func (c *Client) ListIssuesForTeam(ctx context.Context, slug, key, cursor string) (ListIssuesResponse, error) {
+	team, err := c.GetIssueTeam(ctx, slug, key)
+	if err != nil {
+		return ListIssuesResponse{}, err
+	}
+	return c.ListIssuesWithOptions(ctx, slug, IssueListOptions{Team: team.ID, State: "open", Cursor: cursor})
 }

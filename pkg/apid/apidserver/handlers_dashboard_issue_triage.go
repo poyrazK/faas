@@ -61,6 +61,7 @@ func (s *server) dashboardIssueBulkActionForAccount(w http.ResponseWriter, r *ht
 	switch in.Action.Action {
 	case "assign":
 		in.Action.AssigneeAccountID = r.FormValue("assignee_account_id")
+		in.Action.AssigneeTeamID = r.FormValue("assignee_team_id")
 	case "resolve":
 		in.Action.FixedDeploymentID = r.FormValue("fixed_deployment_id")
 	case "ignore":

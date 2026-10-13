@@ -1577,6 +1577,7 @@ type Querier interface {
 	IsMailSuppressed(ctx context.Context, db DBTX, lower string) (bool, error)
 	IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddActivityParams) (IssueActivity, error)
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
+	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
 	IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error)
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
@@ -1587,6 +1588,7 @@ type Querier interface {
 	IssueCountReadySourceMaps(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountRecentEvents(ctx context.Context, db DBTX, arg IssueCountRecentEventsParams) (int64, error)
 	IssueCountSavedViews(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueCountTeams(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParams) (AppIssue, error)
 	IssueCreateSplitGroup(ctx context.Context, db DBTX, arg IssueCreateSplitGroupParams) (AppIssue, error)
@@ -1595,6 +1597,8 @@ type Querier interface {
 	IssueDeleteImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueDeleteOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueDeleteSavedView(ctx context.Context, db DBTX, arg IssueDeleteSavedViewParams) (int64, error)
+	IssueDeleteTeam(ctx context.Context, db DBTX, arg IssueDeleteTeamParams) (int64, error)
+	IssueDeleteTeamMembers(ctx context.Context, db DBTX, teamID pgtype.UUID) error
 	IssueDeploymentScope(ctx context.Context, db DBTX, arg IssueDeploymentScopeParams) (IssueDeploymentScopeRow, error)
 	IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) (int64, error)
 	IssueExpiredIgnores(ctx context.Context, db DBTX, arg IssueExpiredIgnoresParams) ([]IssueExpiredIgnoresRow, error)
@@ -1608,6 +1612,7 @@ type Querier interface {
 	IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLockedParams) (AppIssue, error)
 	IssueGetSavedView(ctx context.Context, db DBTX, arg IssueGetSavedViewParams) (AppIssueSavedView, error)
 	IssueGetSplitRule(ctx context.Context, db DBTX, arg IssueGetSplitRuleParams) (IssueSplitRule, error)
+	IssueGetTeam(ctx context.Context, db DBTX, arg IssueGetTeamParams) (AppIssueTeam, error)
 	IssueGroupMembers(ctx context.Context, db DBTX, id pgtype.UUID) ([]AppIssue, error)
 	IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasSplitAuditParams) (bool, error)
 	IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error)
@@ -1627,6 +1632,7 @@ type Querier interface {
 	IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueListReleasesRow, error)
 	IssueListSavedViews(ctx context.Context, db DBTX, arg IssueListSavedViewsParams) ([]AppIssueSavedView, error)
 	IssueListSourceSplitRules(ctx context.Context, db DBTX, sourceIssueID pgtype.UUID) ([]IssueSplitRule, error)
+	IssueListTeams(ctx context.Context, db DBTX, arg IssueListTeamsParams) ([]AppIssueTeam, error)
 	IssueListTokens(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueIngestToken, error)
 	IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockAppRow, error)
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
@@ -1636,6 +1642,7 @@ type Querier interface {
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
 	IssuePutSavedView(ctx context.Context, db DBTX, arg IssuePutSavedViewParams) (AppIssueSavedView, error)
+	IssuePutTeam(ctx context.Context, db DBTX, arg IssuePutTeamParams) (AppIssueTeam, error)
 	IssueReadSourceMaps(ctx context.Context, db DBTX, arg IssueReadSourceMapsParams) (IssueSourceMapArtifact, error)
 	// Independent aggregates avoid multiplying request weights by issue occurrences.
 	IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueReleaseHealthParams) (IssueReleaseHealthRow, error)
@@ -1650,6 +1657,10 @@ type Querier interface {
 	IssueSourceMapDeploymentOwner(ctx context.Context, db DBTX, arg IssueSourceMapDeploymentOwnerParams) (pgtype.UUID, error)
 	IssueSplitPreviewCounts(ctx context.Context, db DBTX, arg IssueSplitPreviewCountsParams) (IssueSplitPreviewCountsRow, error)
 	IssueSyncGroupAction(ctx context.Context, db DBTX, id pgtype.UUID) error
+	IssueTeamAllowed(ctx context.Context, db DBTX, arg IssueTeamAllowedParams) (bool, error)
+	IssueTeamExists(ctx context.Context, db DBTX, arg IssueTeamExistsParams) (bool, error)
+	IssueTeamMembers(ctx context.Context, db DBTX, teamID pgtype.UUID) ([]pgtype.UUID, error)
+	IssueTeamReferenced(ctx context.Context, db DBTX, teamID pgtype.UUID) (bool, error)
 	IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTokenStillValidParams) (bool, error)
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error)

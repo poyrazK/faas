@@ -812,6 +812,7 @@ export type { IssueSplitRule } from './models/IssueSplitRule.js';
 export type { IssueSplitRuleUndoRequest } from './models/IssueSplitRuleUndoRequest.js';
 export type { IssueSplitRuleUpdate } from './models/IssueSplitRuleUpdate.js';
 export type { IssueSymbolicationResult } from './models/IssueSymbolicationResult.js';
+export type { IssueTeam } from './models/IssueTeam.js';
 export type { JobArtifactDownloadResponse } from './models/JobArtifactDownloadResponse.js';
 export type { JobDeletedResponse } from './models/JobDeletedResponse.js';
 export type { JobFinishedWebhookPayload } from './models/JobFinishedWebhookPayload.js';
@@ -847,6 +848,7 @@ export type { ListInvocationsResponse } from './models/ListInvocationsResponse.j
 export type { ListIssueIngestTokensResponse } from './models/ListIssueIngestTokensResponse.js';
 export type { ListIssueSavedViewsResponse } from './models/ListIssueSavedViewsResponse.js';
 export type { ListIssuesResponse } from './models/ListIssuesResponse.js';
+export type { ListIssueTeamsResponse } from './models/ListIssueTeamsResponse.js';
 export type { ListJobRunsResponse } from './models/ListJobRunsResponse.js';
 export type { ListJobsResponse } from './models/ListJobsResponse.js';
 export type { ListJobTaskAttemptsResponse } from './models/ListJobTaskAttemptsResponse.js';
@@ -1644,6 +1646,7 @@ export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenc
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutIssueSavedViewRequest } from './models/PutIssueSavedViewRequest.js';
+export type { PutIssueTeamRequest } from './models/PutIssueTeamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';

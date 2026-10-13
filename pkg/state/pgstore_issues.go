@@ -42,13 +42,13 @@ func issueNullableTime(t *time.Time) pgtype.Timestamptz {
 	return issueTime(*t)
 }
 func issueRow(r sqlc.AppIssue) api.Issue {
-	return api.Issue{SplitSourceIssueID: issueID(r.SplitSourceIssueID), ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint, GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State, AssigneeAccountID: issueID(r.AssigneeAccountID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time, EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt), FixedDeploymentID: issueID(r.FixedDeploymentID), FixedDeploymentCreatedAt: issueTimePtr(r.FixedDeploymentCreatedAt), IgnoredUntil: issueTimePtr(r.IgnoredUntil)}
+	return api.Issue{SplitSourceIssueID: issueID(r.SplitSourceIssueID), ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint, GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State, AssigneeAccountID: issueID(r.AssigneeAccountID), AssigneeTeamID: issueID(r.AssigneeTeamID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time, EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt), FixedDeploymentID: issueID(r.FixedDeploymentID), FixedDeploymentCreatedAt: issueTimePtr(r.FixedDeploymentCreatedAt), IgnoredUntil: issueTimePtr(r.IgnoredUntil)}
 }
 func issueImpactListRow(r sqlc.IssueListByImpactRow) api.Issue {
 	return api.Issue{
 		SplitSourceIssueID: issueID(r.SplitSourceIssueID), ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint,
 		GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State,
-		AssigneeAccountID: issueID(r.AssigneeAccountID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time,
+		AssigneeAccountID: issueID(r.AssigneeAccountID), AssigneeTeamID: issueID(r.AssigneeTeamID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time,
 		EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt),
 		FixedDeploymentID: issueID(r.FixedDeploymentID), FixedDeploymentCreatedAt: issueTimePtr(r.FixedDeploymentCreatedAt),
 		IgnoredUntil: issueTimePtr(r.IgnoredUntil),
@@ -258,17 +258,17 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 				ExceptionType:     stored.ExceptionType.String,
 				SourceKind:        stored.SourceKind.String,
 				RoutePrefix:       stored.RoutePrefix.String,
-				AssigneeAccountID: issueID(stored.AssigneeAccountID),
+				AssigneeAccountID: issueID(stored.AssigneeAccountID), AssigneeTeamID: issueID(stored.AssigneeTeamID),
 			}
 			if !issueOwnershipRuleMatches(rule, in.Event) {
 				continue
 			}
-			allowed, allowedErr := q.IssueAssigneeAllowed(ctx, tx, sqlc.IssueAssigneeAllowedParams{AppID: owner.ID, Assignee: stored.AssigneeAccountID})
+			allowed, allowedErr := issueAssignmentAllowed(ctx, q, tx, owner.ID, stored.AssigneeAccountID, stored.AssigneeTeamID)
 			if allowedErr != nil {
 				return api.IssueEventResponse{}, allowedErr
 			}
 			if allowed {
-				row, err = q.IssueSetNewIssueAssignee(ctx, tx, sqlc.IssueSetNewIssueAssigneeParams{ID: row.ID, AssigneeAccountID: stored.AssigneeAccountID})
+				row, err = q.IssueSetNewIssueAssignee(ctx, tx, sqlc.IssueSetNewIssueAssigneeParams{ID: row.ID, AssigneeAccountID: stored.AssigneeAccountID, AssigneeTeamID: stored.AssigneeTeamID})
 				if err != nil {
 					return api.IssueEventResponse{}, err
 				}
@@ -293,7 +293,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		return api.IssueEventResponse{}, err
 	}
 	if autoAssigned != nil {
-		details := map[string]string{"assignee_account_id": autoAssigned.AssigneeAccountID, "assignment_source": "ownership_rule"}
+		details := map[string]string{"assignee_account_id": autoAssigned.AssigneeAccountID, "assignee_team_id": autoAssigned.AssigneeTeamID, "assignment_source": "ownership_rule"}
 		if autoAssigned.ExceptionType != "" {
 			details["exception_type"] = autoAssigned.ExceptionType
 		}
@@ -434,7 +434,7 @@ func (s *PgStore) GetIssueOwnershipRules(ctx context.Context, app string) (api.I
 		out.Rules = append(out.Rules, api.IssueOwnershipRule{
 			SourcePathPrefix: row.SourcePathPrefix.String, Tag: row.TagFilter.String,
 			ExceptionType: row.ExceptionType.String, SourceKind: row.SourceKind.String,
-			RoutePrefix: row.RoutePrefix.String, AssigneeAccountID: issueID(row.AssigneeAccountID),
+			RoutePrefix: row.RoutePrefix.String, AssigneeAccountID: issueID(row.AssigneeAccountID), AssigneeTeamID: issueID(row.AssigneeTeamID),
 		})
 	}
 	return out, nil
@@ -459,7 +459,7 @@ func (s *PgStore) SetIssueOwnershipRules(ctx context.Context, app, account strin
 		return api.IssueOwnershipRules{}, ErrNotFound
 	}
 	for _, rule := range rules {
-		allowed, checkErr := q.IssueAssigneeAllowed(ctx, tx, sqlc.IssueAssigneeAllowedParams{AppID: owner.ID, Assignee: issueUUID(rule.AssigneeAccountID)})
+		allowed, checkErr := issueAssignmentAllowed(ctx, q, tx, owner.ID, issueUUID(rule.AssigneeAccountID), issueUUID(rule.AssigneeTeamID))
 		if checkErr != nil {
 			return api.IssueOwnershipRules{}, checkErr
 		}
@@ -478,7 +478,7 @@ func (s *PgStore) SetIssueOwnershipRules(ctx context.Context, app, account strin
 			ExceptionType:     pgtype.Text{String: rule.ExceptionType, Valid: rule.ExceptionType != ""},
 			SourceKind:        pgtype.Text{String: rule.SourceKind, Valid: rule.SourceKind != ""},
 			RoutePrefix:       pgtype.Text{String: rule.RoutePrefix, Valid: rule.RoutePrefix != ""},
-			AssigneeAccountID: issueUUID(rule.AssigneeAccountID),
+			AssigneeAccountID: issueUUID(rule.AssigneeAccountID), AssigneeTeamID: issueUUID(rule.AssigneeTeamID),
 		}); err != nil {
 			return api.IssueOwnershipRules{}, err
 		}
@@ -561,7 +561,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 			CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID),
 			CursorCustomers: pgtype.Int8{Int64: cur.ImpactCustomers, Valid: cur.ID != "" && sortBy == "impact"},
 			PageLimit:       api.IssuePageSize + 1, AppID: issueUUID(app), State: filter.State, Environment: filter.Environment,
-			AssigneeAccountID: issueUUID(filter.AssigneeAccountID), Unassigned: filter.Unassigned,
+			AssigneeAccountID: issueUUID(filter.AssigneeAccountID), AssigneeTeamID: issueUUID(filter.TeamID), Unassigned: filter.Unassigned,
 			Since: issueTime(windowEnd.Add(-api.IssueImpactSummaryWindow)), Until: issueTime(windowEnd),
 		})
 		if err != nil {
@@ -586,7 +586,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 	}
 	rows, err := sqlc.New().IssueList(ctx, s.pool, sqlc.IssueListParams{
 		AppID: issueUUID(app), State: filter.State, Environment: filter.Environment,
-		AssigneeAccountID: issueUUID(filter.AssigneeAccountID), Unassigned: filter.Unassigned,
+		AssigneeAccountID: issueUUID(filter.AssigneeAccountID), AssigneeTeamID: issueUUID(filter.TeamID), Unassigned: filter.Unassigned,
 		CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1,
 	})
 	if err != nil {
@@ -769,13 +769,18 @@ func actOnIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, acto
 		}
 		return issueRow(row), nil
 	}
-	p := sqlc.IssueUpdateActionParams{ID: row.ID, State: row.State, Assignee: row.AssigneeAccountID, ResolvedAt: row.ResolvedAt, FixedDeploymentID: row.FixedDeploymentID, FixedDeploymentCreatedAt: row.FixedDeploymentCreatedAt, IgnoredUntil: row.IgnoredUntil}
+	p := sqlc.IssueUpdateActionParams{ID: row.ID, State: row.State, Assignee: row.AssigneeAccountID, AssigneeTeamID: row.AssigneeTeamID, ResolvedAt: row.ResolvedAt, FixedDeploymentID: row.FixedDeploymentID, FixedDeploymentCreatedAt: row.FixedDeploymentCreatedAt, IgnoredUntil: row.IgnoredUntil}
 	details := map[string]string{}
 	action := ""
 	switch in.Action {
 	case "assign":
-		if in.AssigneeAccountID != "" {
-			ok, err := q.IssueAssigneeAllowed(ctx, tx, sqlc.IssueAssigneeAllowedParams{AppID: row.AppID, Assignee: issueUUID(in.AssigneeAccountID)})
+		account, team, err := api.NormalizeIssueAssignment(in.AssigneeAccountID, in.AssigneeTeamID)
+		if err != nil {
+			return api.Issue{}, ErrInvalidArgument
+		}
+		in.AssigneeAccountID, in.AssigneeTeamID = account, team
+		if in.AssigneeAccountID != "" || in.AssigneeTeamID != "" {
+			ok, err := issueAssignmentAllowed(ctx, q, tx, row.AppID, issueUUID(in.AssigneeAccountID), issueUUID(in.AssigneeTeamID))
 			if err != nil {
 				return api.Issue{}, err
 			}
@@ -783,11 +788,13 @@ func actOnIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, acto
 				return api.Issue{}, ErrNotFound
 			}
 		}
-		if issueID(row.AssigneeAccountID) == in.AssigneeAccountID {
+		if issueID(row.AssigneeAccountID) == in.AssigneeAccountID && issueID(row.AssigneeTeamID) == in.AssigneeTeamID {
 			return issueGroupView(ctx, q, tx, row)
 		}
 		p.Assignee = issueUUID(in.AssigneeAccountID)
+		p.AssigneeTeamID = issueUUID(in.AssigneeTeamID)
 		details["assignee_account_id"] = in.AssigneeAccountID
+		details["assignee_team_id"] = in.AssigneeTeamID
 		action = "assigned"
 	case "resolve":
 		if row.State == "resolved" && issueID(row.FixedDeploymentID) == in.FixedDeploymentID {

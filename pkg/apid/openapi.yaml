@@ -13502,6 +13502,91 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issue-teams:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listIssueTeams
+      summary: List app-scoped teams and their members.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Up to 20 teams, ordered by name and key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueTeamsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-teams/{team_key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: team_key
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+    get:
+      tags: [apps]
+      operationId: getIssueTeam
+      summary: Get a team by its stable key.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Team identity, name, member roster and editor metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTeam' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: putIssueTeam
+      summary: Create or replace a team name and complete membership roster.
+      description: Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueTeamRequest' }
+      responses:
+        '200':
+          description: Team identity and complete member roster.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTeam' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Team quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueTeam
+      summary: Delete an unused team.
+      description: Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Team deleted. }
+        '409': { description: Team still owns issues or routing rules. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+
   /v1/apps/{slug}/issue-release-comparison:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -13581,6 +13666,10 @@ paths:
           description: Exact issue environment namespace.
           in: query
           schema: { type: string }
+        - name: team
+          description: Shared inbox for a team UUID in this app. Mutually exclusive with assignee.
+          in: query
+          schema: { type: string, format: uuid }
         - name: assignee
           description: Filter by me, unassigned, or an owner account UUID.
           in: query
@@ -81899,6 +81988,7 @@ components:
         fixed_deployment_id: { type: string, format: uuid }
         fixed_deployment_created_at: { type: string, format: date-time }
         ignored_until: { type: string, format: date-time }
+        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
 
     IssueImpactSummary:
       description: "Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24 hours."
@@ -82005,6 +82095,30 @@ components:
       properties:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
+    IssueTeam:
+      type: object
+      required: [id, key, name, member_account_ids, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$' }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        member_account_ids: { type: array, maxItems: 50, uniqueItems: true, items: { type: string, format: uuid } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by_account_id: { type: string, format: uuid }
+    PutIssueTeamRequest:
+      type: object
+      additionalProperties: false
+      required: [name, member_account_ids]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, description: Maximum 64 UTF-8 bytes without control characters. }
+        member_account_ids: { type: array, minItems: 1, maxItems: 50, uniqueItems: true, items: { type: string, format: uuid } }
+    ListIssueTeamsResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/IssueTeam' } }
+
     IssueSavedViewFilters:
       type: object
       additionalProperties: false
@@ -82015,6 +82129,8 @@ components:
         sort: { type: string, enum: [recent, impact], default: recent }
         min_customers: { type: integer, format: int64, minimum: 0, default: 0 }
         tag: { type: string, maxLength: 193, description: Exact allowlisted operational key=value in retained occurrences over 24h; value is limited to 128 UTF-8 bytes. }
+        team: { type: string, format: uuid, description: App-scoped team inbox; mutually exclusive with assignee. }
+
     PutIssueSavedViewRequest:
       type: object
       additionalProperties: false
@@ -82042,17 +82158,17 @@ components:
           items: { $ref: '#/components/schemas/IssueSavedView' }
 
     IssueOwnershipRule:
-      description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account."
+      description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account or team. Exactly one assignment target is required."
       type: object
       additionalProperties: false
-      required: [assignee_account_id]
       properties:
+        assignee_account_id: { type: string, format: uuid }
         exception_type: { type: string, minLength: 1, maxLength: 256, description: Exact exception type match. }
         source_kind: { type: string, enum: [exception, http, runtime, worker] }
         route_prefix: { type: string, pattern: '^/', maxLength: 256, description: Path prefix; matches only at a path-segment boundary. }
         source_path_prefix: { type: string, minLength: 1, maxLength: 256, description: 'Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments are rejected. No glob or filesystem access.' }
         tag: { type: string, maxLength: 193, description: 'Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.' }
-        assignee_account_id: { type: string, format: uuid }
+        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
 
     IssueOwnershipRules:
       description: "Complete ordered app-level ownership policy. An empty rules list disables automatic assignment."
@@ -82198,9 +82314,11 @@ components:
       required: [action]
       properties:
         action: { type: string, enum: [assign, resolve, ignore, reopen] }
-        assignee_account_id: { type: string, format: uuid, description: Only for assign; omit or empty to unassign. }
+        assignee_account_id: { type: string, format: uuid, description: Only for assign; omit both assignment targets to unassign. }
         fixed_deployment_id: { type: string, format: uuid, description: Required only for resolve. }
         ignored_until: { type: string, format: date-time, description: Required only for ignore; future and within 90 days. }
+        assignee_team_id: { type: string, format: uuid, description: Only for assign; mutually exclusive with assignee_account_id. }
+
     BulkIssueActionRequest:
       type: object
       additionalProperties: false
@@ -82233,6 +82351,7 @@ components:
         assignee_account_id: { type: string, format: uuid }
         fixed_deployment_id: { type: string, format: uuid }
         ignored_until: { type: string, format: date-time }
+        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
 
     CreateIssueIngestTokenRequest:
       description: "Create a short-lived reporting credential for one existing deployment and environment."

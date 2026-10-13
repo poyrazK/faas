@@ -122,7 +122,7 @@ func issueSplitGroup(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, root sqlc.
 		return sqlc.AppIssue{}, ErrIssueGroupingConflict
 	}
 	member, err := q.IssueUpdateAction(ctx, tx, sqlc.IssueUpdateActionParams{
-		ID: issueUUID(in.MemberIssueID), State: "open", Assignee: root.AssigneeAccountID,
+		ID: issueUUID(in.MemberIssueID), State: "open", Assignee: root.AssigneeAccountID, AssigneeTeamID: root.AssigneeTeamID,
 	})
 	if err != nil {
 		return sqlc.AppIssue{}, err

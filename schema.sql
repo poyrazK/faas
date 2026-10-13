@@ -15963,15 +15963,34 @@ CREATE TABLE public.app_issue_impact_alert_policies (
 -- Name: app_issue_ownership_rules; Type: TABLE; Schema: public; Owner: -
 --
 
+CREATE TABLE public.app_issue_teams (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ team_key text NOT NULL CHECK(team_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'),
+ name text NOT NULL CHECK(octet_length(name) BETWEEN 1 AND 64),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ updated_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ UNIQUE(app_id,team_key), UNIQUE(app_id,id)
+);
+CREATE TABLE public.app_issue_team_members (
+ team_id uuid NOT NULL REFERENCES public.app_issue_teams(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ PRIMARY KEY(team_id,account_id)
+);
+
 CREATE TABLE public.app_issue_ownership_rules (
     app_id uuid NOT NULL,
     rule_order integer NOT NULL,
     exception_type text,
     source_kind text,
     route_prefix text,
-    assignee_account_id uuid NOT NULL,
+    assignee_account_id uuid,
     source_path_prefix text,
     tag_filter text,
+    assignee_team_id uuid,
+    CONSTRAINT app_issue_ownership_rules_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)=1),
+    CONSTRAINT app_issue_ownership_rules_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES public.app_issue_teams(app_id,id),
     CONSTRAINT app_issue_ownership_rules_check CHECK ((exception_type IS NOT NULL AND length(exception_type) BETWEEN 1 AND 256) OR source_kind IS NOT NULL OR route_prefix IS NOT NULL OR source_path_prefix IS NOT NULL OR tag_filter IS NOT NULL),
     CONSTRAINT app_issue_ownership_rules_source_path_prefix_check CHECK(source_path_prefix IS NULL OR octet_length(source_path_prefix) BETWEEN 1 AND 256),
     CONSTRAINT app_issue_ownership_rules_tag_filter_check CHECK(tag_filter IS NULL OR (strpos(tag_filter,'=')>0 AND split_part(tag_filter,'=',1) IN ('component','operation','feature_flag','feature_variant','dependency','region','job_type','workflow','state','error_class','release_channel','runtime') AND octet_length(substring(tag_filter FROM strpos(tag_filter,'=')+1))<=128)),
@@ -16004,6 +16023,9 @@ CREATE TABLE public.app_issues (
     fixed_deployment_created_at timestamp with time zone,
     ignored_until timestamp with time zone,
     split_source_issue_id uuid,
+    assignee_team_id uuid,
+    CONSTRAINT app_issues_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)<=1),
+    CONSTRAINT app_issues_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES public.app_issue_teams(app_id,id),
     CONSTRAINT app_issues_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_issues_event_count_check CHECK ((event_count >= 0)),
     CONSTRAINT app_issues_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -22149,7 +22171,8 @@ CREATE VIEW public.issue_group_rollups AS
     i.fixed_deployment_id,
     i.fixed_deployment_created_at,
     i.ignored_until,
-    i.split_source_issue_id
+    i.split_source_issue_id,
+    i.assignee_team_id
    FROM (public.app_issues i
      CROSS JOIN LATERAL ( SELECT min(m.first_seen_at) AS first_seen_at,
             max(m.last_seen_at) AS last_seen_at,
@@ -58192,3 +58215,5 @@ CREATE TABLE public.app_issue_saved_views (
  updated_by_account_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
  PRIMARY KEY(app_id,view_key)
 );
+
+CREATE INDEX app_issues_team_inbox_idx ON public.app_issues(app_id,assignee_team_id,last_seen_at DESC,id DESC) WHERE assignee_team_id IS NOT NULL;

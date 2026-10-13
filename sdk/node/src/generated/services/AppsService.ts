@@ -68,10 +68,12 @@ import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
 import type { IssueSplitRule } from '../models/IssueSplitRule.js';
 import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequest.js';
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
+import type { IssueTeam } from '../models/IssueTeam.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
+import type { ListIssueTeamsResponse } from '../models/ListIssueTeamsResponse.js';
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
@@ -89,6 +91,7 @@ import type { ProfileInvestigationResponse } from '../models/ProfileInvestigatio
 import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
 import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
+import type { PutIssueTeamRequest } from '../models/PutIssueTeamRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -2632,6 +2635,150 @@ export class AppsService {
     });
   }
   /**
+   * List app-scoped teams and their members.
+   * @returns ListIssueTeamsResponse Up to 20 teams, ordered by name and key.
+   * @throws ApiError
+   */
+  public static listIssueTeams({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueTeamsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-teams',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get a team by its stable key.
+   * @returns IssueTeam Team identity, name, member roster and editor metadata.
+   * @throws ApiError
+   */
+  public static getIssueTeam({
+    slug,
+    teamKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    teamKey: string,
+  }): CancelablePromise<IssueTeam> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or replace a team name and complete membership roster.
+   * Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+   * @returns IssueTeam Team identity and complete member roster.
+   * @throws ApiError
+   */
+  public static putIssueTeam({
+    slug,
+    teamKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    teamKey: string,
+    requestBody: PutIssueTeamRequest,
+  }): CancelablePromise<IssueTeam> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Team quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an unused team.
+   * Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueTeam({
+    slug,
+    teamKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    teamKey: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-teams/{team_key}',
+      path: {
+        'slug': slug,
+        'team_key': teamKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Team still owns issues or routing rules.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Compare observed release request health and issue signals over the last 24 hours.
    * Request counts expand telemetry row weights and span all traffic for each deployment. Issue signals use the selected environment. These are independent retained observations, not complete traffic, crash-free sessions, or a controlled experiment. Unknown request rates and deltas are null.
    * @returns IssueReleaseComparison Both deployment observations from one consistent database snapshot.
@@ -2722,6 +2869,7 @@ export class AppsService {
     slug,
     state,
     environment,
+    team,
     assignee,
     sort = 'recent',
     tag,
@@ -2740,6 +2888,10 @@ export class AppsService {
      * Exact issue environment namespace.
      */
     environment?: string,
+    /**
+     * Shared inbox for a team UUID in this app. Mutually exclusive with assignee.
+     */
+    team?: string,
     /**
      * Filter by me, unassigned, or an owner account UUID.
      */
@@ -2770,6 +2922,7 @@ export class AppsService {
       query: {
         'state': state,
         'environment': environment,
+        'team': team,
         'assignee': assignee,
         'sort': sort,
         'tag': tag,

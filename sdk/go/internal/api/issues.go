@@ -58,6 +58,7 @@ type Issue struct {
 	GroupingVersion          int        `json:"grouping_version"`
 	Title                    string     `json:"title"`
 	State                    string     `json:"state"`
+	AssigneeTeamID           string     `json:"assignee_team_id,omitempty"`
 	AssigneeAccountID        string     `json:"assignee_account_id,omitempty"`
 	FirstSeenAt              time.Time  `json:"first_seen_at"`
 	LastSeenAt               time.Time  `json:"last_seen_at"`
@@ -149,7 +150,8 @@ type IssueOwnershipRule struct {
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`
-	AssigneeAccountID string `json:"assignee_account_id"`
+	AssigneeAccountID string `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string `json:"assignee_team_id,omitempty"`
 }
 
 type IssueOwnershipRules struct {
@@ -186,6 +188,7 @@ type IssueActionRequest struct {
 	MemberIssueID     string     `json:"member_issue_id,omitempty"`
 	Action            string     `json:"action"`
 	AssigneeAccountID string     `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string     `json:"assignee_team_id,omitempty"`
 	FixedDeploymentID string     `json:"fixed_deployment_id,omitempty"`
 	IgnoredUntil      *time.Time `json:"ignored_until,omitempty"`
 }

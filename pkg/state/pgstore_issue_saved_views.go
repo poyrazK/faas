@@ -80,6 +80,15 @@ func (s *PgStore) PutIssueSavedView(ctx context.Context, app, account, actor, ke
 			return api.IssueSavedView{}, ErrInvalidArgument
 		}
 	}
+	if in.Filters.Team != "" {
+		ok, e := q.IssueTeamExists(ctx, tx, sqlc.IssueTeamExistsParams{AppID: owner.ID, TeamID: issueUUID(in.Filters.Team)})
+		if e != nil {
+			return api.IssueSavedView{}, e
+		}
+		if !ok {
+			return api.IssueSavedView{}, ErrInvalidArgument
+		}
+	}
 	_, err = q.IssueGetSavedView(ctx, tx, sqlc.IssueGetSavedViewParams{AppID: owner.ID, AccountID: owner.AccountID, ViewKey: key})
 	if errors.Is(err, pgx.ErrNoRows) {
 		n, countErr := q.IssueCountSavedViews(ctx, tx, owner.ID)

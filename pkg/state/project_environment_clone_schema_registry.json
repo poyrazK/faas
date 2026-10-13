@@ -644,7 +644,8 @@
       "rule_order",
       "source_kind",
       "source_path_prefix",
-      "tag_filter"
+      "tag_filter",
+      "assignee_team_id"
     ],
     "kind": "configuration"
   },
@@ -681,7 +682,8 @@
       "resolved_at",
       "split_source_issue_id",
       "state",
-      "title"
+      "title",
+      "assignee_team_id"
     ],
     "kind": "operational"
   },
@@ -10468,6 +10470,27 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_teams",
+    "columns": [
+      "id",
+      "app_id",
+      "team_key",
+      "name",
+      "created_at",
+      "updated_at",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_team_members",
+    "columns": [
+      "team_id",
+      "account_id"
     ],
     "kind": "operational"
   }

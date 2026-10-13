@@ -189,7 +189,7 @@ func TestPg_IssueSourceTagRoutingAndInboxCursorBinding(t *testing.T) {
 	if err != nil || len(cursor.FilterHash) != 64 || state.ValidateIssueListCursor(filter, cursor) != nil {
 		t.Fatalf("new cursor missing filter binding: %+v %v", cursor, err)
 	}
-	for _, changed := range []state.IssueListFilter{{State: "resolved", AssigneeAccountID: account.ID, Sort: "recent"}, {State: "open", AssigneeAccountID: uuid.NewString(), Sort: "recent"}, {State: "open", AssigneeAccountID: account.ID, Environment: "staging", Sort: "recent"}} {
+	for _, changed := range []state.IssueListFilter{{State: "open", TeamID: uuid.NewString(), Sort: "recent"}, {State: "resolved", AssigneeAccountID: account.ID, Sort: "recent"}, {State: "open", AssigneeAccountID: uuid.NewString(), Sort: "recent"}, {State: "open", AssigneeAccountID: account.ID, Environment: "staging", Sort: "recent"}} {
 		if _, err := s.ListIssues(ctx, app.ID, changed, cursor); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("cursor reused with different saved filters: %+v %v", changed, err)
 		}

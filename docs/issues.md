@@ -835,7 +835,7 @@ gregale issues views delete --app payments --key my-payments
 
 `GET /v1/apps/{slug}/issue-saved-views` lists shared views. `GET`, `PUT`, and `DELETE /v1/apps/{slug}/issue-saved-views/{view_key}` read, replace, and delete a definition. PUT accepts `{ "name": "My payments", "filters": { "state": "open", "assignee": "me", "sort": "impact", "tag": "component=payments" } }`. Saving an existing key replaces its definition and preserves its creation timestamp. Delete returns 204 without changing issues. Go also provides `ListIssuesForSavedView`, which reads the latest definition before listing.
 
-Each app has at most 20 views. Keys contain 1–48 lowercase letters, digits, or hyphens and start with a letter or digit. Names contain at most 64 UTF-8 bytes without control characters. Filters support only state, environment, owner, recent/impact ordering, minimum verified customers, and the existing single allowlisted tag query. Explicit account UUID filters must refer to an eligible owner or active organization member when saved. Writes use the usual deployment-write permission and session MFA; dashboard forms also require CSRF. New list cursors bind all selected filters, including the resolved viewer identity. If a view's filters change between pages, reopen it from the first page. Historical cursors remain readable for compatibility. Inbox preferences are not copied by workload cloning.
+Each app has at most 20 views. Keys contain 1–48 lowercase letters, digits, or hyphens and start with a letter or digit. Names contain at most 64 UTF-8 bytes without control characters. Filters support only state, environment, account or team owner, recent/impact ordering, minimum verified customers, and the existing single allowlisted tag query. Explicit account UUID filters must refer to an eligible owner or active organization member when saved. Writes use the usual deployment-write permission and session MFA; dashboard forms also require CSRF. New list cursors bind all selected filters, including the resolved viewer identity. If a view's filters change between pages, reopen it from the first page. Historical cursors remain readable for compatibility. Inbox preferences are not copied by workload cloning.
 
 ## Route new issues by source path and component
 
@@ -857,4 +857,42 @@ All populated matchers must match. Source prefixes stop at path-segment boundari
 
 Tags use the existing allowlist and match sanitized reported values exactly. A missing key does not match an explicit empty value. They do not provide verified customer identity. The first matching rule with an eligible target assigns only a newly created group and records the matched source/tag criteria in its normal assignment activity. Recurrences and regressions preserve existing ownership, including manual changes. Configure these fields through the existing ownership-policy API, dashboard JSON form, CLI policy file, or SDK DTOs.
 
-The migration refuses rollback while saved views or source/tag matchers are in use, so rollback cannot silently discard views or broaden routing policies. CODEOWNERS ingestion, richer team objects, and provider-specific integrations remain future work.
+The migration refuses rollback while saved views or source/tag matchers are in use, so rollback cannot silently discard views or broaden routing policies. Provider-specific integrations, organization-wide teams, and full CODEOWNERS glob support remain future work.
+
+## Teams and CODEOWNERS
+
+Issue teams have members and a shared inbox within an app. Members must already be the app owner or active organization members; team membership grants no additional app access. Create or update a roster in the dashboard's **Issue teams** section or with the CLI:
+
+```sh
+gregale issues teams save --app my-api --key payments --name Payments --members ACCOUNT_UUID,ACCOUNT_UUID
+gregale issues teams get --app my-api --key payments
+gregale issues teams inbox --app my-api --key payments
+gregale issues assign ISSUE_UUID --app my-api --team TEAM_UUID
+gregale issues bulk --app my-api --issues ISSUE_UUID,ISSUE_UUID --action assign --team TEAM_UUID
+gregale issues views save --app my-api --key payments-open --name 'Payments open' --team TEAM_UUID --state open
+```
+
+Use `--team TEAM_UUID` on `issues list` for team filtering in any lifecycle state. Team and account filters are mutually exclusive. Assign one account or one team; omit both to unassign. Team inbox links show open groups. Team updates preserve its UUID and existing assignments. Deletion requires removing its issue assignments and routing rules first. Up to 20 teams per app, each with 1–50 distinct eligible members. The API provides `GET /v1/apps/{slug}/issue-teams` and `GET|PUT|DELETE /v1/apps/{slug}/issue-teams/{team_key}`; PUT accepts `name` and `member_account_ids`. Writes require deploy-write and session MFA. `assignee_team_id` is accepted by ownership rules and single/bulk assignment actions.
+
+CODEOWNERS import requires a local file, the source root used by reported or mapped application frames, and explicit owner bindings:
+
+```json
+{
+  "@alice": "ACCOUNT_UUID",
+  "@org/payments": {"team_id": "TEAM_UUID"}
+}
+```
+
+An explicit `{"account_id":"ACCOUNT_UUID"}` target is also accepted. Bindings ignore handle case; conflicting bindings fail. A supported example file is:
+
+```text
+* @alice
+/src/payments/ @org/payments
+```
+
+```sh
+gregale issues codeowners preview --file CODEOWNERS --bindings-file owners.json --source-root /app
+gregale issues codeowners apply --app my-api --file CODEOWNERS --bindings-file owners.json --source-root /app --replace
+```
+
+Preview is offline and emits the ordered routing policy plus original line numbers. Apply explicitly replaces the complete policy; existing issues keep their ownership. Last matching lines win. On a line with multiple owners, all owners must have bindings and the first owner becomes the assignment target. This importer supports root defaults (`*`, `/`, `/**`) and literal root-anchored paths such as `/src/payments/` or `src/payments/`. It rejects unsupported globs, bare filenames, ownerless rules, URLs and traversal instead of silently dropping lines. Limits are 256 KiB, 4096 lines, 256 bindings and 50 routing rules. No repository fetch or automatic provider synchronization occurs.

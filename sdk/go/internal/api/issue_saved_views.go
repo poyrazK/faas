@@ -7,6 +7,7 @@ import (
 )
 
 type IssueSavedViewFilters struct {
+	Team         string `json:"team,omitempty"`
 	State        string `json:"state,omitempty"`
 	Environment  string `json:"environment,omitempty"`
 	Assignee     string `json:"assignee,omitempty"`
@@ -34,5 +35,5 @@ type ListIssueSavedViewsResponse struct {
 }
 
 func (f IssueSavedViewFilters) Query() url.Values {
-	return url.Values{"state": {f.State}, "environment": {f.Environment}, "assignee": {f.Assignee}, "sort": {f.Sort}, "min_customers": {strconv.FormatInt(f.MinCustomers, 10)}, "tag": {f.Tag}}
+	return url.Values{"team": {f.Team}, "state": {f.State}, "environment": {f.Environment}, "assignee": {f.Assignee}, "sort": {f.Sort}, "min_customers": {strconv.FormatInt(f.MinCustomers, 10)}, "tag": {f.Tag}}
 }

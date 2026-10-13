@@ -58,6 +58,7 @@ type IssueCursor struct {
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
 type IssueListFilter struct {
+	TeamID            string `json:",omitempty"`
 	Tag               string
 	State             string
 	Environment       string
@@ -88,3 +89,13 @@ func (e *IssueLimitError) Unwrap() error {
 	}
 	return ErrIssueQuota
 }
+
+// IssueTeamStore keeps collaboration separate from the ingestion store boundary.
+type IssueTeamStore interface {
+	ListIssueTeams(context.Context, string, string) (api.ListIssueTeamsResponse, error)
+	GetIssueTeam(context.Context, string, string, string) (api.IssueTeam, error)
+	PutIssueTeam(context.Context, string, string, string, string, api.PutIssueTeamRequest, time.Time) (api.IssueTeam, error)
+	DeleteIssueTeam(context.Context, string, string, string) error
+}
+
+var ErrIssueTeamInUse = errors.New("issue team still owns issues or routing rules")

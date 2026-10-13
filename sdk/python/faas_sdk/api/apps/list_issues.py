@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,6 +18,7 @@ def _get_kwargs(
     *,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
     tag: str | Unset = UNSET,
@@ -29,6 +31,11 @@ def _get_kwargs(
     params["state"] = state
 
     params["environment"] = environment
+
+    json_team: str | Unset = UNSET
+    if not isinstance(team, Unset):
+        json_team = str(team)
+    params["team"] = json_team
 
     params["assignee"] = assignee
 
@@ -128,6 +135,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
     tag: str | Unset = UNSET,
@@ -140,6 +148,7 @@ def sync_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
         tag (str | Unset):
@@ -158,6 +167,7 @@ def sync_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
         tag=tag,
@@ -178,6 +188,7 @@ def sync(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
     tag: str | Unset = UNSET,
@@ -190,6 +201,7 @@ def sync(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
         tag (str | Unset):
@@ -209,6 +221,7 @@ def sync(
         client=client,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
         tag=tag,
@@ -223,6 +236,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
     tag: str | Unset = UNSET,
@@ -235,6 +249,7 @@ async def asyncio_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
         tag (str | Unset):
@@ -253,6 +268,7 @@ async def asyncio_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
         tag=tag,
@@ -271,6 +287,7 @@ async def asyncio(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
     tag: str | Unset = UNSET,
@@ -283,6 +300,7 @@ async def asyncio(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
         tag (str | Unset):
@@ -303,6 +321,7 @@ async def asyncio(
             client=client,
             state=state,
             environment=environment,
+            team=team,
             assignee=assignee,
             sort=sort,
             tag=tag,

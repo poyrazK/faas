@@ -26,6 +26,10 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSavedView)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueSavedView))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueSavedView))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-teams", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueTeams)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTeam)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueTeam))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueTeam))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-release-comparison", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.compareIssueReleases)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/bulk-actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.bulkActOnIssues)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishIssueSourceMaps))))
@@ -89,6 +93,8 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	}
 
 	switch {
+	case errors.Is(err, state.ErrIssueTeamInUse):
+		api.WriteProblem(w, api.NewProblem(409, "issue_team_in_use", "Team in use", "remove this team’s issue assignments and ownership rules before deleting it"))
 	case errors.Is(err, state.ErrIssueSourceMapsConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_conflict", "Conflict", "source-map manifest is immutable for this deployment"))
 	case errors.Is(err, state.ErrIssueSourceMapsUnavailable):
@@ -384,6 +390,13 @@ func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFil
 		}
 		filter.AssigneeAccountID = id.String()
 	}
+	if team := strings.TrimSpace(q.Get("team")); team != "" {
+		id, err := uuid.Parse(team)
+		if err != nil || id == uuid.Nil || filter.AssigneeAccountID != "" || filter.Unassigned {
+			return state.IssueListFilter{}, errors.New("team must be a nonzero team UUID and cannot be combined with assignee")
+		}
+		filter.TeamID = id.String()
+	}
 	switch sortBy := strings.TrimSpace(q.Get("sort")); sortBy {
 	case "", "recent":
 		filter.Sort = "recent"
@@ -481,10 +494,8 @@ func (s *server) actOnIssue(w http.ResponseWriter, r *http.Request, acct state.A
 func validateIssueAction(in api.IssueActionRequest, now time.Time) error {
 	switch in.Action {
 	case "assign":
-		if in.AssigneeAccountID != "" {
-			if _, err := uuid.Parse(in.AssigneeAccountID); err != nil {
-				return errors.New("assignee must be an account UUID")
-			}
+		if _, _, err := api.NormalizeIssueAssignment(in.AssigneeAccountID, in.AssigneeTeamID); err != nil {
+			return err
 		}
 	case "resolve":
 		if _, err := uuid.Parse(in.FixedDeploymentID); err != nil {
@@ -506,7 +517,7 @@ func validateIssueAction(in api.IssueActionRequest, now time.Time) error {
 	default:
 		return errors.New("action must be assign, resolve, reopen, ignore, merge, or split")
 	}
-	if in.Action != "assign" && in.AssigneeAccountID != "" || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil || in.Action != "merge" && in.TargetIssueID != "" || in.Action != "split" && in.MemberIssueID != "" {
+	if in.Action != "assign" && (in.AssigneeAccountID != "" || in.AssigneeTeamID != "") || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil || in.Action != "merge" && in.TargetIssueID != "" || in.Action != "split" && in.MemberIssueID != "" {
 		return errors.New("action contains unrelated fields")
 	}
 	return nil

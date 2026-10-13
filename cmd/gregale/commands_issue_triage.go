@@ -26,10 +26,11 @@ func cmdIssueTriage(args []string) int {
 	environment := fs.String("environment", "application", "issue environment")
 	ids := fs.String("issues", "", "comma-separated issue UUIDs")
 	action := fs.String("action", "", "bulk lifecycle action")
+	team := fs.String("team", "", "team UUID")
 	assignee := fs.String("assignee", "", "account UUID; empty unassigns")
 	dep := fs.String("deployment", "", "fixed deployment UUID")
 	until := fs.String("until", "", "ignore expiry, RFC3339")
-	flags, positional := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "baseline": true, "candidate": true, "environment": true, "issues": true, "action": true, "assignee": true, "deployment": true, "until": true})
+	flags, positional := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "baseline": true, "candidate": true, "environment": true, "issues": true, "action": true, "team": true, "assignee": true, "deployment": true, "until": true})
 	if err := fs.Parse(flags); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -42,7 +43,7 @@ func cmdIssueTriage(args []string) int {
 	}
 	var in api.BulkIssueActionRequest
 	if args[0] == "bulk" {
-		in = api.BulkIssueActionRequest{IssueIDs: strings.Split(*ids, ","), Action: api.IssueActionRequest{Action: *action, AssigneeAccountID: *assignee, FixedDeploymentID: *dep}}
+		in = api.BulkIssueActionRequest{IssueIDs: strings.Split(*ids, ","), Action: api.IssueActionRequest{Action: *action, AssigneeAccountID: *assignee, AssigneeTeamID: *team, FixedDeploymentID: *dep}}
 		for i := range in.IssueIDs {
 			in.IssueIDs[i] = strings.TrimSpace(in.IssueIDs[i])
 		}

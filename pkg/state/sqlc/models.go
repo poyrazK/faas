@@ -717,6 +717,7 @@ type AppIssue struct {
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
 	SplitSourceIssueID       pgtype.UUID
+	AssigneeTeamID           pgtype.UUID
 }
 
 type AppIssueImpactAlertPolicy struct {
@@ -734,6 +735,7 @@ type AppIssueOwnershipRule struct {
 	AssigneeAccountID pgtype.UUID
 	SourcePathPrefix  pgtype.Text
 	TagFilter         pgtype.Text
+	AssigneeTeamID    pgtype.UUID
 }
 
 type AppIssueSavedView struct {
@@ -744,6 +746,21 @@ type AppIssueSavedView struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	UpdatedByAccountID pgtype.UUID
+}
+
+type AppIssueTeam struct {
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	TeamKey            string
+	Name               string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedByAccountID pgtype.UUID
+}
+
+type AppIssueTeamMember struct {
+	TeamID    pgtype.UUID
+	AccountID pgtype.UUID
 }
 
 type AppLogDrain struct {
@@ -3919,6 +3936,7 @@ type IssueGroupRollup struct {
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
 	SplitSourceIssueID       pgtype.UUID
+	AssigneeTeamID           pgtype.UUID
 }
 
 type IssueIngestToken struct {

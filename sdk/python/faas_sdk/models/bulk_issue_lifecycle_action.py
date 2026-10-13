@@ -20,11 +20,13 @@ T = TypeVar("T", bound="BulkIssueLifecycleAction")
 class BulkIssueLifecycleAction:
     action: BulkIssueLifecycleActionAction
     assignee_account_id: UUID | Unset = UNSET
-    """Only for assign; omit or empty to unassign."""
+    """Only for assign; omit both assignment targets to unassign."""
     fixed_deployment_id: UUID | Unset = UNSET
     """Required only for resolve."""
     ignored_until: datetime.datetime | Unset = UNSET
     """Required only for ignore; future and within 90 days."""
+    assignee_team_id: UUID | Unset = UNSET
+    """Only for assign; mutually exclusive with assignee_account_id."""
 
     def to_dict(self) -> dict[str, Any]:
         action: str = self.action
@@ -41,6 +43,10 @@ class BulkIssueLifecycleAction:
         if not isinstance(self.ignored_until, Unset):
             ignored_until = self.ignored_until.isoformat()
 
+        assignee_team_id: str | Unset = UNSET
+        if not isinstance(self.assignee_team_id, Unset):
+            assignee_team_id = str(self.assignee_team_id)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -54,6 +60,8 @@ class BulkIssueLifecycleAction:
             field_dict["fixed_deployment_id"] = fixed_deployment_id
         if ignored_until is not UNSET:
             field_dict["ignored_until"] = ignored_until
+        if assignee_team_id is not UNSET:
+            field_dict["assignee_team_id"] = assignee_team_id
 
         return field_dict
 
@@ -83,11 +91,19 @@ class BulkIssueLifecycleAction:
         else:
             ignored_until = datetime.datetime.fromisoformat(_ignored_until)
 
+        _assignee_team_id = d.pop("assignee_team_id", UNSET)
+        assignee_team_id: UUID | Unset
+        if isinstance(_assignee_team_id, Unset):
+            assignee_team_id = UNSET
+        else:
+            assignee_team_id = UUID(_assignee_team_id)
+
         bulk_issue_lifecycle_action = cls(
             action=action,
             assignee_account_id=assignee_account_id,
             fixed_deployment_id=fixed_deployment_id,
             ignored_until=ignored_until,
+            assignee_team_id=assignee_team_id,
         )
 
         return bulk_issue_lifecycle_action

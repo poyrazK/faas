@@ -18,11 +18,11 @@ T = TypeVar("T", bound="IssueOwnershipRule")
 @_attrs_define
 class IssueOwnershipRule:
     """Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one
-    eligible account.
+    eligible account or team. Exactly one assignment target is required.
 
     """
 
-    assignee_account_id: UUID
+    assignee_account_id: UUID | Unset = UNSET
     exception_type: str | Unset = UNSET
     """Exact exception type match."""
     source_kind: IssueOwnershipRuleSourceKind | Unset = UNSET
@@ -35,9 +35,13 @@ class IssueOwnershipRule:
     tag: str | Unset = UNSET
     """Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes.
     Missing keys do not match an empty value."""
+    assignee_team_id: UUID | Unset = UNSET
+    """Team in this app; mutually exclusive with assignee_account_id."""
 
     def to_dict(self) -> dict[str, Any]:
-        assignee_account_id = str(self.assignee_account_id)
+        assignee_account_id: str | Unset = UNSET
+        if not isinstance(self.assignee_account_id, Unset):
+            assignee_account_id = str(self.assignee_account_id)
 
         exception_type = self.exception_type
 
@@ -51,13 +55,15 @@ class IssueOwnershipRule:
 
         tag = self.tag
 
+        assignee_team_id: str | Unset = UNSET
+        if not isinstance(self.assignee_team_id, Unset):
+            assignee_team_id = str(self.assignee_team_id)
+
         field_dict: dict[str, Any] = {}
 
-        field_dict.update(
-            {
-                "assignee_account_id": assignee_account_id,
-            }
-        )
+        field_dict.update({})
+        if assignee_account_id is not UNSET:
+            field_dict["assignee_account_id"] = assignee_account_id
         if exception_type is not UNSET:
             field_dict["exception_type"] = exception_type
         if source_kind is not UNSET:
@@ -68,13 +74,20 @@ class IssueOwnershipRule:
             field_dict["source_path_prefix"] = source_path_prefix
         if tag is not UNSET:
             field_dict["tag"] = tag
+        if assignee_team_id is not UNSET:
+            field_dict["assignee_team_id"] = assignee_team_id
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        assignee_account_id = UUID(d.pop("assignee_account_id"))
+        _assignee_account_id = d.pop("assignee_account_id", UNSET)
+        assignee_account_id: UUID | Unset
+        if isinstance(_assignee_account_id, Unset):
+            assignee_account_id = UNSET
+        else:
+            assignee_account_id = UUID(_assignee_account_id)
 
         exception_type = d.pop("exception_type", UNSET)
 
@@ -91,6 +104,13 @@ class IssueOwnershipRule:
 
         tag = d.pop("tag", UNSET)
 
+        _assignee_team_id = d.pop("assignee_team_id", UNSET)
+        assignee_team_id: UUID | Unset
+        if isinstance(_assignee_team_id, Unset):
+            assignee_team_id = UNSET
+        else:
+            assignee_team_id = UUID(_assignee_team_id)
+
         issue_ownership_rule = cls(
             assignee_account_id=assignee_account_id,
             exception_type=exception_type,
@@ -98,6 +118,7 @@ class IssueOwnershipRule:
             route_prefix=route_prefix,
             source_path_prefix=source_path_prefix,
             tag=tag,
+            assignee_team_id=assignee_team_id,
         )
 
         return issue_ownership_rule

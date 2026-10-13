@@ -61,18 +61,16 @@ func NormalizeBulkIssueAction(in BulkIssueActionRequest, now time.Time) (BulkIss
 	if a.TargetIssueID != "" || a.MemberIssueID != "" {
 		return in, fmt.Errorf("bulk regrouping is unsupported")
 	}
-	if a.Action != "assign" && a.AssigneeAccountID != "" || a.Action != "resolve" && a.FixedDeploymentID != "" || a.Action != "ignore" && a.IgnoredUntil != nil {
+	if a.Action != "assign" && (a.AssigneeAccountID != "" || a.AssigneeTeamID != "") || a.Action != "resolve" && a.FixedDeploymentID != "" || a.Action != "ignore" && a.IgnoredUntil != nil {
 		return in, fmt.Errorf("action contains unrelated fields")
 	}
 	switch a.Action {
 	case "assign":
-		if a.AssigneeAccountID != "" {
-			id, err := uuid.Parse(a.AssigneeAccountID)
-			if err != nil || id == uuid.Nil {
-				return in, fmt.Errorf("assignee must be a nonzero account UUID")
-			}
-			a.AssigneeAccountID = id.String()
+		account, team, err := NormalizeIssueAssignment(a.AssigneeAccountID, a.AssigneeTeamID)
+		if err != nil {
+			return in, err
 		}
+		a.AssigneeAccountID, a.AssigneeTeamID = account, team
 	case "resolve":
 		id, err := uuid.Parse(a.FixedDeploymentID)
 		if err != nil || id == uuid.Nil {

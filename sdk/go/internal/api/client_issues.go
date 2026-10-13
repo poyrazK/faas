@@ -198,3 +198,32 @@ func (c *Client) ListIssuesForSavedView(ctx context.Context, slug, key, cursor s
 	err = c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) ListIssueTeams(ctx context.Context, slug string) (ListIssueTeamsResponse, error) {
+	var out ListIssueTeamsResponse
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-teams", nil, &out)
+	return out, err
+}
+func (c *Client) GetIssueTeam(ctx context.Context, slug, key string) (IssueTeam, error) {
+	var out IssueTeam
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), nil, &out)
+	return out, err
+}
+func (c *Client) PutIssueTeam(ctx context.Context, slug, key string, in PutIssueTeamRequest) (IssueTeam, error) {
+	var out IssueTeam
+	err := c.do(ctx, "PUT", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), in, &out)
+	return out, err
+}
+func (c *Client) DeleteIssueTeam(ctx context.Context, slug, key string) error {
+	return c.do(ctx, "DELETE", issueAppPath(slug)+"/issue-teams/"+url.PathEscape(key), nil, nil)
+}
+func (c *Client) ListIssuesForTeam(ctx context.Context, slug, key, cursor string) (ListIssuesResponse, error) {
+	team, err := c.GetIssueTeam(ctx, slug, key)
+	if err != nil {
+		return ListIssuesResponse{}, err
+	}
+	q := url.Values{"team": {team.ID}, "state": {"open"}, "cursor": {cursor}}
+	var out ListIssuesResponse
+	err = c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
+	return out, err
+}

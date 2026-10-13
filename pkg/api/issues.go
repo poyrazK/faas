@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // IssueImpactSummaryWindow is the fixed window used for list-level triage
@@ -75,6 +73,7 @@ type Issue struct {
 	GroupingVersion          int                 `json:"grouping_version"`
 	Title                    string              `json:"title"`
 	State                    string              `json:"state"`
+	AssigneeTeamID           string              `json:"assignee_team_id,omitempty"`
 	AssigneeAccountID        string              `json:"assignee_account_id,omitempty"`
 	FirstSeenAt              time.Time           `json:"first_seen_at"`
 	LastSeenAt               time.Time           `json:"last_seen_at"`
@@ -109,14 +108,15 @@ type UpdateIssueImpactAlertPolicyRequest struct {
 }
 
 // IssueOwnershipRule applies when every populated matcher equals the incoming
-// event. The first matching rule assigns a newly-created issue to the account.
+// event. The first matching rule assigns a newly-created issue to an account or team.
 type IssueOwnershipRule struct {
 	SourcePathPrefix  string `json:"source_path_prefix,omitempty"`
 	Tag               string `json:"tag,omitempty"`
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`
-	AssigneeAccountID string `json:"assignee_account_id"`
+	AssigneeAccountID string `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string `json:"assignee_team_id,omitempty"`
 }
 
 // IssueOwnershipRules is the complete, ordered app-level routing policy.
@@ -157,11 +157,11 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 		if _, err := ParseIssueTagFilter(rule.Tag); err != nil {
 			return nil, fmt.Errorf("rules[%d]: %w", i, err)
 		}
-		id, err := uuid.Parse(strings.TrimSpace(rule.AssigneeAccountID))
-		if err != nil {
-			return nil, fmt.Errorf("rules[%d].assignee_account_id must be a UUID", i)
+		account, team, err := NormalizeIssueAssignment(rule.AssigneeAccountID, rule.AssigneeTeamID)
+		if err != nil || account == "" && team == "" {
+			return nil, fmt.Errorf("rules[%d] require exactly one account or team UUID", i)
 		}
-		rule.AssigneeAccountID = id.String()
+		rule.AssigneeAccountID, rule.AssigneeTeamID = account, team
 		out[i] = rule
 	}
 	return out, nil
@@ -261,6 +261,7 @@ type IssueActionRequest struct {
 	TargetIssueID     string     `json:"target_issue_id,omitempty"`
 	MemberIssueID     string     `json:"member_issue_id,omitempty"`
 	AssigneeAccountID string     `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string     `json:"assignee_team_id,omitempty"`
 	FixedDeploymentID string     `json:"fixed_deployment_id,omitempty"`
 	IgnoredUntil      *time.Time `json:"ignored_until,omitempty"`
 }

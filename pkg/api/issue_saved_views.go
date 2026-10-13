@@ -15,6 +15,7 @@ import (
 )
 
 type IssueSavedViewFilters struct {
+	Team         string `json:"team,omitempty"`
 	State        string `json:"state,omitempty"`
 	Environment  string `json:"environment,omitempty"`
 	Assignee     string `json:"assignee,omitempty"`
@@ -73,6 +74,13 @@ func NormalizeIssueSavedView(in PutIssueSavedViewRequest) (PutIssueSavedViewRequ
 		}
 		f.Assignee = id.String()
 	}
+	if f.Team != "" {
+		_, team, err := NormalizeIssueAssignment(f.Assignee, f.Team)
+		if err != nil {
+			return in, err
+		}
+		f.Team = team
+	}
 	if f.Sort == "" {
 		f.Sort = "recent"
 	}
@@ -88,7 +96,7 @@ func NormalizeIssueSavedView(in PutIssueSavedViewRequest) (PutIssueSavedViewRequ
 // Query applies an exact saved filter set and starts a fresh page. "me" remains
 // a viewer-relative token; the authenticated list handler resolves its identity.
 func (f IssueSavedViewFilters) Query() url.Values {
-	return url.Values{"state": {f.State}, "environment": {f.Environment}, "assignee": {f.Assignee}, "sort": {f.Sort}, "min_customers": {strconv.FormatInt(f.MinCustomers, 10)}, "tag": {f.Tag}}
+	return url.Values{"team": {f.Team}, "state": {f.State}, "environment": {f.Environment}, "assignee": {f.Assignee}, "sort": {f.Sort}, "min_customers": {strconv.FormatInt(f.MinCustomers, 10)}, "tag": {f.Tag}}
 }
 
 // NormalizeIssueSourcePathPrefix accepts bounded local paths only. Source

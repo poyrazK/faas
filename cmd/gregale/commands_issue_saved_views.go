@@ -26,12 +26,13 @@ func cmdIssueSavedViews(args []string) int {
 	name := fs.String("name", "", "shared view name")
 	stateFilter := fs.String("state", "", "issue lifecycle state")
 	environment := fs.String("environment", "", "issue environment")
+	team := fs.String("team", "", "team UUID for a shared team inbox")
 	assignee := fs.String("assignee", "", "me, unassigned, or an eligible account UUID")
 	sort := fs.String("sort", "recent", "recent or impact")
 	minimum := fs.Int64("min-customers", 0, "minimum verified customers in 24h")
 	tag := fs.String("tag", "", "allowed operational key=value")
 	cursor := fs.String("cursor", "", "cursor from the same saved filter set")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "key": true, "name": true, "state": true, "environment": true, "assignee": true, "sort": true, "min-customers": true, "tag": true, "cursor": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "key": true, "name": true, "state": true, "environment": true, "team": true, "assignee": true, "sort": true, "min-customers": true, "tag": true, "cursor": true})
 	if err := fs.Parse(flags); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -40,7 +41,7 @@ func cmdIssueSavedViews(args []string) int {
 	}
 	invalidFlag := ""
 	fs.Visit(func(f *flag.Flag) {
-		if action != "save" && (f.Name == "name" || f.Name == "state" || f.Name == "environment" || f.Name == "assignee" || f.Name == "sort" || f.Name == "min-customers" || f.Name == "tag") {
+		if action != "save" && (f.Name == "name" || f.Name == "state" || f.Name == "environment" || f.Name == "team" || f.Name == "assignee" || f.Name == "sort" || f.Name == "min-customers" || f.Name == "tag") {
 			invalidFlag = f.Name
 		}
 		if f.Name == "cursor" && action != "apply" || f.Name == "key" && action == "list" {
@@ -63,7 +64,7 @@ func cmdIssueSavedViews(args []string) int {
 			return printErr("Invalid view key", err)
 		}
 	}
-	in := api.PutIssueSavedViewRequest{Name: *name, Filters: api.IssueSavedViewFilters{State: *stateFilter, Environment: *environment, Assignee: *assignee, Sort: *sort, MinCustomers: *minimum, Tag: *tag}}
+	in := api.PutIssueSavedViewRequest{Name: *name, Filters: api.IssueSavedViewFilters{Team: *team, State: *stateFilter, Environment: *environment, Assignee: *assignee, Sort: *sort, MinCustomers: *minimum, Tag: *tag}}
 	if action == "save" {
 		var err error
 		in, err = api.NormalizeIssueSavedView(in)

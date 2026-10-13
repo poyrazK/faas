@@ -21,5 +21,9 @@ export type IssueSavedViewFilters = {
    * Exact allowlisted operational key=value in retained occurrences over 24h; value is limited to 128 UTF-8 bytes.
    */
   tag?: string;
+  /**
+   * App-scoped team inbox; mutually exclusive with assignee.
+   */
+  team?: string;
 };
 

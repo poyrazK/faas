@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -25,6 +26,8 @@ class IssueSavedViewFilters:
     tag: str | Unset = UNSET
     """Exact allowlisted operational key=value in retained occurrences over 24h; value is limited to 128 UTF-8
     bytes."""
+    team: UUID | Unset = UNSET
+    """App-scoped team inbox; mutually exclusive with assignee."""
 
     def to_dict(self) -> dict[str, Any]:
         state: str | Unset = UNSET
@@ -43,6 +46,10 @@ class IssueSavedViewFilters:
 
         tag = self.tag
 
+        team: str | Unset = UNSET
+        if not isinstance(self.team, Unset):
+            team = str(self.team)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -58,6 +65,8 @@ class IssueSavedViewFilters:
             field_dict["min_customers"] = min_customers
         if tag is not UNSET:
             field_dict["tag"] = tag
+        if team is not UNSET:
+            field_dict["team"] = team
 
         return field_dict
 
@@ -86,6 +95,13 @@ class IssueSavedViewFilters:
 
         tag = d.pop("tag", UNSET)
 
+        _team = d.pop("team", UNSET)
+        team: UUID | Unset
+        if isinstance(_team, Unset):
+            team = UNSET
+        else:
+            team = UUID(_team)
+
         issue_saved_view_filters = cls(
             state=state,
             environment=environment,
@@ -93,6 +109,7 @@ class IssueSavedViewFilters:
             sort=sort,
             min_customers=min_customers,
             tag=tag,
+            team=team,
         )
 
         return issue_saved_view_filters

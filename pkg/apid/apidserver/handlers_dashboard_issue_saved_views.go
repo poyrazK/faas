@@ -46,7 +46,7 @@ func (s *server) populateDashboardSavedViews(w http.ResponseWriter, r *http.Requ
 		return false
 	}
 	minimum, _ := strconv.ParseInt(data.MinCustomersFilter, 10, 64)
-	data.SavedViews = &dashboard.IssueSavedViewsView{AppSlug: data.AppSlug, CSRF: data.CSRF, CurrentKey: data.SavedViewKey, CurrentFilters: api.IssueSavedViewFilters{State: data.StateFilter, Environment: data.EnvironmentFilter, Assignee: data.AssigneeFilter, Sort: data.SortFilter, MinCustomers: minimum, Tag: data.TagFilter}, Items: dashboard.IssueSavedViewLinks(data.AppSlug, views.Items), MaxViews: api.IssueSavedViewsMax, Updated: r.URL.Query().Get("saved_view") == "updated"}
+	data.SavedViews = &dashboard.IssueSavedViewsView{AppSlug: data.AppSlug, CSRF: data.CSRF, CurrentKey: data.SavedViewKey, CurrentFilters: api.IssueSavedViewFilters{Team: data.TeamFilter, State: data.StateFilter, Environment: data.EnvironmentFilter, Assignee: data.AssigneeFilter, Sort: data.SortFilter, MinCustomers: minimum, Tag: data.TagFilter}, Items: dashboard.IssueSavedViewLinks(data.AppSlug, views.Items), MaxViews: api.IssueSavedViewsMax, Updated: r.URL.Query().Get("saved_view") == "updated"}
 	return true
 }
 
@@ -101,7 +101,7 @@ func decodeDashboardSavedView(w http.ResponseWriter, r *http.Request) (api.PutIs
 		api.WriteProblem(w, api.ErrValidation("invalid customer threshold"))
 		return api.PutIssueSavedViewRequest{}, false
 	}
-	in := api.PutIssueSavedViewRequest{Name: r.PostForm.Get("name"), Filters: api.IssueSavedViewFilters{State: r.PostForm.Get("state"), Environment: r.PostForm.Get("environment"), Assignee: r.PostForm.Get("assignee"), Sort: r.PostForm.Get("sort"), MinCustomers: minimum, Tag: r.PostForm.Get("tag")}}
+	in := api.PutIssueSavedViewRequest{Name: r.PostForm.Get("name"), Filters: api.IssueSavedViewFilters{Team: r.PostForm.Get("team"), State: r.PostForm.Get("state"), Environment: r.PostForm.Get("environment"), Assignee: r.PostForm.Get("assignee"), Sort: r.PostForm.Get("sort"), MinCustomers: minimum, Tag: r.PostForm.Get("tag")}}
 	in, err = api.NormalizeIssueSavedView(in)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))

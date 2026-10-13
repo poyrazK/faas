@@ -3,9 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account.
+ * Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account or team. Exactly one assignment target is required.
  */
 export type IssueOwnershipRule = {
+  assignee_account_id?: string;
   /**
    * Exact exception type match.
    */
@@ -23,6 +24,9 @@ export type IssueOwnershipRule = {
    * Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.
    */
   tag?: string;
-  assignee_account_id: string;
+  /**
+   * Team in this app; mutually exclusive with assignee_account_id.
+   */
+  assignee_team_id?: string;
 };
 

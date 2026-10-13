@@ -542,3 +542,7 @@ type IssueSavedViewFilters = api.IssueSavedViewFilters
 type IssueSavedView = api.IssueSavedView
 type PutIssueSavedViewRequest = api.PutIssueSavedViewRequest
 type ListIssueSavedViewsResponse = api.ListIssueSavedViewsResponse
+
+type IssueTeam = api.IssueTeam
+type PutIssueTeamRequest = api.PutIssueTeamRequest
+type ListIssueTeamsResponse = api.ListIssueTeamsResponse

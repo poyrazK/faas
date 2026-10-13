@@ -10439,3 +10439,15 @@ const (
 	IssueSavedViewNameMaxBytes    = 64
 	IssueSavedViewFiltersMaxBytes = 2048
 )
+
+const (
+	IssueCodeownersMaxBytes    = 256 << 10
+	IssueCodeownersMaxLines    = 4096
+	IssueCodeownersMaxBindings = 256
+)
+
+// App-scoped Issues collaboration bounds.
+const (
+	IssueTeamsMax       = 20
+	IssueTeamMembersMax = 50
+)
