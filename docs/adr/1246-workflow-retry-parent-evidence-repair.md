@@ -1,4 +1,4 @@
-# ADR-1036: Pending retry parent evidence repair
+# ADR-1246: Pending retry parent evidence repair
 
 ## Status
 

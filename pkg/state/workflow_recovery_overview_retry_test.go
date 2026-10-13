@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// adr: 1052
+// adr: 1262
 func TestRecoveryOverviewManualRetry(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1046
+// adr: 1256
 func TestWorkflowRecoveryPollingIsolation(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

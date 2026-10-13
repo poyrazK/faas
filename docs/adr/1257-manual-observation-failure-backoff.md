@@ -1,4 +1,4 @@
-# ADR-1047: Bounded backoff for manual observation data failures
+# ADR-1257: Bounded backoff for manual observation data failures
 
 Date: 2026-10-13
 

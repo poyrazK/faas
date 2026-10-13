@@ -1,4 +1,4 @@
-# ADR-1034: Verified initial recovery evidence repair
+# ADR-1244: Verified initial recovery evidence repair
 
 ## Status
 

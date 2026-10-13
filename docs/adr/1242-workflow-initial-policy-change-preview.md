@@ -1,4 +1,4 @@
-# ADR-1032: Initial-failure policy-change previews
+# ADR-1242: Initial-failure policy-change previews
 
 Status: Accepted (2026-10-12)
 

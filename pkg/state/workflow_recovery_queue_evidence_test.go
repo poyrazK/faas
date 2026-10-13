@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1039
+// adr: 1249
 func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 	for _, scenario := range []string{"parent", "paused", "budget", "cooldown", "missing_run", "superseded", "child_running", "child_terminal"} {
 		t.Run(scenario, func(t *testing.T) {

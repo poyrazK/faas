@@ -1,10 +1,10 @@
-# ADR-1029: Durable first-recovery reviews
+# ADR-1239: Durable first-recovery reviews
 
 Status: Accepted (2026-10-12)
 
 ## Context
 
-ADR-1027 provides reviewed first recovery and ADR-1028 adds candidate-policy dry
+ADR-1237 provides reviewed first recovery and ADR-1238 adds candidate-policy dry
 runs. Local plans have no saved policy authority, review lifecycle or submission
 budget reservation. Existing recovery-policy reviews require a parent job that
 initial failures do not have.

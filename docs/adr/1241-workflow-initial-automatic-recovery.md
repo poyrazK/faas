@@ -1,10 +1,10 @@
-# ADR-1031: Opt-in automatic first recovery
+# ADR-1241: Opt-in automatic first recovery
 
 Status: Accepted (2026-10-12)
 
 ## Context
 
-ADR-1030 discovers and prepares durable first-recovery reviews without execution.
+ADR-1240 discovers and prepares durable first-recovery reviews without execution.
 Operators still submit each captured failure individually. Automatic first
 recovery needs independent execution authority and retained outcome proof.
 

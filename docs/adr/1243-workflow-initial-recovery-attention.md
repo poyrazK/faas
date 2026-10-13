@@ -1,4 +1,4 @@
-# ADR-1033: Initial automatic recovery attention notifications
+# ADR-1243: Initial automatic recovery attention notifications
 
 ## Status
 

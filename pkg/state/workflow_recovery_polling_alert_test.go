@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1049
+// adr: 1259
 func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 	for _, scope := range []string{"manual_initial", "automatic_policy"} {
 		for _, subscribed := range []bool{true, false} {

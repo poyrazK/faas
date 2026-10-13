@@ -1,10 +1,10 @@
-# ADR-1044: Diagnose and repair manual initial recovery evidence
+# ADR-1254: Diagnose and repair manual initial recovery evidence
 
 Date: 2026-10-13
 
 ## Context
 
-ADR-1043 observes manually approved preview-mode initial recoveries, but missing
+ADR-1253 observes manually approved preview-mode initial recoveries, but missing
 saved execution proof leaves the review unresolved. The existing diagnosis and
 repair endpoints only accept automatic-initial submissions.
 

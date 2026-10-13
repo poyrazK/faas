@@ -2424,7 +2424,7 @@ gregale automations recovery-start --plan first-recovery.json --reason "Reviewed
 
 Plan preparation does not create a job or resume the workflow. The plan retains the captured failure ID and expected generation zero. Creation and admission recheck retained evidence and generation; resume rechecks safety and capacity. A run that advances after review cannot be resumed by the stale plan. Keep the same plan/key when reconciling an uncertain submission. Inspect the returned native job and its execution results to distinguish admission from workflow completion. Submit these plans through `recovery-start`; the per-run journal executor cannot preserve their evidence checks.
 
-The API exposes `GET /v1/apps/{slug}/workflow-failures` and `GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview`. First recovery remains an explicit operator action; automatic policies still retry saved failed recovery generations only. See [ADR-1027](adr/1027-reviewed-initial-workflow-recovery.md).
+The API exposes `GET /v1/apps/{slug}/workflow-failures` and `GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview`. First recovery remains an explicit operator action; automatic policies still retry saved failed recovery generations only. See [ADR-1237](adr/1237-reviewed-initial-workflow-recovery.md).
 
 ### Dry-run initial-failure policy filters
 

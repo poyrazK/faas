@@ -1,4 +1,4 @@
-# ADR-1037: Retry evidence alert guidance and transitions
+# ADR-1247: Retry evidence alert guidance and transitions
 
 ## Status
 

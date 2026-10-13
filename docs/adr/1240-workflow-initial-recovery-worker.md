@@ -1,11 +1,11 @@
-# ADR-1030: Worker preparation of initial-failure reviews
+# ADR-1240: Worker preparation of initial-failure reviews
 
 Status: Accepted (2026-10-12)
 
 ## Context
 
 The policy worker scans recovery jobs. Captured generation-zero failures without
-parent jobs therefore require operators to prepare ADR-1029 reviews individually.
+parent jobs therefore require operators to prepare ADR-1239 reviews individually.
 
 ## Decision
 

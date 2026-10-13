@@ -1,4 +1,4 @@
-# ADR-1049: Persistent recovery polling alerts
+# ADR-1259: Persistent recovery polling alerts
 
 Date: 2026-10-13
 

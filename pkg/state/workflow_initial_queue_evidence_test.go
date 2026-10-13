@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// adr: 1040
+// adr: 1250
 func TestWorkflowInitialQueuePreparedEvidence(t *testing.T) {
 	for _, paused := range []bool{false, true} {
 		workflowScheduleStores(t, func(t *testing.T, s Store) {

@@ -1,10 +1,10 @@
-# ADR-1048: Automatic policy polling failure isolation
+# ADR-1258: Automatic policy polling failure isolation
 
 Date: 2026-10-13
 
 ## Context
 
-ADR-1046 separates manual and automatic polling. ADR-1047 defers deterministic
+ADR-1256 separates manual and automatic polling. ADR-1257 defers deterministic
 manual observation errors. Automatic execution still ends its pass on the oldest
 faulty policy, allowing that policy to delay other apps indefinitely.
 

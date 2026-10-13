@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1042
+// adr: 1252
 func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 	for _, scenario := range []string{"success", "failed", "cancelled", "expired", "stale"} {
 		t.Run(scenario, func(t *testing.T) {

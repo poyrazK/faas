@@ -1,4 +1,4 @@
-# ADR-1046: Independent manual observation and automatic execution polling
+# ADR-1256: Independent manual observation and automatic execution polling
 
 Date: 2026-10-13
 

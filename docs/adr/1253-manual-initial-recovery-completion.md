@@ -1,4 +1,4 @@
-# ADR-1043: Observe manually approved initial recovery completion
+# ADR-1253: Observe manually approved initial recovery completion
 
 Date: 2026-10-13
 

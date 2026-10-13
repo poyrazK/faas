@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1041
+// adr: 1251
 func TestWorkflowInitialAttentionHistory(t *testing.T) {
 	for _, receivers := range []bool{true, false} {
 		workflowScheduleStores(t, func(t *testing.T, s Store) {
@@ -134,7 +134,7 @@ func TestWorkflowInitialAttentionHistory(t *testing.T) {
 	}
 }
 
-// adr: 1041
+// adr: 1251
 func TestWorkflowInitialAttentionDiagnosisChanges(t *testing.T) {
 	r := api.WorkflowInitialRecoveryReview{ID: uuid.NewString(), Policy: api.WorkflowRecoveryPolicy{Mode: "automatic_initial"}}
 	d := api.WorkflowInitialEvidenceDiagnosis{Reason: "completion_time_unverified"}

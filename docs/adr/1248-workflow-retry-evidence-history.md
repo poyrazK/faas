@@ -1,4 +1,4 @@
-# ADR-1038: Retry evidence repairs and alert transitions in history
+# ADR-1248: Retry evidence repairs and alert transitions in history
 
 ## Status
 

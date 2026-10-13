@@ -1,4 +1,4 @@
-# ADR-1052: Manual retry review health coverage
+# ADR-1262: Manual retry review health coverage
 
 Date: 2026-10-14
 
