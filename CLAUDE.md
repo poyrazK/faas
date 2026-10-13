@@ -163,9 +163,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
 - apidserver's tests compile as two units: the package with its internal tests, and the
-  external `apidserver_test` package. Run them with `make test-apid [RUN='^TestX'] [RACE=1]`,
-  not a bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and
-  `GOMEMLIMIT=6GiB`, which holds a `-race` build near 7.5 GB RSS instead of ~13.5 GB.
+  external `apidserver_test` package. Prefer `make test-apid [RUN='^TestX'] [RACE=1]` to a
+  bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and `GOMEMLIMIT=6GiB`,
+  which holds a `-race` build near 3 GB RSS (a bare `go test -race` peaks near 4 GB).
   Write new apid tests in `package apidserver_test` and reach internals through
   `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
