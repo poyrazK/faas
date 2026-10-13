@@ -3368,13 +3368,22 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// never be restored. Keeping it and discarding this capture would
 			// leave the deployment cold-booting on every wake, so retire it
 			// and publish the new capture instead.
-			if state.SnapshotDriveKey(stored) == "" && state.SnapshotDriveKey(snap) != "" {
+			//
+			// The same holds for a live row of another Firecracker version
+			// (ADR-1152 §6): no fleet-wide sweep retires it any more, and
+			// the node that just captured cannot restore it, so the newer
+			// capture replaces it.
+			unrestorable := state.SnapshotDriveKey(stored) == ""
+			otherFC := snap.FCVersion != "" && stored.FCVersion != snap.FCVersion
+			if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
 				}
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
-					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID,
+					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
+					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
 				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
@@ -4658,10 +4667,11 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 
 // --- F2: FC-version startup sweep ------------------------------------------
 
-// MarkFCSnapshotsStale is the F2 sweep body. It is invoked once at imaged
-// startup (cmd/imaged/main.go wires it) and never on a timer — a Firecracker
-// upgrade requires the operator to restart imaged, which matches the
-// "snapshots are cache, not truth" framing (ADR-005). Idempotent.
+// MarkFCSnapshotsStale marks every live snapshot of another Firecracker
+// version stale, fleet-wide. imaged startup no longer calls it (ADR-1152 §6):
+// imaged runs on every compute node, so a startup sweep let one upgraded node
+// retire every other node's warm snapshots in a rolling upgrade. It is for an
+// operator to run once the whole fleet is on fcVersion. Idempotent.
 //
 // Issue #470 / PR C / ADR-074: when n > 0, walk the just-marked-stale
 // rows and emit app.warm_snapshot_stale per affected app. The kind
