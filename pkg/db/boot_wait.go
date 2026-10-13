@@ -1,6 +1,6 @@
 package db
 
-// Boot-time wait for PostgreSQL (ADR-1152 §5 rule 6).
+// Boot-time wait for PostgreSQL (ADR-1237 §5 rule 6).
 //
 // Every daemon unit runs Restart=on-failure with RestartSec=2s under
 // StartLimitBurst=5 per 60 s. A daemon that exits because Postgres is not

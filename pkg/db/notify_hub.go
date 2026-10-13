@@ -482,7 +482,7 @@ func (h *notifyHub) run(ctx context.Context, conn *pgxpool.Conn, listened map[st
 			h.log.Info("db: notify hub LISTEN re-subscribed", "channels", len(listened))
 		}
 		// Notifications sent while the connection was down are lost;
-		// subscribers that depend on them reload now (ADR-1152 §5 rule 3).
+		// subscribers that depend on them reload now (ADR-1237 §5 rule 3).
 		h.requestResync()
 		conn = c
 	}

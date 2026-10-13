@@ -456,7 +456,7 @@ func TestHeartbeat_OwnerScopedObserverMarksStalePeerUnavailable(t *testing.T) {
 	h.Staleness = time.Minute
 	h.now = func() time.Time { return now }
 	// This schedd has read the store for longer than the staleness window
-	// (ADR-1152 §5 rule 4), so the peer's old timestamp is evidence.
+	// (ADR-1237 §5 rule 4), so the peer's old timestamp is evidence.
 	h.peerSettle.settledSince(now.Add(-time.Hour))
 	if err := h.Tick(ctx); err != nil {
 		t.Fatalf("Tick: %v", err)

@@ -48,7 +48,7 @@ func runDNSHandoff(
 	ops *wire.OpsMetrics,
 ) error {
 	// Election reads compute_nodes, not the payload, so a resync after a
-	// LISTEN reconnect (ADR-1152 §5 rule 3) re-elects like any notification.
+	// LISTEN reconnect (ADR-1237 §5 rule 3) re-elects like any notification.
 	notif, err := db.SubscribeWithResync(ctx, pool, []string{
 		db.NotifyComputeNodeChanged,
 	}, log)

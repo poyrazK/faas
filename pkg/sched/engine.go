@@ -583,7 +583,7 @@ type Engine struct {
 	deadNodeReconcilerStalenessSeconds int
 	// deadNodeSettle holds the dead-node sweep back until this schedd has
 	// read the store without interruption for the staleness window, so a
-	// store outage cannot fail every running instance at once (ADR-1152 §5
+	// store outage cannot fail every running instance at once (ADR-1237 §5
 	// rule 4).
 	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
@@ -5862,7 +5862,7 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // verdict would terminate instances on a node that is merely slow.
 //
 // The sweep also waits until this schedd has read the store without
-// interruption for the same window (ADR-1152 §5 rule 4). After a store
+// interruption for the same window (ADR-1237 §5 rule 4). After a store
 // outage longer than 120 s every node's heartbeat is old because nobody
 // could write one; failing rows then would terminate every running
 // instance in the fleet, and vmmd would destroy the healthy VMs behind them.

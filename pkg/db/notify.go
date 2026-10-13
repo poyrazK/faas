@@ -1127,7 +1127,7 @@ func SubscribeWithReconnect(
 const ResyncChannel = "_gregale_resync"
 
 // SubscribeWithResync is SubscribeWithReconnect for consumers whose state is
-// driven only by notifications, with no table poll of their own (ADR-1152 §5
+// driven only by notifications, with no table poll of their own (ADR-1237 §5
 // rule 3). pg_notify is not durable: anything sent while the LISTEN
 // connection is down, or dropped because the subscriber's buffer was full, is
 // gone. Besides the subscribed channels, the returned channel therefore

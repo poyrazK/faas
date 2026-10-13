@@ -150,7 +150,7 @@ type Heartbeat struct {
 	recoverMu sync.Mutex
 	// peerSettle tracks uninterrupted store access for the stale-peer
 	// observer, which must not judge peers by timestamps that nobody could
-	// write during a store outage (ADR-1152 §5 rule 4).
+	// write during a store outage (ADR-1237 §5 rule 4).
 	peerSettle storeSettle
 
 	// recovering holds the nodes THIS schedd flipped inactive after a

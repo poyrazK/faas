@@ -3370,7 +3370,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// and publish the new capture instead.
 			//
 			// The same holds for a live row of another Firecracker version
-			// (ADR-1152 §6): no fleet-wide sweep retires it any more, and
+			// (ADR-1237 §6): no fleet-wide sweep retires it any more, and
 			// the node that just captured cannot restore it, so the newer
 			// capture replaces it.
 			unrestorable := state.SnapshotDriveKey(stored) == ""
@@ -4668,7 +4668,7 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 // --- F2: FC-version startup sweep ------------------------------------------
 
 // MarkFCSnapshotsStale marks every live snapshot of another Firecracker
-// version stale, fleet-wide. imaged startup no longer calls it (ADR-1152 §6):
+// version stale, fleet-wide. imaged startup no longer calls it (ADR-1237 §6):
 // imaged runs on every compute node, so a startup sweep let one upgraded node
 // retire every other node's warm snapshots in a rolling upgrade. It is for an
 // operator to run once the whole fleet is on fcVersion. Idempotent.

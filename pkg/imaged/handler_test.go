@@ -2328,7 +2328,7 @@ func TestHandleSnapshotWritten_ReplacesUnrestorableLegacyRow(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow: with no
 // fleet-wide FC sweep, a restorable live row of another Firecracker version
 // would otherwise hold the unique (deployment, tier) slot and make every new

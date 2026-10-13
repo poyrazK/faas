@@ -1,5 +1,5 @@
-// adr: 1152
-// boot_wait_test.go pins ADR-1152 §5 rule 6: under a Type=notify unit a
+// adr: 1237
+// boot_wait_test.go pins ADR-1237 §5 rule 6: under a Type=notify unit a
 // daemon waits for an unreachable database (extending its start timeout)
 // instead of exiting into the systemd restart limit, while configuration
 // errors and non-systemd callers still fail fast.
@@ -41,7 +41,7 @@ func failingPing(n int, err error) (func(context.Context) error, *int) {
 	}, &calls
 }
 
-// adr: 1152
+// adr: 1237
 func TestBootWaiterWaitsForUnreachableDatabase(t *testing.T) {
 	var notes []string
 	ping, calls := failingPing(3, syscall.ECONNREFUSED)
@@ -65,7 +65,7 @@ func TestBootWaiterWaitsForUnreachableDatabase(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestBootWaiterFailsFastOutsideSystemd(t *testing.T) {
 	var notes []string
 	ping, calls := failingPing(3, syscall.ECONNREFUSED)
@@ -77,7 +77,7 @@ func TestBootWaiterFailsFastOutsideSystemd(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestBootWaiterFailsFastOnConfigurationErrors(t *testing.T) {
 	for _, code := range []string{"28P01", "3D000"} { // bad password, missing database
 		var notes []string
@@ -91,7 +91,7 @@ func TestBootWaiterFailsFastOnConfigurationErrors(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestBootWaiterStopsOnCancel(t *testing.T) {
 	var notes []string
 	ctx, cancel := context.WithCancel(context.Background())
@@ -111,7 +111,7 @@ func TestBootWaiterStopsOnCancel(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestRetryableBootError(t *testing.T) {
 	cases := []struct {
 		err  error
