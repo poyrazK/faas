@@ -81,17 +81,7 @@ func QueueBindingAppClass(observed WorkloadClass, executionMode string) Workload
 	return observed
 }
 
-// QueueBindingPushReachable reports whether push delivery can reach an app in
-// this execution mode. Worker and job instances never join the gateway target
-// set (ADR-051), so they consume through pull leases instead (ADR-1140).
-func QueueBindingPushReachable(executionMode string) bool {
-	return executionMode != api.ExecutionModeWorker && executionMode != api.ExecutionModeJob
-}
-
-func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass WorkloadClass, executionMode string) error {
-	if row.Mode == "push" && !QueueBindingPushReachable(executionMode) {
-		return ErrInvalidArgument
-	}
+func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass WorkloadClass) error {
 	if row.RetiredAt != nil || row.DeploymentScope != "" && !api.ValidProjectEnvironmentSlug(row.DeploymentScope) {
 		return ErrInvalidArgument
 	}

@@ -324,10 +324,10 @@ waits for demand to stay low for 60 seconds: a pool shrinks only to the highest
 replica count its queue called for during that window, so a queue that drains
 and refills does not stop and re-boot workers.
 
-Workers do not listen for HTTP, so they consume queues through pull bindings
-and lease messages ([pull leases](../queue-pull-leases.md)); push delivery is
-for function apps, and a push binding on a worker- or job-mode app is
-rejected. `gregale queue setup` creates a pull binding for such apps. A worker
+A worker consumes a queue either way: a push binding delivers each message to a
+worker that listens for deliveries on its port, and a pull binding lets a
+worker with no HTTP listener lease messages itself
+([pull leases](../queue-pull-leases.md)). A worker
 holding unexpired leases is kept when the pool scales in. On the stop signal,
 stop leasing and finish or nack in-flight messages within
 `stop_grace_period_s`; an unacked lease is redelivered after its visibility

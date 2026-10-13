@@ -104,7 +104,7 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 		}
 	}
 	if !remove {
-		if err := validateQueueBindingConsumer(binding, AppType(app.Type), QueueBindingAppClass(WorkloadClass(app.WorkloadClass), app.ExecutionMode), app.ExecutionMode); err != nil {
+		if err := validateQueueBindingConsumer(binding, AppType(app.Type), QueueBindingAppClass(WorkloadClass(app.WorkloadClass), app.ExecutionMode)); err != nil {
 			return QueueBindingConsumerResult{}, err
 		}
 	}

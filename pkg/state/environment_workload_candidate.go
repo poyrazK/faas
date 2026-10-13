@@ -287,7 +287,7 @@ func validateEnvironmentQueueBindings(frozen EnvironmentWorkloadRuntime, binding
 		if row.Name != name {
 			return fmt.Errorf("%w: queue %q contract has the wrong name", ErrInvalidArgument, name)
 		}
-		if err := validateQueueBindingConsumer(row, frozen.AppType, frozen.WorkloadClass, frozen.Baseline.ExecutionMode); err != nil {
+		if err := validateQueueBindingConsumer(row, frozen.AppType, frozen.WorkloadClass); err != nil {
 			return fmt.Errorf("%w: queue %q is incompatible with the frozen workload: %w", ErrInvalidArgument, name, err)
 		}
 		canonical, err := canonicalGitOpsValue(mustGitOpsJSON(gitOpsQueueContract(row)))

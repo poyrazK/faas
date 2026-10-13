@@ -1,13 +1,13 @@
 # Pull leases for worker queues
 
-Worker and job apps never receive pushed messages: they have no HTTP listener
-and are not gateway targets. They consume a queue by leasing its messages
-(ADR-1140). Function apps keep using push bindings.
+A push binding delivers each message to the app over HTTP, so the app must
+listen for deliveries. A worker or job that runs its own loop with no HTTP
+listener consumes a queue by leasing its messages instead (ADR-1140): it asks
+for messages when it has capacity, and acks or nacks each one.
 
 ## Set up
 
-Give the app a **pull** binding for the queue, either with
-`gregale queue setup` (which picks pull for worker and job apps) or directly:
+Give the app a **pull** binding for the queue:
 
 ```bash
 curl -X POST "$GREGALE_API/v1/apps/my-worker/queue-bindings" \

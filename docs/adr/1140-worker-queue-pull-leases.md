@@ -2,18 +2,18 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-11
-- **Context:** Worker and job apps cannot consume Gregale queues. Push
-  delivery reaches only gateway targets, and worker instances never join the
-  target set (ADR-051), so push is for function apps (ADR-231). Pull bindings
-  exist, but no public API leases a message: `POST /queues/receive` returns
-  rows the drain already delivered and completed, and `POST /queues/{id}/ack`
-  is informational. The invocation drain never dispatches named-queue or
-  binding-owned rows, so a message on a pull binding has no consumer at all
-  and waits in `pending` indefinitely, while worker pools scale on the depth
-  of that queue. `gregale queue setup` compounds this by creating a
-  push binding for worker and job apps, a combination that can never deliver.
-  Stage environments already have a receipt-based lease primitive (ADR-531);
-  production queues have none.
+- **Context:** A push binding delivers each message to the app over HTTP, so
+  only an app that listens for deliveries can consume it. A worker or job
+  that runs its own loop with no HTTP listener (a broker-style consumer, the
+  common shape for background work) has no way to consume a Gregale queue.
+  Pull bindings exist, but no public API leases a message:
+  `POST /queues/receive` returns rows the drain already delivered and
+  completed, and `POST /queues/{id}/ack` is informational. The invocation
+  drain never dispatches named-queue or binding-owned rows, so a message on a
+  pull binding has no consumer at all and waits in `pending` indefinitely,
+  while worker pools scale on the depth of that queue. Stage environments
+  already have a receipt-based lease primitive (ADR-531); production queues
+  have none.
 - **Decision:**
   1. *Lease API.* An app with an enabled pull binding for a queue can lease
      its production messages:
@@ -60,11 +60,11 @@
   6. *Scale-in.* A worker that holds unexpired leases ranks as busy when the
      pool picks scale-in victims, so idle-first ordering (ADR-933's
      companion change) works for pull workers, not only HTTP apps.
-  7. *Push to worker/job is rejected.* The binding API, the store and the
-     GitOps compiler reject `mode=push` with `workload_class` worker or job,
-     with a message that points to pull leases. `gregale queue setup`
-     creates pull bindings for worker and job apps. Existing push bindings of
-     that shape can still be switched to pull or removed.
+  7. *Push stays valid for workers.* A worker that listens for deliveries
+     keeps using push bindings (environment qualification and GitOps
+     delivery already push to worker-mode instances); pull is the option for
+     workers without an HTTP listener. Binding validation and
+     `gregale queue setup` defaults are unchanged.
   8. *SDK consumers.* `@gregale/sdk-node/queues/runtime` (`consumeQueue`)
      and `faas_sdk.queue_consumer` (`consume_queue`) run the loop: long-poll
      lease up to the free concurrency, handler, ack or nack with the error,
@@ -92,8 +92,7 @@
 - **Validation:** Store tests cover lease, ack, nack to retry and to dead
   letter, extend, expiry and redelivery with a stale receipt, the
   `max_concurrency` cap, the response byte budget and binding-mode checks.
-  API tests cover both authentication paths and the rejected push +
-  worker/job combination; `pkg/apid/queueleases` tests cover a wait woken
+  API tests cover both authentication paths; `pkg/apid/queueleases` tests cover a wait woken
   by a notification, the recheck without notifications, an empty wait and
   the wait/batch bounds. A scheduler test covers lease-holding workers
   surviving scale-in. Node and Python SDK tests cover ack and nack, the

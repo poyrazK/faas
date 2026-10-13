@@ -182,10 +182,6 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	}
 	enabled := true
 	mode := "push"
-	if !state.QueueBindingPushReachable(app.Manifest.ExecutionMode) {
-		// Worker and job instances never receive pushes; they lease (ADR-1140).
-		mode = "pull"
-	}
 	workloadClass := state.WorkloadClass(class)
 	var binding state.QueueBinding
 	consumers, ok := s.queueBindingConsumers(w)
