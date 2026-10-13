@@ -658,7 +658,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg},
 		probe.ReadyFunc(), drainTracker)
 	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
-	// ADR-1152 §2: the Cloudflare Load Balancer monitor's signal, independent
+	// ADR-1237 §2: the Cloudflare Load Balancer monitor's signal, independent
 	// of Postgres (edge_health.go).
 	controlMux.HandleFunc("/edgez", edge.handler())
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)

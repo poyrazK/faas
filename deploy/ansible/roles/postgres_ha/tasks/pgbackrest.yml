@@ -1,7 +1,7 @@
 ---
 # pgBackRest replaces the cp+rclone archive_command and the nightly
 # pg_basebackup timers. repo1 is in the cell's region; repo2 is in a second
-# US region and is what a region rebuild restores from (ADR-1152).
+# US region and is what a region rebuild restores from (ADR-1237).
 - name: postgres_ha — require both backup repositories
   ansible.builtin.assert:
     that:
@@ -55,7 +55,7 @@
     mode: "0755"
     content: |
       #!/bin/sh
-      # Managed by Ansible (postgres_ha). ADR-1152: back up only from the
+      # Managed by Ansible (postgres_ha). ADR-1237: back up only from the
       # current primary; every member runs this timer and the others exit.
       set -eu
       type="${1:?usage: faas-pgbackrest-backup full|diff}"
@@ -72,7 +72,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by Ansible (postgres_ha). ADR-1152.
+      # Managed by Ansible (postgres_ha). ADR-1237.
       [Unit]
       Description=pgBackRest %i backup of {{ faas_pgbackrest_stanza }} (primary only)
       After=patroni.service
@@ -91,7 +91,7 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by Ansible (postgres_ha). ADR-1152.
+      # Managed by Ansible (postgres_ha). ADR-1237.
       [Unit]
       Description=pgBackRest {{ item.type }} backup schedule
 

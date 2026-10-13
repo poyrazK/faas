@@ -307,7 +307,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// ADR-1152 §4: a central schedd that lost its lease must exit with an
+	// ADR-1237 §4: a central schedd that lost its lease must exit with an
 	// error so systemd restarts it as a standby (central_lease.go).
 	var centralHold *singleton.Holding
 	stopStandbyWatchdog := func() {}
@@ -476,7 +476,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 	} else {
 		log.Info("schedd owner node: legacy single-box (cfg.NodeName empty; ownership guard short-circuits)")
 	}
-	// ADR-1152 §4: only one central schedd runs per cell. Wait here as a
+	// ADR-1237 §4: only one central schedd runs per cell. Wait here as a
 	// standby until this process holds the central-scheduler lease; all
 	// work below then stops when the lease is lost.
 	if ownerNodeID == "" && centralSchedulerLeaseEnabled(os.Getenv(centralSchedulerLeaseEnv)) {
@@ -645,7 +645,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
-	// ADR-1152 §5 rule 4: a schedd that saw the store unavailable before it
+	// ADR-1237 §5 rule 4: a schedd that saw the store unavailable before it
 	// started (a boot wait for Postgres, or store errors while it waited for
 	// the central-scheduler lease) holds its liveness verdicts for a full
 	// staleness window; every heartbeat is old because nobody could write.

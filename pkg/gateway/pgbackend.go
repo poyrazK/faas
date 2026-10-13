@@ -1022,7 +1022,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
 			if err != nil {
 				// The validation could not reach the registry. Treat it like
-				// any other route lookup error (ADR-190, ADR-1152 §5): serve
+				// any other route lookup error (ADR-190, ADR-1237 §5): serve
 				// the last-known-good route within the stale TTL instead of
 				// failing every request to the domain.
 				return b.lookupStale(ctx, host, err)

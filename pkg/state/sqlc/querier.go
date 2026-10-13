@@ -39,7 +39,7 @@ type Querier interface {
 	AcknowledgeEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentWorkloadServingRouteParams) error
 	// Legacy scheduler subscribers cannot acknowledge another worker's lease.
 	AcknowledgePendingNotification(ctx context.Context, db DBTX, id int64) error
-	// ADR-1152 §4. Acquires name for holder, or renews it when holder already
+	// ADR-1237 §4. Acquires name for holder, or renews it when holder already
 	// holds it. Another holder's row is taken over only once it has expired by
 	// the database clock. A takeover, or re-acquisition after the holder's own
 	// row expired, draws a new epoch. No row means another holder still holds it.
@@ -3283,7 +3283,7 @@ type Querier interface {
 	RecordRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeActivityParams) (int64, error)
 	RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeGuardParams) (int64, error)
 	RecordRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams) (int64, error)
-	// ADR-1152: one row per wrong TOTP code, shared by every apid replica.
+	// ADR-1237: one row per wrong TOTP code, shared by every apid replica.
 	// Rows that have left the window are pruned in the same statement.
 	RecordTOTPFailure(ctx context.Context, db DBTX, arg RecordTOTPFailureParams) error
 	RecordTelemetryCoverage(ctx context.Context, db DBTX, arg RecordTelemetryCoverageParams) error

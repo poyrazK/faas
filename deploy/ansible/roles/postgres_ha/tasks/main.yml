@@ -1,5 +1,5 @@
 ---
-# ADR-1152 §3: PostgreSQL high availability for a cell. The control nodes run
+# ADR-1237 §3: PostgreSQL high availability for a cell. The control nodes run
 # etcd, Patroni (which runs PostgreSQL) and pgBackRest; every node runs
 # HAProxy so local daemons reach the current primary at
 # 127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port }}.
@@ -34,7 +34,7 @@
       ansible.builtin.assert:
         that:
           - faas_postgres_ha_members | length == 1 or (faas_host_zone | default('') | length > 0)
-        fail_msg: "{{ inventory_hostname }} needs fleet.hosts[].zone in the manifest (ADR-1152 §2)."
+        fail_msg: "{{ inventory_hostname }} needs fleet.hosts[].zone in the manifest (ADR-1237 §2)."
         quiet: true
 
     - name: postgres_ha — watchdog

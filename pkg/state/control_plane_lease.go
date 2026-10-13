@@ -1,6 +1,6 @@
 package state
 
-// Control-plane singleton leases (ADR-1152 §4).
+// Control-plane singleton leases (ADR-1237 §4).
 //
 // A cell runs its control plane on three nodes, but some work must run on
 // exactly one of them: the central scheduler's cron and placement, meterd's
@@ -11,7 +11,7 @@ package state
 // work started under an older epoch can be refused with ControlPlaneLeaseHeld.
 //
 // The lease lives in the cell's Postgres on purpose: the fencing check must
-// commit with the write it guards (ADR-1152, rejected alternatives).
+// commit with the write it guards (ADR-1237, rejected alternatives).
 
 import (
 	"context"

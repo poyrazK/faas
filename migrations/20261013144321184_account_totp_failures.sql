@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-1152: apid runs on several control nodes, so the per-account TOTP
+-- ADR-1237: apid runs on several control nodes, so the per-account TOTP
 -- failure window (10 failures per 15 minutes) must be shared, or each
 -- replica would grant its own budget of guesses. One row per failed code;
 -- rows older than the window are pruned on the next failure and all rows

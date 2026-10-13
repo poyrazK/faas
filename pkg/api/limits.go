@@ -10673,7 +10673,7 @@ const (
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
 
-// Control-plane singleton leases (ADR-1152 §4). A singleton renews its lease
+// Control-plane singleton leases (ADR-1237 §4). A singleton renews its lease
 // every ControlPlaneLeaseRenewInterval; a standby takes over once the lease
 // has gone ControlPlaneLeaseTTL without renewal, by the database clock. The
 // holder stops its own work ControlPlaneLeaseSafetyMargin before that, timed

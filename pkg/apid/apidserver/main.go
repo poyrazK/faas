@@ -732,7 +732,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// build runDeps directly without a real pool — the verifier
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
-	// ADR-1152 §4: per-replica workers run on every apid; workers that act
+	// ADR-1237 §4: per-replica workers run on every apid; workers that act
 	// on shared state run only under the apid-background lease
 	// (background.go).
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {

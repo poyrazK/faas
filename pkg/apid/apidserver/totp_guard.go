@@ -15,7 +15,7 @@ import (
 // skew accepts three values per attempt. Ten failures in fifteen minutes
 // hold that account's TOTP checks until the window has moved on.
 //
-// ADR-1152: apid runs on several control nodes, so the window lives in the
+// ADR-1237: apid runs on several control nodes, so the window lives in the
 // database (state.TOTPFailureStore) whenever the store provides it; a window
 // per replica would hand each replica its own budget of guesses. Without such
 // a store (tests, tools) the guard keeps the window in process.

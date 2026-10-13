@@ -1,5 +1,5 @@
-// adr: 1152
-// toml_postgres_ha_test.go pins the Patroni DSN rule (ADR-1152 §3): with
+// adr: 1237
+// toml_postgres_ha_test.go pins the Patroni DSN rule (ADR-1237 §3): with
 // manifest.postgresql.ha the primary may run on another control node, so a
 // control-plane TOML must not pin the local peer socket; the daemons take
 // the HAProxy DSN from sealed.env instead.
@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// adr: 1152
+// adr: 1237
 func TestRenderTOML_ControlPlaneUnderPostgresHAUsesEnvironmentDSN(t *testing.T) {
 	const sharedDSN = "postgres://faas@fsn-1.gregale.dev:5432/faas?sslmode=disable"
 	for _, d := range []string{"apid", "schedd", "meterd", "githubd"} {

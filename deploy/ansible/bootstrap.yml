@@ -105,7 +105,7 @@
     - role: prometheus
     - role: grafana
     # Control-plane-only:
-    # ADR-1152 §3: manifest postgresql.ha selects the Patroni cluster
+    # ADR-1237 §3: manifest postgresql.ha selects the Patroni cluster
     # (postgres_ha) instead of the single distro-managed cluster and its
     # capacity restarts and pg_basebackup timers.
     - role: postgres
@@ -169,7 +169,7 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
-    # ADR-1152 §3: compute daemons reach the Patroni primary through a local
+    # ADR-1237 §3: compute daemons reach the Patroni primary through a local
     # HAProxy (127.0.0.1:5433).
     - role: postgres_ha
       vars:

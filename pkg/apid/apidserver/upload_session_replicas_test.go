@@ -1,4 +1,4 @@
-// adr: 1152
+// adr: 1237
 // upload_session_replicas_test.go pins the multi-replica upload stopgap: with
 // FAAS_APID_RESUMABLE_UPLOADS=0 (set on cells with more than one control
 // node) POST /v1/uploads answers 404 without allocating spool, which makes
@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1152
+// adr: 1237
 func TestUploadSession_OffOnMultiReplicaCell(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)

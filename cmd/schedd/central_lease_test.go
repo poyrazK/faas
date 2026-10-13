@@ -1,5 +1,5 @@
-// adr: 1152
-// central_lease_test.go pins ADR-1152 §4 for the central schedd: a second
+// adr: 1237
+// central_lease_test.go pins ADR-1237 §4 for the central schedd: a second
 // central schedd waits as a standby while another holds the
 // central-scheduler lease, and the gate can be turned off.
 
@@ -23,7 +23,7 @@ func TestCentralSchedulerLeaseEnabled(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestCentralSchedulerLeaseStandbyWaitsForHolder(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

@@ -1,6 +1,6 @@
 package state
 
-// Shared per-account TOTP failure window (ADR-1152).
+// Shared per-account TOTP failure window (ADR-1237).
 //
 // apid limits wrong TOTP codes per account (10 per 15 minutes) so someone
 // holding the password cannot walk the code space from many addresses. With

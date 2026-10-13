@@ -1,6 +1,6 @@
 ---
 # etcd: Patroni's distributed configuration store, one member per control
-# node. Private to Patroni; application leases stay in Postgres (ADR-1152 §4).
+# node. Private to Patroni; application leases stay in Postgres (ADR-1237 §4).
 - name: postgres_ha — install etcd
   ansible.builtin.apt:
     name: etcd-server
@@ -37,7 +37,7 @@
     mode: "0640"
   notify: restart etcd
 
-# ADR-1152 owner decision: etcd shares the control node with Postgres but must
+# ADR-1237 owner decision: etcd shares the control node with Postgres but must
 # not wait behind it for disk. Its own disk is the operator's part (mount it
 # at faas_etcd_data_dir); the unit gets the higher I/O and CPU priority.
 - name: postgres_ha — etcd drop-in directory
@@ -52,7 +52,7 @@
   ansible.builtin.copy:
     dest: /etc/systemd/system/etcd.service.d/zz-gregale-priority.conf
     content: |
-      # Managed by Ansible (postgres_ha). ADR-1152.
+      # Managed by Ansible (postgres_ha). ADR-1237.
       [Service]
       IOSchedulingClass=best-effort
       IOSchedulingPriority=0

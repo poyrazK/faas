@@ -115,7 +115,7 @@
       {% if faas_public_edge_platform_tls | default(true) | bool %}
       {{ faas_public_edge_domain }}, *.{{ faas_public_edge_domain }} {
           tls {{ faas_public_edge_cert }} {{ faas_public_edge_key }}
-          # ADR-1152 §2: the Cloudflare Load Balancer monitor asks this one
+          # ADR-1237 §2: the Cloudflare Load Balancer monitor asks this one
           # path on the origin hostname; gatewayd-public's /edgez answers it
           # without depending on Postgres. No app host is affected.
           @edgehealth {

@@ -742,7 +742,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr error) {
-	// ADR-1152 §4: a meterd that lost its lease must exit with an error so
+	// ADR-1237 §4: a meterd that lost its lease must exit with an error so
 	// systemd restarts it as a standby (meterd_lease.go).
 	var meterdHold *singleton.Holding
 	stopStandbyWatchdog := func() {}
@@ -835,7 +835,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 	}
 
 	store := state.NewPgStore(pool)
-	// ADR-1152 §4: only one meterd runs per cell. Wait here as a standby
+	// ADR-1237 §4: only one meterd runs per cell. Wait here as a standby
 	// until this process holds the meterd lease; all work below then stops
 	// when the lease is lost.
 	if meterdLeaseEnabled(deps.getenv, meterdLeaseEnv) {

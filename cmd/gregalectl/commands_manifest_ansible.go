@@ -198,7 +198,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if sharedPrivateHosts {
 			privateHosts = nil
 		}
-		// ADR-1152 §2: every control node runs its own scheduler and its own
+		// ADR-1237 §2: every control node runs its own scheduler and its own
 		// Postgres member, so render each one's own address rather than the
 		// last control node's. With one control node these equal the values
 		// computed above.
@@ -226,7 +226,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 		}
 		if m.PostgreSQL.HA {
-			// ADR-1152 §3: control nodes run the Patroni cluster and every
+			// ADR-1237 §3: control nodes run the Patroni cluster and every
 			// node routes to its primary through a local HAProxy.
 			body += "faas_postgres_ha_enabled: true\n"
 		}
@@ -421,7 +421,7 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 	fmt.Fprintf(&b, "faas_box_role: %s\n", host.Role)
 	fmt.Fprintf(&b, "faas_node_name: %s\n", canonicalNodeName)
 	if host.Zone != "" {
-		// ADR-1152 §2: the Postgres HA role places Patroni and etcd members
+		// ADR-1237 §2: the Postgres HA role places Patroni and etcd members
 		// by zone.
 		fmt.Fprintf(&b, "faas_host_zone: %q\n", host.Zone)
 	}

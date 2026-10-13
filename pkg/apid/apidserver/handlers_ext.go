@@ -4745,7 +4745,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 }
 
 // resolveGraceWindow reads the per-account grace override from the store on
-// every rotation. ADR-1152: apid runs on several control nodes, and an
+// every rotation. ADR-1237: apid runs on several control nodes, and an
 // in-process cache invalidated only on the replica that handled the update
 // let a rotation on another replica keep a leaked key valid for the default
 // grace period after the customer had set immediate rotation. Rotations are

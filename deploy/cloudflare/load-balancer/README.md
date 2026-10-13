@@ -1,4 +1,4 @@
-# Cell edge load balancer (ADR-1152 §2)
+# Cell edge load balancer (ADR-1237 §2)
 
 A cell runs one edge per control node: Caddy terminating Cloudflare Origin CA
 TLS in front of gatewayd-public, one per zone. This directory holds the
@@ -13,7 +13,7 @@ customer request to `ORIGIN_HOSTNAME` (`origin.gregale.dev`) through
 `cf.resolveOverride`, keeping the customer Host header. Today that name is a
 DNS-only A record for the single control node.
 
-ADR-1152 makes `origin.gregale.dev` a **DNS-only** Cloudflare Load Balancer
+ADR-1237 makes `origin.gregale.dev` a **DNS-only** Cloudflare Load Balancer
 (`"proxied": false`, 30 s TTL). The monitor below checks every edge every
 15 s; an edge that fails twice drops out of the DNS answers, so the Worker
 stops resolving to it within about a minute (monitor detection plus TTL),
@@ -24,7 +24,7 @@ a loop through the Worker's `*.gregale.dev/*` route.
 load-balanced hostname (it resolves through Cloudflare's own DNS, so it
 should). If it does not, keep `origin.gregale.dev` as plain A records and
 add per-origin failover in the Worker instead (try the next origin on a
-connection error); that was the alternative recorded in ADR-1152.
+connection error); that was the alternative recorded in ADR-1237.
 
 ## The health signal
 
@@ -33,7 +33,7 @@ The monitor asks `GET https://<edge>/__gregale/edge-health` with
 on that one host from gatewayd-public's loopback `/edgez`, which returns 200
 `ready` only while the edge is not draining and can reach a compute gateway.
 It deliberately ignores Postgres: during a database outage every edge keeps
-serving warm traffic from its last-known routes (ADR-1152 §5), so the load
+serving warm traffic from its last-known routes (ADR-1237 §5), so the load
 balancer must not drop them all. `/readyz` includes a Postgres ping and is
 the wrong signal here.
 
@@ -79,7 +79,7 @@ api -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/load_balancers" --
    pool origin turns unhealthy within about 30 s and stops appearing in
    answers; customer traffic keeps flowing through the other edges.
 3. Stop Postgres on the primary during a load test: all origins stay
-   healthy (the drill in ADR-1152 P1/P2).
+   healthy (the drill in ADR-1237 P1/P2).
 
 ## Roll back
 

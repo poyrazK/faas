@@ -193,7 +193,7 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 		return nil, fmt.Errorf("db: open pool: %w", err)
 	}
 	// Under a Type=notify unit, wait for an unreachable database instead of
-	// exiting into the restart limit (ADR-1152 §5 rule 6, boot_wait.go).
+	// exiting into the restart limit (ADR-1237 §5 rule 6, boot_wait.go).
 	if err := defaultBootWaiter().ping(ctx, func(ctx context.Context) error {
 		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 		defer cancel()

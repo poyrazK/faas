@@ -460,7 +460,7 @@ func TestConvergeControlPlaneFailurePaths(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestControlPlaneHostsReturnsEveryControlNode: convergence contacts every
 // control-plane host of the cell; a manifest without one is refused.
 func TestControlPlaneHostsReturnsEveryControlNode(t *testing.T) {

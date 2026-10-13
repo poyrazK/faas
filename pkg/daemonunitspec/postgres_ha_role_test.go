@@ -1,6 +1,6 @@
-// adr: 1152
+// adr: 1237
 // postgres_ha_role_test.go renders the postgres_ha templates through ansible
-// for a three-member cell and pins the properties ADR-1152 §3 depends on: one
+// for a three-member cell and pins the properties ADR-1237 §3 depends on: one
 // synchronous standby, a required watchdog, WAL archiving through pgBackRest
 // into two repositories, and HAProxy following Patroni's /primary check on
 // every member.
@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// adr: 1152
+// adr: 1237
 func TestPostgresHARoleRendersAThreeZoneCell(t *testing.T) {
 	playbookBin, err := exec.LookPath("ansible-playbook")
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 const lastSeenFlushInterval = 2 * time.Second
 
 // lastSeenRetryRetention bounds how long a touch whose report failed is kept
-// for retry (ADR-1152 §5 rule 5). It exceeds the longest plan idle timeout
+// for retry (ADR-1237 §5 rule 5). It exceeds the longest plan idle timeout
 // (600 s), after which an old touch can no longer keep an instance warm.
 const lastSeenRetryRetention = 15 * time.Minute
 
@@ -128,7 +128,7 @@ func (s *schedFlushSink) Forget(instanceID string) {
 //
 // Touches whose owner could not be resolved or whose report failed
 // are merged back into the buffer and retried on the next flush,
-// for up to lastSeenRetryRetention (ADR-1152 §5 rule 5). Dropping
+// for up to lastSeenRetryRetention (ADR-1237 §5 rule 5). Dropping
 // them made a store outage erase the activity of every instance that
 // kept serving warm traffic through it, and the idle reaper then
 // parked those busy instances as soon as the store returned.

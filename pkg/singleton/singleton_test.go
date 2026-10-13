@@ -1,5 +1,5 @@
-// adr: 1152
-// singleton_test.go pins ADR-1152 §4 for control-plane singletons: exactly one
+// adr: 1237
+// singleton_test.go pins ADR-1237 §4 for control-plane singletons: exactly one
 // node runs the work, a standby takes over when the holder stops or loses the
 // database, and the old and new holders never run at the same time.
 
@@ -111,7 +111,7 @@ func startRunner(t *testing.T, store state.ControlPlaneLeaseStore, holder string
 	return stop, ch
 }
 
-// adr: 1152
+// adr: 1237
 func TestRunnerStandbyTakesOverAfterShutdownWithANewEpoch(t *testing.T) {
 	store := state.NewMemStore()
 	tr := newTracker()
@@ -140,7 +140,7 @@ func TestRunnerStandbyTakesOverAfterShutdownWithANewEpoch(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestRunnerPartitionedHolderStopsBeforeTakeover: the holder loses the
 // database. It must stop its work on its own before the lease expires by the
 // database clock, so the standby's takeover never overlaps it.
@@ -173,7 +173,7 @@ func TestRunnerPartitionedHolderStopsBeforeTakeover(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestRunnerWorkReturningReleasesAndBacksOff(t *testing.T) {
 	store := state.NewMemStore()
 	var runs atomic.Int32
@@ -207,7 +207,7 @@ func TestTimingsValidation(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestAcquireWaitsAsStandbyUntilRelease: a second process blocks in Acquire
 // while the lease is held and gets it as soon as the holder releases.
 func TestAcquireWaitsAsStandbyUntilRelease(t *testing.T) {
@@ -245,7 +245,7 @@ func TestAcquireWaitsAsStandbyUntilRelease(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestHoldingContextEndsWithErrLeaseLostOnPartition: a whole daemon gated by
 // Acquire learns it must exit from the context cause.
 func TestHoldingContextEndsWithErrLeaseLostOnPartition(t *testing.T) {

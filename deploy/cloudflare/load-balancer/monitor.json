@@ -1,5 +1,5 @@
 {
-  "description": "Gregale cell edge health (ADR-1152): gatewayd-public /edgez via Caddy, independent of Postgres",
+  "description": "Gregale cell edge health (ADR-1237): gatewayd-public /edgez via Caddy, independent of Postgres",
   "type": "https",
   "method": "GET",
   "path": "/__gregale/edge-health",

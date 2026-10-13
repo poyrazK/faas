@@ -1,5 +1,5 @@
-// adr: 1152
-// zones_test.go pins the ADR-1152 §2 cell shape: one control-plane host, or
+// adr: 1237
+// zones_test.go pins the ADR-1237 §2 cell shape: one control-plane host, or
 // an odd number of at least three, each in its own zone.
 
 package manifest
@@ -26,7 +26,7 @@ func threeControlPlanes(zones ...string) string {
 		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n", hosts, 1)
 }
 
-// adr: 1152
+// adr: 1237
 func TestValidate_ControlPlaneZones(t *testing.T) {
 	tests := []struct {
 		name string

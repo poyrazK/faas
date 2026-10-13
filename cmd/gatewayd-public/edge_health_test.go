@@ -1,5 +1,5 @@
-// adr: 1152
-// edge_health_test.go pins the Cloudflare Load Balancer signal (ADR-1152 §2):
+// adr: 1237
+// edge_health_test.go pins the Cloudflare Load Balancer signal (ADR-1237 §2):
 // /edgez follows the compute gateway check and draining, and stays ready
 // through a Postgres outage that fails /readyz.
 
@@ -24,7 +24,7 @@ func edgez(t *testing.T, e *edgeHealth) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
-// adr: 1152
+// adr: 1237
 func TestEdgeHealthIgnoresPostgresButFollowsGatewayAndDrain(t *testing.T) {
 	probe := &gateway.ReadyzProbe{}
 	pgSig := probe.Register()

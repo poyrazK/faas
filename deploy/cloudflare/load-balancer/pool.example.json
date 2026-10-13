@@ -1,6 +1,6 @@
 {
   "name": "gregale-us-east1-edges",
-  "description": "Edges of the US East cell (ADR-1152): one gatewayd-public + Caddy per control node, one per zone",
+  "description": "Edges of the US East cell (ADR-1237): one gatewayd-public + Caddy per control node, one per zone",
   "enabled": true,
   "minimum_origins": 1,
   "monitor": "REPLACE_WITH_MONITOR_ID",

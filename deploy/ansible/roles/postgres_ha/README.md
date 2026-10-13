@@ -1,4 +1,4 @@
-# postgres_ha (ADR-1152 §3)
+# postgres_ha (ADR-1237 §3)
 
 Self-run PostgreSQL high availability for one cell: three control nodes, one
 per zone, each running
@@ -12,7 +12,7 @@ per zone, each running
 - **pgBackRest**, archiving WAL asynchronously (`archive_timeout = 60s`) and
   taking full/differential backups from the current primary into two GCS
   repositories: repo1 in the cell's region, repo2 in a second US region
-  (ADR-1152 region loss: off-region backups only).
+  (ADR-1237 region loss: off-region backups only).
 
 Every node, control and compute, runs **HAProxy**: `127.0.0.1:5433` reaches
 the current primary and `127.0.0.1:5434` the replicas, chosen by Patroni's

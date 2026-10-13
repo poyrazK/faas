@@ -1,6 +1,6 @@
-// adr: 1152
+// adr: 1237
 // control_plane_lease_test.go pins the control-plane singleton lease
-// contract (ADR-1152 §4) on both stores: one holder at a time, takeover only
+// contract (ADR-1237 §4) on both stores: one holder at a time, takeover only
 // after expiry by the database clock, and a new epoch on every takeover.
 
 package state_test

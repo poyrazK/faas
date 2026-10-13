@@ -1,6 +1,6 @@
 package main
 
-// Central scheduler lease (ADR-1152 §4).
+// Central scheduler lease (ADR-1237 §4).
 //
 // Every control node runs a central schedd (empty FAAS_NODE_NAME): it places
 // unplaced apps, fires cron, sweeps the fleet and owns default-local work.
@@ -26,7 +26,7 @@ import (
 const (
 	centralSchedulerLeaseName = "central-scheduler"
 	// centralSchedulerLeaseEnv set to "0" turns the gate off (a single-box
-	// deployment that wants the pre-ADR-1152 start path).
+	// deployment that wants the pre-ADR-1237 start path).
 	centralSchedulerLeaseEnv = "FAAS_SCHEDD_CENTRAL_LEASE"
 )
 

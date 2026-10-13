@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-1152 §4: one control-plane singleton (central schedd work, meterd, ...)
+-- ADR-1237 §4: one control-plane singleton (central schedd work, meterd, ...)
 -- runs on exactly one of the cell's control nodes. The holder renews its row
 -- before expires_at; another node takes over only after the row expired by
 -- the database clock. epoch comes from one sequence and changes on every

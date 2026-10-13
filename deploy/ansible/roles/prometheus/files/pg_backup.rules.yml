@@ -18,7 +18,7 @@ groups:
       - alert: PgBackupStale
         # The gauge is a Unix timestamp written only after rclone copy and
         # byte verification succeed. Zero means no verified push exists.
-        # ADR-1152: every apid replica exports the gauge, but only the host
+        # ADR-1237: every apid replica exports the gauge, but only the host
         # that ran the backup has its marker; judge the cell by the newest.
         expr: max(apid_pg_backup_last_pushed_seconds) == 0 or time() - max(apid_pg_backup_last_pushed_seconds) > 93600
         for: 5m
@@ -60,7 +60,7 @@ groups:
             prune journal and off-host object-store reachability before deleting files.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
-      # ADR-1152 §3: the WAL off-host copy bounds the region-loss RPO. The
+      # ADR-1237 §3: the WAL off-host copy bounds the region-loss RPO. The
       # metrics come from faas-postgres-connection-metrics (postgres role).
       - alert: PgWalArchiveStalled
         # archive_timeout = 60s forces a segment switch every minute on a

@@ -5630,7 +5630,7 @@ SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
               WHERE singleton = true AND expires_at > now()) AS ready;
 
 -- name: AcquireControlPlaneLease :one
--- ADR-1152 §4. Acquires name for holder, or renews it when holder already
+-- ADR-1237 §4. Acquires name for holder, or renews it when holder already
 -- holds it. Another holder's row is taken over only once it has expired by
 -- the database clock. A takeover, or re-acquisition after the holder's own
 -- row expired, draws a new epoch. No row means another holder still holds it.
@@ -5653,7 +5653,7 @@ DELETE FROM control_plane_leases
 WHERE name = sqlc.arg(name)::text AND holder = sqlc.arg(holder)::text AND epoch = sqlc.arg(epoch)::bigint;
 
 -- name: RecordTOTPFailure :exec
--- ADR-1152: one row per wrong TOTP code, shared by every apid replica.
+-- ADR-1237: one row per wrong TOTP code, shared by every apid replica.
 -- Rows that have left the window are pruned in the same statement.
 WITH pruned AS (
     DELETE FROM account_totp_failures

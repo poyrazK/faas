@@ -49,8 +49,8 @@ func (r *cachedCustomDomainRouter) CachedCustomDomainRouteActive(context.Context
 }
 
 // adr: 190
-// adr: 1152
-// TestPGBackendCachedCustomDomainSurvivesRegistryOutage pins ADR-1152 §5
+// adr: 1237
+// TestPGBackendCachedCustomDomainSurvivesRegistryOutage pins ADR-1237 §5
 // rule 2: when the per-request custom-domain validation cannot reach the
 // registry, a warm custom domain keeps serving from the stale tier instead
 // of failing every request, and a positive "inactive" answer still removes it.
@@ -94,7 +94,7 @@ func TestPGBackendCachedCustomDomainSurvivesRegistryOutage(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestPGBackendCustomDomainValidationRefreshesStaleTTL: each successful
 // per-request validation restarts the stale TTL, so a busy custom domain
 // is still within its window when an outage begins long after the route

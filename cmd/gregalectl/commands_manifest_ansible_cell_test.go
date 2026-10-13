@@ -1,5 +1,5 @@
-// adr: 1152
-// commands_manifest_ansible_cell_test.go pins the inventory for an ADR-1152 §2
+// adr: 1237
+// commands_manifest_ansible_cell_test.go pins the inventory for an ADR-1237 §2
 // cell: three control nodes, one per zone. Each control node gets its own
 // scheduler and Postgres addresses (not the last control node's), zones reach
 // the host vars, and compute gateways reach apid through apid.faas.
@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
-// adr: 1152
+// adr: 1237
 func TestRenderManifestAnsibleFiles_ThreeControlNodesGetTheirOwnAddresses(t *testing.T) {
 	yaml := strings.Replace(validManifestYAML,
 		"    - name: fsn-1\n      role: control-plane\n",

@@ -1,6 +1,6 @@
 # PostgreSQL HA (Patroni) runbook
 
-ADR-1152 §3. Applies to a cell whose manifest sets `postgresql.ha: true`
+ADR-1237 §3. Applies to a cell whose manifest sets `postgresql.ha: true`
 (Ansible role `postgres_ha`). All commands run on a control node as root
 unless stated; `patronictl` reads `/etc/patroni/config.yml`.
 
@@ -15,7 +15,7 @@ all `running`.
 ## Migrating from the single-node cluster (one time)
 
 Planned write pause of a few minutes; warm traffic keeps serving from the
-gateways' last-known routes (ADR-1152 §5).
+gateways' last-known routes (ADR-1237 §5).
 
 1. Provision the two new control nodes (other zones) and the etcd TLS
    leaves; add them and `zone` to the manifest; set `postgresql.ha: true`;
@@ -83,7 +83,7 @@ then `member add`, wipe `faas_etcd_data_dir`, start with
 
 ## Region rebuild (region lost)
 
-Target RPO ≤ 60 s, RTO about 2–4 hours (ADR-1152: off-region backups only).
+Target RPO ≤ 60 s, RTO about 2–4 hours (ADR-1237: off-region backups only).
 
 1. Provision three control nodes and the compute nodes in the paired US
    region from the same manifest with addresses and zones updated.
@@ -95,4 +95,4 @@ Target RPO ≤ 60 s, RTO about 2–4 hours (ADR-1152: off-region backups only).
    load-balancer) at the new edges.
 5. Apps cold-boot (ADR-005); snapshots rebuild lazily.
 
-Drill this before launch (ADR-1152 P2 exit criterion).
+Drill this before launch (ADR-1237 P2 exit criterion).

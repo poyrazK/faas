@@ -65,7 +65,7 @@ type tomlRenderCtx struct {
 	// root-owned systemd EnvironmentFile; embedding it in every daemon
 	// TOML would duplicate a credential into world-readable config.
 	HostRole string
-	// PostgresHA is manifest.postgresql.ha (ADR-1152 §3). The primary may
+	// PostgresHA is manifest.postgresql.ha (ADR-1237 §3). The primary may
 	// then be on another control node, so control-plane TOMLs also leave
 	// db_url empty and the daemons take the HAProxy DSN from sealed.env.
 	PostgresHA bool

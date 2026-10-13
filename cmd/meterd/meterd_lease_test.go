@@ -1,5 +1,5 @@
-// adr: 1152
-// meterd_lease_test.go pins ADR-1152 §4 for meterd: a second meterd waits as
+// adr: 1237
+// meterd_lease_test.go pins ADR-1237 §4 for meterd: a second meterd waits as
 // a standby while another holds the meterd lease, and the gate can be turned
 // off.
 
@@ -27,7 +27,7 @@ func TestMeterdLeaseEnabled(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 func TestMeterdLeaseStandbyWaitsForHolder(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

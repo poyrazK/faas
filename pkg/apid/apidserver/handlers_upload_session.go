@@ -129,7 +129,7 @@ const (
 	uploadSessionSpoolBudgetMultiplier = 4
 )
 
-// resumableUploadsEnv set to "0" turns POST /v1/uploads off (ADR-1152). The
+// resumableUploadsEnv set to "0" turns POST /v1/uploads off (ADR-1237). The
 // control_plane_service role sets it whenever the cell has more than one
 // control node (zz-faas-apid-replicas.conf).
 const resumableUploadsEnv = "FAAS_APID_RESUMABLE_UPLOADS"
@@ -143,7 +143,7 @@ func resumableUploadsEnabled(raw string) bool {
 // pre-allocates the .part file, and returns upload_id +
 // chunk_size.
 func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// ADR-1152: a session's chunks spool on the replica that started it, so
+	// ADR-1237: a session's chunks spool on the replica that started it, so
 	// with apid on several control nodes a PATCH or commit routed to another
 	// replica fails. Until chunks live in object storage, such a cell answers
 	// 404 here and the CLI falls back to the single-request upload, which any

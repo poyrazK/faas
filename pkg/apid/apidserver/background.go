@@ -1,6 +1,6 @@
 package apidserver
 
-// apid background workers under ADR-1152 §4.
+// apid background workers under ADR-1237 §4.
 //
 // apid serves HTTP on every control node. Most of its background workers,
 // though, act on shared state: rollback workers, managed Postgres, realtime
@@ -36,7 +36,7 @@ import (
 const (
 	apidBackgroundLeaseName = "apid-background"
 	// apidBackgroundLeaseEnv set to "0" runs the shared workers on every
-	// replica, as before ADR-1152 (single control node only).
+	// replica, as before ADR-1237 (single control node only).
 	apidBackgroundLeaseEnv = "FAAS_APID_BACKGROUND_LEASE"
 )
 

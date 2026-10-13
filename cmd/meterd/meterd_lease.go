@@ -1,6 +1,6 @@
 package main
 
-// meterd lease (ADR-1152 §4).
+// meterd lease (ADR-1237 §4).
 //
 // meterd walks every app each minute, keeps per-process CPU baselines, runs
 // the overage-cap and dunning ticks and pushes billing. Two copies would

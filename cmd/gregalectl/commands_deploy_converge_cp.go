@@ -209,7 +209,7 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	return report, nil
 }
 
-// controlPlaneHosts returns every control-plane host. ADR-1152 §2 cells run
+// controlPlaneHosts returns every control-plane host. ADR-1237 §2 cells run
 // three (one per zone); the manifest validator enforces the allowed counts.
 func controlPlaneHosts(m *manifest.Manifest) ([]manifest.Host, error) {
 	var found []manifest.Host

@@ -1,4 +1,4 @@
-// adr: 1152
+// adr: 1237
 // totp_failures_test.go pins the shared per-account TOTP failure window on
 // both stores: failures count inside the window, the oldest is reported for
 // Retry-After, and a reset clears the account.

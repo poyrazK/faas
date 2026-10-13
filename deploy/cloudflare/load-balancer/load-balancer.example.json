@@ -1,6 +1,6 @@
 {
   "name": "origin.gregale.dev",
-  "description": "Cell edge selection for the public-timeout Worker's resolveOverride (ADR-1152)",
+  "description": "Cell edge selection for the public-timeout Worker's resolveOverride (ADR-1237)",
   "proxied": false,
   "ttl": 30,
   "default_pools": ["REPLACE_WITH_POOL_ID"],

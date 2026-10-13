@@ -193,9 +193,9 @@ func waitBackgroundRefresh(t *testing.T, pool *computeGatewayPool) {
 	t.Fatal("background refresh did not finish")
 }
 
-// adr: 1152
+// adr: 1237
 // TestComputeGatewayPoolServesLastKnownInventoryWhenRegistryFails pins
-// ADR-1152 §5 rule 1: once the registry has answered, a registry failure
+// ADR-1237 §5 rule 1: once the registry has answered, a registry failure
 // keeps routing to the last-known nodes instead of failing every request.
 func TestComputeGatewayPoolServesLastKnownInventoryWhenRegistryFails(t *testing.T) {
 	target := acceptingTarget(t)
@@ -220,7 +220,7 @@ func TestComputeGatewayPoolServesLastKnownInventoryWhenRegistryFails(t *testing.
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestComputeGatewayPoolStaleInventoryIsBounded: past the stale bound the
 // pool stops trusting the old inventory and reports no capacity.
 func TestComputeGatewayPoolStaleInventoryIsBounded(t *testing.T) {
@@ -239,7 +239,7 @@ func TestComputeGatewayPoolStaleInventoryIsBounded(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestComputeGatewayPoolBackgroundRefreshPicksUpNewInventory: an expired
 // TTL with a healthy registry serves the cached list once and replaces it
 // in the background.
@@ -266,7 +266,7 @@ func TestComputeGatewayPoolBackgroundRefreshPicksUpNewInventory(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestComputeGatewayPoolInvalidationRereadsAndFallsBack: compute_node_changed
 // forces a synchronous re-read; if the registry fails at that moment the
 // pool keeps the last-known inventory instead of dropping traffic.

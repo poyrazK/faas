@@ -1,5 +1,5 @@
 // Package singleton runs control-plane work on exactly one node of a cell
-// (ADR-1152 §4).
+// (ADR-1237 §4).
 //
 // Every control node runs the same daemons. Work that must not run twice (the
 // central scheduler, meterd's sampling and billing) is guarded by a named
@@ -223,7 +223,7 @@ type Holding struct {
 // SawStoreError reports whether Acquire met a store error while this
 // process waited for the lease. A standby that waited through a database
 // outage takes over with every heartbeat in the store old because nobody
-// could write one, so its liveness verdicts must wait (ADR-1152 §5 rule 4).
+// could write one, so its liveness verdicts must wait (ADR-1237 §5 rule 4).
 func (h *Holding) SawStoreError() bool { return h.storeErr }
 
 // Context ends when the lease is lost (cause ErrLeaseLost), released, or the

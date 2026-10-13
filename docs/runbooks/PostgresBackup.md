@@ -26,7 +26,7 @@ off-host recovery source.
   the recovery boundary from the oldest retained basebackup, copies every
   deletion candidate off-host, verifies the bytes, and only then removes
   local WAL preceding that boundary.
-- **RPO in steady state**: `archive_timeout = 60s` (ADR-1152) forces a
+- **RPO in steady state**: `archive_timeout = 60s` (ADR-1237) forces a
   WAL segment switch at least once a minute, so the off-host copy is at
   most about a minute plus the push time behind. Before that setting a
   quiet server could hold committed WAL in an unfinished segment

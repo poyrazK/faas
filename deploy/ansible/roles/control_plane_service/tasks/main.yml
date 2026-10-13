@@ -306,7 +306,7 @@
     group: root
     mode: "0644"
 
-# ADR-1152: apid settings that depend on how many control nodes the cell has.
+# ADR-1237: apid settings that depend on how many control nodes the cell has.
 - name: control_plane_service — set apid multi-replica mode
   notify: restart faas-apid
   ansible.builtin.template:
@@ -510,7 +510,7 @@
 # hardened PostgreSQL role and otherwise turns every account transaction into
 # a runtime 500 while /healthz still reports liveness.
 #
-# ADR-1152 §3: under Patroni (faas_postgres_ha_enabled) the local member may
+# ADR-1237 §3: under Patroni (faas_postgres_ha_enabled) the local member may
 # be a read-only replica, so the daemons must instead reach the primary
 # through the node-local HAProxy, password-authenticated over loopback TCP.
 - name: control_plane_service — validate control-plane database DSN topology
@@ -536,7 +536,7 @@
       /etc/faas/sealed.env must define DATABASE_URL as the password-authenticated
       DSN of the local HAProxy route to the Patroni primary
       (postgres://faas:<password>@127.0.0.1:{{ faas_postgres_ha_haproxy_primary_port | default(5433) }}/faas?sslmode=disable);
-      the local socket may reach a read-only replica (ADR-1152).
+      the local socket may reach a read-only replica (ADR-1237).
       {% else %}
       /etc/faas/sealed.env must define DATABASE_URL with the local
       PostgreSQL Unix-socket DSN (postgres:///faas?host=/run/postgresql...);
@@ -933,7 +933,7 @@
 # once, in apid's own file format (hex, 0600 faas-apid); existing keys are
 # never replaced, since rotating them breaks audit joins and recovery codes.
 #
-# ADR-1152 §2: apid runs on every control node of a cell, and a recovery code
+# ADR-1237 §2: apid runs on every control node of a cell, and a recovery code
 # or audit hash written through one replica is checked by another, so every
 # control node holds the same keys. The first control node in the inventory
 # generates them; the others receive a copy where theirs is missing.
@@ -956,7 +956,7 @@
   delegate_to: "{{ groups['control_plane'] | default([inventory_hostname]) | first }}"
   no_log: true
 
-- name: control_plane_service — read the cell's apid HMAC keys from the first control node (ADR-1152)
+- name: control_plane_service — read the cell's apid HMAC keys from the first control node (ADR-1237)
   ansible.builtin.slurp:
     src: /var/lib/faas/{{ item }}
   loop:
@@ -967,7 +967,7 @@
   delegate_to: "{{ groups['control_plane'] | default([inventory_hostname]) | first }}"
   no_log: true
 
-- name: control_plane_service — copy apid HMAC keys to control nodes that lack them (ADR-1152)
+- name: control_plane_service — copy apid HMAC keys to control nodes that lack them (ADR-1237)
   ansible.builtin.copy:
     dest: /var/lib/faas/{{ item.item }}
     content: "{{ item.content | b64decode }}"
@@ -980,7 +980,7 @@
     label: "{{ item.item }}"
   no_log: true
 
-- name: control_plane_service — checksum apid HMAC keys and the host HMAC key (ADR-1152)
+- name: control_plane_service — checksum apid HMAC keys and the host HMAC key (ADR-1237)
   ansible.builtin.stat:
     path: "{{ item }}"
     get_checksum: true
@@ -995,7 +995,7 @@
 # (that would break its audit joins and recovery codes); an operator picks
 # one key for the cell instead. host.hmac.key is operator-provisioned, so the
 # same check covers a host where it was generated separately.
-- name: control_plane_service — assert every control node holds the same shared keys (ADR-1152)
+- name: control_plane_service — assert every control node holds the same shared keys (ADR-1237)
   ansible.builtin.assert:
     that:
       - >-
@@ -1004,7 +1004,7 @@
         | unique | length == 1
     fail_msg: >-
       Control nodes hold different copies of {{ item }}. Every control node of a
-      cell must share it (ADR-1152): choose one copy, install it on every
+      cell must share it (ADR-1237): choose one copy, install it on every
       control node with the same owner and mode, and re-run.
     quiet: true
   loop:

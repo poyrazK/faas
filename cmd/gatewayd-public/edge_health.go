@@ -1,12 +1,12 @@
 package main
 
-// Edge health for the Cloudflare Load Balancer (ADR-1152 §2).
+// Edge health for the Cloudflare Load Balancer (ADR-1237 §2).
 //
 // A cell's edges sit behind one Cloudflare Load Balancer pool, and its
 // monitor decides which edges receive traffic. /readyz is the wrong signal
 // for that: it includes a Postgres ping, so a database outage would take
 // every edge out of the pool at once, exactly when the edges keep serving
-// warm traffic from their last-known routes (ADR-1152 §5). /edgez answers
+// warm traffic from their last-known routes (ADR-1237 §5). /edgez answers
 // only what the load balancer needs to know: this edge is not draining and
 // can reach a compute gateway. Caddy exposes it to the monitor at one
 // reserved path on the origin hostname (public_edge role).

@@ -207,7 +207,7 @@ func SubscribeClusterVerifierChanges(
 	// The verifier has no table poll of its own: a rotation notified while
 	// the LISTEN connection was down would leave gatewayd-internal rejecting
 	// every token minted with the new key until restart. SubscribeWithResync
-	// re-runs the load after a reconnect (ADR-1152 §5 rule 3); re-installing
+	// re-runs the load after a reconnect (ADR-1237 §5 rule 3); re-installing
 	// an unchanged key is harmless.
 	notifs, err := db.SubscribeWithResync(ctx, pool,
 		[]string{db.NotifyClusterSigningKeysChanged}, log)

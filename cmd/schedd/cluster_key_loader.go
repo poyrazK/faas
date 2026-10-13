@@ -292,7 +292,7 @@ func SubscribeClusterKeyChanges(
 	}
 	// The minter has no table poll of its own, so a rotation notified while
 	// the LISTEN connection was down would otherwise be missed until restart.
-	// SubscribeWithResync re-runs the load after a reconnect (ADR-1152 §5
+	// SubscribeWithResync re-runs the load after a reconnect (ADR-1237 §5
 	// rule 3); re-installing an unchanged key is harmless.
 	notifs, err := db.SubscribeWithResync(ctx, pool,
 		[]string{db.NotifyClusterSigningKeysChanged}, log)

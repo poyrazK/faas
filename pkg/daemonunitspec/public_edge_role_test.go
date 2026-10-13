@@ -71,7 +71,7 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	}
 	vars["faas_public_edge_domain"] = "gregale.dev"
 	vars["faas_public_edge_origin_host"] = "origin.gregale.dev"
-	// ADR-1152 §2: the Cloudflare Load Balancer monitor reaches
+	// ADR-1237 §2: the Cloudflare Load Balancer monitor reaches
 	// gatewayd-public's Postgres-independent /edgez on the origin host only.
 	edgeHealth := []string{
 		"host origin.gregale.dev",

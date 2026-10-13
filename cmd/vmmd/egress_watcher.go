@@ -218,7 +218,7 @@ func (w *egressWatcher) Run(ctx context.Context, pool *pgxpool.Pool) error {
 	// The watcher has no table poll of its own, so a policy change notified
 	// while the LISTEN connection was down would otherwise wait for the next
 	// cache mutation. SubscribeWithResync forces a reload after a reconnect
-	// (ADR-1152 §5 rule 3).
+	// (ADR-1237 §5 rule 3).
 	notif, err := db.SubscribeWithResync(ctx, pool, []string{db.NotifyEgressPolicyChanged}, w.log)
 	if err != nil {
 		return fmt.Errorf("vmmd: egress watcher subscribe: %w", err)

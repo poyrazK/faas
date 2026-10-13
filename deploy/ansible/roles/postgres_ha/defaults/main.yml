@@ -1,5 +1,5 @@
 ---
-# ADR-1152 §3: self-run PostgreSQL high availability for one cell (or for the
+# ADR-1237 §3: self-run PostgreSQL high availability for one cell (or for the
 # global directory). Off by default: enabling it replaces the single
 # distro-managed cluster (roles postgres, postgres_capacity, postgres_backup)
 # and is a planned migration, see docs/runbooks/PostgresHA.md.
@@ -68,7 +68,7 @@ faas_postgres_ha_replication_user: replicator
 faas_postgres_ha_rewind_user: rewind_user
 faas_postgres_ha_restapi_user: patroni
 
-# pgBackRest (ADR-1152 region loss: off-region backups only). repo1 is
+# pgBackRest (ADR-1237 region loss: off-region backups only). repo1 is
 # object storage in the cell's region, repo2 a bucket in a second US region.
 # Credentials come from the host's service account (GCS application default
 # credentials).

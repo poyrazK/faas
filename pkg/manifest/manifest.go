@@ -399,7 +399,7 @@ func (f Fleet) ControlPlaneCount() int {
 // hyphens, as GCP and AWS zone names are.
 var zonePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// validateZones enforces the ADR-1152 §2 cell shape. One control-plane host
+// validateZones enforces the ADR-1237 §2 cell shape. One control-plane host
 // keeps the single-node layout. More than one must be an odd number of at
 // least three, because the Postgres and etcd members they carry need a
 // majority to survive the loss of one, and each must name its own zone so
@@ -455,7 +455,7 @@ type Host struct {
 	// of guessing which disk is safe to format.
 	StorageDevice string `yaml:"storage_device,omitempty"`
 	// Zone is the failure domain the host runs in (a cloud availability
-	// zone, or a rack). ADR-1152 §2: a cell with more than one control-plane
+	// zone, or a rack). ADR-1237 §2: a cell with more than one control-plane
 	// host places them one per zone, so its Postgres and etcd members and its
 	// edges survive the loss of any one zone. Optional for a single control
 	// plane and for compute hosts.
@@ -751,7 +751,7 @@ type PostgreSQL struct {
 	// `on-boot-offline`). `on-boot-offline` is the single-box dev
 	// default; the multi-box fleet convention is `on-boot`.
 	Policy string `yaml:"policy"`
-	// HA selects the Patroni-managed cluster (ADR-1152 §3, Ansible role
+	// HA selects the Patroni-managed cluster (ADR-1237 §3, Ansible role
 	// postgres_ha). The primary may then run on another control node, so
 	// control-plane daemons leave the peer socket and reach it through the
 	// node-local HAProxy, with the DSN from sealed.env.

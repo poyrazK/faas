@@ -410,7 +410,7 @@ func TestTOTPGuard_WindowAndReset(t *testing.T) {
 	}
 }
 
-// adr: 1152
+// adr: 1237
 // TestTOTPGuard_SharedAcrossReplicas: two apid replicas over one store share
 // one budget of guesses per account, so a second replica cannot be used to
 // double it, and a correct code on either clears it.

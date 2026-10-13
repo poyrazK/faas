@@ -124,7 +124,7 @@
     # rolling generation, and reject a database host without enough RAM
     # before opening access or activating the joining node.
     - role: postgres_capacity
-      # ADR-1152 §3: Patroni runs a fixed max_connections, so a join never
+      # ADR-1237 §3: Patroni runs a fixed max_connections, so a join never
       # restarts PostgreSQL.
       when: not (faas_postgres_ha_enabled | default(false) | bool)
     # The generated control-plane host vars contain the complete manifest
