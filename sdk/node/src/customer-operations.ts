@@ -784,7 +784,7 @@ function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscript
  return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
 
-export interface OperationWorkflowReadinessCoordinationRequest { review_response?: OperationWorkflowReviewResponseRequest; completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
+export interface OperationWorkflowReadinessCoordinationRequest { target_binding?: OperationWorkflowObligationTargetRequest; review_response?: OperationWorkflowReviewResponseRequest; completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
 export interface OperationWorkflowReadinessCoordination extends Omit<OperationWorkflowReadinessCoordinationRequest, 'review_response'> { completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
 export interface OperationWorkflowReadinessNotificationCheck { next_action_digest?: OperationWorkflowNextActionDigestCheck; business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
@@ -962,3 +962,9 @@ export type OperationWorkflowObligationReplacement = import('./generated/models/
 export type OperationWorkflowObligationContext = import('./generated/models/OperationWorkflowObligationContext.js').OperationWorkflowObligationContext;
 
 export type OperationWorkflowObligationAssessment = import('./generated/models/OperationWorkflowObligationAssessment.js').OperationWorkflowObligationAssessment;
+
+export type OperationWorkflowObligationTransitionTarget = import('./generated/models/OperationWorkflowObligationTransitionTarget.js').OperationWorkflowObligationTransitionTarget;
+
+export type OperationWorkflowObligationTargetBinding = import('./generated/models/OperationWorkflowObligationTargetBinding.js').OperationWorkflowObligationTargetBinding;
+
+export type OperationWorkflowObligationTargetRequest = import('./generated/models/OperationWorkflowObligationTargetRequest.js').OperationWorkflowObligationTargetRequest;

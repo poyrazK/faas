@@ -7,6 +7,9 @@ OperationWorkflowObligationAssessmentStatus = Literal[
     "review_actionable",
     "review_evidence_unavailable",
     "scheduled_check",
+    "target_requirements_satisfied",
+    "target_unavailable",
+    "waiting_on_target_requirements",
 ]
 
 OPERATION_WORKFLOW_OBLIGATION_ASSESSMENT_STATUS_VALUES: set[OperationWorkflowObligationAssessmentStatus] = {
@@ -16,6 +19,9 @@ OPERATION_WORKFLOW_OBLIGATION_ASSESSMENT_STATUS_VALUES: set[OperationWorkflowObl
     "review_actionable",
     "review_evidence_unavailable",
     "scheduled_check",
+    "target_requirements_satisfied",
+    "target_unavailable",
+    "waiting_on_target_requirements",
 }
 
 

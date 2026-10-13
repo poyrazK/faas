@@ -3,7 +3,7 @@ package state
 import "github.com/onebox-faas/faas/pkg/api"
 
 // Declared transition requirements are context, not inferred guards on human coordination.
-func projectWorkflowCaseObligationAssessments(out *api.OperationWorkflowCase) {
+func projectWorkflowCaseObligationAssessments(out *api.OperationWorkflowCase, rows []api.OperationWorkflowReadinessFollowUp, tenant string, operator bool) {
 	context := api.OperationWorkflowObligationContext{Status: "evidence_unavailable", Summary: "Current workflow requirements are unknown; obtain fresh application evidence.", CheckedAt: out.EvidenceCheckedAt, CoverageIncomplete: true}
 	fresh := out.Instance != nil && out.Instance.State != nil && !out.Instance.State.Stale
 	if fresh {
@@ -67,6 +67,39 @@ func projectWorkflowCaseObligationAssessments(out *api.OperationWorkflowCase) {
 		case "handoff_reassignment", "escalation_acknowledgment":
 			assessment.Status = "human_action_required"
 			assessment.Summary = "A human routing or acknowledgment decision is outstanding. Use source controls to record responsibility; application execution remains separately authorized."
+		}
+		for _, row := range rows {
+			if row.SubscriptionID != action.SubscriptionID || row.Sequence != action.Sequence {
+				continue
+			}
+			for _, binding := range row.Coordination.TargetBindings {
+				if action.Obligation == nil || binding.ObligationID != action.Obligation.ID || binding.Case.Subject != out.Timeline.Subject || binding.Case.Workflow != out.Timeline.Workflow || binding.Case.InstanceID != out.Timeline.InstanceID || operator && !sameOperationHistoryIdentity(binding.Case.PlatformTenantID, tenant) {
+					continue
+				}
+				value := binding
+				if !operator {
+					value.Case.PlatformTenantID = ""
+				}
+				assessment.Binding = &value
+				assessment.Status = "target_unavailable"
+				assessment.Summary = "The bound transition cannot be assessed against a fresh current declaration. Refresh evidence or revise the binding; old readiness is not carried forward."
+				if fresh && !out.Instance.State.Terminal && out.Instance.Readiness != nil {
+					for _, edge := range out.Instance.Readiness.Items {
+						target := binding.Transition
+						if edge.Declared && edge.ContractVersion == target.ContractVersion && edge.Transition.Operation == target.Operation && edge.Transition.From == target.From && edge.Transition.To == target.To {
+							current := edge
+							assessment.Readiness = &current
+							assessment.CheckedAt = out.EvidenceCheckedAt
+							assessment.Status = "waiting_on_target_requirements"
+							assessment.Summary = "The explicitly bound transition has unmet evaluated prerequisites. Inspect its current evidence and dependency cases; the deadline remains independent."
+							if edge.Ready {
+								assessment.Status = "target_requirements_satisfied"
+								assessment.Summary = "The explicitly bound transition satisfies its evaluated prerequisites. The application must still authorize execution; obligation fulfillment is not established."
+							}
+						}
+					}
+				}
+			}
 		}
 		out.ObligationAssessments = append(out.ObligationAssessments, assessment)
 	}

@@ -88,18 +88,20 @@ type OperationWorkflowReadinessInboxResponse struct {
 
 // Coordination is shared inbox bookkeeping, never business workflow evidence.
 type OperationWorkflowReadinessCoordination struct {
-	Completion     *OperationWorkflowReadinessCompletion `json:"completion,omitempty"`
-	Revision       int64                                 `json:"revision"`
-	Status         string                                `json:"status"`
-	Owner          string                                `json:"owner"`
-	Note           string                                `json:"note"`
-	FollowUpAt     *time.Time                            `json:"follow_up_at,omitempty"`
-	UpdatedAt      time.Time                             `json:"updated_at"`
-	UpdatedBy      string                                `json:"updated_by"`
-	AcknowledgedAt *time.Time                            `json:"acknowledged_at,omitempty"`
-	AcknowledgedBy string                                `json:"acknowledged_by,omitempty"`
+	TargetBindings []OperationWorkflowObligationTargetBinding `json:"target_bindings,omitempty"`
+	Completion     *OperationWorkflowReadinessCompletion      `json:"completion,omitempty"`
+	Revision       int64                                      `json:"revision"`
+	Status         string                                     `json:"status"`
+	Owner          string                                     `json:"owner"`
+	Note           string                                     `json:"note"`
+	FollowUpAt     *time.Time                                 `json:"follow_up_at,omitempty"`
+	UpdatedAt      time.Time                                  `json:"updated_at"`
+	UpdatedBy      string                                     `json:"updated_by"`
+	AcknowledgedAt *time.Time                                 `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string                                     `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
+	TargetBinding  *OperationWorkflowObligationTargetRequest    `json:"target_binding,omitempty"`
 	ReviewResponse *OperationWorkflowReviewResponseRequest      `json:"review_response,omitempty"`
 	Completion     *OperationWorkflowReadinessCompletionRequest `json:"completion,omitempty"`
 	Revision       int64                                        `json:"revision"`
@@ -928,15 +930,16 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
-	Replacement  *OperationWorkflowObligationReplacement `json:"replacement,omitempty"`
-	Cases        []OperationWorkflowNextActionCase       `json:"cases,omitempty"`
-	ActionKind   string                                  `json:"action_kind,omitempty"`
-	SharedPlan   bool                                    `json:"shared_plan,omitempty"`
-	ObligationID string                                  `json:"obligation_id,omitempty"`
-	Kind         string                                  `json:"kind"`
-	At           time.Time                               `json:"at"`
-	Actor        string                                  `json:"actor,omitempty"`
-	Explanation  string                                  `json:"explanation"`
+	TargetBinding *OperationWorkflowObligationTargetBinding `json:"target_binding,omitempty"`
+	Replacement   *OperationWorkflowObligationReplacement   `json:"replacement,omitempty"`
+	Cases         []OperationWorkflowNextActionCase         `json:"cases,omitempty"`
+	ActionKind    string                                    `json:"action_kind,omitempty"`
+	SharedPlan    bool                                      `json:"shared_plan,omitempty"`
+	ObligationID  string                                    `json:"obligation_id,omitempty"`
+	Kind          string                                    `json:"kind"`
+	At            time.Time                                 `json:"at"`
+	Actor         string                                    `json:"actor,omitempty"`
+	Explanation   string                                    `json:"explanation"`
 }
 
 type OperationWorkflowCaseObligationHistoryItem struct {
@@ -970,11 +973,35 @@ type OperationWorkflowObligationContext struct {
 	EvaluatedTransitionCount int       `json:"evaluated_transition_count"`
 }
 type OperationWorkflowObligationAssessment struct {
-	SubscriptionID string    `json:"subscription_id"`
-	Sequence       int64     `json:"sequence"`
-	ObligationID   string    `json:"obligation_id,omitempty"`
-	ActionKind     string    `json:"action_kind"`
-	Status         string    `json:"status"`
-	Summary        string    `json:"summary"`
-	CheckedAt      time.Time `json:"checked_at"`
+	Binding        *OperationWorkflowObligationTargetBinding `json:"binding,omitempty"`
+	Readiness      *OperationWorkflowTransitionReadiness     `json:"readiness,omitempty"`
+	SubscriptionID string                                    `json:"subscription_id"`
+	Sequence       int64                                     `json:"sequence"`
+	ObligationID   string                                    `json:"obligation_id,omitempty"`
+	ActionKind     string                                    `json:"action_kind"`
+	Status         string                                    `json:"status"`
+	Summary        string                                    `json:"summary"`
+	CheckedAt      time.Time                                 `json:"checked_at"`
+}
+
+type OperationWorkflowObligationTransitionTarget struct {
+	Operation       string `json:"operation"`
+	From            string `json:"from"`
+	To              string `json:"to"`
+	ContractVersion int    `json:"contract_version"`
+}
+type OperationWorkflowObligationTargetBinding struct {
+	ObligationID string                                      `json:"obligation_id"`
+	Case         OperationWorkflowNextActionCase             `json:"case"`
+	Transition   OperationWorkflowObligationTransitionTarget `json:"transition"`
+	Reason       string                                      `json:"reason"`
+	BoundAt      time.Time                                   `json:"bound_at"`
+	BoundBy      string                                      `json:"bound_by"`
+}
+type OperationWorkflowObligationTargetRequest struct {
+	ObligationID string                                       `json:"obligation_id"`
+	Case         OperationWorkflowNextActionCase              `json:"case"`
+	Transition   *OperationWorkflowObligationTransitionTarget `json:"transition,omitempty"`
+	Clear        bool                                         `json:"clear,omitempty"`
+	Reason       string                                       `json:"reason"`
 }

@@ -130,7 +130,7 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 	projectWorkflowPlaybookBusinessOutcomes(&out)
 	projectPlaybookReplacementLinks(out.PlaybookProgress)
 	out.Limitations = append(out.Limitations, "Playbook progress records human review of pinned guidance. Evidence references are checked on edit; checklist completion does not establish readiness or business success.")
-	projectWorkflowCaseObligationAssessments(&out)
+	projectWorkflowCaseObligationAssessments(&out, rows, tenant, operator)
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	return out, nil
 }

@@ -79536,6 +79536,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        target_binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetRequest'
         review_response:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseRequest'
           description: OperationWorkflowReadinessCoordinationRequest.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.
@@ -79582,6 +79584,11 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        target_bindings:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
         completion:
           $ref: '#/components/schemas/OperationWorkflowReadinessCompletion'
         revision:
@@ -82532,6 +82539,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        target_binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
         replacement:
           $ref: '#/components/schemas/OperationWorkflowObligationReplacement'
         cases:
@@ -82548,7 +82557,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared]
         at:
           type: string
           format: date-time
@@ -82766,12 +82775,68 @@ components:
           type: integer
         evaluated_transition_count:
           type: integer
+    OperationWorkflowObligationTransitionTarget:
+      type: object
+      additionalProperties: false
+      description: Exact declared transition identity and pinned workflow contract version; it is an advisory target, not execution authorization.
+      required: [operation, from, to, contract_version]
+      properties:
+        operation:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        contract_version:
+          type: integer
+          minimum: 1
+    OperationWorkflowObligationTargetBinding:
+      type: object
+      additionalProperties: false
+      description: One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason. Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed.
+      required: [obligation_id, case, transition, reason, bound_at, bound_by]
+      properties:
+        obligation_id:
+          type: string
+        case:
+          $ref: '#/components/schemas/OperationWorkflowNextActionCase'
+        transition:
+          $ref: '#/components/schemas/OperationWorkflowObligationTransitionTarget'
+        reason:
+          type: string
+        bound_at:
+          type: string
+          format: date-time
+        bound_by:
+          type: string
+    OperationWorkflowObligationTargetRequest:
+      type: object
+      additionalProperties: false
+      description: Bind or clear one active free-form plan obligation for an exact case. Clear requires no transition; bind requires a fresh declared current-state transition. Requires the current coordination revision and unchanged status, owner, note and deadline; cannot combine with completion or review-response edits. Customer cases omit tenant IDs; operators specify the exact customer. Source obligation identity is rechecked under its write lock; evidence observation and persistence are independent.
+      required: [obligation_id, case, reason]
+      properties:
+        obligation_id:
+          type: string
+        case:
+          $ref: '#/components/schemas/OperationWorkflowNextActionCase'
+        transition:
+          $ref: '#/components/schemas/OperationWorkflowObligationTransitionTarget'
+        clear:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
     OperationWorkflowObligationAssessment:
       type: object
       additionalProperties: false
       description: Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and worker checks are distinct from executing application transitions. Free-form response/coordinator plans remain fulfillment_unassessed without a declared binding. Deadlines and histories never create dependency guards or authorize actions.
       required: [subscription_id, sequence, action_kind, status, summary, checked_at]
       properties:
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        readiness:
+          $ref: '#/components/schemas/OperationWorkflowTransitionReadiness'
         subscription_id:
           type: string
           format: uuid
@@ -82784,7 +82849,7 @@ components:
           type: string
         status:
           type: string
-          enum: [fulfillment_unassessed, acceptance_required, scheduled_check, review_actionable, review_evidence_unavailable, human_action_required]
+          enum: [fulfillment_unassessed, acceptance_required, scheduled_check, review_actionable, review_evidence_unavailable, human_action_required, target_unavailable, waiting_on_target_requirements, target_requirements_satisfied]
         summary:
           type: string
         checked_at:

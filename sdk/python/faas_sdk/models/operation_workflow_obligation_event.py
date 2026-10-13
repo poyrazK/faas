@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
+    from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
 
 T = TypeVar("T", bound="OperationWorkflowObligationEvent")
@@ -30,6 +31,9 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    target_binding: OperationWorkflowObligationTargetBinding | Unset = UNSET
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     replacement: OperationWorkflowObligationReplacement | Unset = UNSET
     """Same-source obligation succession recorded atomically with a source change. Links require overlapping saved
     case coverage and removed/new cycles or explicit transition references; a retained terminal same-kind
@@ -51,6 +55,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        target_binding: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.target_binding, Unset):
+            target_binding = self.target_binding.to_dict()
 
         replacement: dict[str, Any] | Unset = UNSET
         if not isinstance(self.replacement, Unset):
@@ -80,6 +88,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if target_binding is not UNSET:
+            field_dict["target_binding"] = target_binding
         if replacement is not UNSET:
             field_dict["replacement"] = replacement
         if cases is not UNSET:
@@ -99,6 +109,7 @@ class OperationWorkflowObligationEvent:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
+        from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
         d = dict(src_dict)
         kind = check_operation_workflow_obligation_event_kind(d.pop("kind"))
@@ -106,6 +117,13 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _target_binding = d.pop("target_binding", UNSET)
+        target_binding: OperationWorkflowObligationTargetBinding | Unset
+        if isinstance(_target_binding, Unset):
+            target_binding = UNSET
+        else:
+            target_binding = OperationWorkflowObligationTargetBinding.from_dict(_target_binding)
 
         _replacement = d.pop("replacement", UNSET)
         replacement: OperationWorkflowObligationReplacement | Unset
@@ -135,6 +153,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            target_binding=target_binding,
             replacement=replacement,
             cases=cases,
             action_kind=action_kind,

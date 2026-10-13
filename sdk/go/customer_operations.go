@@ -451,3 +451,9 @@ type OperationWorkflowObligationReplacement = api.OperationWorkflowObligationRep
 type OperationWorkflowObligationContext = api.OperationWorkflowObligationContext
 
 type OperationWorkflowObligationAssessment = api.OperationWorkflowObligationAssessment
+
+type OperationWorkflowObligationTransitionTarget = api.OperationWorkflowObligationTransitionTarget
+
+type OperationWorkflowObligationTargetBinding = api.OperationWorkflowObligationTargetBinding
+
+type OperationWorkflowObligationTargetRequest = api.OperationWorkflowObligationTargetRequest

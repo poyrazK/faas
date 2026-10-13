@@ -1207,6 +1207,9 @@ export type { OperationWorkflowObligationAssessment } from './models/OperationWo
 export type { OperationWorkflowObligationContext } from './models/OperationWorkflowObligationContext.js';
 export type { OperationWorkflowObligationEvent } from './models/OperationWorkflowObligationEvent.js';
 export type { OperationWorkflowObligationReplacement } from './models/OperationWorkflowObligationReplacement.js';
+export type { OperationWorkflowObligationTargetBinding } from './models/OperationWorkflowObligationTargetBinding.js';
+export type { OperationWorkflowObligationTargetRequest } from './models/OperationWorkflowObligationTargetRequest.js';
+export type { OperationWorkflowObligationTransitionTarget } from './models/OperationWorkflowObligationTransitionTarget.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

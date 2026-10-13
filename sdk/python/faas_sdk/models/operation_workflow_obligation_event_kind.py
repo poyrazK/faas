@@ -13,6 +13,8 @@ OperationWorkflowObligationEventKind = Literal[
     "replaces",
     "rescheduled",
     "superseded",
+    "target_bound",
+    "target_cleared",
 ]
 
 OPERATION_WORKFLOW_OBLIGATION_EVENT_KIND_VALUES: set[OperationWorkflowObligationEventKind] = {
@@ -28,6 +30,8 @@ OPERATION_WORKFLOW_OBLIGATION_EVENT_KIND_VALUES: set[OperationWorkflowObligation
     "replaces",
     "rescheduled",
     "superseded",
+    "target_bound",
+    "target_cleared",
 }
 
 

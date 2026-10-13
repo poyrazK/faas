@@ -402,3 +402,9 @@ export type { OperationWorkflowObligationReplacement } from './customer-operatio
 export type { OperationWorkflowObligationContext } from './customer-operations.js';
 
 export type { OperationWorkflowObligationAssessment } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTransitionTarget } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTargetBinding } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTargetRequest } from './customer-operations.js';

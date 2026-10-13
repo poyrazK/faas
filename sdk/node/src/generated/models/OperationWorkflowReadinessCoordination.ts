@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowObligationTargetBinding } from './OperationWorkflowObligationTargetBinding.js';
 import type { OperationWorkflowReadinessCompletion } from './OperationWorkflowReadinessCompletion.js';
 /**
  * OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordination = {
+  target_bindings?: Array<OperationWorkflowObligationTargetBinding>;
   completion?: OperationWorkflowReadinessCompletion;
   /**
    * OperationWorkflowReadinessCoordination.revision. Shared coordination value; does not alter application evidence.

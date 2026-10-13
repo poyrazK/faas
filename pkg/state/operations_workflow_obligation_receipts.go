@@ -113,6 +113,7 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 			add(id, "assigned", "This obligation became active for "+current[id].Owner+".")
 		}
 	}
+	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)
 	receipts = linkObligationSuccessors(before, after, old, current, cases, actor, now, receipts)
 	after.ObligationReceiptsTruncated = before.ObligationReceiptsTruncated
 	if len(receipts) > 128 {
