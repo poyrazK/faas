@@ -338,16 +338,9 @@ func serveInteractive(ctx context.Context, conn net.Conn, req Request, handler I
 	}
 	result, handlerErr := handler(sessionCtx, session)
 	if handlerErr != nil {
-		result = Result{Status: StatusFailed, FailureCode: "guest_error", FailureMessage: "command execution failed"}
-		switch {
-		case errors.Is(context.Cause(sessionCtx), ErrHostDisconnected):
-			result.FailureCode = "client_disconnected"
-			result.FailureMessage = "the attached client disconnected"
-		case errors.Is(runCtx.Err(), context.DeadlineExceeded):
-			result.Status = StatusTimedOut
-			result.FailureCode = "timeout"
-			result.FailureMessage = "session reached its time limit"
-		}
+		deadline, _ := runCtx.Deadline()
+		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded) || !time.Now().Before(deadline)
+		result = interactiveFailure(timedOut, errors.Is(context.Cause(sessionCtx), ErrHostDisconnected))
 	}
 	result.Stdout, result.Stderr = nil, nil
 	result.OutputTruncated = false
@@ -421,4 +414,19 @@ func writeStreamFrame(ctx context.Context, conn net.Conn, frameType uint32, body
 		return contextError(ctx, err)
 	}
 	return nil
+}
+
+// interactiveFailure classifies a session whose handler failed. A passed
+// deadline wins over a disconnect: the input reader's stream read shares the
+// session deadline, so at the time limit it can fail and report a disconnect
+// just before the deadline timer cancels the session.
+func interactiveFailure(timedOut, hostDisconnected bool) Result {
+	switch {
+	case timedOut:
+		return Result{Status: StatusTimedOut, FailureCode: "timeout", FailureMessage: "session reached its time limit"}
+	case hostDisconnected:
+		return Result{Status: StatusFailed, FailureCode: "client_disconnected", FailureMessage: "the attached client disconnected"}
+	default:
+		return Result{Status: StatusFailed, FailureCode: "guest_error", FailureMessage: "command execution failed"}
+	}
 }

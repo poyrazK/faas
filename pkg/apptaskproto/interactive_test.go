@@ -165,6 +165,24 @@ func TestInteractiveTimeoutReportsTimedOut(t *testing.T) {
 	}
 }
 
+func TestInteractiveFailurePrefersTimeoutOverDisconnect(t *testing.T) {
+	cases := map[string]struct {
+		timedOut, disconnected bool
+		status                 Status
+		code                   string
+	}{
+		"deadline and reader hang-up": {true, true, StatusTimedOut, "timeout"},
+		"deadline only":               {true, false, StatusTimedOut, "timeout"},
+		"client went away":            {false, true, StatusFailed, "client_disconnected"},
+		"handler error":               {false, false, StatusFailed, "guest_error"},
+	}
+	for name, tc := range cases {
+		if got := interactiveFailure(tc.timedOut, tc.disconnected); got.Status != tc.status || got.FailureCode != tc.code {
+			t.Errorf("%s: interactiveFailure = %+v, want %s/%s", name, got, tc.status, tc.code)
+		}
+	}
+}
+
 func TestInteractiveRequestValidation(t *testing.T) {
 	if err := interactiveRequest().Validate(); err != nil {
 		t.Fatalf("valid request rejected: %v", err)
