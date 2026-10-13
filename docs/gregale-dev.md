@@ -232,7 +232,7 @@ delivers the edit. With `--json`, the watcher emits a
 
 When a sync cannot be live-patched, the terminal says why and what would make
 the app patchable, for example
-`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. ...`
+`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. Run gregale dev --watch ...`
 or that a dependency or lockfile changed. A reason is printed when it first
 appears and again only after a sync with a different outcome, so an app with a
 build step hears it once per session. Expected cases (the first sync, a running

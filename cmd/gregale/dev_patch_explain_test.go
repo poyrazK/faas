@@ -23,6 +23,9 @@ func TestDevPatchExplanationCoversActionableReasons(t *testing.T) {
 			t.Errorf("reason %q should stay quiet", reason)
 		}
 	}
+	if why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonBuildCommand}); !strings.Contains(why, "gregale dev --watch") {
+		t.Fatalf("build-step explanation = %q, want the --watch suggestion", why)
+	}
 	why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonTooLarge, ChangedPaths: 312, PatchBytes: 9 << 20})
 	if !strings.Contains(why, "312 files, 9.0 MiB") || !strings.Contains(why, "200 files, 8.0 MiB") {
 		t.Fatalf("too-large explanation = %q", why)

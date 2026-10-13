@@ -14,7 +14,7 @@ import (
 func devPatchExplanation(preview api.DevPatchPreview) (string, bool) {
 	switch preview.Reason {
 	case api.DevPatchReasonBuildCommand:
-		return "your app has a build step, so edits go through the build. Apps that run their source files directly (no build script) are live-patched in seconds", true
+		return "your app has a build step, so edits go through the build. Run gregale dev --watch to hot-reload it with its development server instead (ADR-1170)", true
 	case api.DevPatchReasonNotRailpack:
 		return "this app is built from a Dockerfile. Live patches work for apps Gregale builds without one", true
 	case api.DevPatchReasonNoSourceLayer, api.DevPatchReasonSourceNotDeployed:

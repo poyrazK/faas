@@ -191,6 +191,8 @@ the builder VM. That is the only case that waits for a build.
      acknowledges them without restarting the workload.
 3. **Framework defaults.** `dev.watch: true` resolves the command from the
    package's `dev` script or known frameworks (Next.js, Vite, Nuxt, Remix,
-   SvelteKit). The rebuild explainer suggests `--watch`.
+   SvelteKit). The rebuild explainer suggests `--watch`. *The `dev` script
+   default and the explainer suggestion are implemented; known-framework
+   commands are not.*
 4. **Python.** `uvicorn --reload` / Flask debug for uv projects, whose
    `uv sync` over the full source makes them non-verbatim today.
