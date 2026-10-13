@@ -14,9 +14,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events subscription-"+action, flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm changing subscription delivery")
+	var command string
 	var expectedMax, expectedPlan *int
 	var capacity *int
 	if action == "capacity" {
+		fs.StringVar(&command, "command-id", "", "optional nonzero UUID; repeat unchanged after an uncertain response")
 		expectedMax = fs.Int("expected-max-pending", -1, "reviewed saved capacity; requires expected-plan-max-pending")
 		expectedPlan = fs.Int("expected-plan-max-pending", -1, "reviewed plan ceiling; requires expected-max-pending")
 		capacity = fs.Int("max-pending", -1, "maximum pending plus dispatching deliveries; 0 restores plan limit")
@@ -52,9 +54,9 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 		})
 		if provided {
 			guard = &api.EventSubscriptionCapacityGuard{MaxPendingDeliveries: expectedMax, PlanMaxPendingDeliveries: expectedPlan}
-			if err := (api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard}).Validate(); err != nil {
-				return printErr("Invalid capacity expectations", err)
-			}
+		}
+		if err := (api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard, CommandID: command}).Validate(); err != nil {
+			return printErr("Invalid capacity request", err)
 		}
 	}
 	if _, err := uuid.Parse(positional[1]); err != nil {
@@ -67,7 +69,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	var out api.EventSubscriptionDeliveryControl
 	switch action {
 	case "capacity":
-		out, err = client.SetEventSubscriptionCapacity(context.Background(), positional[0], positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard})
+		out, err = client.SetEventSubscriptionCapacity(context.Background(), positional[0], positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard, CommandID: command})
 	case "pause":
 		out, err = client.PauseEventSubscription(context.Background(), positional[0], positional[1])
 	case "resume":
@@ -78,6 +80,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	if err != nil {
 		return printErr("Subscription delivery control failed", err)
 	}
+	if action == "capacity" && command != "" {
+		if err := verifySubscriptionCapacityReceipt(out, positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard, CommandID: command}); err != nil {
+			return printErr("Capacity command acknowledgment unconfirmed; repeat the same request", err)
+		}
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
@@ -87,6 +94,9 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s: %s | rate %d/s (0=unlimited) | pending %d | processing %d | oldest pending %.0fs\n", oneLine(out.SubscriptionID), mode, out.RatePerSecond, out.PendingRecipients, out.ProcessingRecipients, out.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Live deliveries %d | effective subscription limit %d | configured %d (0=plan default)\n", out.LiveDeliveries, out.EffectiveMaxPendingDeliveries, out.MaxPendingDeliveries)
+	if receipt := out.CapacityCommandReceipt; receipt != nil {
+		_, _ = fmt.Fprintf(osStdout, "Command %s | original %s setting %d (effective %d, plan %d) | retained until %s\n", receipt.CommandID, receipt.Outcome, receipt.RequestedMaxPendingDeliveries, receipt.EffectiveMaxPendingDeliveries, receipt.PlanMaxPendingDeliveries, receipt.RetainUntil.Format("2006-01-02T15:04:05Z07:00"))
+	}
 	if out.CircuitBreaker != nil {
 		_, _ = fmt.Fprintf(osStdout, "Circuit %s | reason %s | recovery rate %d/s | history incomplete %t\n", oneLine(out.CircuitBreaker.State), oneLine(out.CircuitBreaker.Reason), out.CircuitBreaker.RecoveryRatePerSecond, out.CircuitBreaker.HistoryIncomplete)
 	}

@@ -506,6 +506,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1175 | [Subscription capacity-pressure diagnostics](1175-subscription-capacity-pressure-diagnostics.md) | accepted | Read-only scope usage, effective ceilings and waiting acceptance ages from a complete pressure snapshot |
 | 1176 | [Guarded subscription capacity preview](1176-guarded-subscription-capacity-preview.md) | accepted | Read-only proposal validation and projected consumer/shared capacity from fresh scoped evidence |
 | 1177 | [Guarded subscription capacity apply](1177-guarded-subscription-capacity-apply.md) | accepted | Atomically compare reviewed saved capacity and locked plan allowance before applying changes |
+| 1178 | [Idempotent subscription capacity commands](1178-idempotent-subscription-capacity-commands.md) | accepted | Retained successful capacity acknowledgments and safe repeats with fixed command UUIDs |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

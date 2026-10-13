@@ -10429,3 +10429,8 @@ const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
 const EventExecutionLineageControlPlanMaxJobs = 200
 const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
 const EventExecutionLineageControlReportMaxBytes = 1024 * 1024
+
+// Capacity command evidence is bounded independently of delivery slots.
+const EventSubscriptionCapacityCommandMaxReceipts = 128
+const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
+const EventSubscriptionCapacityCommandPruneBatch = 500

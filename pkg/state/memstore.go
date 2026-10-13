@@ -206,11 +206,12 @@ type MemStore struct {
 	routeLifecycleApprovals              map[string]api.RouteLifecycleApproval
 	routeRemovalPolicies                 map[string]api.RouteRemovalPolicy
 
-	eventCircuitBreakers      map[string]*eventCircuitRecord
-	eventSubscriptionControls map[string]*memEventSubscriptionControl
-	eventRecoveryJobs         map[string]*memEventRecoveryJob
-	workflowCodePins          map[string]time.Time
-	qualificationSnapshots    map[string]EnvironmentQualificationSnapshotReceipt
+	eventCircuitBreakers              map[string]*eventCircuitRecord
+	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
+	eventRecoveryJobs                 map[string]*memEventRecoveryJob
+	workflowCodePins                  map[string]time.Time
+	qualificationSnapshots            map[string]EnvironmentQualificationSnapshotReceipt
 	// Restore evidence survives cleanup of the target's runtime receipt.
 	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
 	// Guest configuration hashes survive cleanup of private qualification VMs.

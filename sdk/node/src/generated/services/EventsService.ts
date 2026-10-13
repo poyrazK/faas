@@ -2880,7 +2880,8 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Saved capacity or plan ceiling changed from expected values; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
+        409: `Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
+        429: `New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.`,
         504: `Set consumer delivery capacity: subscription control request timed out.`,
       },
     });

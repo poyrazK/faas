@@ -3,6 +3,7 @@ package appevents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,6 +26,9 @@ func (s *Service) eventSubscriptionControl(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	out, err := applyEventSubscriptionControl(ctx, store, r, acct.ID, app.ID, action)
+	if writeSubscriptionCapacityCommandError(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrEventSubscriptionCapacityChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_subscription_capacity_changed", "Subscription capacity changed", "saved capacity or plan ceiling differs from the reviewed expectations; refresh preview before applying"))
@@ -84,7 +88,7 @@ func applyEventSubscriptionCapacity(ctx context.Context, store state.EventSubscr
 	if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil || req.Validate() != nil {
 		return api.EventSubscriptionDeliveryControl{}, state.ErrInvalidArgument
 	}
-	if req.Expected != nil {
+	if req.Expected != nil || req.CommandID != "" {
 		guarded, ok := store.(state.EventSubscriptionCapacityGuardedStore)
 		if !ok {
 			return api.EventSubscriptionDeliveryControl{}, errors.New("guarded subscription capacity store unavailable")
@@ -92,4 +96,16 @@ func applyEventSubscriptionCapacity(ctx context.Context, store state.EventSubscr
 		return guarded.SetEventSubscriptionCapacityGuarded(ctx, account, app, sub, req)
 	}
 	return capacityStore.SetEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries)
+}
+
+func writeSubscriptionCapacityCommandError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, state.ErrSubscriptionCapacityCommandConflict):
+		api.WriteProblem(w, api.NewProblem(409, "event_subscription_capacity_command_changed", "Capacity command UUID reused", "repeat a command UUID only with its original proposed value and expectations"))
+	case errors.Is(err, state.ErrSubscriptionCapacityCommandLimit):
+		api.WriteProblem(w, api.NewProblem(429, "event_subscription_capacity_command_limit", "Capacity command receipt limit reached", fmt.Sprintf("the subscription has %d retained commands; known repeats and commands without UUIDs remain available", api.EventSubscriptionCapacityCommandMaxReceipts)).WithLimit(api.EventSubscriptionCapacityCommandMaxReceipts, api.EventSubscriptionCapacityCommandMaxReceipts).WithDocs("https://gregale.dev/docs/event-driven"))
+	default:
+		return false
+	}
+	return true
 }

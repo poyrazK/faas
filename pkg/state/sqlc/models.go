@@ -3201,6 +3201,17 @@ type EventSubscription struct {
 	SchemaVersions     []string
 }
 
+type EventSubscriptionCapacityCommand struct {
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
 type EventSubscriptionCircuitBreaker struct {
 	SubscriptionID pgtype.UUID
 	AccountID      pgtype.UUID

@@ -56994,3 +56994,16 @@ BEGIN
  INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
  RETURN NEW;
 END $$;
+
+CREATE TABLE public.event_subscription_capacity_commands (
+ subscription_id uuid NOT NULL REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
+ command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ request jsonb NOT NULL CHECK(jsonb_typeof(request)='object'),
+ receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object'),
+ recorded_at timestamptz NOT NULL,
+ retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
+ PRIMARY KEY(subscription_id,command_id)
+);
+CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands(retain_until,subscription_id,command_id);

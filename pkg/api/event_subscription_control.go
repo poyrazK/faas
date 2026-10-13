@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -33,6 +35,7 @@ type EventSubscriptionCapacityGuard struct {
 // Zero restores the current plan limit. Positive values lower a subscription's
 // live pending-plus-dispatching delivery ceiling without changing siblings.
 type EventSubscriptionCapacityRequest struct {
+	CommandID            string                          `json:"command_id,omitempty"`
 	Expected             *EventSubscriptionCapacityGuard `json:"expected,omitempty"`
 	MaxPendingDeliveries *int                            `json:"max_pending_deliveries"`
 }
@@ -44,13 +47,42 @@ func (r EventSubscriptionCapacityRequest) Validate() error {
 	if e := r.Expected; e != nil && (e.MaxPendingDeliveries == nil || e.PlanMaxPendingDeliveries == nil || *e.MaxPendingDeliveries < 0 || *e.PlanMaxPendingDeliveries <= 0) {
 		return fmt.Errorf("expected requires a nonnegative saved setting and a positive plan ceiling")
 	}
+	if r.CommandID != "" {
+		id := r.CommandID
+		if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+			return fmt.Errorf("command_id must be a nonzero hyphenated UUID")
+		}
+		raw, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+		nonzero := false
+		for _, value := range raw {
+			nonzero = nonzero || value != 0
+		}
+		if err != nil || len(raw) != 16 || !nonzero {
+			return fmt.Errorf("command_id must be a nonzero hyphenated UUID")
+		}
+	}
 	return nil
 }
 
+type EventSubscriptionCapacityCommandReceipt struct {
+	CommandID                     string                          `json:"command_id"`
+	AppID                         string                          `json:"app_id"`
+	SubscriptionID                string                          `json:"subscription_id"`
+	RequestedMaxPendingDeliveries int                             `json:"requested_max_pending_deliveries"`
+	Expected                      *EventSubscriptionCapacityGuard `json:"expected,omitempty"`
+	PreviousMaxPendingDeliveries  int                             `json:"previous_max_pending_deliveries"`
+	PlanMaxPendingDeliveries      int                             `json:"plan_max_pending_deliveries"`
+	EffectiveMaxPendingDeliveries int                             `json:"effective_max_pending_deliveries"`
+	Outcome                       string                          `json:"outcome"`
+	RecordedAt                    time.Time                       `json:"recorded_at"`
+	RetainUntil                   time.Time                       `json:"retain_until"`
+}
+
 type EventSubscriptionDeliveryControl struct {
-	MaxPendingDeliveries          int   `json:"max_pending_deliveries"`
-	EffectiveMaxPendingDeliveries int   `json:"effective_max_pending_deliveries"`
-	LiveDeliveries                int64 `json:"live_deliveries"`
+	CapacityCommandReceipt        *EventSubscriptionCapacityCommandReceipt `json:"capacity_command_receipt,omitempty"`
+	MaxPendingDeliveries          int                                      `json:"max_pending_deliveries"`
+	EffectiveMaxPendingDeliveries int                                      `json:"effective_max_pending_deliveries"`
+	LiveDeliveries                int64                                    `json:"live_deliveries"`
 
 	CircuitBreaker       *EventCircuitBreakerResponse `json:"circuit_breaker,omitempty"`
 	SubscriptionID       string                       `json:"subscription_id"`

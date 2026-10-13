@@ -35095,13 +35095,18 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: Saved capacity or plan ceiling changed from expected values; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.
+          description: Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Set consumer delivery capacity: subscription control request timed out."
           content:
@@ -63729,8 +63734,27 @@ components:
       description: Explicit per-subscription live-delivery ceiling. Zero restores the plan default; positive values must not exceed the current plan ceiling. Requires deploy write or admin scope and MFA.
       required: [max_pending_deliveries]
       properties:
+        command_id: { type: string, format: uuid, description: "Optional nonzero command UUID scoped to this owned subscription. Repeat the same value and expectations while its 30-day receipt remains retained; repeats return the original receipt without applying again, even after later settings or plan changes. Different normalized inputs conflict. No guarantee after expiry or deletion." }
         expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Maximum pending plus dispatching deliveries; zero restores the current plan default. }
+
+    EventSubscriptionCapacityCommandReceipt:
+      type: object
+      additionalProperties: false
+      description: Immutable acknowledgment of a successful capacity command. The surrounding control response reports current state; this receipt preserves the original outcome. Retained for 30 days without extension on repeat. No event payloads or credentials.
+      required: [command_id, app_id, subscription_id, requested_max_pending_deliveries, previous_max_pending_deliveries, plan_max_pending_deliveries, effective_max_pending_deliveries, outcome, recorded_at, retain_until]
+      properties:
+        command_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        requested_max_pending_deliveries: { type: integer, minimum: 0 }
+        expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
+        previous_max_pending_deliveries: { type: integer, minimum: 0 }
+        plan_max_pending_deliveries: { type: integer, minimum: 1 }
+        effective_max_pending_deliveries: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [applied, unchanged], description: "Whether the original successful command changed the saved setting; both consume a receipt slot." }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
 
     EventSubscriptionDeliveryControl:
       type: object
@@ -63738,6 +63762,7 @@ components:
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
       required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        capacity_command_receipt: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }
         effective_max_pending_deliveries: { type: integer, minimum: 1, description: Effective ceiling after applying the current plan limit. }
         live_deliveries: { type: integer, format: int64, minimum: 0, description: Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work. }

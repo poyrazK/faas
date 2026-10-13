@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -23,12 +24,21 @@ class EventSubscriptionCapacityRequest:
 
     max_pending_deliveries: int
     """Maximum pending plus dispatching deliveries; zero restores the current plan default."""
+    command_id: UUID | Unset = UNSET
+    """Optional nonzero command UUID scoped to this owned subscription. Repeat the same value and expectations
+    while its 30-day receipt remains retained; repeats return the original receipt without applying again, even
+    after later settings or plan changes. Different normalized inputs conflict. No guarantee after expiry or
+    deletion."""
     expected: EventSubscriptionCapacityGuard | Unset = UNSET
     """Value preconditions checked atomically before changing subscription capacity. Both fields are required.
     Checks saved configuration and the current plan allowance; live usage is not reserved."""
 
     def to_dict(self) -> dict[str, Any]:
         max_pending_deliveries = self.max_pending_deliveries
+
+        command_id: str | Unset = UNSET
+        if not isinstance(self.command_id, Unset):
+            command_id = str(self.command_id)
 
         expected: dict[str, Any] | Unset = UNSET
         if not isinstance(self.expected, Unset):
@@ -41,6 +51,8 @@ class EventSubscriptionCapacityRequest:
                 "max_pending_deliveries": max_pending_deliveries,
             }
         )
+        if command_id is not UNSET:
+            field_dict["command_id"] = command_id
         if expected is not UNSET:
             field_dict["expected"] = expected
 
@@ -53,6 +65,13 @@ class EventSubscriptionCapacityRequest:
         d = dict(src_dict)
         max_pending_deliveries = d.pop("max_pending_deliveries")
 
+        _command_id = d.pop("command_id", UNSET)
+        command_id: UUID | Unset
+        if isinstance(_command_id, Unset):
+            command_id = UNSET
+        else:
+            command_id = UUID(_command_id)
+
         _expected = d.pop("expected", UNSET)
         expected: EventSubscriptionCapacityGuard | Unset
         if isinstance(_expected, Unset):
@@ -62,6 +81,7 @@ class EventSubscriptionCapacityRequest:
 
         event_subscription_capacity_request = cls(
             max_pending_deliveries=max_pending_deliveries,
+            command_id=command_id,
             expected=expected,
         )
 

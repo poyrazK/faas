@@ -924,6 +924,10 @@ type Querier interface {
 	EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error)
 	EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error)
 	EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	EventSubscriptionCapacityCommandGet(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandGetParams) (EventSubscriptionCapacityCommand, error)
+	EventSubscriptionCapacityCommandInsert(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandInsertParams) error
+	EventSubscriptionCapacityCommandsCount(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsCountParams) (int64, error)
+	EventSubscriptionCapacityCommandsExpire(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsExpireParams) error
 	EventSubscriptionCapacityOverride(ctx context.Context, db DBTX, arg EventSubscriptionCapacityOverrideParams) (int32, error)
 	EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg EventSubscriptionCapacitySetParams) error
 	EventSubscriptionControlGet(ctx context.Context, db DBTX, arg EventSubscriptionControlGetParams) (EventSubscriptionDeliveryControl, error)
@@ -2803,6 +2807,7 @@ type Querier interface {
 	PruneEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetryJobsParams) (int64, error)
 	PruneEventExecutionOutcomes(ctx context.Context, db DBTX, arg PruneEventExecutionOutcomesParams) (int64, error)
 	PruneEventExecutionRoots(ctx context.Context, db DBTX, arg PruneEventExecutionRootsParams) (int64, error)
+	PruneEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg PruneEventSubscriptionCapacityCommandsParams) (int64, error)
 	PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error)
 	PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error)
 	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)

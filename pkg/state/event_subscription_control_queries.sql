@@ -45,3 +45,26 @@ AND subscription_id::text=sqlc.arg(subscription_id)::text),0)::integer AS max_pe
 
 -- name: EventSubscriptionCapacityAccount :one
 SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: EventSubscriptionCapacityCommandGet :one
+SELECT * FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND command_id=sqlc.arg(command_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandsExpire :exec
+DELETE FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until<=sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandInsert :exec
+INSERT INTO event_subscription_capacity_commands(subscription_id,command_id,account_id,app_id,request,receipt,recorded_at,retain_until)
+VALUES(sqlc.arg(subscription_id)::uuid,sqlc.arg(command_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(request)::jsonb,sqlc.arg(receipt)::jsonb,sqlc.arg(recorded_at)::timestamptz,sqlc.arg(retain_until)::timestamptz);
+
+-- name: PruneEventSubscriptionCapacityCommands :execrows
+WITH expired AS (
+ SELECT subscription_id,command_id FROM event_subscription_capacity_commands WHERE retain_until<=sqlc.arg(now_at)::timestamptz
+ ORDER BY retain_until,subscription_id,command_id FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+)
+DELETE FROM event_subscription_capacity_commands c USING expired e WHERE c.subscription_id=e.subscription_id AND c.command_id=e.command_id;

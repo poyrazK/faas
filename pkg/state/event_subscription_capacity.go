@@ -47,15 +47,20 @@ func populateEventSubscriptionCapacity(ctx context.Context, q *sqlc.Queries, db 
 	return err
 }
 func (s *PgStore) SetEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int) (api.EventSubscriptionDeliveryControl, error) {
-	return s.setEventSubscriptionCapacity(ctx, account, app, sub, limit, nil)
+	return s.setEventSubscriptionCapacity(ctx, account, app, sub, limit, nil, "")
 }
 func (s *PgStore) SetEventSubscriptionCapacityGuarded(ctx context.Context, account, app, sub string, req api.EventSubscriptionCapacityRequest) (api.EventSubscriptionDeliveryControl, error) {
 	if err := req.Validate(); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, ErrInvalidArgument
 	}
-	return s.setEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries, req.Expected)
+	return s.setEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries, req.Expected, req.CommandID)
 }
-func (s *PgStore) setEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int, expected *api.EventSubscriptionCapacityGuard) (api.EventSubscriptionDeliveryControl, error) {
+func (s *PgStore) setEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int, expected *api.EventSubscriptionCapacityGuard, command string) (api.EventSubscriptionDeliveryControl, error) {
+	req, payload, normalizeErr := normalizeCapacityCommandRequest(api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: &limit, Expected: expected, CommandID: command})
+	if normalizeErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, normalizeErr
+	}
+	expected, command = req.Expected, req.CommandID
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
@@ -89,40 +94,79 @@ func (s *PgStore) setEventSubscriptionCapacity(ctx context.Context, account, app
 	if err = q.EventSubscriptionControlLock(ctx, tx, canonicalMemUUID(sub)); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
-	if expected != nil {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	priorReceipt, lookupErr := lookupCapacityCommandTx(ctx, q, tx, account, app, sub, req, payload, now)
+	if lookupErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, lookupErr
+	}
+	if priorReceipt != nil {
+		out, readErr := getSubscriptionControl(ctx, q, tx, account, app, sub)
+		if readErr != nil {
+			return out, readErr
+		}
+		out.CapacityCommandReceipt = priorReceipt
+		return out, tx.Commit(ctx)
+	}
+	previous := 0
+	if expected != nil || command != "" {
 		configured, readErr := q.EventSubscriptionCapacityOverride(ctx, tx, sqlc.EventSubscriptionCapacityOverrideParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: canonicalMemUUID(sub)})
 		if readErr != nil {
 			return api.EventSubscriptionDeliveryControl{}, readErr
 		}
-		if !eventSubscriptionCapacityGuardMatches(expected, int(configured), limits.EventDeliveries.PerConsumer) {
+		previous = int(configured)
+		if expected != nil && !eventSubscriptionCapacityGuardMatches(expected, int(configured), limits.EventDeliveries.PerConsumer) {
 			return api.EventSubscriptionDeliveryControl{}, ErrEventSubscriptionCapacityChanged
 		}
 	}
 	if limit > limits.EventDeliveries.PerConsumer {
 		return api.EventSubscriptionDeliveryControl{}, ErrInvalidArgument
 	}
-	if err = q.EventSubscriptionCapacitySet(ctx, tx, sqlc.EventSubscriptionCapacitySetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), MaxPendingDeliveries: int32(limit), NowAt: pgtypeFromTime(time.Now().UTC())}); err != nil {
+	if command != "" {
+		count, countErr := q.EventSubscriptionCapacityCommandsCount(ctx, tx, sqlc.EventSubscriptionCapacityCommandsCountParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), NowAt: pgtypeFromTime(now)})
+		if countErr != nil {
+			return api.EventSubscriptionDeliveryControl{}, countErr
+		}
+		if count >= api.EventSubscriptionCapacityCommandMaxReceipts {
+			return api.EventSubscriptionDeliveryControl{}, ErrSubscriptionCapacityCommandLimit
+		}
+	}
+	receipt, receiptJSON, receiptErr := capacityCommandReceipt(req, app, sub, previous, limits.EventDeliveries.PerConsumer, now)
+	if receiptErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, receiptErr
+	}
+	if err = q.EventSubscriptionCapacitySet(ctx, tx, sqlc.EventSubscriptionCapacitySetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), MaxPendingDeliveries: int32(limit), NowAt: pgtypeFromTime(now)}); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
+	}
+	if receipt != nil {
+		if err = q.EventSubscriptionCapacityCommandInsert(ctx, tx, sqlc.EventSubscriptionCapacityCommandInsertParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), CommandID: mustPgUUID(command), Request: payload, Receipt: receiptJSON, RecordedAt: pgtypeFromTime(receipt.RecordedAt), RetainUntil: pgtypeFromTime(receipt.RetainUntil)}); err != nil {
+			return api.EventSubscriptionDeliveryControl{}, err
+		}
 	}
 	out, err := getSubscriptionControl(ctx, q, tx, account, app, sub)
 	if err != nil {
 		return out, err
 	}
+	out.CapacityCommandReceipt = receipt
 	return out, tx.Commit(ctx)
 }
 func (m *MemStore) SetEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int) (api.EventSubscriptionDeliveryControl, error) {
-	return m.setEventSubscriptionCapacity(ctx, account, app, sub, limit, nil)
+	return m.setEventSubscriptionCapacity(ctx, account, app, sub, limit, nil, "")
 }
 func (m *MemStore) SetEventSubscriptionCapacityGuarded(ctx context.Context, account, app, sub string, req api.EventSubscriptionCapacityRequest) (api.EventSubscriptionDeliveryControl, error) {
 	if err := req.Validate(); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, ErrInvalidArgument
 	}
-	return m.setEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries, req.Expected)
+	return m.setEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries, req.Expected, req.CommandID)
 }
-func (m *MemStore) setEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int, expected *api.EventSubscriptionCapacityGuard) (api.EventSubscriptionDeliveryControl, error) {
+func (m *MemStore) setEventSubscriptionCapacity(ctx context.Context, account, app, sub string, limit int, expected *api.EventSubscriptionCapacityGuard, command string) (api.EventSubscriptionDeliveryControl, error) {
 	if err := ctx.Err(); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
+	req, payload, normalizeErr := normalizeCapacityCommandRequest(api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: &limit, Expected: expected, CommandID: command})
+	if normalizeErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, normalizeErr
+	}
+	expected, command = req.Expected, req.CommandID
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
@@ -133,6 +177,16 @@ func (m *MemStore) setEventSubscriptionCapacity(ctx context.Context, account, ap
 	}
 	if !m.eventSubscriptionControlTargetLocked(account, app, sub) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	priorReceipt, lookupErr := m.lookupCapacityCommandLocked(account, app, sub, req, payload, now)
+	if lookupErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, lookupErr
+	}
+	if priorReceipt != nil {
+		out := m.eventSubscriptionControlResponseLocked(account, app, sub)
+		out.CapacityCommandReceipt = priorReceipt
+		return out, nil
 	}
 	c := m.eventSubscriptionControls[canonicalMemUUID(sub)]
 	ceiling := m.eventDeliveryLimitsLocked(account).PerConsumer
@@ -146,6 +200,16 @@ func (m *MemStore) setEventSubscriptionCapacity(ctx context.Context, account, ap
 	if limit < 0 || limit > ceiling {
 		return api.EventSubscriptionDeliveryControl{}, ErrInvalidArgument
 	}
+	if command != "" && m.capacityCommandCountLocked(account, app, sub, now) >= api.EventSubscriptionCapacityCommandMaxReceipts {
+		return api.EventSubscriptionDeliveryControl{}, ErrSubscriptionCapacityCommandLimit
+	}
+	receipt, receiptJSON, receiptErr := capacityCommandReceipt(req, app, sub, configured, ceiling, now)
+	if receiptErr != nil {
+		return api.EventSubscriptionDeliveryControl{}, receiptErr
+	}
+	if err := ctx.Err(); err != nil {
+		return api.EventSubscriptionDeliveryControl{}, err
+	}
 	if m.eventSubscriptionControls == nil {
 		m.eventSubscriptionControls = make(map[string]*memEventSubscriptionControl)
 	}
@@ -154,8 +218,21 @@ func (m *MemStore) setEventSubscriptionCapacity(ctx context.Context, account, ap
 		m.eventSubscriptionControls[canonicalMemUUID(sub)] = c
 	}
 	c.MaxPendingDeliveries = limit
-	c.UpdatedAt = time.Now().UTC()
-	return m.eventSubscriptionControlResponseLocked(account, app, sub), nil
+	c.UpdatedAt = now
+	if receipt != nil {
+		for key, row := range m.eventSubscriptionCapacityCommands {
+			if !row.RetainUntil.After(now) && sameMemUUID(row.AccountID, account) && sameMemUUID(row.AppID, app) && sameMemUUID(row.SubscriptionID, sub) {
+				delete(m.eventSubscriptionCapacityCommands, key)
+			}
+		}
+		if m.eventSubscriptionCapacityCommands == nil {
+			m.eventSubscriptionCapacityCommands = make(map[string]memSubscriptionCapacityCommand)
+		}
+		m.eventSubscriptionCapacityCommands[canonicalMemUUID(sub)+"/"+command] = memSubscriptionCapacityCommand{AccountID: canonicalMemUUID(account), AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), Request: payload, Receipt: receiptJSON, RetainUntil: receipt.RetainUntil}
+	}
+	out := m.eventSubscriptionControlResponseLocked(account, app, sub)
+	out.CapacityCommandReceipt = receipt
+	return out, nil
 }
 
 func eventSubscriptionCapacityGuardMatches(expected *api.EventSubscriptionCapacityGuard, configured, ceiling int) bool {

@@ -2661,10 +2661,11 @@ Inspect delivery pause, pacing, and oldest waiting event
 
 Set a lower live-delivery limit for one subscription
 
-`gregale events subscription-capacity [--expected-max-pending <N>] [--expected-plan-max-pending <N>] [--max-pending <N>] [--yes] <app> <subscription-id>`
+`gregale events subscription-capacity [--command-id <UUID>] [--expected-max-pending <N>] [--expected-plan-max-pending <N>] [--max-pending <N>] [--yes] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--command-id <UUID>` | retain original outcome; reuse unchanged on uncertain response |  |
 | `--expected-max-pending <N>` | reviewed saved setting; use with expected-plan-max-pending |  |
 | `--expected-plan-max-pending <N>` | reviewed plan ceiling; use with expected-max-pending |  |
 | `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |

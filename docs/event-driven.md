@@ -3229,3 +3229,48 @@ controls remain intact, and already admitted work is not evicted. After an uncer
 response, inspect status and review again; a repeat conflict is not proof of success.
 Plan changes can occur after commit. See
 [ADR-1177](adr/1177-guarded-subscription-capacity-apply.md).
+
+### Recover an uncertain capacity change with a command UUID
+
+```sh
+gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --command-id 5c531f54-4f73-4f41-83bb-eb8771993256 --yes
+```
+
+Choose and save a fresh nonzero UUID before first use. After a timeout, repeat the
+same command UUID, proposed value and original expectations. Do not refresh guards
+on a retained repeat. The example values are illustrative; use your reviewed
+preview expectations. The existing PUT accepts optional `command_id` alongside
+`max_pending_deliveries` and `expected`.
+
+A successful request stores its setting change and acknowledgment atomically. A
+known matching repeat returns `capacity_command_receipt` without reapplying,
+changing control timestamps, consuming another slot or extending retention. The
+response's ordinary fields report current state; the receipt reports the original
+requested/previous setting, plan/effective allowance, expectations, applied or
+unchanged outcome, recording time and deadline. It remains an acknowledgment even
+if later commands or plan changes produced different current state.
+
+Different normalized values or guards for an already retained UUID return 409,
+`event_subscription_capacity_command_changed`. New commands still check current
+guards and plan ceilings. A subscription can retain 128 successful receipts,
+including no-ops; a new UUID at the cap returns 429,
+`event_subscription_capacity_command_limit`, without applying. Known repeats and
+commands without UUIDs remain available. Rejections do not retain successful
+receipts or reserve the UUID. No UUID means legacy behavior without command evidence.
+
+Receipts expire thirty days after first success. Repeats do not extend that period.
+Expiry frees budget, and a bounded scheduler cleanup removes expired evidence
+without changing settings. Parent deletion ends availability. After expiry or
+missing evidence, inspect status and review a fresh command rather than assuming
+an old UUID can prove success; an expired unguarded request may apply again.
+
+The CLI verifies the original receipt before reporting acknowledgment and displays
+its outcome separately from current settings. An incompatible success response is
+unconfirmed. It does not manufacture replacement UUIDs, alter expectations or
+retry without guards. Current ownership, write scope and MFA still apply to every
+repeat. Go/Node/Python expose the optional request UUID and receipt models.
+
+Apply migration `20261013220000001_subscription_capacity_commands.sql` before
+upgrading API/scheduler writers and relying on receipts. Downgrade requires retained
+evidence to be pruned first. The implementation does not execute this migration.
+See [ADR-1178](adr/1178-idempotent-subscription-capacity-commands.md).

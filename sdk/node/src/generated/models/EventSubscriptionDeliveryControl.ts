@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventCircuitBreakerResponse } from './EventCircuitBreakerResponse.js';
+import type { EventSubscriptionCapacityCommandReceipt } from './EventSubscriptionCapacityCommandReceipt.js';
 /**
  * Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
  */
 export type EventSubscriptionDeliveryControl = {
+  capacity_command_receipt?: EventSubscriptionCapacityCommandReceipt;
   /**
    * Configured live-delivery ceiling; zero uses the current plan limit.
    */
