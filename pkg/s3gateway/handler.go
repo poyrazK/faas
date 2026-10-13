@@ -400,7 +400,10 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	if len(parts) == 1 {
+	// AWS JavaScript path-style bucket operations use /bucket/ (H9-132).
+	// Preserve the original URI for SigV4; classify its empty final segment
+	// as the bucket itself because S3 has no empty key.
+	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])
@@ -894,7 +897,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
 			return true
 		}
 	}

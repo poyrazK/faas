@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -42,9 +43,9 @@ func TestCapturedCloneObjectPlansRequireCompleteOwnedCatalogue(t *testing.T) {
 			case "no_provider":
 				catalogue[0].Buckets[0].PhysicalName = ""
 			}
-			plans, err := buildCapturedProjectEnvironmentObjectPlans(op, views, catalogue)
+			plans, err := apidserver.BuildCapturedProjectEnvironmentObjectPlans(op, views, catalogue)
 			if fault == "valid" {
-				if err != nil || len(plans) != 2 || plans[0].source.ID == plans[1].source.ID {
+				if err != nil || len(plans) != 2 || (*plans[0].Source()).ID == (*plans[1].Source()).ID {
 					t.Fatalf("omitted independent buckets: %+v, %v", plans, err)
 				}
 			} else if !errors.Is(err, state.ErrProjectEnvironmentCloneBindingCapture) {
@@ -56,14 +57,14 @@ func TestCapturedCloneObjectPlansRequireCompleteOwnedCatalogue(t *testing.T) {
 
 func TestCapturedCloneObjectResourcesRequirePinnedRosterAndSharedPoint(t *testing.T) {
 	op, views, catalogue := capturedObjectPlanningFixture()
-	plans, err := buildCapturedProjectEnvironmentObjectPlans(op, views, catalogue)
+	plans, err := apidserver.BuildCapturedProjectEnvironmentObjectPlans(op, views, catalogue)
 	if err != nil {
 		t.Fatal(err)
 	}
 	point := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
 	for _, fault := range []string{"valid", "missing", "duplicate", "name", "point_precision", "point_future", "point_noncanonical", "point_changed", "database_point_changed", "shared_target", "copy_without_manifest", "hash", "ready_without_target"} {
 		t.Run(fault, func(t *testing.T) {
-			resources, err := capturedProjectEnvironmentObjectResources(plans, point)
+			resources, err := apidserver.CapturedProjectEnvironmentObjectResources(plans, point)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +97,7 @@ func TestCapturedCloneObjectResourcesRequirePinnedRosterAndSharedPoint(t *testin
 			case "ready_without_target":
 				resources[0].Status, resources[0].TargetID = "ready", ""
 			}
-			_, gotPoint, err := validateCapturedProjectEnvironmentObjectResources(plans, resources, false)
+			_, gotPoint, err := apidserver.ValidateCapturedProjectEnvironmentObjectResources(plans, resources, false)
 			if (err == nil) != (fault == "valid") || fault == "valid" && !gotPoint.Equal(point) {
 				t.Fatalf("accepted changed resource plan: point %v, error %v", gotPoint, err)
 			}

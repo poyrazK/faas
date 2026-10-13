@@ -1,5 +1,5 @@
 // adr: 731 — authenticated durable PostgreSQL API restart and replay.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -19,7 +19,9 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery"
@@ -153,7 +155,7 @@ func TestManagedPostgresDurableAPIRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sink, err := newAppSecretCredentialSink(secretStore, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return hmac })
+		sink, err := apidserver.NewAppSecretCredentialSink(secretStore, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return hmac })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,10 +163,10 @@ func TestManagedPostgresDurableAPIRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv := newServerWithDeps(secretStore, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, nil, nil, nil, 15*time.Minute, "")
-		srv.managedPostgres = service
-		srv.managedPostgresBindings = bindings
-		handler = srv.handler()
+		srv := apidserver.NewServerWithDeps(secretStore, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, nil, nil, nil, 15*time.Minute, "")
+		(*srv.ManagedPostgres()) = service
+		(*srv.ManagedPostgresBindings()) = bindings
+		handler = srv.Handler()
 		observer = credentialdelivery.Observer{Store: secretStore, Identity: identity, HMACKey: hmac}
 	}
 	request := func(method, path, idempotency string, body any, want int) *httptest.ResponseRecorder {

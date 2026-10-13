@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -35,6 +36,10 @@ type Config struct {
 	// directory for immutable capture receipts and authorized retirement
 	// tombstones. It is experimental and requires NativeProcessRecovery.
 	NativeSnapshotPublicationRoot string `toml:"native_snapshot_publication_root"`
+	// NativeImageStagingRoot is a pre-created private persistent disk
+	// directory for native image and snapshot output claims. Configure it
+	// before native recovery; it does not enable qualification capture.
+	NativeImageStagingRoot string `toml:"native_image_staging_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -62,11 +67,16 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// QuietPause enables ADR-957 quiet pause: vmmd pauses an eligible
+	// instance's vCPUs between requests and resumes it on the next one.
+	// Off by default; schedd decides which instances are eligible.
+	// FAAS_QUIET_PAUSE overrides TOML.
+	QuietPause bool `toml:"quiet_pause"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
-	// it over virtio-blk. It must be on the same reflink-capable filesystem
-	// as the cached bases. Empty (the default) keeps virtio-blk;
-	// FAAS_PMEM_BASE_DIR overrides TOML.
+	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
+	// that holds its base; a path must be on that same mount. Empty or
+	// "off" keeps virtio-blk. FAAS_PMEM_BASE_DIR overrides TOML.
 	PmemBaseDir string `toml:"pmem_base_dir"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
@@ -500,6 +510,10 @@ func LoadConfig(path string) (*Config, error) {
 		// (below), so a node does not depend on an Ansible drop-in to
 		// skip network setup on its restores.
 		PreparedNetworks: api.DefaultPreparedNetworkCacheSize,
+		// ADR-908 (amended 2026-10-12): per-account pmem bases on by
+		// default. Bases without the pmem label, filesystems without
+		// reflink and native recovery all keep virtio-blk.
+		PmemBaseDir: fcvm.PmemBaseDirAuto,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -568,6 +582,9 @@ func LoadConfig(path string) (*Config, error) {
 		c.PreparedNetworks = 0
 	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
+		return nil, err
+	}
+	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
 		return nil, err
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -727,6 +744,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.DisableRestorePrefetch = !enabled
 	}
+	if v := os.Getenv("FAAS_QUIET_PAUSE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE must be a boolean (got %q)", v)
+		}
+		c.QuietPause = enabled
+	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v
 	}
@@ -872,14 +896,22 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
+	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {
+	return validateNativePrivateRootConfig(nativeRecovery, root, "native_image_staging_root")
+}
+
+func validateNativePrivateRootConfig(nativeRecovery bool, root, field string) error {
 	if root == "" {
 		return nil
 	}
 	if !nativeRecovery {
-		return fmt.Errorf("vmmd: native_snapshot_publication_root requires native_process_recovery = true")
+		return fmt.Errorf("vmmd: %s requires native_process_recovery = true", field)
 	}
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator) {
-		return fmt.Errorf("vmmd: native_snapshot_publication_root must be a clean absolute non-root path")
+		return fmt.Errorf("vmmd: %s must be a clean absolute non-root path", field)
 	}
 	return nil
 }

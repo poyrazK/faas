@@ -1,5 +1,5 @@
 // adr: 937
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,13 +20,13 @@ func TestHealthPollRetainsLastObservationOnCorruptState(t *testing.T) {
 	hook := entityOutboxHook(t, e, app)
 	seedAPIOutbox(t, e, app, entityRequest("health"), hook.ID)
 	registry := prometheus.NewRegistry()
-	e.s.durable.Metrics = durable.NewMetrics(registry, "apid")
+	(*e.s.Durable()).Metrics = durable.NewMetrics(registry, "apid")
 	r := durable.HealthRotation{}
-	e.s.durable.PollHealth(t.Context(), &r)
-	if durableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || durableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds") == 0 {
+	(*e.s.Durable()).PollHealth(t.Context(), &r)
+	if apidserver.DurableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || apidserver.DurableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds") == 0 {
 		t.Fatal("completed rotation lost pending work")
 	}
-	previous := durableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds")
+	previous := apidserver.DurableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds")
 	bucket.mu.Lock()
 	for key, value := range bucket.objects {
 		if strings.HasSuffix(key, "/manifest.json") {
@@ -34,8 +35,8 @@ func TestHealthPollRetainsLastObservationOnCorruptState(t *testing.T) {
 		}
 	}
 	bucket.mu.Unlock()
-	e.s.durable.PollHealth(t.Context(), &r)
-	if durableMetric(t, registry, "apid_durable_entity_health_poll_success") != 0 || durableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || durableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds") != previous {
+	(*e.s.Durable()).PollHealth(t.Context(), &r)
+	if apidserver.DurableMetric(t, registry, "apid_durable_entity_health_poll_success") != 0 || apidserver.DurableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || apidserver.DurableMetric(t, registry, "apid_durable_entity_health_last_success_timestamp_seconds") != previous {
 		t.Fatal("failed rotation published healthy empty backlog")
 	}
 }
@@ -43,21 +44,21 @@ func TestHealthPollRetainsLastObservationOnCorruptState(t *testing.T) {
 func TestHealthTracksRecoveryAndDeduplicatedHandoff(t *testing.T) {
 	e, app, dispatch, request := apiRecoveryFixture(t, "outbox")
 	registry := prometheus.NewRegistry()
-	e.s.durable.Metrics = durable.NewMetrics(registry, "apid")
+	(*e.s.Durable()).Metrics = durable.NewMetrics(registry, "apid")
 	r := durable.HealthRotation{}
-	e.s.durable.PollHealth(t.Context(), &r)
-	if durableMetric(t, registry, "apid_durable_entity_health_exhausted_entities", "target", "outbox") != 1 {
+	(*e.s.Durable()).PollHealth(t.Context(), &r)
+	if apidserver.DurableMetric(t, registry, "apid_durable_entity_health_exhausted_entities", "target", "outbox") != 1 {
 		t.Fatal("exhaustion not observed")
 	}
-	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key})
+	id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key})
 	if problem != nil {
 		t.Fatal(problem)
 	}
-	before, err := e.s.durable.Engine.Read(t.Context(), id)
+	before, err := (*e.s.Durable()).Engine.Read(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := e.s.durable.Engine.PendingOutbox(t.Context(), id)
+	pending, err := (*e.s.Durable()).Engine.PendingOutbox(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,27 +67,27 @@ func TestHealthTracksRecoveryAndDeduplicatedHandoff(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	e.s.durable.PollHealth(t.Context(), &r)
-	if durableMetric(t, registry, "apid_durable_entity_health_exhausted_entities", "target", "outbox") != 0 || durableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || durableMetric(t, registry, "apid_durable_entity_operations_total", "operation", "retry_outbox", "outcome", "success") != 1 {
+	(*e.s.Durable()).PollHealth(t.Context(), &r)
+	if apidserver.DurableMetric(t, registry, "apid_durable_entity_health_exhausted_entities", "target", "outbox") != 0 || apidserver.DurableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 1 || apidserver.DurableMetric(t, registry, "apid_durable_entity_operations_total", "operation", "retry_outbox", "outcome", "success") != 1 {
 		t.Fatal("recovery observations incorrect")
 	}
-	e.s.durable.OutboxEnabled = true
-	if err := e.s.durable.DeliverOutbox(t.Context(), durableentity.OutboxWork{Entity: id, MessageID: request.HeadID}); err != nil {
+	(*e.s.Durable()).OutboxEnabled = true
+	if err := (*e.s.Durable()).DeliverOutbox(t.Context(), durableentity.OutboxWork{Entity: id, MessageID: request.HeadID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.durable.AcceptOutbox(t.Context(), id, original); err != nil {
+	if err := (*e.s.Durable()).AcceptOutbox(t.Context(), id, original); err != nil {
 		t.Fatal("accepted identity failed deduplication", err)
 	}
 	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, original.Intent.WebhookID, 100, "")
 	if err != nil || len(deliveries) != 1 || deliveries[0].ID != request.HeadID {
 		t.Fatal(deliveries, err)
 	}
-	after, err := e.s.durable.Engine.Read(t.Context(), id)
+	after, err := (*e.s.Durable()).Engine.Read(t.Context(), id)
 	if err != nil || after.Version != before.Version || string(after.Data) != string(before.Data) || dispatch.calls.Load() != 0 {
 		t.Fatal("handoff altered business state or dispatched guest", after, err)
 	}
-	e.s.durable.PollHealth(t.Context(), &r)
-	if durableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 0 {
+	(*e.s.Durable()).PollHealth(t.Context(), &r)
+	if apidserver.DurableMetric(t, registry, "apid_durable_entity_health_pending_work", "target", "outbox") != 0 {
 		t.Fatal("acknowledged head retained in health observation")
 	}
 }

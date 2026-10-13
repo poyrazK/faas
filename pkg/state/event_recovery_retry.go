@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -47,7 +48,7 @@ func validateRecoveryRetryParent(parent sqlc.EventRecoveryJob, app string) error
 // Lock the retained child before reading so pruning cannot turn an uncertain
 // creation retry into a second selection. Parent pruning does not break reuse.
 func prepareRecoveryRetry(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, account, app string, req api.EventRecoveryRequest) (*api.EventRecoveryJob, error) {
-	if req.ParentJobID == "" {
+	if req.RequestID == "" {
 		return nil, nil
 	}
 	id, err := q.EventRecoveryRetryExisting(ctx, tx, sqlc.EventRecoveryRetryExistingParams{AccountID: mustPgUUID(account), RequestID: mustPgUUID(req.RequestID)})
@@ -56,7 +57,7 @@ func prepareRecoveryRetry(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, ac
 		if readErr != nil {
 			return nil, readErr
 		}
-		if job.AppID != canonicalMemUUID(app) || job.Selection != req {
+		if job.AppID != canonicalMemUUID(app) || !reflect.DeepEqual(job.Selection, req) {
 			return nil, ErrEventRecoveryRequestConflict
 		}
 		return &job, nil
@@ -64,12 +65,18 @@ func prepareRecoveryRetry(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, ac
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
+	if req.ParentJobID == "" {
+		return nil, nil
+	}
 	parent, err := q.EventRecoveryLock(ctx, tx, sqlc.EventRecoveryLockParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(req.ParentJobID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if req.WorkflowRuns != nil {
+		return nil, validateWorkflowRecoveryRetryParent(parent, app, req.WorkflowRuns.Name)
 	}
 	return nil, validateRecoveryRetryParent(parent, app)
 }

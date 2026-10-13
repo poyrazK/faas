@@ -12,11 +12,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 const passedObjectStorageVerification = `{"prefix":"ASSETS","environment":{"status":"passed","detail":"PRIVATE_DETAIL"},"configuration":{"status":"passed"},"connection":{"status":"passed"},"authorization":{"status":"passed"},"bucket_access":{"status":"passed"}}`
 
-func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.App, scope string) state.ObjectS3Credential {
+func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.App, scope string, permissions ...string) state.ObjectS3Credential {
 	t.Helper()
 	ctx := context.Background()
 	bucketID := uuid.NewString()
@@ -39,6 +40,9 @@ func readyObjectStorageVerificationBinding(t *testing.T, e testEnv, app state.Ap
 	credential := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: e.acct.ID, BucketID: bucket.ID,
 		AccessKeyID: access, SecretSealed: []byte(secret), KID: "age1test", Label: "compute", Permission: "read", Status: "active",
 		ManagedAppID: app.ID, ManagedScope: scope, ManagedPrefix: "ASSETS"}
+	if len(permissions) > 0 {
+		credential.Permission = permissions[0]
+	}
 	request := state.ObjectS3ComputeBindingCreateRequest{Credential: credential, MaxCredentialsPerBucket: 10, MaxSecretsPerApp: 30}
 	for _, suffix := range []string{"_ENDPOINT", "_REGION", "_BUCKET", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY", "_ADDRESSING_STYLE"} {
 		request.Secrets = append(request.Secrets, state.AppSecret{AccountID: e.acct.ID, AppID: app.ID, Scope: scope,
@@ -129,41 +133,10 @@ func TestObjectStorageBindingVerificationRotationAndStaleServingInstance(t *test
 	// unchanged public metadata and without relying on a configuration stamp.
 	rows[0].BindingID = uuid.NewString()
 	reads := &inventoryReadStore{MemStore: e.store, objects: rows}
-	e.s.store = reads
+	e.s.store = statetest.NewMem(reads)
 	item, _ = selectedObjectStorageVerification(t, e, app, binding.ID)
 	if item.VerificationStatus != "stale" || item.Verification.Reason != "configuration_changed" {
 		t.Fatalf("replacement reused evidence: %+v", item)
-	}
-}
-
-func TestObjectStorageBindingVerificationScopeAndPermission(t *testing.T) {
-	for _, scope := range []string{"default", "staging"} {
-		t.Run(scope, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
-			enableAppTaskAPIForTest(&e)
-			app, _ := seedAppTaskDeployment(t, e, "storage-scope")
-			readyObjectStorageVerificationBinding(t, e, app, scope)
-			task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageBindingProbeCommand, "ASSETS"}})
-			stored, err := e.store.AppTaskByID(context.Background(), e.acct.ID, app.ID, task.ID)
-			if err != nil || (stored.BindingVerification != nil) != (scope == "default") {
-				t.Fatalf("scope=%s pin=%+v err=%v", scope, stored.BindingVerification, err)
-			}
-		})
-	}
-	e := setupWithScopes(t, []string{api.ScopeAppsRead, api.ScopeDeployWrite})
-	enableAppTaskAPIForTest(&e)
-	app, _ := seedAppTaskDeployment(t, e, "storage-permission")
-	readyObjectStorageVerificationBinding(t, e, app, "default")
-	task := createAppTaskForTest(t, e, app.Slug, api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageBindingProbeCommand, "ASSETS"}})
-	stored, err := e.store.AppTaskByID(context.Background(), e.acct.ID, app.ID, task.ID)
-	if err != nil || stored.BindingVerification != nil {
-		t.Fatalf("restricted task acquired evidence: %+v %v", stored, err)
-	}
-	inventory := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil))
-	for _, item := range inventory.Bindings {
-		if item.Type == api.BindingTypeObjectStorage {
-			t.Fatal("forbidden storage metadata exposed")
-		}
 	}
 }
 

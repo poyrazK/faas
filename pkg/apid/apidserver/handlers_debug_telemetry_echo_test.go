@@ -12,11 +12,13 @@
 //  4. unparseable raw falls through to canonical form of effective
 //
 // Part of PR-B's /code-review review-fix cluster.
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestEchoDebugSince(t *testing.T) {
@@ -83,7 +85,7 @@ func TestEchoDebugSince(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := echoDebugSince(tc.raw, tc.eff)
+			got := apidserver.EchoDebugSince(tc.raw, tc.eff)
 			if got != tc.want {
 				t.Fatalf("echoDebugSince(%q, %s) = %q, want %q", tc.raw, tc.eff, got, tc.want)
 			}
@@ -107,8 +109,8 @@ func TestEchoDebugSinceRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			echo := echoDebugSince(tc.raw, tc.eff)
-			got := parseDebugSinceFromString(echo, -1)
+			echo := apidserver.EchoDebugSince(tc.raw, tc.eff)
+			got := apidserver.ParseDebugSinceFromString(echo, -1)
 			if got != tc.eff {
 				t.Fatalf("round-trip: echo %q parsed back to %s, want %s", echo, got, tc.eff)
 			}

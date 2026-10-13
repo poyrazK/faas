@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,12 +35,12 @@ func TestGoogleAuthRedirect(t *testing.T) {
 	}
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(cfg)
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(cfg)
 
 	req := httptest.NewRequest("GET", "/v1/auth/google", nil)
 	w := httptest.NewRecorder()
 
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusFound {
@@ -66,28 +68,28 @@ func TestGoogleAuthRedirect(t *testing.T) {
 	cookies := resp.Cookies()
 	var foundStateCookie, foundNonceCookie, foundPKCECookie bool
 	for _, c := range cookies {
-		if c.Name == googleAuthStateCookie {
+		if c.Name == apidserver.GoogleAuthStateCookie {
 			foundStateCookie = true
 			if c.Value == "" {
 				t.Errorf("expected non-empty state cookie value")
 			}
 		}
-		if c.Name == googleAuthNonceCookie {
+		if c.Name == apidserver.GoogleAuthNonceCookie {
 			foundNonceCookie = true
 			if c.Value == "" {
 				t.Errorf("expected non-empty nonce cookie value")
 			}
-			if c.Path != googleCallbackPath {
-				t.Errorf("nonce cookie path = %q, want %q", c.Path, googleCallbackPath)
+			if c.Path != apidserver.GoogleCallbackPath {
+				t.Errorf("nonce cookie path = %q, want %q", c.Path, apidserver.GoogleCallbackPath)
 			}
 		}
-		if c.Name == googleAuthPKCECookie {
+		if c.Name == apidserver.GoogleAuthPKCECookie {
 			foundPKCECookie = true
 			if c.Value == "" {
 				t.Errorf("expected non-empty PKCE verifier cookie value")
 			}
-			if c.Path != googleCallbackPath {
-				t.Errorf("PKCE cookie path = %q, want %q", c.Path, googleCallbackPath)
+			if c.Path != apidserver.GoogleCallbackPath {
+				t.Errorf("PKCE cookie path = %q, want %q", c.Path, apidserver.GoogleCallbackPath)
 			}
 		}
 	}
@@ -117,12 +119,12 @@ func TestGoogleAuthRedirect_BothEnvUnset(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// oauthConfig zero-value = both providers Disabled (the issue
 	// #419 shape, before cmd/apid/main.go::runWithDeps runs).
-	srv := newServer(store, log, "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{})
 
 	req := httptest.NewRequest("GET", "/v1/auth/google", nil)
 	w := httptest.NewRecorder()
 
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -138,12 +140,12 @@ func TestGoogleAuthRedirect_BothEnvUnset(t *testing.T) {
 func TestGoogleAuthCallbackCSRFMismatch(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{})
 
 	req := httptest.NewRequest("GET", "/v1/auth/google/callback?state=invalid_state&code=test_code", nil)
 	w := httptest.NewRecorder()
 
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -154,7 +156,7 @@ func TestGoogleAuthCallbackCSRFMismatch(t *testing.T) {
 func TestGoogleAuthCallbackRequiresNonceCookie(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(auth.SignInConfig{
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(auth.SignInConfig{
 		Google: auth.SignInProvider{
 			Status:       auth.SignInProviderConfigured,
 			ClientID:     "test_google_client_id",
@@ -163,10 +165,10 @@ func TestGoogleAuthCallbackRequiresNonceCookie(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/v1/auth/google/callback?state=state&code=test_code", nil)
-	req.AddCookie(&http.Cookie{Name: googleAuthStateCookie, Value: "state"})
+	req.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthStateCookie, Value: "state"})
 	w := httptest.NewRecorder()
 
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for missing nonce cookie, got %d", w.Code)
@@ -179,7 +181,7 @@ func TestGoogleAuthCallbackRequiresNonceCookie(t *testing.T) {
 func TestGoogleAuthCallbackRequiresPKCECookie(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, log, "gregale.dev", noopNotifier{}).WithOAuthConfig(auth.SignInConfig{
+	srv := apidserver.NewServer(store, log, "gregale.dev", apidserver.NoopNotifier{}).WithOAuthConfig(auth.SignInConfig{
 		Google: auth.SignInProvider{
 			Status:       auth.SignInProviderConfigured,
 			ClientID:     "test_google_client_id",
@@ -188,11 +190,11 @@ func TestGoogleAuthCallbackRequiresPKCECookie(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/v1/auth/google/callback?state=state&code=test_code", nil)
-	req.AddCookie(&http.Cookie{Name: googleAuthStateCookie, Value: "state"})
-	req.AddCookie(&http.Cookie{Name: googleAuthNonceCookie, Value: "nonce"})
+	req.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthStateCookie, Value: "state"})
+	req.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthNonceCookie, Value: "nonce"})
 	w := httptest.NewRecorder()
 
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for missing PKCE cookie, got %d", w.Code)
@@ -211,8 +213,8 @@ func TestGoogleAuthCallbackRejectsUntrustedSignedIDToken(t *testing.T) {
 	}))
 	t.Cleanup(jwks.Close)
 
-	verifier := newGoogleIDTokenVerifier(nil).(*googleJWKSVerifier)
-	verifier.jwksURL = jwks.URL
+	verifier := apidserver.NewGoogleIDTokenVerifier(nil).(*apidserver.GoogleJWKSVerifier)
+	(*verifier.JwksURL()) = jwks.URL
 	token := mintGoogleIDToken(t, priv, "google-test", jwt.Claims{
 		Issuer:   "https://attacker.example",
 		Subject:  "google-subject",

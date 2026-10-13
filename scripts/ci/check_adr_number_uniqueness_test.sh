@@ -90,6 +90,12 @@ run "an ADR directory with no numbered files fails closed" 1 "$empty" "$test_roo
 # --- fail closed on a missing directory ----------------------------------
 run "a missing ADR directory fails closed" 1 "$test_root/absent" "$test_root/empty-baseline.txt"
 
+four="$(new_case four-digit)"
+touch "$four/1000-alpha.md" "$four/1001-beta.md"
+run "four-digit ADR numbers pass" 0 "$four" "$test_root/empty-baseline.txt"
+touch "$four/1000-duplicate.md"
+run "four-digit ADR duplicates fail" 1 "$four" "$test_root/empty-baseline.txt"
+
 if ((failures > 0)); then
   echo "check_adr_number_uniqueness_test: $failures case(s) failed" >&2
   exit 1

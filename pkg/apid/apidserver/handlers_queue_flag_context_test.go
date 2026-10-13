@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,15 +7,17 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestQueueWorkPreservesBoundedFlagContext(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "flag-queue")
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "flag-customer", "Flag customer", 100)
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "flag-queue")
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "flag-customer", "Flag customer", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +37,7 @@ func TestQueueWorkPreservesBoundedFlagContext(t *testing.T) {
 	}
 	flagContext := contextFor(tenant.ID)
 
-	queueResponse := e.do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
+	queueResponse := e.Do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
 		Payload: json.RawMessage(`{"kind":"export"}`), FlagContext: flagContext,
 	}, nil)
 	if queueResponse.Code != http.StatusCreated {
@@ -45,13 +47,13 @@ func TestQueueWorkPreservesBoundedFlagContext(t *testing.T) {
 	if err := json.Unmarshal(queueResponse.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := e.store.InvocationByID(context.Background(), receipt.ID)
+	queued, err := (*e.Store()).InvocationByID(context.Background(), receipt.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertInvocationFlagContext(t, queued, tenant.ID, flagContext)
 
-	inboxResponse := e.do(t, http.MethodPost, "/v1/apps/flag-queue/inbox", api.SendAppMessageRequest{
+	inboxResponse := e.Do(t, http.MethodPost, "/v1/apps/flag-queue/inbox", api.SendAppMessageRequest{
 		Type: "export.requested", Data: json.RawMessage(`{"customer":"flag-customer"}`), FlagContext: flagContext,
 	}, nil)
 	if inboxResponse.Code != http.StatusAccepted {
@@ -61,38 +63,38 @@ func TestQueueWorkPreservesBoundedFlagContext(t *testing.T) {
 	if err := json.Unmarshal(inboxResponse.Body.Bytes(), &inbox); err != nil {
 		t.Fatal(err)
 	}
-	inboxInvocation, err := e.store.InvocationByID(context.Background(), inbox.ID)
+	inboxInvocation, err := (*e.Store()).InvocationByID(context.Background(), inbox.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertInvocationFlagContext(t, inboxInvocation, tenant.ID, flagContext)
 
-	invalid := e.do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
+	invalid := e.Do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
 		Payload: json.RawMessage(`{"kind":"export"}`), FlagContext: "not-base64",
 	}, nil)
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid flag context status=%d body=%s", invalid.Code, invalid.Body)
 	}
 
-	otherAccount, err := e.store.CreateAccount(context.Background(), "foreign-flag-context@example.com", api.PlanHobby)
+	otherAccount, err := (*e.Store()).CreateAccount(context.Background(), "foreign-flag-context@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignTenant, _, err := e.store.CreatePlatformTenant(context.Background(), otherAccount.ID, "foreign", "Foreign", 100)
+	foreignTenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), otherAccount.ID, "foreign", "Foreign", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := e.do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
+	foreign := e.Do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
 		Payload: json.RawMessage(`{"kind":"export"}`), FlagContext: contextFor(foreignTenant.ID),
 	}, nil)
 	if foreign.Code != http.StatusBadRequest {
 		t.Fatalf("cross-account flag context status=%d body=%s", foreign.Code, foreign.Body)
 	}
 
-	if _, err := e.store.SetPlatformTenantStatus(context.Background(), e.acct.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantStatus(context.Background(), (*e.Acct()).ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
 		t.Fatal(err)
 	}
-	suspended := e.do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
+	suspended := e.Do(t, http.MethodPost, "/v1/apps/flag-queue/queues/send", api.QueueSendRequest{
 		Payload: json.RawMessage(`{"kind":"export"}`), FlagContext: flagContext,
 	}, nil)
 	if suspended.Code != http.StatusForbidden {

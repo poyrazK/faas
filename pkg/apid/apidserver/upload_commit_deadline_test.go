@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -10,15 +10,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // expiringOutcomeStore expires the request context the moment the commit
 // records its outcome, after Enqueue has already created the deployment.
 type expiringOutcomeStore struct {
-	*state.MemStore
-	expire context.CancelFunc
+	MemStore *state.MemStore
+	expire   context.CancelFunc
 }
 
 func (s expiringOutcomeStore) RecordUploadCommitOutcome(ctx context.Context, arg sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
@@ -34,16 +36,16 @@ func (s expiringOutcomeStore) RecordUploadCommitOutcome(ctx context.Context, arg
 // released a second deployment from the same upload.
 func TestUploadCommitRecordsTheOutcomeAfterTheRequestDeadline(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
-	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "commit-deadline"}, nil)
-	raw := buildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{"index.js": []byte("console.log(1)\n")})
-	body, _ := json.Marshal(startUploadRequest{AppSlug: "commit-deadline", TotalSize: int64(len(raw))})
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "commit-deadline"}, nil)
+	raw := apidserver.BuildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{"index.js": []byte("console.log(1)\n")})
+	body, _ := json.Marshal(apidserver.StartUploadRequest{AppSlug: "commit-deadline", TotalSize: int64(len(raw))})
 	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
-	var started startUploadResponse
+	(*e.H()).ServeHTTP(rec, req)
+	var started apidserver.StartUploadResponse
 	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &started) != nil {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
@@ -53,15 +55,15 @@ func TestUploadCommitRecordsTheOutcomeAfterTheRequestDeadline(t *testing.T) {
 
 	ctx, expire := context.WithCancel(context.Background())
 	defer expire()
-	e.s.store = expiringOutcomeStore{MemStore: e.store, expire: expire}
+	(*(*e.S()).Store()) = statetest.NewMem(expiringOutcomeStore{MemStore: (*e.Store()), expire: expire})
 	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil).WithContext(ctx)
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec = httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("commit after deadline: %d %s", rec.Code, rec.Body)
 	}
-	outcome, err := e.store.GetUploadCommitOutcome(context.Background(), started.UploadID)
+	outcome, err := (*e.Store()).GetUploadCommitOutcome(context.Background(), started.UploadID)
 	if err != nil || outcome.DeploymentID == "" {
 		t.Fatalf("commit outcome = %+v, %v; a retry would create a second deployment", outcome, err)
 	}

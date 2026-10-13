@@ -16,10 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type targetSQLPinsWorkerFailureStore struct {
-	*state.PgStore
+	PgStore    *state.PgStore
 	loseRecord bool
 }
 
@@ -50,7 +51,7 @@ func targetSQLPinsWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *targetS
 		t.Fatal(err)
 	}
 	store := &targetSQLPinsWorkerFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	p.inspectTargetSQL = func(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyTargetRequest) (managedpostgres.SnapshotCopyTargetSQLObservation, error) {
 		var zero managedpostgres.SnapshotCopyTargetSQLObservation
 		deadline, ok := ctx.Deadline()
@@ -89,14 +90,14 @@ func TestPGClonePostgresTargetSQLPinsWorkerRecoversCommittedReplyAndOriginalKeyW
 	if _, err := f.srv.projectEnvironmentClonePostgresTargetSQLPins(t.Context(), f.lease, source); !errors.Is(err, managedpostgres.ErrUnavailable) || p.targetSQLInspections != 1 {
 		t.Fatalf("lost committed target SQL pins reply: %v", err)
 	}
-	original, err := store.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID)
+	original, err := store.PgStore.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +110,7 @@ func TestPGClonePostgresTargetSQLPinsWorkerRecoversCommittedReplyAndOriginalKeyW
 	if err != nil || got != target || p.targetSQLInspections != 1 {
 		t.Fatalf("handoff rediscovered target SQL pins: %v", err)
 	}
-	r, err := store.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID)
+	r, err := store.PgStore.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID)
 	if err != nil || !r.CapturedAt.Equal(original.CapturedAt) || !bytes.Equal(r.Sealed.Ciphertext, original.Sealed.Ciphertext) || r.Sealed.KeyID != previous.Recipient().String() {
 		t.Fatalf("rotation replaced committed target SQL ciphertext: %v", err)
 	}
@@ -141,7 +142,7 @@ func TestPGClonePostgresTargetSQLPinsWorkerNeverReplacesUnreadableCommittedPins(
 	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM project_environment_clone_postgres_target_sql_pins WHERE operation_id=$1", f.lease.Operation.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("unreadable target SQL pins lost ownership: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.PgStore.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(t.Context(), f.lease, source.source.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("unreadable target SQL pins accepted")
 	}
 }
@@ -160,10 +161,10 @@ func TestPGClonePostgresTargetSQLPinsWorkerRejectsMissingKeysSourceAndInFlightOw
 			case "source":
 				source.hash = strings.Repeat("f", 64)
 			case "stale":
-				if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+				if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute); err != nil {
+				if _, err := store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute); err != nil {
 					t.Fatal(err)
 				}
 			case "provider":

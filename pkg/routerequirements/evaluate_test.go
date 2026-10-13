@@ -108,13 +108,38 @@ func TestEvaluateIgnoresLowerPriorityConditionalRule(t *testing.T) {
 	}
 }
 
-func TestEvaluateThrottleUsesGatewayRateFloor(t *testing.T) {
+func TestEvaluateThrottlePreservesGatewayFractionalRate(t *testing.T) {
 	config := requirementConfig(t, `{"throttle":{"key_by":"none","max_rps":0.5}}`)
 	context := requirementContext()
 	context.Rules = []api.EdgeRuleResponse{requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":0.2,"burst":1}}`, 10)}
 	report := Evaluate(config, "digest", context)
-	if report.Status != "violated" || !strings.Contains(report.Routes[0].Checks[0].Actual, "gateway_rps=1") {
-		t.Fatalf("configured fraction bypassed gateway floor: %+v", report)
+	if report.Status != "satisfied" || !strings.Contains(report.Routes[0].Checks[0].Actual, "gateway_rps=0.2;") {
+		t.Fatalf("configured fractional gateway rate changed: %+v", report)
+	}
+	context.Rules[0] = requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":0.7,"burst":1}}`, 10)
+	if report := Evaluate(config, "digest", context); report.Status != "violated" {
+		t.Fatalf("fractional rate exceeding the requirement was accepted: %+v", report)
+	}
+}
+
+// The gateway keeps fractional throttle rates (H9-45), so the requirement is
+// judged against the configured rate, not a 1 rps floor.
+func TestEvaluateThrottleUsesGatewayEffectiveRate(t *testing.T) {
+	config := requirementConfig(t, `{"throttle":{"key_by":"none","max_rps":0.5}}`)
+	for _, tc := range []struct {
+		rps    string
+		status string
+		actual string
+	}{
+		{rps: "0.2", status: "satisfied", actual: "gateway_rps=0.2"},
+		{rps: "0.8", status: "violated", actual: "gateway_rps=0.8"},
+	} {
+		context := requirementContext()
+		context.Rules = []api.EdgeRuleResponse{requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":`+tc.rps+`,"burst":1}}`, 10)}
+		report := Evaluate(config, "digest", context)
+		if report.Status != tc.status || !strings.Contains(report.Routes[0].Checks[0].Actual, tc.actual) {
+			t.Fatalf("rps=%s: status=%s, want %s with %s: %+v", tc.rps, report.Status, tc.status, tc.actual, report)
+		}
 	}
 }
 

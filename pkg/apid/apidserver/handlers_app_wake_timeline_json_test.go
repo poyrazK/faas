@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Per-app wake-timeline JSON mirror tests (commit 3 of the per-app
 // observability PR series).
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,14 +27,14 @@ import (
 // code. Same gate as /metrics — see PerAppMetricsAllowed on
 // pkg/api/limits.go.
 func TestAppWakeTimeline_FreePlanReturns402(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "my-api")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "my-api")
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("Free plan status %d, want 402", rec.Code)
 	}
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
 }
 
 // TestAppWakeTimeline_HobbyPlanReturns200 confirms Hobby+ passes
@@ -43,10 +44,10 @@ func TestAppWakeTimeline_FreePlanReturns402(t *testing.T) {
 // `renderAppWakeTimeline` failure-is-non-fatal branch at
 // handlers_dashboard.go:2562-2566.
 func TestAppWakeTimeline_HobbyPlanReturns200(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "my-api")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "my-api")
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Hobby plan status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -94,12 +95,12 @@ func TestAppWakeTimeline_HobbyPlanReturns200(t *testing.T) {
 // 200 with B's data). Mirrors TestAppMetrics_CrossAccount404 —
 // both gates share loadApp.
 func TestAppWakeTimeline_CrossAccount404(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	other := state.NewMemStore()
 	otherAcct, _ := other.CreateAccount(context.Background(), "other@hobby.com", api.PlanPro)
-	mustSeedAppFor(t, other, otherAcct.ID, "their-api")
+	apidserver.MustSeedAppFor(t, other, otherAcct.ID, "their-api")
 
-	rec := e.do(t, "GET", "/v1/apps/their-api/wake-timeline", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/their-api/wake-timeline", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404 (IDOR)", rec.Code)
 	}
@@ -117,30 +118,31 @@ func TestAppWakeTimeline_CrossAccount404(t *testing.T) {
 // stamps started_at = now(); we then BackdateForTest the old row
 // to 50h-ago so the descending-cutoff break engages.
 func TestAppWakeTimeline_DescendingCutoffBreak(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "my-api")
+	e := apidserver.Setup(t, api.PlanPro)
+	dep := apidserver.MustSeedDeployment(t, e, "my-api")
 
-	recent, err := e.store.CreateInstance(context.Background(),
+	recent, err := (*e.Store()).CreateInstance(context.Background(),
 		dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "wake-recent")
 	if err != nil {
 		t.Fatalf("CreateInstance recent: %v", err)
 	}
 
-	old, err := e.store.CreateInstance(context.Background(),
+	old, err := (*e.Store()).CreateInstance(context.Background(),
 		dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "wake-old")
 	if err != nil {
 		t.Fatalf("CreateInstance old: %v", err)
 	}
+	(*
 
 	// Backdate the old instance 50 hours so the descending-cutoff
 	// break must engage. MemStore sets started_at=now() on
 	// CreateInstance; BackdateForTest is the test-only escape
 	// hatch to fabricate aged rows (also used by the §6.1
 	// watchdog tests in pkg/sched).
-	e.store.BackdateForTest(old.ID, time.Now().UTC().Add(-50*time.Hour))
+	e.Store()).BackdateForTest(old.ID, time.Now().UTC().Add(-50*time.Hour))
 	_ = recent // unused — the test pins the old row's absence
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/wake-timeline", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -172,7 +174,7 @@ func TestAppWakeTimeline_DescendingCutoffBreak(t *testing.T) {
 // TestAppWakeTimeline_UnknownSlug404 mirrors the other per-app
 // handlers' unknown-slug branch.
 func TestAppWakeTimeline_UnknownSlug404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/apps/ghost/wake-timeline", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/apps/ghost/wake-timeline", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }

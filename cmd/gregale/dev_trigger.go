@@ -63,6 +63,10 @@ func cmdDevInfo(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  postgres: %s (%s; binding %s, injected as %s)\n", session.Postgres.Name,
 			session.Postgres.State, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 	}
+	for _, bucket := range session.Buckets {
+		_, _ = fmt.Fprintf(osStdout, "  bucket: %s (%s; %s under %s)\n", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
+	}
+
 	return 0
 }
 

@@ -137,6 +137,8 @@ gregale issues assign ISSUE_ID --app exports --assignee ACCOUNT_ID
 gregale issues resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
 gregale issues reopen ISSUE_ID --app exports
 gregale issues ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
+gregale issues merge SOURCE_ISSUE_ID --app exports --target DESTINATION_ISSUE_ID
+gregale issues split CANONICAL_ISSUE_ID --app exports --member ORIGINAL_ISSUE_ID
 ```
 
 Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
@@ -216,6 +218,189 @@ Use an explicit fingerprint for unsupported or unstable stack representations.
 HTTP 5xx observations are a separate source from instrumented exceptions and
 may produce a separate issue for the same incident.
 
+### Opt-in failure-site grouping
+
+The default `legacy` strategy (grouping version 1) uses every application frame,
+or route/status/normalized message when no application frames are available.
+The opt-in `failure-site-v1` strategy (grouping version 2) uses the application
+frame nearest the failure plus a stable error code or normalized message.
+Changing callers no longer splits the same failure; different messages or codes
+at the same function can produce separate groups.
+
+Enable it on the reporter:
+
+```ts
+const issues = createIssueReporter({
+  baseURL: apiURL, app: 'exports', token: reportingToken,
+  groupingStrategy: 'failure-site-v1',
+});
+issues.captureException(error, { error_code: 'INVALID_DATE' });
+```
+
+```python
+issues = IssueReporter(api_url, "exports", reporting_token,
+                       grouping_strategy="failure-site-v1")
+issues.capture_exception(error, error_code="INVALID_DATE")
+```
+
+```go
+issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+    BaseURL: apiURL, App: "exports", Token: reportingToken,
+    GroupingStrategy: "failure-site-v1",
+})
+// Handle err before using the reporter.
+issues.CaptureException(errToReport, faas.IssueContext{ErrorCode: "INVALID_DATE"})
+```
+
+Use stable, low-cardinality application codes, rather than customer IDs or
+per-request values. Codes are sanitized and bounded to 256 UTF-8 bytes. Without
+a code, message grouping masks numbers and UUIDs and collapses whitespace.
+Meaningful numeric differences such as provider error 404 versus 500 need
+distinct codes. An explicit `fingerprint_override` (Go: `FingerprintOverride`)
+takes precedence over frames, code, and message within the same exception type,
+source, and grouping version. Both Node and Python capture methods accept it.
+With no application frame, version 2 also includes route and HTTP status.
+Legacy grouping ignores `error_code` and `frame_order`.
+
+Direct REST events select `grouping_strategy: "failure-site-v1"`. Structured
+frames default to `frame_order: "newest-first"`; Python-style structured stacks
+must declare `"oldest-first"`. The reporters supply the correct order. Raw
+Node/Python stacks infer order when omitted. Within the retained 16 KiB stack
+trace, Python parsing uses the last 32 frames to select the final failure.
+Structured reporter frames preserve that site even when stack text is truncated.
+Node anonymous frames group consistently between structured and raw stacks.
+Go errors still identify the reporting site because standard errors lack an
+origin stack.
+
+String-valued OTLP exception event/log attributes accept `gregale.issue.grouping_strategy`,
+`gregale.issue.error_code`, `gregale.issue.frame_order`, and
+`gregale.issue.fingerprint_override`. Extracted controls have the same validation
+and grouping semantics as REST. Resource attributes are not grouping controls.
+
+Opting in creates separate version 2 groups. Existing version 1 history,
+assignment, and resolution stay with those groups; no automatic history
+migration or merge occurs. Keep the strategy consistent across reporters for
+one app/environment and plan an explicit transition. Automatic HTTP failures
+continue using version 1. Modeled exception causes and history-preserving
+merge/split controls remain separate work. Node reporters can resolve bundled
+locations with the deployment-local source maps below.
+
+### Deployment-local Node source maps
+
+Ship the matching map files with each deployment and register them when creating
+its Node reporter. Use exact absolute bundle paths or file URLs; a basename is
+not enough to distinguish two bundles. The reporter reads no files and fetches
+no map URLs itself:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { createIssueReporter } from '@gregale/sdk-node';
+
+const issues = createIssueReporter({
+  baseURL: apiURL, app: 'exports', token: reportingToken,
+  groupingStrategy: 'failure-site-v1',
+  sourceMaps: [{
+    generatedFile: '/app/dist/checkout-a1b2.js',
+    payload: readFileSync('/app/dist/checkout-a1b2.js.map', 'utf8'),
+  }],
+});
+```
+
+The generated stack line and column select an original location from a flat
+Source Map v3 artifact. Relative sources and `sourceRoot` resolve against the
+bundle path. File URLs and absolute paths for the same bundle match. Original
+files, map symbols, and line numbers enter the existing structured frames;
+the raw stack trace stays available. The dashboard's **Reported frame locations**
+shows this evidence. Grouping uses the original file and symbol while continuing
+to exclude line numbers.
+
+Missing maps, unmapped segments, and lines without entries keep the generated
+frame. The reporter's `stats().mappedFrames` counts mapped frames;
+`unmappedFrames` counts application frames left generated when maps are enabled.
+Counters count captures, so retries do not inflate them. Mappings without a name become
+`<anonymous>`; names in source maps are symbols and may not identify an enclosing
+function. Use stable error codes or overrides to distinguish failures when a map
+does not provide useful names. Dependency sources such as `node_modules` stay
+outside application grouping.
+
+Maps are registered once per reporter, require `failure-site-v1`, and reject
+invalid configuration at initialization. Register at most 32 maps, 512 KiB each,
+and 4 MiB of JSON total. Across the reporter, decoded mapping rows plus segments
+are capped at 100,000, and sources plus names at 8,192. Source roots, sources,
+names, and resolved source identifiers share the 512-byte frame text bound.
+`sourcesContent` and producer extensions are discarded; map artifacts and embedded source
+content are never sent to issue ingestion. Reported frames still receive normal
+server validation and redaction.
+
+Roll out matching maps and reporting tokens with each deployment. Enabling maps
+can create new issue identities; saved groups and history are not migrated.
+This first increment covers Node reporters. Automatic build discovery, central
+release artifact uploads, indexed maps, and server-side OTLP symbolication remain
+future work.
+
+### Grouping explanations
+
+Open **Why this occurrence is grouped here** on a retained occurrence in the
+Issues dashboard. It shows the source and exception type, canonical application
+frames used in identity, and the selected override, stable code, or normalized
+message. When application frames are unavailable, it identifies the route and
+HTTP status used as fallback evidence. Version 1 shows all application frames;
+version 2 shows the frame nearest the failure. Line numbers and request/trace
+IDs do not affect grouping.
+
+The authenticated issue detail API returns the same evidence as optional
+`events[].grouping_explanation`, including zero-based `frames[].frame_index`
+indices into each occurrence's frames. Values come from retained sanitized
+evidence. The explanation is returned only when that evidence reproduces the
+saved fingerprint under the saved grouping version. Unsupported versions or
+mismatches show an unavailable notice; expired occurrences have no explanation.
+This describes group identity, without establishing an incident's root cause.
+
+### Reversible manual grouping
+
+Open **Merge or split issue groups** in the dashboard to combine fingerprint
+groups in the same app and environment. Choose a destination issue or paste its
+ID. The merged inbox entry uses the destination's owner and lifecycle state;
+subsequent ownership and lifecycle actions apply to all linked identities.
+Merge activity records the actor and both issue IDs. Regrouping itself emits
+no webhook; later lifecycle and customer-impact notifications use the canonical
+issue.
+
+The canonical detail combines occurrences, release totals, and activity. Its
+`group_members` collection lists original identities with their own lifetime
+counters. Each occurrence's `original_issue_id` identifies its original
+fingerprint, which still verifies its grouping explanation. Customer impact
+counts distinct verified customers across all linked groups. Saved issue links
+and event retries resolve to the current canonical ID.
+
+Use **Split out for review** to detach an original group. Its fingerprint,
+original ID, lifetime counters, release history, and retained occurrences remain
+intact. It reopens with its current owner; the remaining canonical issue keeps
+its state. Future matching failures and event retries follow the detached group.
+These controls work after detailed occurrences expire and do not recompute
+fingerprints or change reporting strategies.
+
+The API uses the existing action endpoint:
+
+```json
+{ "action": "merge", "target_issue_id": "DESTINATION_ISSUE_UUID" }
+```
+
+Post that body to the source issue's `/actions` endpoint. To detach a member,
+post `{ "action": "split", "member_issue_id": "ORIGINAL_ISSUE_UUID" }` to the
+canonical issue's `/actions` endpoint. Both responses identify the remaining
+canonical issue. Repeating a merge while its link remains in place, or repeating
+a completed split, is a no-op. A source that
+has since joined another group returns `409 issue_grouping_conflict`; reload
+the detail before retrying.
+
+A group can contain at most 32 original identities. Merging existing groups
+flattens their members under the destination. Splitting detaches one original
+identity; former siblings stay in the canonical group. For occurrence-level splits within one fingerprint, use the preview and durable
+routing rules described below.
+
+### Lifecycle and retained evidence
+
 Resolve against the deployment expected to contain the fix. A new occurrence
 after resolution in that release or a newer deployment reopens the issue and increments recurrences.
 Delayed older events and older co-serving deployments do not trigger recurrence.
@@ -271,7 +456,7 @@ Accepted timestamps must fall inside retention and within five minutes of the
 server's clock. Limits are enforced transactionally across API replicas. Storage
 quotas return 409 and minute limits return 429 with `Retry-After: 60`; limit
 problems include the bound, attempted count, and documentation URL.
-Resolved and ignored issues still count toward the issues-per-app limit because
+Resolved, ignored, and linked original identities still count toward the issues-per-app limit because
 their identity and release history are retained.
 
 Maintenance runs every minute with bounded batches. Detailed occurrences expire
@@ -349,3 +534,129 @@ unambiguous retained telemetry within five minutes of the smoke run. For an
 invocation link check, set `GREGALE_ISSUES_SMOKE_INVOCATION_ID` to a real worker
 invocation UUID belonging to the app. The command reports these checks as skipped
 when either ID is absent; it never fabricates platform evidence.
+
+### Preview occurrence-level splits
+
+Use **Preview splitting matching occurrences** in issue detail, or
+`POST /v1/apps/{slug}/issues/{original_issue_id}/split-preview` with a body such as
+`{"route":"/checkout","error_code":"PAYMENT_DECLINED"}`. This is a read-only
+operation using the Issues read scope. Every populated selector must exactly
+match the sanitized stored value; at least one is required. Supported selectors
+are exception type, error code, route, and source kind. Preview a specific original
+fingerprint identity, including a member of a merged group, rather than the whole
+merged family.
+
+The response counts all retained occurrences, independently of the detail page's
+pagination and impact window. It separates matching, nonmatching, and unavailable
+lifetime history, and includes at most ten newest matching occurrence IDs. Older
+expired evidence cannot be assigned to either side. A preview does not move
+occurrences, save a rule, alter lifecycle, or route future captures. Use the durable split controls below to apply a rule after reviewing the preview.
+
+### Apply durable occurrence split rules
+
+After previewing an original fingerprint, choose **Apply split rule**. Gregale
+creates an open branch with the current canonical source owner, moves eligible
+retained matches still assigned to the source, and routes future matching
+captures to that branch. The operation evaluates current evidence under the app
+lock; events may arrive or expire between preview and application. Earlier
+enabled rules take precedence, so applied counts can differ from a raw preview.
+A rule can also be prospective when no retained occurrence matches.
+
+Create through `POST /v1/apps/{slug}/issues/{source_issue_id}/split-rules` using
+the same matcher body as preview. Repeating the same source and exact matcher
+returns the existing rule and does not transfer events again or re-enable it.
+Rules are included in `split_rules` on source, branch, and merged issue detail.
+Branches expose `split_source_issue_id`. At most **eight immutable rules per
+source**, including disabled rules, can exist; each branch counts toward the
+plan's issue storage quota. A derived branch cannot have nested split rules.
+
+Use **Disable future routing** or **Enable future routing**, or
+`PATCH /v1/apps/{slug}/issues/{source_issue_id}/split-rules/{rule_id}` with
+`{"enabled":false}` or `{"enabled":true}`. Lower numbered priority wins among
+enabled matching rules. Toggling does not replay historical evidence, change
+matchers or priorities, or reclassify existing retries. To combine a branch with
+another issue, use existing merge controls; **merging does not disable its
+routing rule**. To recombine a split and return future captures to the original
+source, disable its rule and merge the branch back into the source. Detaching a
+linked branch restores its independent inbox entry.
+
+Occurrence IDs, event IDs, sanitized payloads, attribution, and payload hashes
+survive a transfer. `original_issue_id` continues to identify the automatic
+fingerprint source, and grouping explanations verify against that fingerprint.
+Exact retries return the current canonical destination of the existing
+occurrence without incrementing counters or re-evaluating rules. As with ordinary
+ingestion, this guarantee is limited to retained occurrence evidence.
+
+Only known retained event and deployment counts move. Expired lifetime and
+release totals remain on the source; historical regression counts and source
+first/last bounds remain there because unavailable events cannot reconstruct a
+more precise partition. Branch bounds come from moved evidence, or creation
+time for an initially empty branch. Rule responses record the initial moved
+count and unavailable-history count at creation. Counts remain conserved across
+source and branch. Mutations use existing write scopes, MFA, API idempotency,
+and dashboard CSRF, with actor-attributed audit on both identities.
+
+### Cause-aware grouping
+
+Opt into `cause-chain-v1` with Node `groupingStrategy`, Python
+`grouping_strategy`, or Go `IssueReporterOptions.GroupingStrategy`. This creates
+version 3 groups; existing version 1/2 identities and history remain unchanged.
+
+Wrapped failures group using the deepest reported cause's type, nearest usable
+application frame, and stable code (when supplied) or normalized message.
+Different wrappers around the same cause can therefore share a group. Route and
+HTTP status remain the outer event's fallback context. Explicit fingerprint
+overrides take precedence and retain the outer exception type in identity.
+Ownership and occurrence split-rule matchers continue using the outer fields.
+
+The dashboard shows the outer exception and the reported cause chain. Verified
+grouping explanations identify the zero-based selected cause index; frame indices
+then refer to that cause's frames. The chain contains at most eight causes, from
+immediate to deepest, each with bounded sanitized evidence. Incomplete chains use
+the outer failure for grouping, rather than treating a truncated cause as a root.
+
+Raw stacks describe the outer exception; structured causes retain their own
+reported frames without rendering an unbounded chain into a raw string.
+
+Node follows `Error.cause`, including deployment-local source maps for each
+cause's frames. Python follows explicit `__cause__`, otherwise unsuppressed
+`__context__`. Go follows single `Unwrap() error` links; ordinary Go errors have
+no creation-time stack, so cause grouping uses the outer route/status fallback
+and does not fabricate cause frames. Cycles, depth limits, inaccessible causes,
+and aggregate exceptions mark the chain incomplete. Aggregate children are not
+arbitrarily chosen. Go capture-site frames remain available on the outer event.
+
+REST accepts structured `causes` and `causes_incomplete`; OTLP does not infer
+cause structure from raw stack strings. Existing request-size limits also apply
+to the complete envelope. Enabling this strategy does not migrate prior groups.
+
+### Split-rule previews and undo
+
+Previews keep the raw matching and nonmatching counts, and now also show how
+many retained matches are eligible to move after earlier enabled rules claim
+their matches. Eligible samples reflect that same priority calculation.
+`application_status` distinguishes a new rule from an existing exact matcher,
+a derived branch, or the eight-rule limit. Existing matchers move no additional
+events when applied again, even if their rule is disabled. Plan storage capacity
+is checked during apply, and evidence or policy can change after preview.
+
+New branches have titles such as `Split 2 [route=/checkout] · Error: failed`.
+Existing titles stay unchanged; the rule table identifies every branch by its
+priority and selectors.
+
+Choose **Review undo** on a rule to inspect its branch and destination, including
+the destination's current state, owner, and lifetime event count. **Disable rule
+and merge branch** performs both changes atomically. It combines the group views
+while preserving original evidence, counts, releases, and retry provenance.
+Other enabled rules still route by priority; undo does not promise that every
+future matching event will return to the source.
+
+The API equivalent is
+`POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo` with
+`{"canonical_source_issue_id":"<reviewed canonical source UUID>"}`. It returns
+the disabled rule. A changed source destination or unrelated branch membership
+returns a conflict without disabling routing. A branch already merged with its
+source only needs its rule disabled. Undo rejects isolated branch roots that
+also contain other merged members; review those links first. Repeating a
+completed undo adds no activity or counters. The source group's current owner
+and lifecycle take precedence, as for a manual merge.

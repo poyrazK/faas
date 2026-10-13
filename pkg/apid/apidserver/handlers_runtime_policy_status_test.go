@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -146,7 +147,7 @@ func TestSummarizeRuntimePolicyStatus(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := summarizeRuntimePolicyStatus("app-1", "", tc.desired, tc.desired, tc.edgeRulesDesired, tc.corsPresetsDesired, tc.cachePurgeDesired, tc.egressDesired, tc.cpuDesired, tc.gateways, tc.egressNodes, tc.cpuNodes,
+			got := apidserver.SummarizeRuntimePolicyStatus("app-1", "", tc.desired, tc.desired, tc.edgeRulesDesired, tc.corsPresetsDesired, tc.cachePurgeDesired, tc.egressDesired, tc.cpuDesired, tc.gateways, tc.egressNodes, tc.cpuNodes,
 				state.AppScalingPolicyStatus{DesiredRevision: 1, ObservedRevision: 1, ObservedAt: now}, now)
 			if got.State != tc.state || got.AppliedGateways != tc.applied || got.StaleGateways != tc.stale ||
 				got.EdgeRules.State != tc.edgeState || got.EdgeRules.AppliedGateways != tc.edgeApplied || got.EdgeRules.StaleGateways != tc.edgeStale ||
@@ -162,17 +163,17 @@ func TestSummarizeRuntimePolicyStatus(t *testing.T) {
 			}
 		})
 	}
-	if got := summarizeRuntimePolicySchedulerStatus("app", "node-a", state.AppScalingPolicyStatus{
+	if got := apidserver.SummarizeRuntimePolicySchedulerStatus("app", "node-a", state.AppScalingPolicyStatus{
 		DesiredRevision: 4, ObservedRevision: 4, SchedulerNodeID: "node-a", ObservedAt: now.Add(-2 * time.Minute),
 	}, now); got.State != "pending" || !got.Stale {
 		t.Fatalf("stale scheduler observation = %+v; want pending/stale", got)
 	}
-	if got := summarizeRuntimePolicySchedulerStatus("app", "node-a", state.AppScalingPolicyStatus{
+	if got := apidserver.SummarizeRuntimePolicySchedulerStatus("app", "node-a", state.AppScalingPolicyStatus{
 		DesiredRevision: 4,
 	}, now); got.State != "pending" {
 		t.Fatalf("missing observation for assigned owner = %+v; want pending", got)
 	}
-	if got := summarizeRuntimePolicySchedulerStatus("app", "node-b", state.AppScalingPolicyStatus{
+	if got := apidserver.SummarizeRuntimePolicySchedulerStatus("app", "node-b", state.AppScalingPolicyStatus{
 		DesiredRevision: 4, ObservedRevision: 4, SchedulerNodeID: "node-a", ObservedAt: now,
 	}, now); got.State != "pending" {
 		t.Fatalf("wrong scheduler owner observation = %+v; want pending", got)
@@ -182,13 +183,13 @@ func TestSummarizeRuntimePolicyStatus(t *testing.T) {
 func TestSummarizeRuntimeRequestPolicySeparatelyFromTraffic(t *testing.T) {
 	now := time.Now().UTC()
 	gateways := []state.ServingGatewayControlPlaneState{{NodeName: "node-a", LastChangeID: 41, ObservedAt: now}}
-	got := summarizeRuntimePolicyStatus("app-1", "", 42, 41, 0, 0, 0, 0, 0, gateways, nil, nil, state.AppScalingPolicyStatus{}, now)
+	got := apidserver.SummarizeRuntimePolicyStatus("app-1", "", 42, 41, 0, 0, 0, 0, 0, gateways, nil, nil, state.AppScalingPolicyStatus{}, now)
 	if got.State != "pending" || got.RequestPolicy.State != "active" || got.RequestPolicy.DesiredRevision != 41 {
 		t.Fatalf("traffic lag should not hide applied request policy: overall=%+v request_policy=%+v", got, got.RequestPolicy)
 	}
 
 	gateways[0].LastChangeID = 40
-	got = summarizeRuntimePolicyStatus("app-1", "", 42, 41, 0, 0, 0, 0, 0, gateways, nil, nil, state.AppScalingPolicyStatus{}, now)
+	got = apidserver.SummarizeRuntimePolicyStatus("app-1", "", 42, 41, 0, 0, 0, 0, 0, gateways, nil, nil, state.AppScalingPolicyStatus{}, now)
 	if got.RequestPolicy.State != "pending" || got.RequestPolicy.PendingGateways != 1 {
 		t.Fatalf("request policy behind gateway cursor = %+v; want pending", got.RequestPolicy)
 	}
@@ -222,11 +223,11 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 		cpuNodes:      []state.AppCPUPolicyNodeState{{NodeName: "vm-a", DesiredRevision: 4, AppliedRevision: 3, ObservedAt: time.Now().UTC()}},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", &captureNotifier{}, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?wait=1s", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}

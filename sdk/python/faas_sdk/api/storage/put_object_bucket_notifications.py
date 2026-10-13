@@ -71,8 +71,8 @@ def sync_detailed(
 
      Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and
     validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent.
-    Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be
-    enabled.
+    Full replacement clears managed compute-trigger ownership, including identical rules. Accepted
+    events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
 
     Args:
         slug (str):
@@ -112,8 +112,8 @@ def sync(
 
      Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and
     validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent.
-    Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be
-    enabled.
+    Full replacement clears managed compute-trigger ownership, including identical rules. Accepted
+    events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
 
     Args:
         slug (str):
@@ -148,8 +148,8 @@ async def asyncio_detailed(
 
      Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and
     validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent.
-    Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be
-    enabled.
+    Full replacement clears managed compute-trigger ownership, including identical rules. Accepted
+    events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
 
     Args:
         slug (str):
@@ -187,8 +187,8 @@ async def asyncio(
 
      Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and
     validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent.
-    Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be
-    enabled.
+    Full replacement clears managed compute-trigger ownership, including identical rules. Accepted
+    events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
 
     Args:
         slug (str):

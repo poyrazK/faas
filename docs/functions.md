@@ -13,12 +13,25 @@ The current profiles include Node 22/24, Python 312/313, Go 124, and
 [`binary`](runtimes/binary.md): one statically linked executable in any
 compiled language (Rust, Zig, C, C++, Go), built from a Dockerfile at the
 source root and served by the Go runner. Start from the `function-rust`
-template. Handlers
-must return a bounded response. Node and Python handlers, and Go and `binary` handlers that
+template. A handler returns one response or streams it: server-sent
+events, generated text and large downloads reach the client as they are
+produced ([Node](runtimes/node24.md#streaming),
+[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming);
+ADR-999). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
+response. Every `Set-Cookie` header is sent. Node and Python handlers, and Go and `binary` handlers that
 speak the [persistent protocol](runtimes/go124.md#persistent-handlers), stay
 loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
+
+A function request must start its response within 3 seconds by default.
+For slower work, raise the function's request timeout:
+`gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
+Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
+a streamed response included, may run for the longer of that timeout and
+30 s. The runner passes the time left to the handler in the
+`X-Faas-Deadline-Ms` request header. Async, queue and cron invocations keep
+a 30 s limit.
 
 An idle function parks after 30 seconds by default on every plan; set
 `gregale app APP --idle SECONDS` to keep it warm longer (see

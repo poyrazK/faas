@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppResponse } from './AppResponse.js';
+import type { DevBucketResponse } from './DevBucketResponse.js';
 import type { DevPostgresResponse } from './DevPostgresResponse.js';
 /**
  * Stable remote developer workspace and its renewable lease.
@@ -11,5 +12,9 @@ export type DevSessionResponse = {
   app: AppResponse;
   expires_at: string;
   postgres?: DevPostgresResponse;
+  /**
+   * Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
+   */
+  buckets?: Array<DevBucketResponse>;
 };
 

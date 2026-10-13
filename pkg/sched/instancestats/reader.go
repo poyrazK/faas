@@ -81,6 +81,9 @@ type InstanceStat struct {
 	// "not-yet-observed" case only by the reader's Validity,
 	// not the field.
 	InflightRequests int64
+	// QuietPaused (ADR-957) is true while vmmd holds the instance
+	// quiet-paused between requests.
+	QuietPaused bool
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller
@@ -215,6 +218,7 @@ type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
+	quiet  atomic.Pointer[quietPausedSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from
@@ -427,10 +431,14 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 		if row.InstanceID == "" || !freshSample(row.SampledAt, now) {
 			continue
 		}
-		out[row.InstanceID] = sched.InstanceActivity{
+		activity := sched.InstanceActivity{
 			Inflight:    row.InflightRequests,
 			LastRequest: row.LastRequestAt,
 		}
+		if row.RSSMB > 0 {
+			activity.ResidentMB = int(row.RSSMB)
+		}
+		out[row.InstanceID] = activity
 	}
 	return out
 }

@@ -1,5 +1,5 @@
 // adr: 521 — preview rollout is scoped; closing admission preserves retained work.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -69,7 +70,7 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 	if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "preview", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -87,8 +88,8 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyPath := filepath.Join(t.TempDir(), "preview.json")
-	srv.operation.AdmissionEnabled = true // startup must override this private fixture fallback
-	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
+	(*srv.Operation()).AdmissionEnabled = true // startup must override this private fixture fallback
+	if err := srv.ConfigureOperations(apidserver.Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
 	localStorage, err := storage.NewLocalStorageBackend(t.TempDir())
@@ -108,7 +109,7 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 			r.Header.Set("Idempotency-Key", idempotency)
 		}
 		w := httptest.NewRecorder()
-		srv.handler().ServeHTTP(w, r)
+		srv.Handler().ServeHTTP(w, r)
 		return w
 	}
 	check := func(w *httptest.ResponseRecorder, expected int) {
@@ -157,13 +158,13 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	verifier, backend := srv.operation.WorkloadVerifier, srv.operation.ArtifactStorage
-	srv.operation.WorkloadVerifier = nil
+	verifier, backend := (*srv.Operation()).WorkloadVerifier, (*srv.Operation()).ArtifactStorage
+	(*srv.Operation()).WorkloadVerifier = nil
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "unready-trust"), http.StatusServiceUnavailable)
-	srv.operation.WorkloadVerifier = verifier
-	srv.operation.ArtifactStorage = nil
+	(*srv.Operation()).WorkloadVerifier = verifier
+	(*srv.Operation()).ArtifactStorage = nil
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "unready-storage"), http.StatusServiceUnavailable)
-	srv.operation.ArtifactStorage = backend
+	(*srv.Operation()).ArtifactStorage = backend
 	for _, raw := range [][]byte{[]byte(`{"version":1,"enabled":false}`), []byte(`{"version":1,"enabled":`)} {
 		if err := os.WriteFile(policyPath, raw, 0600); err != nil {
 			t.Fatal(err)
@@ -182,13 +183,13 @@ func TestOperationsPreviewAdmissionAndRollback(t *testing.T) {
 		t.Fatal("rollback altered retained work", err)
 	}
 	manifest := &gregalemanifest.Manifest{ResolvedOperations: []api.OperationDefinitionSpec{spec}}
-	staged, problem := srv.applySourceRefManifest(ctx, acct, app, manifest, dep.Scope, true)
-	if problem == nil || problem.Status != http.StatusServiceUnavailable || sourceRefManifestNeedsRollback(staged) {
+	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, dep.Scope, true)
+	if problem == nil || problem.Status != http.StatusServiceUnavailable || apidserver.SourceRefManifestNeedsRollback(staged) {
 		t.Fatal("closed source cohort reached manifest mutation")
 	}
 	writeOperationPreviewPolicy(t, policyPath, acct.ID, app.ID, dep.Scope, tenants[0].ID)
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "preview-export"), http.StatusAccepted)
-	if err := srv.configureOperations(Config{OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
+	if err := srv.ConfigureOperations(apidserver.Config{OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
 	check(do(http.MethodPost, "/v1/platform-tenant-self/customer-operations", tokens[0], start, "default"), http.StatusServiceUnavailable)

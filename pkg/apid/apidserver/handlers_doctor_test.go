@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,14 +23,14 @@ import (
 // probe logic so a single env flip is the only knob needed to
 // disable the doctor fleet-wide.
 func TestGetDomainDoctor_DisabledFlagReturns503(t *testing.T) {
-	withDomainDoctorDisabled(t)
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "doc-flag-app")
-	if _, err := e.store.CreateCustomDomain(context.Background(), "flag.example.com", appID, "tok"); err != nil {
+	apidserver.WithDomainDoctorDisabled(t)
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "doc-flag-app")
+	if _, err := (*e.Store()).CreateCustomDomain(context.Background(), "flag.example.com", appID, "tok"); err != nil {
 		t.Fatalf("seed domain: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/domains/flag.example.com/doctor", nil, nil)
-	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeDoctorDisabled)
+	rec := e.Do(t, "GET", "/v1/domains/flag.example.com/doctor", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusServiceUnavailable, api.CodeDoctorDisabled)
 }
 
 // TestGetDomainDoctor_FlagEnabledServesReport (ADR-120 Tier A3)
@@ -40,10 +41,10 @@ func TestGetDomainDoctor_DisabledFlagReturns503(t *testing.T) {
 // the dashboard rendering AND the Alertmanager runbook so the
 // three surfaces stay in lockstep.
 func TestGetDomainDoctor_FlagEnabledServesReport(t *testing.T) {
-	withDomainDoctorEnabled(t)
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "doc-on-app")
-	if _, err := e.store.CreateCustomDomain(context.Background(), "on.example.com", appID, "tok"); err != nil {
+	apidserver.WithDomainDoctorEnabled(t)
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "doc-on-app")
+	if _, err := (*e.Store()).CreateCustomDomain(context.Background(), "on.example.com", appID, "tok"); err != nil {
 		t.Fatalf("seed domain: %v", err)
 	}
 	// Seed a fully-OK observation row so buildDoctorReport returns
@@ -59,10 +60,10 @@ func TestGetDomainDoctor_FlagEnabledServesReport(t *testing.T) {
 		ObservedTarget:  "apps.gregale.dev",
 		DNSCheckedAt:    time.Now().UTC(),
 	}
-	if err := e.store.UpsertDoctorObservation(context.Background(), obs); err != nil {
+	if err := (*e.Store()).UpsertDoctorObservation(context.Background(), obs); err != nil {
 		t.Fatalf("upsert obs: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/domains/on.example.com/doctor", nil, nil)
+	rec := e.Do(t, "GET", "/v1/domains/on.example.com/doctor", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -82,18 +83,18 @@ func TestGetDomainDoctor_FlagEnabledServesReport(t *testing.T) {
 }
 
 func TestDoctorReportRemediatesToConfiguredTargetNotObservedTarget(t *testing.T) {
-	previous := appsDomainFunc
-	appsDomainFunc = func() string { return "apps.gregale.dev." }
-	t.Cleanup(func() { appsDomainFunc = previous })
+	previous := (*apidserver.AppsDomainFunc)
+	(*apidserver.AppsDomainFunc) = func() string { return "apps.gregale.dev." }
+	t.Cleanup(func() { (*apidserver.AppsDomainFunc) = previous })
 
-	report := doctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
+	report := apidserver.DoctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
 		Domain:          "api.customer.test",
 		ObservedAt:      time.Now().UTC(),
 		DNSRecordFound:  true,
 		PointsToGregale: false,
 		ObservedTarget:  "api.customer.test",
 		DNSCheckedAt:    time.Now().UTC(),
-		CertState:       certStatusPending,
+		CertState:       apidserver.CertStatusPending,
 	}, false)
 	for _, check := range report.Checks {
 		if check.Name != "points_to_gregale" {
@@ -111,18 +112,18 @@ func TestDoctorReportRemediatesToConfiguredTargetNotObservedTarget(t *testing.T)
 }
 
 func TestDoctorReportNeverSuggestsSelfCNAMEWhenPlatformTargetIsInvalid(t *testing.T) {
-	previous := appsDomainFunc
-	appsDomainFunc = func() string { return "api.customer.test" }
-	t.Cleanup(func() { appsDomainFunc = previous })
+	previous := (*apidserver.AppsDomainFunc)
+	(*apidserver.AppsDomainFunc) = func() string { return "api.customer.test" }
+	t.Cleanup(func() { (*apidserver.AppsDomainFunc) = previous })
 
-	report := doctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
+	report := apidserver.DoctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
 		Domain:          "api.customer.test",
 		ObservedAt:      time.Now().UTC(),
 		DNSRecordFound:  true,
 		PointsToGregale: false,
 		ObservedTarget:  "api.customer.test",
 		DNSCheckedAt:    time.Now().UTC(),
-		CertState:       certStatusPending,
+		CertState:       apidserver.CertStatusPending,
 	}, false)
 	for _, check := range report.Checks {
 		if check.Name == "points_to_gregale" && strings.HasPrefix(check.Remediation, "Set CNAME") {
@@ -139,18 +140,18 @@ func TestDoctorReportNeverSuggestsSelfCNAMEWhenPlatformTargetIsInvalid(t *testin
 // at handlers_ext.go:1892 returns 404 not_found when loadDomain
 // signals failure.
 func TestGetDomainDoctor_IDOR(t *testing.T) {
-	withDomainDoctorEnabled(t)
+	apidserver.WithDomainDoctorEnabled(t)
 	// Account A creates the domain.
-	a := setup(t, api.PlanPro)
-	appIDA := mustSeedApp(t, a, "idor-a")
-	if _, err := a.store.CreateCustomDomain(context.Background(), "shared.example.com", appIDA, "tok"); err != nil {
+	a := apidserver.Setup(t, api.PlanPro)
+	appIDA := apidserver.MustSeedApp(t, a, "idor-a")
+	if _, err := (*a.Store()).CreateCustomDomain(context.Background(), "shared.example.com", appIDA, "tok"); err != nil {
 		t.Fatalf("seed domain A: %v", err)
 	}
 	// Account B probes it.
-	b := setup(t, api.PlanPro)
+	b := apidserver.Setup(t, api.PlanPro)
 	// Account B's sessionAuth must NOT see account A's domain.
-	rec := b.do(t, "GET", "/v1/domains/shared.example.com/doctor", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	rec := b.Do(t, "GET", "/v1/domains/shared.example.com/doctor", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 // TestGetDomainDoctor_StaleFlagFlipsResponse (ADR-120 Tier A3)
@@ -158,7 +159,7 @@ func TestGetDomainDoctor_IDOR(t *testing.T) {
 // surfaces in the response as Stale=true. Mirrors the dashboard's
 // stale-banner rendering so the JSON + HTML stay in lockstep.
 func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
-	withDomainDoctorEnabled(t)
+	apidserver.WithDomainDoctorEnabled(t)
 	// Force the TTL to 5s so we can build a stale row deterministically.
 	t.Setenv("FAAS_DOMAIN_DOCTOR_TTL_SECONDS", "5")
 	// Inject probe seams (review-fix #3) so the handler's
@@ -166,7 +167,7 @@ func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
 	// CI runner. Returning the same values the seeded row
 	// carries keeps the re-probe write idempotent and the
 	// assertion race-free.
-	withSeams(t,
+	apidserver.WithSeams(t,
 		func(_ context.Context, _ string) ([]string, error) { return []string{"apps.gregale.dev"}, nil },
 		func(_ context.Context, _ string) ([]string, error) {
 			return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
@@ -175,9 +176,9 @@ func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
 			return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
 		},
 		"apps.gregale.dev")
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "stale-app")
-	if _, err := e.store.CreateCustomDomain(context.Background(), "stale.example.com", appID, "tok"); err != nil {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "stale-app")
+	if _, err := (*e.Store()).CreateCustomDomain(context.Background(), "stale.example.com", appID, "tok"); err != nil {
 		t.Fatalf("seed domain: %v", err)
 	}
 	// Seed an observation row 30s in the past — well past the 5s TTL.
@@ -190,10 +191,10 @@ func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
 		CertState:       "issued",
 		ObservedTarget:  "apps.gregale.dev",
 	}
-	if err := e.store.UpsertDoctorObservation(context.Background(), obs); err != nil {
+	if err := (*e.Store()).UpsertDoctorObservation(context.Background(), obs); err != nil {
 		t.Fatalf("upsert obs: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/domains/stale.example.com/doctor", nil, nil)
+	rec := e.Do(t, "GET", "/v1/domains/stale.example.com/doctor", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -237,7 +238,7 @@ func TestParseDomainDoctorPath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			gotSlug, gotDomain, gotOK := parseDomainDoctorPath(tc.in)
+			gotSlug, gotDomain, gotOK := apidserver.ParseDomainDoctorPath(tc.in)
 			if gotSlug != tc.wantSlug || gotDomain != tc.wantDomain || gotOK != tc.wantOK {
 				t.Fatalf("parseDomainDoctorPath(%q) = (%q, %q, %v); want (%q, %q, %v)",
 					tc.in, gotSlug, gotDomain, gotOK, tc.wantSlug, tc.wantDomain, tc.wantOK)
@@ -262,8 +263,8 @@ func TestParseDomainDoctorPath(t *testing.T) {
 // on the same operator choice (CLI gets a structured error,
 // dashboard renders a stale 5-check report).
 func TestRenderDomainDoctor_FlagDisabledReturns503(t *testing.T) {
-	withDomainDoctorDisabled(t)
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	apidserver.WithDomainDoctorDisabled(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(context.Background(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -294,8 +295,8 @@ func TestRenderDomainDoctor_FlagDisabledReturns503(t *testing.T) {
 }
 
 func TestRenderDomainDoctor_RouteRegistered(t *testing.T) {
-	withDomainDoctorEnabled(t)
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	apidserver.WithDomainDoctorEnabled(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(context.Background(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -343,21 +344,21 @@ func TestRenderDomainDoctor_RouteRegistered(t *testing.T) {
 // asked for the Gregale CNAME. The failing detail now describes the
 // observation, and the fix is the same routing record.
 func TestDoctorReportMissingRecordMatchesAddInstructions(t *testing.T) {
-	previous := appsDomainFunc
-	appsDomainFunc = func() string { return "gregale.dev." }
-	t.Cleanup(func() { appsDomainFunc = previous })
+	previous := (*apidserver.AppsDomainFunc)
+	(*apidserver.AppsDomainFunc) = func() string { return "gregale.dev." }
+	t.Cleanup(func() { (*apidserver.AppsDomainFunc) = previous })
 	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
 
-	report := doctorReportFromObs(state.CustomDomain{Domain: "h3-test-domain.example.com"}, state.DomainDoctorObservation{
+	report := apidserver.DoctorReportFromObs(state.CustomDomain{Domain: "h3-test-domain.example.com"}, state.DomainDoctorObservation{
 		Domain: "h3-test-domain.example.com", ObservedAt: time.Now().UTC(), DNSCheckedAt: time.Now().UTC(),
-		DNSRecordFound: false, PointsToGregale: false, CertState: certStatusPending,
+		DNSRecordFound: false, PointsToGregale: false, CertState: apidserver.CertStatusPending,
 	}, false)
 	checks := map[string]api.DomainDoctorCheck{}
 	for _, check := range report.Checks {
 		checks[check.Name] = check
 	}
 	dns := checks["dns_record"]
-	if dns.Status != string(probeFail) || strings.Contains(dns.Detail, "present") || !strings.Contains(dns.Detail, "no DNS record") {
+	if dns.Status != string(apidserver.ProbeFail) || strings.Contains(dns.Detail, "present") || !strings.Contains(dns.Detail, "no DNS record") {
 		t.Fatalf("dns_record = %+v, want a failing detail that says nothing resolves", dns)
 	}
 	if want := "Set CNAME h3-test-domain.example.com → gregale.dev"; dns.Remediation != want || checks["points_to_gregale"].Remediation != want {

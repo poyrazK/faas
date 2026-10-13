@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,13 +9,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type routeAdviceTestStore struct {
-	*state.MemStore
+	MemStore    *state.MemStore
 	stats       sqlc.RouteAdviceRouteStatsParams
 	excess      []sqlc.RouteAdviceThrottleExcessParams
 	statRows    []sqlc.RouteAdviceRouteStatsRow
@@ -38,10 +41,10 @@ func (s *routeAdviceTestStore) RouteAdviceThrottleExcess(_ context.Context, arg 
 	return s.excessValue, nil
 }
 
-func routeAdviceFixture(e testEnv) *routeAdviceTestStore {
+func routeAdviceFixture(e apidserver.TestEnv) *routeAdviceTestStore {
 	top, next := uuid.New(), uuid.New()
 	return &routeAdviceTestStore{
-		MemStore: e.store,
+		MemStore: (*e.Store()),
 		statRows: []sqlc.RouteAdviceRouteStatsRow{
 			{Route: "GET /search", Method: "GET", Requests: 10000, AnonymousRequests: 5},
 			{Route: "GET /catalog", Method: "GET", Requests: 1000, AnonymousRequests: 990, AnonymousSuccess: 985, ColdBoots: 30, CacheHits: 700, WakesAvoided: 20},
@@ -54,9 +57,9 @@ func routeAdviceFixture(e testEnv) *routeAdviceTestStore {
 	}
 }
 
-func getRouteAdviceResponse(t *testing.T, e testEnv, path string) api.RouteAdviceResponse {
+func getRouteAdviceResponse(t *testing.T, e apidserver.TestEnv, path string) api.RouteAdviceResponse {
 	t.Helper()
-	res := e.do(t, "GET", path, nil, nil)
+	res := e.Do(t, "GET", path, nil, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("%d: %s", res.Code, res.Body.String())
 	}
@@ -68,10 +71,10 @@ func getRouteAdviceResponse(t *testing.T, e testEnv, path string) api.RouteAdvic
 }
 
 func TestRouteAdviceSuggestsCacheAndThrottle(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := mustSeedApp(t, e, "shop")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.MustSeedApp(t, e, "shop")
 	store := routeAdviceFixture(e)
-	e.s.store = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice")
 	if out.Slug != "shop" || out.CacheMaxAgeSeconds != 60 || out.RoutesAnalyzed != 2 || out.WindowClamped || len(out.Suggestions) != 2 {
 		t.Fatalf("response = %+v", out)
@@ -82,13 +85,13 @@ func TestRouteAdviceSuggestsCacheAndThrottle(t *testing.T) {
 	if got := out.Suggestions[0].Impact.EstimatedThrottledRequests; got != 4200 {
 		t.Fatalf("throttled estimate = %d, want 4200", got)
 	}
-	host := appHostForDomain("shop", e.s.domain)
+	host := apidserver.AppHostForDomain("shop", (*(*e.S()).Domain()))
 	for _, s := range out.Suggestions {
 		if len(s.Rules) != 1 || s.Rules[0].MatchHost != host || s.Rules[0].Enabled == nil || *s.Rules[0].Enabled {
 			t.Fatalf("rules must be one disabled rule on %s: %+v", host, s.Rules)
 		}
 	}
-	if uuid.UUID(store.stats.AppID.Bytes) != uuid.MustParse(app) || uuid.UUID(store.stats.AccountID.Bytes) != uuid.MustParse(e.acct.ID) ||
+	if uuid.UUID(store.stats.AppID.Bytes) != uuid.MustParse(app) || uuid.UUID(store.stats.AccountID.Bytes) != uuid.MustParse((*e.Acct()).ID) ||
 		store.stats.RouteLimit != api.RouteAdviceMaxRoutes || store.stats.CacheMaxAgeSeconds != 60 {
 		t.Fatalf("stats scope = %+v", store.stats)
 	}
@@ -101,17 +104,17 @@ func TestRouteAdviceSuggestsCacheAndThrottle(t *testing.T) {
 }
 
 func TestRouteAdviceSkipsRulesTheAppAlreadyHas(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "shop")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "shop")
 	disabled := false
-	res := e.do(t, "POST", "/v1/apps/shop/edge-rules", api.CreateEdgeRuleRequest{
-		MatchHost: appHostForDomain("shop", e.s.domain), MatchPath: "/catalog", Enabled: &disabled,
+	res := e.Do(t, "POST", "/v1/apps/shop/edge-rules", api.CreateEdgeRuleRequest{
+		MatchHost: apidserver.AppHostForDomain("shop", (*(*e.S()).Domain())), MatchPath: "/catalog", Enabled: &disabled,
 		Kind: "cache", Action: json.RawMessage(`{"max_age_seconds":60,"stale_if_error_seconds":300}`),
 	}, nil)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("create rule: %d %s", res.Code, res.Body.String())
 	}
-	e.s.store = routeAdviceFixture(e)
+	(*(*e.S()).Store()) = statetest.NewMem(routeAdviceFixture(e))
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice")
 	for _, s := range out.Suggestions {
 		if s.Kind == api.RouteAdviceKindCache {
@@ -121,10 +124,10 @@ func TestRouteAdviceSkipsRulesTheAppAlreadyHas(t *testing.T) {
 }
 
 func TestRouteAdviceWhatIfAndWindow(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "shop")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "shop")
 	store := routeAdviceFixture(e)
-	e.s.store = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice?cache_max_age=300")
 	if out.CacheMaxAgeSeconds != 300 || store.stats.CacheMaxAgeSeconds != 300 {
 		t.Fatalf("what-if max age not applied: %+v / %+v", out, store.stats)
@@ -135,29 +138,29 @@ func TestRouteAdviceWhatIfAndWindow(t *testing.T) {
 }
 
 func TestRouteAdviceRejectsAndDegrades(t *testing.T) {
-	free := setup(t, api.PlanFree)
-	mustSeedApp(t, free, "shop")
-	if res := free.do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusPaymentRequired {
+	free := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, free, "shop")
+	if res := free.Do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusPaymentRequired {
 		t.Fatalf("free plan: %d %s", res.Code, res.Body.String())
 	}
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "shop")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "shop")
 	for _, q := range []string{"cache_max_age=0", "cache_max_age=3601", "cache_max_age=x", "since=nope"} {
-		if res := e.do(t, "GET", "/v1/apps/shop/routes/advice?"+q, nil, nil); res.Code != http.StatusBadRequest {
+		if res := e.Do(t, "GET", "/v1/apps/shop/routes/advice?"+q, nil, nil); res.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", q, res.Code, res.Body.String())
 		}
 	}
-	if res := e.do(t, "GET", "/v1/apps/missing/routes/advice", nil, nil); res.Code != http.StatusNotFound {
+	if res := e.Do(t, "GET", "/v1/apps/missing/routes/advice", nil, nil); res.Code != http.StatusNotFound {
 		t.Fatalf("missing app: %d", res.Code)
 	}
 	// MemStore has no retained telemetry.
-	if res := e.do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusServiceUnavailable {
+	if res := e.Do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("memstore: %d %s", res.Code, res.Body.String())
 	}
 	store := routeAdviceFixture(e)
 	store.err = errors.New("boom")
-	e.s.store = store
-	if res := e.do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusServiceUnavailable {
+	(*(*e.S()).Store()) = statetest.NewMem(store)
+	if res := e.Do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("read failure: %d %s", res.Code, res.Body.String())
 	}
 }

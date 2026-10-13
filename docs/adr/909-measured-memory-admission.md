@@ -1,10 +1,10 @@
 # ADR-909: Admission by measured memory
 
-- Status: Proposed. It changes invariant 2 and the node capacity the
-  financial model assumes, so it needs an owner decision first.
+- Status: Accepted (owner decision, 2026-10-12). Measured admission is on
+  by default in schedd.
 - Date: 2026-10-12
 - Related: ADR-906, ADR-907, ADR-193, spec §1, §4.7, §6.2 invariant 2
-- Would amend: spec §6.2 invariant 2
+- Amends: spec §6.2 invariant 2
 
 ## Context
 
@@ -130,13 +130,56 @@ one by their cgroups' `memory.current`. On the n2 node, against an
 Unit tests in `pkg/sched/admission_measured_test.go` cover the same rule,
 including random admit/release traffic.
 
-Not built yet, and why the flag stays off:
+## Charge history and pressure eviction (implemented 2026-10-12)
 
-- The charge is the latest sample plus 25% headroom, not the 10-minute p95
-  of proposal 1. A VM that grows right after a sample is covered only by
-  the headroom and the plan cap.
-- Eviction under memory pressure (proposal 3) does not exist. Without it,
-  a burst past the measured charges falls to the kernel OOM killer.
+- **Charge history (proposal 1).** The instance-stats poller records each
+  instance's resident memory every `MeasuredChargeSampleSeconds` (5 s) over
+  `MeasuredChargeWindowSeconds` (10 minutes). The charge starts from the
+  larger of the latest sample and that window's p95
+  (`MeasuredChargePercentile`). A VM that just freed memory therefore still
+  books its recent peak, while growth is charged at once.
+- **Pressure eviction (proposal 3).** Under measured admission, the reaper
+  reads each node's tenant memory from vmmd's capacity report. When it is
+  over the node's admission ceiling, the reaper evicts in the existing
+  RAM-pressure order until the node is under `MeasuredEvictionTargetPercent`
+  (90%) of the ceiling. That order skips service replicas and instances
+  younger than 30 s, evicts Scale last, and is otherwise LRU. Each eviction
+  counts the instance's measured memory. Evictions are counted under
+  `schedd_eviction_fired_total{reason="measured_memory"}`. Without measured
+  admission this never fires: every VM's `memory.max` keeps a node under its
+  reservations.
+- **On the n2 node,** `TestMetalMeasuredAdmissionDensity` ran the selector
+  on its 16 VMs after the burst. The ceiling was set just under the VMs'
+  real cgroup total, 6,318 MB against a 6,118 MB ceiling. The selector chose
+  the two least recently used VMs. Destroying them brought the node to
+  5,109 MB, under the 5,506 MB target, and the other 14 kept serving.
+
+## Decision (accepted 2026-10-12)
+
+The owner accepted this ADR. schedd's `measured_admission` now defaults to
+on, and `measured_admission = false` restores reservation admission.
+Invariant 2 now reads: a node's measured memory stays under its admission
+ceiling, Σ(plan RAM + 8 MB) stays under twice that ceiling, and schedd
+evicts when measured memory crosses the ceiling. Billing is unchanged: plan
+RAM + 8 MB per running second.
+
+What still bounds the risk:
+
+- Every VM keeps `memory.max = plan + 8 MB`, so no VM can grow past its
+  plan.
+- The tenant slice's hard `memory.max` sits above the admission ceiling
+  (57,344 MB against 47,600 MB on the reference box). Pressure eviction
+  runs on the reaper's 10 s tick from vmmd's 1 s capacity reports. A burst
+  that outruns eviction ends in the kernel OOM-killing a tenant VM inside
+  the slice, never the control plane. The app then wakes again from its
+  snapshot.
+- The financial model's node capacity assumes reservations. It now
+  understates how many tenants a node holds, until the owner updates it.
+
+Still open:
+
+- Eviction destroys; it does not freeze. Freezing (ADR-906) would keep the
+  evicted VMs a fast thaw away.
 - The warm floor still books full reservations (`HeadroomMB`), so it never
   pre-warms into the overcommit.
 - Measurements come from vmmd. A vmmd that under-reports can over-admit

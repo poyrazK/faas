@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"bufio"
@@ -22,6 +22,7 @@ import (
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,44 +58,44 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	if _, err = os.Stat(sdk); err != nil {
 		t.Fatal("build sdk/node before Flags acceptance")
 	}
-	e := setupPGHandler(t, api.PlanPro)
-	e.s.featureFlagsEnabled = true
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	(*(*e.S()).FeatureFlagsEnabled()) = true
 	ctx := context.Background()
 	slug := "flags-acceptance-api"
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "flags-acceptance", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags-acceptance", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: slug, Status: state.AppActive, ConsumerAuthMode: api.ConsumerAuthModeRequired, PlatformTenantRequired: true})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: slug, Status: state.AppActive, ConsumerAuthMode: api.ConsumerAuthModeRequired, PlatformTenantRequired: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: "production"})
+	dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: "production"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	nodeRow, err := e.store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	nodeRow, err := (*e.Store()).ComputeNodeByName(ctx, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := e.store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, nodeRow.ID, "")
+	instance, err := (*e.Store()).CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, nodeRow.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var customers, keys []string
 	for _, name := range []string{"one", "two", "three", "four"} {
-		tenant, _, err := e.store.(state.PlatformTenantStore).CreatePlatformTenant(ctx, e.acct.ID, name, name, 100)
+		tenant, _, err := (*e.Store()).(state.PlatformTenantStore).CreatePlatformTenant(ctx, (*e.Acct()).ID, name, name, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
-		consumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, app.ID, name, name)
+		consumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, app.ID, name, name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = e.store.(state.PlatformTenantStore).LinkPlatformTenantConsumer(ctx, e.acct.ID, tenant.ID, consumer.ID); err != nil {
+		if _, err = (*e.Store()).(state.PlatformTenantStore).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, tenant.ID, consumer.ID); err != nil {
 			t.Fatal(err)
 		}
-		res := e.do(t, "POST", "/v1/apps/"+slug+"/consumers/"+consumer.ID+"/keys", api.CreateConsumerKeyRequest{Name: name + "-acceptance", Scopes: []string{"read"}}, nil)
+		res := e.Do(t, "POST", "/v1/apps/"+slug+"/consumers/"+consumer.ID+"/keys", api.CreateConsumerKeyRequest{Name: name + "-acceptance", Scopes: []string{"read"}}, nil)
 		if res.Code != 201 {
 			t.Fatalf("key: %d %s", res.Code, res.Body.String())
 		}
@@ -107,7 +108,7 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	}
 	path := "/v1/projects/flags-acceptance/environments/production/flags"
 	update := map[string]any{"expected_version": 0, "config": map[string]any{"groups": map[string]any{}, "flags": []any{map[string]any{"key": "export", "enabled": true, "default": false, "rules": []any{map[string]any{"id": "selected", "customers": customers[:3], "value": true}}}}}}
-	if res := e.do(t, "PUT", path, update, nil); res.Code != 200 {
+	if res := e.Do(t, "PUT", path, update, nil); res.Code != 200 {
 		t.Fatalf("publish: %d %s", res.Code, res.Body.String())
 	}
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -118,18 +119,18 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.flagsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	(*(*e.S()).FlagsWorkloadVerifier()), err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := httptest.NewServer(e.h)
+	owner := httptest.NewServer((*e.H()))
 	t.Cleanup(owner.Close)
 	identity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("audience") != workloadidentity.FlagsAudience {
 			http.Error(w, "audience", 400)
 			return
 		}
-		token, err := signer.Mint(time.Now(), e.acct.ID, app.ID, instance.ID, workloadidentity.FlagsAudience)
+		token, err := signer.Mint(time.Now(), (*e.Acct()).ID, app.ID, instance.ID, workloadidentity.FlagsAudience)
 		if err != nil {
 			http.Error(w, "identity", 500)
 			return
@@ -181,11 +182,11 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	if !strings.HasPrefix(address, "127.0.0.1:") {
 		t.Fatal("Node Flags startup failed")
 	}
-	backend := &flagsAcceptanceBackend{tenantIngressBackend: &tenantIngressBackend{store: e.store, slug: slug, address: address}, deploymentID: dep.ID, instanceID: instance.ID}
-	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{e.store})
-	recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{Enabled: true, RingSize: 32}, e.s.log)
+	backend := &flagsAcceptanceBackend{tenantIngressBackend: &tenantIngressBackend{store: (*e.Store()), slug: slug, address: address}, deploymentID: dep.ID, instanceID: instance.ID}
+	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), nil).WithConsumerAuth(tenantIngressConsumerStore{(*e.Store())})
+	recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{Enabled: true, RingSize: 32}, (*(*e.S()).Log()))
 	edge.WithRequestTelemetryRecorder(recorder)
-	receiver := receivers.NewRequestTelemetryReceiver(e.store.(receivers.RequestTelemetryStore), e.s.ops, nil, true)
+	receiver := receivers.NewRequestTelemetryReceiver((*e.Store()).(receivers.RequestTelemetryStore), (*(*e.S()).Ops()), nil, true)
 	request := func(i int, want bool, version int64) {
 		r := httptest.NewRequest("GET", "http://"+slug+".gregale.dev/exports", nil)
 		r.Header.Set("Authorization", "Bearer "+keys[i])
@@ -215,11 +216,11 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	for i := range customers {
 		request(i, i < 3, 1)
 	}
-	res := e.do(t, "GET", path+"/export/requests?value=true&used=true", nil, nil)
+	res := e.Do(t, "GET", path+"/export/requests?value=true&used=true", nil, nil)
 	if res.Code != 200 {
 		t.Fatalf("evidence: %d %s", res.Code, res.Body.String())
 	}
-	var page featureFlagEvidencePage
+	var page apidserver.FeatureFlagEvidencePage
 	if err = json.Unmarshal(res.Body.Bytes(), &page); err != nil || len(page.Items) != 3 {
 		t.Fatalf("evidence: %s", res.Body.String())
 	}
@@ -230,7 +231,7 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	}
 	update["expected_version"] = 1
 	update["config"].(map[string]any)["flags"].([]any)[0].(map[string]any)["enabled"] = false
-	if res = e.do(t, "PUT", path, update, nil); res.Code != 200 {
+	if res = e.Do(t, "PUT", path, update, nil); res.Code != 200 {
 		t.Fatalf("disable: %d %s", res.Code, res.Body.String())
 	}
 	// The same Node process observes disablement after inactivity, with no deploy.
@@ -243,7 +244,7 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 	for i := range customers {
 		request(i, false, 2)
 	}
-	res = e.do(t, "GET", path+"/export/requests?value=false&used=true&customer_id="+customers[0], nil, nil)
+	res = e.Do(t, "GET", path+"/export/requests?value=false&used=true&customer_id="+customers[0], nil, nil)
 	if res.Code != 200 {
 		t.Fatalf("filtered evidence: %d %s", res.Code, res.Body.String())
 	}

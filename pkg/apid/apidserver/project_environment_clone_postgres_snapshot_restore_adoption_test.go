@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneSnapshotAdoptionFailureStore struct {
@@ -35,13 +36,13 @@ func (s *cloneSnapshotAdoptionFailureStore) AdoptProjectEnvironmentClonePostgres
 func TestPGClonePostgresSnapshotRestoreAdoptionWorkerRecoversWithoutAnotherRestore(t *testing.T) {
 	f, original, p, sourceID := cloneSnapshotRestoreWorkerFixture(t)
 	store := &cloneSnapshotAdoptionFailureStore{cloneSnapshotRestoreFailureStore: original, failAdoption: true}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	var err error
 	f.lease, _, err = f.srv.restoreProjectEnvironmentClonePostgresSnapshots(t.Context(), f.lease)
 	if err == nil || p.forkCreates != 1 {
 		t.Fatalf("unavailable adoption: %v", err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "restored" || receipt.AdoptedDatabaseID != "" {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "restored" || receipt.AdoptedDatabaseID != "" {
 		t.Fatalf("failed adoption lost native fork: %+v %v", receipt, err)
 	}
 	store.loseAdoption = true
@@ -49,7 +50,7 @@ func TestPGClonePostgresSnapshotRestoreAdoptionWorkerRecoversWithoutAnotherResto
 	if err == nil || p.forkCreates != 1 {
 		t.Fatalf("lost committed adoption: %v", err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.State != "adopted" || receipt.AdoptedDatabaseID != receipt.TargetOwnerID {
 		t.Fatalf("durable adoption: %+v %v", receipt, err)
 	}
@@ -59,10 +60,10 @@ func TestPGClonePostgresSnapshotRestoreAdoptionWorkerRecoversWithoutAnotherResto
 	if _, err := f.srv.managedPostgres.Reconcile(t.Context(), f.lease.Operation.AccountID, receipt.AdoptedDatabaseID); !errors.Is(err, managedpostgres.ErrConflict) {
 		t.Fatalf("ordinary reconcile claimed native target: %v", err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestPGClonePostgresSnapshotRestoreAdoptionWorkerRecoversWithoutAnotherResto
 	if err != nil || !complete || p.forkCreates != 1 || p.forkFinds != finds || p.deadlineMissing || f.lease.Operation.Resources[0].TargetID != "" {
 		t.Fatalf("adopted owner replay: complete=%v err=%v", complete, err)
 	}
-	if _, err := store.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("adoption published environment: %v", err)
 	}
 }
@@ -84,21 +85,21 @@ func TestPGClonePostgresSnapshotRestoreAdoptionCleanupRetiresSameCatalogueOwner(
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.State != "adopted" {
 		t.Fatalf("native owner was not adopted: %+v %v", receipt, err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.forkDeleteReady = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.forkCreates != 1 || p.forkDeletes != 1 || p.forkDeleteObservations != 1 || p.deletes != 1 {
 		t.Fatalf("adopted fork retirement: %v", err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
 		t.Fatalf("retired adoption receipt: %+v %v", receipt, err)
 	}
 	databases, err := managedpostgres.NewPostgresStore(f.pool)

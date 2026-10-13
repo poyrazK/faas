@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -92,32 +93,32 @@ func (f *signedURLNative) serve(w http.ResponseWriter, r *http.Request) {
 
 // adr: 557
 func TestObjectSignedURLE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	signedURLE2E(t, e.s, e.store, e.acct, e.key, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	signedURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil)
 }
 func TestObjectSignedURLE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	signedURLE2E(t, e.s, e.store, e.acct, e.key, e.pool)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	signedURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()))
 }
 
-func signedURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
-	identity, teardown := withTestIdentities(t)
+func signedURLE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool) {
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &signedURLNative{}
 	upstream := httptest.NewServer(http.HandlerFunc(native.serve))
 	defer upstream.Close()
 	_, b, backend, _ := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
-	if _, err := st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: runtimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: boolJSON(true), ApplyMode: state.RuntimeConfigApplyHot, Reason: "signed URL test"}); err != nil {
+	if _, err := st.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: apidserver.RuntimeConfigS3, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: apidserver.BoolJSON(true), ApplyMode: state.RuntimeConfigApplyHot, Reason: "signed URL test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.runtimeConfig.reconcile(t.Context(), st); err != nil {
+	if err := (*s.RuntimeConfig()).Reconcile(t.Context(), st); err != nil {
 		t.Fatal(err)
 	}
 	var gateway http.Handler
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
-	h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	h, err := s3gateway.New(s3gateway.Config{Registry: (*s.ObjectStorage()), Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, e := secretbox.OpenBytes(identity, blob)
 		if e != nil {
 			return "", fmt.Errorf("open URL credential: %w", e)
@@ -131,7 +132,7 @@ func signedURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, b
 		t.Fatal(err)
 	}
 	gateway = h
-	apiHandler := s.handler()
+	apiHandler := s.Handler()
 	issue := func(req api.ObjectSignRequest) api.ObjectSignedRequest {
 		t.Helper()
 		body, e := json.Marshal(req)
@@ -263,14 +264,14 @@ func signedURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, b
 		if _, err = pool.Exec(t.Context(), `UPDATE object_upload_completions SET recovery_retry_at=now()-interval '1 second' WHERE id=$1`, lost.UploadID); err != nil {
 			t.Fatal(err)
 		}
-		s.store = state.NewPgStore(pool)
+		(*s.Store()) = state.NewPgStore(pool)
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	if err = s.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	done, err := s.store.(state.ObjectTrackedUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", c.ID, lost.UploadID)
+	done, err := (*s.Store()).(state.ObjectTrackedUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", c.ID, lost.UploadID)
 	if err != nil || done.Status != "completed" || done.ETag != `"signed-url"` {
 		t.Fatal("URL recovery", done, err)
 	}

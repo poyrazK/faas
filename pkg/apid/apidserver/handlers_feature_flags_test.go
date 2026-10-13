@@ -1,27 +1,29 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/flags"
-	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 	config := flags.Config{Flags: []flags.Flag{{Key: "export", Rules: []flags.Rule{{ID: "pilot-user", Subjects: []string{"user-17"}}}}}}
-	if featureFlagConfigRequiresSubjectTargeting(config) {
+	if apidserver.FeatureFlagConfigRequiresSubjectTargeting(config) {
 		t.Fatal("disabled subject flag required a new SDK capability")
 	}
 	config.Flags[0].Enabled = true
-	if !featureFlagConfigRequiresSubjectTargeting(config) {
+	if !apidserver.FeatureFlagConfigRequiresSubjectTargeting(config) {
 		t.Fatal("enabled subject flag did not require the SDK capability")
 	}
 }
@@ -31,8 +33,8 @@ func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 // membership, and credential permissions" and sent users after the wrong
 // cause.
 func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	res := e.do(t, http.MethodGet, "/v1/projects/flags/environments/production/flags", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	res := e.Do(t, http.MethodGet, "/v1/projects/flags/environments/production/flags", nil, nil)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", res.Code, res.Body.String())
 	}
@@ -46,17 +48,17 @@ func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
 }
 
 func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.featureFlagsEnabled = true
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).FeatureFlagsEnabled()) = true
 	ctx := context.Background()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "flags", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = project
 	var ids []string
 	for _, ref := range []string{"one", "two", "three", "four"} {
-		customer, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, ref, ref, 100)
+		customer, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, ref, ref, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,14 +71,14 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	}}
 	path := "/v1/projects/flags/environments/production/flags"
 	zero := int64(0)
-	res := e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &zero, Config: cfg}, nil)
+	res := e.Do(t, http.MethodPut, path, apidserver.UpdateFeatureFlagsRequest{ExpectedVersion: &zero, Config: cfg}, nil)
 	if res.Code != 200 {
 		t.Fatalf("publish: %d %s", res.Code, res.Body.String())
 	}
 	var saved state.FeatureFlagVersion
 	_ = json.Unmarshal(res.Body.Bytes(), &saved)
 	for i, id := range ids {
-		res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: id}, nil)
+		res = e.Do(t, http.MethodPost, path+"/export/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: id}, nil)
 		if res.Code != 200 {
 			t.Fatalf("inspect: %d %s", res.Code, res.Body.String())
 		}
@@ -86,89 +88,89 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 			t.Fatal(d)
 		}
 	}
-	res = e.do(t, http.MethodPost, path+"/checkout/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
+	res = e.Do(t, http.MethodPost, path+"/checkout/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
 	var variantDecision flags.Decision
 	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &variantDecision) != nil || variantDecision.Type != "variant" || variantDecision.Value != "new" || variantDecision.RuleID != "selected-customer" {
 		t.Fatalf("variant inspect: %d %s %+v", res.Code, res.Body.String(), variantDecision)
 	}
-	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user-17"}, nil)
+	res = e.Do(t, http.MethodPost, path+"/actor-release/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user-17"}, nil)
 	var subjectDecision flags.Decision
 	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &subjectDecision) != nil || subjectDecision.Value != true || subjectDecision.RuleID != "pilot-user" {
 		t.Fatalf("subject inspect: %d %s %+v", res.Code, res.Body.String(), subjectDecision)
 	}
-	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
+	res = e.Do(t, http.MethodPost, path+"/actor-release/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
 	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &subjectDecision) != nil || subjectDecision.Reason != "subject_missing" || subjectDecision.Value != false {
 		t.Fatalf("missing-subject inspect: %d %s %+v", res.Code, res.Body.String(), subjectDecision)
 	}
-	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{SubjectID: "user-17"}, nil)
+	res = e.Do(t, http.MethodPost, path+"/actor-release/inspect", apidserver.InspectFeatureFlagRequest{SubjectID: "user-17"}, nil)
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("subject inspect without customer=%d %s", res.Code, res.Body.String())
 	}
-	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user with space"}, nil)
+	res = e.Do(t, http.MethodPost, path+"/actor-release/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user with space"}, nil)
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("invalid subject inspect=%d %s", res.Code, res.Body.String())
 	}
 	saved.Flags[0].Enabled = false
 	one := int64(1)
-	res = e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil)
+	res = e.Do(t, http.MethodPut, path, apidserver.UpdateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil)
 	if res.Code != 200 {
 		t.Fatalf("disable: %d %s", res.Code, res.Body.String())
 	}
-	res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
+	res = e.Do(t, http.MethodPost, path+"/export/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
 	var d flags.Decision
 	_ = json.Unmarshal(res.Body.Bytes(), &d)
 	if d.Value != false || d.Reason != "disabled" {
 		t.Fatal(d)
 	}
-	res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], Version: 1}, nil)
+	res = e.Do(t, http.MethodPost, path+"/export/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: ids[0], Version: 1}, nil)
 	_ = json.Unmarshal(res.Body.Bytes(), &d)
 	if d.Value != true || d.RuleID != "selected" {
 		t.Fatal(d)
 	}
-	if res = e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil); res.Code != 409 {
+	if res = e.Do(t, http.MethodPut, path, apidserver.UpdateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil); res.Code != 409 {
 		t.Fatalf("stale update=%d", res.Code)
 	}
 	two := int64(2)
-	res = e.do(t, http.MethodPost, path+"/rollback", rollbackFeatureFlagsRequest{ExpectedVersion: &two, Version: 1}, nil)
+	res = e.Do(t, http.MethodPost, path+"/rollback", apidserver.RollbackFeatureFlagsRequest{ExpectedVersion: &two, Version: 1}, nil)
 	if res.Code != 200 {
 		t.Fatalf("rollback=%d %s", res.Code, res.Body.String())
 	}
-	res = e.do(t, http.MethodGet, path+"/versions", nil, nil)
+	res = e.Do(t, http.MethodGet, path+"/versions", nil, nil)
 	var history []state.FeatureFlagVersion
 	_ = json.Unmarshal(res.Body.Bytes(), &history)
 	if len(history) != 3 || history[0].Version != 3 || history[0].RestoredFrom != 1 {
 		t.Fatal(history)
 	}
-	other, err := e.store.CreateAccount(ctx, "outsider@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(ctx, "outsider@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	outsider, _, err := e.store.CreatePlatformTenant(ctx, other.ID, "foreign", "foreign", 100)
+	outsider, _, err := (*e.Store()).CreatePlatformTenant(ctx, other.ID, "foreign", "foreign", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: outsider.ID}, nil)
+	res = e.Do(t, http.MethodPost, path+"/export/inspect", apidserver.InspectFeatureFlagRequest{CustomerID: outsider.ID}, nil)
 	if res.Code != 404 {
 		t.Fatalf("foreign inspect=%d", res.Code)
 	}
 }
 func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.featureFlagsEnabled = true
+	e := apidserver.Setup(t, api.PlanPro)
+	(*(*e.S()).FeatureFlagsEnabled()) = true
 	ctx := context.Background()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "flags-runtime", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags-runtime", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "flags-runtime-api", Status: state.AppActive})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "flags-runtime-api", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: "default"})
+	dep, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Scope: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := e.store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "default-local", "")
+	instance, err := (*e.Store()).CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "default-local", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,25 +182,25 @@ func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.flagsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	(*(*e.S()).FlagsWorkloadVerifier()), err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := signer.Mint(time.Now(), e.acct.ID, app.ID, instance.ID, workloadidentity.FlagsAudience)
+	token, err := signer.Mint(time.Now(), (*e.Acct()).ID, app.ID, instance.ID, workloadidentity.FlagsAudience)
 	if err != nil {
 		t.Fatal(err)
 	}
-	customer, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "runtime-subject", "Runtime Subject", 100)
+	customer, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "runtime-subject", "Runtime Subject", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := e.store.ProjectEnvironmentBySlug(ctx, e.acct.ID, project.ID, "production")
+	env, err := (*e.Store()).ProjectEnvironmentBySlug(ctx, (*e.Acct()).ID, project.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{
-		Scope:           state.FeatureFlagScope{AccountID: e.acct.ID, ProjectID: project.ID, EnvironmentID: env.ID},
-		ExpectedVersion: 0, Actor: e.acct.ID,
+	_, err = (*e.Store()).UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{
+		Scope:           state.FeatureFlagScope{AccountID: (*e.Acct()).ID, ProjectID: project.ID, EnvironmentID: env.ID},
+		ExpectedVersion: 0, Actor: (*e.Acct()).ID,
 		Config: flags.Config{Groups: map[string][]string{}, Flags: []flags.Flag{{Key: "export", Enabled: true, Default: false, Rules: []flags.Rule{{
 			ID: "pilot-user", Customers: []string{customer.ID}, Subjects: []string{"user-18"}, Value: true,
 		}}}}},
@@ -206,11 +208,11 @@ func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := e.do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
+	res := e.Do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
 	if res.Code != http.StatusUpgradeRequired {
 		t.Fatalf("legacy SDK received subject-targeted bundle: %d %s", res.Code, res.Body.String())
 	}
-	res = e.do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{
+	res = e.Do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{
 		"Authorization":               "Bearer " + token.AccessToken,
 		api.FlagSDKCapabilitiesHeader: api.FlagSDKSubjectTargetingCapability,
 	})
@@ -225,12 +227,12 @@ func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	if len(bundle.Flags) != 1 || len(bundle.Flags[0].Rules) != 1 || len(bundle.Flags[0].Rules[0].Subjects) != 1 || bundle.Flags[0].Rules[0].Subjects[0] != "user-18" {
 		t.Fatalf("runtime bundle lost subject targeting: %+v", bundle.Flags)
 	}
-	foreign, _ := signer.Mint(time.Now(), e.acct.ID, app.ID, instance.ID, "sts.amazonaws.com")
-	res = e.do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + foreign.AccessToken})
+	foreign, _ := signer.Mint(time.Now(), (*e.Acct()).ID, app.ID, instance.ID, "sts.amazonaws.com")
+	res = e.Do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + foreign.AccessToken})
 	if res.Code != 401 {
 		t.Fatalf("wrong audience=%d", res.Code)
 	}
-	res = e.do(t, http.MethodGet, "/v1/runtime/flags", nil, nil)
+	res = e.Do(t, http.MethodGet, "/v1/runtime/flags", nil, nil)
 	if res.Code != 401 {
 		t.Fatalf("account credential on runtime=%d", res.Code)
 	}
@@ -238,14 +240,14 @@ func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res = e.do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + wrongAccount.AccessToken})
+	res = e.Do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + wrongAccount.AccessToken})
 	if res.Code != 401 {
 		t.Fatalf("mismatched workload account=%d", res.Code)
 	}
-	if err = e.store.UpdateInstanceState(ctx, instance.ID, string(state.StateStopped)); err != nil {
+	if err = (*e.Store()).UpdateInstanceState(ctx, instance.ID, string(state.StateStopped)); err != nil {
 		t.Fatal(err)
 	}
-	res = e.do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
+	res = e.Do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
 	if res.Code != 401 {
 		t.Fatalf("stopped workload=%d", res.Code)
 	}

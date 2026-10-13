@@ -152,18 +152,22 @@ type EventBacklogRecipient struct {
 }
 
 type EventBacklogConsumer struct {
-	OrderingWaitingRecipients int64     `json:"ordering_waiting_recipients"`
-	AppID                     string    `json:"app_id"`
-	AppSlug                   string    `json:"app_slug"`
-	TargetAvailable           bool      `json:"target_available"`
-	SubscriptionID            string    `json:"subscription_id"`
-	ConsumerKind              string    `json:"consumer_kind"`
-	WaitingRecipients         int64     `json:"waiting_recipients"`
-	PendingRecipients         int64     `json:"pending_recipients"`
-	ProcessingRecipients      int64     `json:"processing_recipients"`
-	CapacityWaitingRecipients int64     `json:"capacity_waiting_recipients"`
-	OldestAcceptedAt          time.Time `json:"oldest_accepted_at"`
-	OldestAgeSeconds          float64   `json:"oldest_age_seconds"`
+	PendingWaitingReasons             map[string]int64 `json:"pending_waiting_reasons,omitempty"`
+	CapacityConsumerWaitingRecipients int64            `json:"capacity_consumer_waiting_recipients"`
+	CapacityAppWaitingRecipients      int64            `json:"capacity_app_waiting_recipients"`
+	CapacityAccountWaitingRecipients  int64            `json:"capacity_account_waiting_recipients"`
+	OrderingWaitingRecipients         int64            `json:"ordering_waiting_recipients"`
+	AppID                             string           `json:"app_id"`
+	AppSlug                           string           `json:"app_slug"`
+	TargetAvailable                   bool             `json:"target_available"`
+	SubscriptionID                    string           `json:"subscription_id"`
+	ConsumerKind                      string           `json:"consumer_kind"`
+	WaitingRecipients                 int64            `json:"waiting_recipients"`
+	PendingRecipients                 int64            `json:"pending_recipients"`
+	ProcessingRecipients              int64            `json:"processing_recipients"`
+	CapacityWaitingRecipients         int64            `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt                  time.Time        `json:"oldest_accepted_at"`
+	OldestAgeSeconds                  float64          `json:"oldest_age_seconds"`
 }
 
 // Counts cover matching live recipients, independently of the recipient page.
@@ -450,10 +454,13 @@ type EventDeliveryListResponse struct {
 // ReplayEventFanoutFailureRequest identifies one failed recipient by the
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
-	AllowExpired   bool   `json:"allow_expired,omitempty"`
-	EventID        string `json:"event_id"`
-	EventSource    string `json:"event_source"`
-	SubscriptionID string `json:"subscription_id"`
+	RecoveryExpectation *EventRoutingRecoveryExpectation `json:"recovery_expectation,omitempty"`
+	ExpectedGeneration  *int64                           `json:"expected_generation,omitempty"`
+	ExpectedAcceptedAt  *time.Time                       `json:"expected_accepted_at,omitempty"`
+	AllowExpired        bool                             `json:"allow_expired,omitempty"`
+	EventID             string                           `json:"event_id"`
+	EventSource         string                           `json:"event_source"`
+	SubscriptionID      string                           `json:"subscription_id"`
 }
 
 // ReplayEventFanoutFailureResponse confirms that one recipient was returned
@@ -798,6 +805,7 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	Buckets     []DevBucketRequest  `json:"buckets,omitempty"`
 	// LeaseSeconds chooses how long the environment survives after its
 	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
 	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
@@ -854,6 +862,7 @@ type DevSessionResponse struct {
 	App       AppResponse          `json:"app"`
 	ExpiresAt time.Time            `json:"expires_at"`
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
+	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -9726,13 +9735,12 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // Field-by-field:
 //
 //   - BudgetMs: required per-request budget in milliseconds. Must
-//     be > 0 and ≤ api.RequestBudgetMaxMs (30 s). 0 is rejected
-//     with 422 — a kind=budget rule with no budget is a silent
-//     no-op, worst shape for a safety feature. The hard upper bound
-//     matches api.RequestBudgetMaxMs so a kind=budget rule can
-//     never widen past the platform ceiling; if a customer wants a
-//     longer per-route budget they're mis-using this primitive
-//     (api.RequestBudgetMax is the absolute ceiling).
+//     be > 0 and ≤ api.RequestBudgetPlanMax (15 min, ADR-1150). 0 is
+//     rejected with 422 — a kind=budget rule with no budget is a
+//     silent no-op, worst shape for a safety feature. At request time
+//     the budget is further clamped to the plan's ceiling
+//     (Limits.RequestBudgetMaxDuration), so a rule never widens past
+//     what the account's plan allows.
 //   - AllowOverrideHeader: optional HTTP header name (default
 //     `x-faas-budget-ms`) whose numeric value, if present on the
 //     inbound request, overrides BudgetMs for that single request.
@@ -9762,10 +9770,10 @@ func (a *EdgeRuleBudgetAction) Validate() *Problem {
 			"budget action: budget_ms must be > 0 (got %d) — a kind=budget rule with no budget is a silent no-op; drop the rule if you want the platform default to apply",
 			a.BudgetMs))
 	}
-	if a.BudgetMs > int(RequestBudgetMax.Milliseconds()) {
+	if a.BudgetMs > int(RequestBudgetPlanMax.Milliseconds()) {
 		return ErrValidation(fmt.Sprintf(
 			"budget action: budget_ms (%d) exceeds the platform ceiling (%d ms = %s)",
-			a.BudgetMs, int(RequestBudgetMax.Milliseconds()), RequestBudgetMax))
+			a.BudgetMs, int(RequestBudgetPlanMax.Milliseconds()), RequestBudgetPlanMax))
 	}
 	if a.AllowOverrideHeader != "" {
 		if len(a.AllowOverrideHeader) > 128 {
@@ -12976,4 +12984,16 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.
+type EventRoutingRecoveryExpectation struct {
+	WorkflowName     string `json:"workflow_name"`
+	PublishedVersion int64  `json:"published_version"`
+	ReplayCount      int64  `json:"replay_count"`
+	Generation       *int64 `json:"generation,omitempty"`
+}
+
+func (e EventRoutingRecoveryExpectation) Valid() bool {
+	return strings.TrimSpace(e.WorkflowName) != "" && e.PublishedVersion > 0 && e.ReplayCount >= 0 && (e.Generation == nil || *e.Generation >= 0)
 }

@@ -169,20 +169,20 @@ func (j *linuxNativeSnapshotPublicationJournal) RetireRestoreCohort(ctx context.
 	if err != nil {
 		return err
 	}
-	for _, object := range objects {
-		if err := storage.CheckExclusiveArtifactRetirement(ctx, backend, object.Object); err != nil {
-			return err
-		}
+	var receipts [4]storage.ExclusiveArtifactReceipt
+	for i, object := range objects {
+		receipts[i] = object.Object
+	}
+	if err := storage.CheckExclusiveArtifactCohortRetirement(ctx, backend, capture, receipts); err != nil {
+		return err
 	}
 	if !pending {
 		if err := j.writeRetirementStateLocked(ctx, intent, objects, false); err != nil {
 			return err
 		}
 	}
-	for _, object := range objects {
-		if err := storage.RetireExclusiveArtifact(ctx, backend, object.Object); err != nil {
-			return err
-		}
+	if err := storage.RetireExclusiveArtifactCohort(ctx, backend, capture, receipts); err != nil {
+		return err
 	}
 	if err := j.requireIntentLocked(ctx, intent); err != nil {
 		return err

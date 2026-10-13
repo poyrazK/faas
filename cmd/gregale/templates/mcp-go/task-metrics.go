@@ -22,10 +22,6 @@ const defaultGregaleAPIURL = "https://api.gregale.dev"
 
 var mcpTaskAppSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-type mcpTaskMetricPublishEvent struct {
-	Event string `json:"event"`
-}
-
 type mcpTaskMetricsSettings struct {
 	appSlug string
 	token   string
@@ -146,8 +142,10 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 			if observer {
 				event = "mcp_task_observer_health_check_failed"
 			}
-			payload, _ := json.Marshal(mcpTaskMetricPublishEvent{Event: event})
-			log.Print(string(payload))
+			body, _ := json.Marshal(struct {
+				Event string `json:"event"`
+			}{Event: event})
+			log.Print(string(body))
 		}
 	}
 

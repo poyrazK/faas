@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -8,16 +8,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := mustSeedApp(t, e, "work-api")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.MustSeedApp(t, e, "work-api")
 	path := "/v1/apps/work-api/work-policies/document-index"
 	policy := api.UpsertWorkPolicyRequest{MaxRunningPerKey: 1, MaxRunningPerFairnessKey: 2,
 		PendingUpdates: "keep_latest", DebounceMS: 3000, ExpiresAfterMS: 600000}
-	put := e.do(t, http.MethodPut, path, policy, nil)
+	put := e.Do(t, http.MethodPut, path, policy, nil)
 	if put.Code != http.StatusOK {
 		t.Fatalf("PUT = %d %s", put.Code, put.Body.String())
 	}
@@ -28,7 +29,7 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if configured.Name != "document-index" || configured.Revision != 1 || configured.MaxRunningPerFairnessKey != 2 {
 		t.Fatalf("policy = %+v", configured)
 	}
-	listed := e.do(t, http.MethodGet, "/v1/apps/work-api/work-policies", nil, nil)
+	listed := e.Do(t, http.MethodGet, "/v1/apps/work-api/work-policies", nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("GET = %d %s", listed.Code, listed.Body.String())
 	}
@@ -41,7 +42,7 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	}
 	invoke := func(key string) state.Invocation {
 		t.Helper()
-		response := e.do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
+		response := e.Do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
 			Payload: json.RawMessage(`{"document_id":"d1"}`),
 			Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(key),
 				FairnessKey: json.RawMessage(`"tenant-1"`)},
@@ -53,14 +54,14 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &accepted); err != nil {
 			t.Fatal(err)
 		}
-		row, err := e.store.InvocationByID(context.Background(), accepted.ID)
+		row, err := (*e.Store()).InvocationByID(context.Background(), accepted.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return row
 	}
 	first, second, other := invoke(`"d1"`), invoke(`"d1"`), invoke(`"d2"`)
-	first, _ = e.store.InvocationByID(context.Background(), first.ID)
+	first, _ = (*e.Store()).InvocationByID(context.Background(), first.ID)
 	if first.State != state.InvocationSuperseded || second.State != state.InvocationPending || other.State != state.InvocationPending {
 		t.Fatalf("states = %s, %s, %s", first.State, second.State, other.State)
 	}
@@ -73,7 +74,7 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if app != second.AppID {
 		t.Fatalf("invocation app = %s, want %s", second.AppID, app)
 	}
-	cancel := e.do(t, http.MethodPost, path+"/cancel-pending", api.CancelPendingWorkRequest{Key: json.RawMessage(`"d2"`)}, nil)
+	cancel := e.Do(t, http.MethodPost, path+"/cancel-pending", api.CancelPendingWorkRequest{Key: json.RawMessage(`"d2"`)}, nil)
 	if cancel.Code != http.StatusOK {
 		t.Fatalf("cancel = %d %s", cancel.Code, cancel.Body.String())
 	}
@@ -84,11 +85,11 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if cancelled.ID == "" || cancelled.CancelledCount != 1 {
 		t.Fatalf("cancel receipt = %+v", cancelled)
 	}
-	other, _ = e.store.InvocationByID(context.Background(), other.ID)
+	other, _ = (*e.Store()).InvocationByID(context.Background(), other.ID)
 	if other.State != state.InvocationCancelled {
 		t.Fatalf("cancelled state = %s", other.State)
 	}
-	delayed := e.do(t, http.MethodPost, "/v1/apps/work-api/delayed-tasks", api.DelayedTaskRequest{
+	delayed := e.Do(t, http.MethodPost, "/v1/apps/work-api/delayed-tasks", api.DelayedTaskRequest{
 		DelaySeconds: 30,
 		Payload:      json.RawMessage(`{"document_id":"d3"}`),
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d3"`),
@@ -101,7 +102,7 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if err := json.Unmarshal(delayed.Body.Bytes(), &task); err != nil {
 		t.Fatal(err)
 	}
-	delayedRow, err := e.store.InvocationByID(context.Background(), task.ID)
+	delayedRow, err := (*e.Store()).InvocationByID(context.Background(), task.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if bytes.Equal(delayedRow.WorkFairnessDigest, second.WorkFairnessDigest) {
 		t.Fatal("delayed task should use its selected fairness group")
 	}
-	queue := e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+	queue := e.Do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
 		Payload: json.RawMessage(`{"document_id":"d4"}`),
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d4"`),
 			FairnessKey: json.RawMessage(`"tenant-2"`)},
@@ -123,11 +124,11 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if err := json.Unmarshal(queue.Body.Bytes(), &queued); err != nil {
 		t.Fatal(err)
 	}
-	queuedRow, err := e.store.InvocationByID(context.Background(), queued.ID)
+	queuedRow, err := (*e.Store()).InvocationByID(context.Background(), queued.ID)
 	if err != nil || queuedRow.Source != state.InvocationQueue || queuedRow.QueueName != "" || queuedRow.WorkPolicyName != "document-index" {
 		t.Fatalf("queued policy row = %+v, err=%v", queuedRow, err)
 	}
-	inbox := e.do(t, http.MethodPost, "/v1/apps/work-api/inbox", api.SendAppMessageRequest{
+	inbox := e.Do(t, http.MethodPost, "/v1/apps/work-api/inbox", api.SendAppMessageRequest{
 		Type: "document.edited", Data: json.RawMessage(`{"document_id":"d4"}`),
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d4"`)},
 	}, nil)
@@ -138,11 +139,11 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if err := json.Unmarshal(inbox.Body.Bytes(), &inboxReceipt); err != nil {
 		t.Fatal(err)
 	}
-	inboxRow, err := e.store.InvocationByID(context.Background(), inboxReceipt.ID)
+	inboxRow, err := (*e.Store()).InvocationByID(context.Background(), inboxReceipt.ID)
 	if err != nil || inboxRow.Source != state.InvocationQueue || inboxRow.WorkSequence != queuedRow.WorkSequence+1 {
 		t.Fatalf("inbox policy row = %+v, err=%v", inboxRow, err)
 	}
-	queuedRow, _ = e.store.InvocationByID(context.Background(), queued.ID)
+	queuedRow, _ = (*e.Store()).InvocationByID(context.Background(), queued.ID)
 	if queuedRow.State != state.InvocationSuperseded || inboxRow.State != state.InvocationPending {
 		t.Fatalf("queue replacement states = %s, %s", queuedRow.State, inboxRow.State)
 	}
@@ -152,15 +153,15 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 			body = api.SendAppMessageRequest{Type: "document.edited", Data: json.RawMessage(`{}`), QueueName: "named",
 				Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d5"`)}}
 		}
-		assertProblem(t, e.do(t, http.MethodPost, path, body, nil), http.StatusBadRequest, api.CodeValidation)
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPost, path, body, nil), http.StatusBadRequest, api.CodeValidation)
 	}
-	if _, err := e.store.CreateQueueBinding(context.Background(), state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app, Name: "documents", QueueName: "documents",
+	if _, err := (*e.Store()).CreateQueueBinding(context.Background(), state.QueueBinding{
+		AccountID: (*e.Acct()).ID, AppID: app, Name: "documents", QueueName: "documents",
 		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	bound := e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+	bound := e.Do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d6"`)},
 	}, nil)
 	if bound.Code != http.StatusCreated {
@@ -170,43 +171,43 @@ func TestWorkPolicyAsyncInvokeAPI(t *testing.T) {
 	if err := json.Unmarshal(bound.Body.Bytes(), &boundReceipt); err != nil {
 		t.Fatal(err)
 	}
-	boundRow, err := e.store.InvocationByID(context.Background(), boundReceipt.ID)
+	boundRow, err := (*e.Store()).InvocationByID(context.Background(), boundReceipt.ID)
 	if err != nil || boundRow.QueueName != "documents" || boundRow.WorkPolicyName != "document-index" {
 		t.Fatalf("named keyed queue row = %+v, err=%v", boundRow, err)
 	}
-	if _, err := e.store.CreateQueueBinding(context.Background(), state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app, Name: "manual", QueueName: "manual",
+	if _, err := (*e.Store()).CreateQueueBinding(context.Background(), state.QueueBinding{
+		AccountID: (*e.Acct()).ID, AppID: app, Name: "manual", QueueName: "manual",
 		Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertProblem(t, e.do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPost, "/v1/apps/work-api/queues/send", api.QueueSendRequest{
 		QueueName: "manual", Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`"d7"`)},
 	}, nil), http.StatusBadRequest, api.CodeValidation)
-	bad := e.do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
+	bad := e.Do(t, http.MethodPost, "/v1/apps/work-api/invoke/async", api.InvokeRequest{
 		Work: &api.InvokeWork{Policy: "document-index", Key: json.RawMessage(`{"not":"scalar"}`)},
 	}, nil)
-	assertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
 }
 
 func TestWorkPolicyQueueReplacementAtDepthCap(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	appID := mustSeedApp(t, e, "queue-cap")
-	policy := e.do(t, http.MethodPut, "/v1/apps/queue-cap/work-policies/latest", api.UpsertWorkPolicyRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "queue-cap")
+	policy := e.Do(t, http.MethodPut, "/v1/apps/queue-cap/work-policies/latest", api.UpsertWorkPolicyRequest{
 		MaxRunningPerKey: 1, PendingUpdates: "keep_latest", DebounceMS: 3000,
 	}, nil)
 	if policy.Code != http.StatusOK {
 		t.Fatalf("policy = %d %s", policy.Code, policy.Body.String())
 	}
 	for i := 0; i < 4; i++ {
-		response := e.do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{}, nil)
+		response := e.Do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{}, nil)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("fill queue %d = %d %s", i, response.Code, response.Body.String())
 		}
 	}
 	send := func(key string) (int, string) {
 		t.Helper()
-		response := e.do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{
+		response := e.Do(t, http.MethodPost, "/v1/apps/queue-cap/queues/send", api.QueueSendRequest{
 			Work: &api.InvokeWork{Policy: "latest", Key: json.RawMessage(key)},
 		}, nil)
 		var receipt api.QueueSendResponse
@@ -223,7 +224,7 @@ func TestWorkPolicyQueueReplacementAtDepthCap(t *testing.T) {
 	if code != http.StatusCreated || replacementID == "" {
 		t.Fatalf("same-key replacement at cap = %d, id=%q", code, replacementID)
 	}
-	depth, err := e.store.CountPendingInvocations(context.Background(), appID, state.InvocationQueue)
+	depth, err := (*e.Store()).CountPendingInvocations(context.Background(), appID, state.InvocationQueue)
 	if err != nil || depth != api.MustLimitsFor(api.PlanHobby).MaxQueueDepth {
 		t.Fatalf("queue depth after replacement = %d, err=%v", depth, err)
 	}

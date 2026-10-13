@@ -31,6 +31,7 @@ type Metrics struct {
 	aiTranslations         *prometheus.CounterVec
 	aiBudgetAlerts         *prometheus.CounterVec
 	credentialKeyEvents    *prometheus.CounterVec
+	aiContentFindings      *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -119,6 +120,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_credential_key_events_total",
 			Help: "Provider key pool events by integration and bounded event (cooldown, rotated, or exhausted).",
 		}, []string{"integration_id", "event"}),
+		aiContentFindings: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_content_findings_total",
+			Help: "AI content policy findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked).",
+		}, []string{"integration_id", "kind", "action"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -140,6 +145,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiTranslations,
 		m.aiBudgetAlerts,
 		m.credentialKeyEvents,
+		m.aiContentFindings,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -285,6 +291,14 @@ func (m *Metrics) ObserveAIBudgetAlert(budget string, thresholdPercent int) {
 		return
 	}
 	m.aiBudgetAlerts.WithLabelValues(budget, strconv.Itoa(thresholdPercent)).Inc()
+}
+
+// ObserveAIContent counts one content policy finding (ADR-997).
+func (m *Metrics) ObserveAIContent(integrationID, kind, action string) {
+	if m == nil || m.aiContentFindings == nil {
+		return
+	}
+	m.aiContentFindings.WithLabelValues(integrationID, kind, action).Inc()
 }
 
 func (m *Metrics) ObserveCredentialKey(integrationID, event string) {

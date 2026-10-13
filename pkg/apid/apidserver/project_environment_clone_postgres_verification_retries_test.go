@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type verificationRetryFailureStore struct {
@@ -70,7 +71,7 @@ func retryVerificationWorkerFixture(t *testing.T) (*verificationWorkerFixture, *
 	t.Helper()
 	v := cloneVerificationWorkerFixture(t)
 	store := &verificationRetryFailureStore{verificationWorkerFailureStore: v.store}
-	v.f.db.x.f.srv.store = store
+	v.f.db.x.f.srv.store = statetest.NewPg(store)
 	return v, store
 }
 func runVerificationRetryWorker(t *testing.T, v *verificationWorkerFixture) (state.ProjectEnvironmentClonePostgresVerificationAttempt, error) {
@@ -81,7 +82,7 @@ func runVerificationRetryWorker(t *testing.T, v *verificationWorkerFixture) (sta
 func verificationRetryHistory(t *testing.T, v *verificationWorkerFixture) []state.ProjectEnvironmentClonePostgresVerificationAttempt {
 	t.Helper()
 	f, x := v.f, v.f.db.x
-	history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +394,7 @@ func TestPGClonePostgresVerificationRetryWorkerProviderPostchecksAndAbsentDispat
 						return err
 					}
 					if selected == x.target.DatabaseName {
-						history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+						history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 						if err != nil {
 							return err
 						}

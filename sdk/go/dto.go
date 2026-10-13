@@ -339,6 +339,9 @@ const (
 type (
 	IssueEvent                          = api.IssueEvent
 	IssueFrame                          = api.IssueFrame
+	IssueCause                          = api.IssueCause
+	IssueGroupingFrame                  = api.IssueGroupingFrame
+	IssueGroupingExplanation            = api.IssueGroupingExplanation
 	Issue                               = api.Issue
 	IssueOccurrence                     = api.IssueOccurrence
 	IssueRelease                        = api.IssueRelease
@@ -364,6 +367,7 @@ type (
 	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
 	InvokeWork                 = api.InvokeWork
 )
+type CommitEventPublication = api.CommitEventPublication
 type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse
 type CommitOperationResponse = api.CommitOperationResponse
@@ -373,3 +377,146 @@ type CreateCommitSourceRequest = api.CreateCommitSourceRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
+
+type IssueSplitMatcher = api.IssueSplitMatcher
+type IssueSplitPreview = api.IssueSplitPreview
+
+type IssueSplitRule = api.IssueSplitRule
+type IssueSplitRuleUndoRequest = api.IssueSplitRuleUndoRequest
+type IssueSplitRuleUpdate = api.IssueSplitRuleUpdate
+
+type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
+type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse
+
+type CommitSubscriberWaitResult = api.CommitSubscriberWaitResult
+
+type CommitDeliveryReport = api.CommitDeliveryReport
+type CommitDeliveryReportItem = api.CommitDeliveryReportItem
+
+type CommitDeliveryReportChange = api.CommitDeliveryReportChange
+
+// Commit delivery report recovery evidence aliases.
+type CommitDeliveryReportSubscriber = api.CommitDeliveryReportSubscriber
+type CommitDeliveryReportRecovery = api.CommitDeliveryReportRecovery
+
+// CommitRecoveryPlan describes current read-only recovery eligibility.
+type CommitRecoveryPlan = api.CommitRecoveryPlan
+type CommitRecoveryPlanItem = api.CommitRecoveryPlanItem
+type CommitRecoveryPlanAction = api.CommitRecoveryPlanAction
+
+type CommitRecoveryApplyResult = api.CommitRecoveryApplyResult
+type CommitRecoveryApplyItem = api.CommitRecoveryApplyItem
+
+type EventRoutingRecoveryExpectation = api.EventRoutingRecoveryExpectation
+type ReplayEventFanoutFailureRequest = api.ReplayEventFanoutFailureRequest
+type ReplayEventFanoutFailureResponse = api.ReplayEventFanoutFailureResponse
+
+// CommitRecoveryStatusResult keeps current delivery evidence separate from saved attempts.
+type CommitRecoveryStatusResult = api.CommitRecoveryStatusResult
+type CommitRecoveryStatusItem = api.CommitRecoveryStatusItem
+type CommitRecoveryDiagnostics = api.CommitRecoveryDiagnostics
+
+type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection
+
+type CommitRecoveryStatusObservation = api.CommitRecoveryStatusObservation
+type CommitRecoveryStatusChange = api.CommitRecoveryStatusChange
+
+// CommitRecoveryStatusSettled reports terminal acknowledged execution coverage.
+func CommitRecoveryStatusSettled(out CommitRecoveryStatusResult) bool {
+	return api.CommitRecoveryStatusSettled(out)
+}
+
+// CommitRecoveryMonitoring describes a bounded watch invocation.
+type CommitRecoveryMonitoring = api.CommitRecoveryMonitoring
+
+// CommitRecoveryWatchOptions controls retries and optional observation freshness.
+type CommitRecoveryWatchOptions = api.CommitRecoveryWatchOptions
+
+type EventBacklogRecipient = api.EventBacklogRecipient
+type EventBacklogResponse = api.EventBacklogResponse
+type EventBacklogConsumer = api.EventBacklogConsumer
+type EventOrderingBlocker = api.EventOrderingBlocker
+type EventBacklogOptions = api.EventBacklogOptions
+type EventBacklogFilters = api.EventBacklogFilters
+
+type EventRecipientBlockerQuery = api.EventRecipientBlockerQuery
+type EventRecipientBlockerResponse = api.EventRecipientBlockerResponse
+
+type CommitRecoveryDiagnosticProgress = api.CommitRecoveryDiagnosticProgress
+
+type EventRecipientBlockerBatchRequest = api.EventRecipientBlockerBatchRequest
+type EventRecipientBlockerBatchItem = api.EventRecipientBlockerBatchItem
+type EventRecipientBlockerBatchResponse = api.EventRecipientBlockerBatchResponse
+
+type CommitRecoveryDiagnosticsOptions = api.CommitRecoveryDiagnosticsOptions
+
+type CommitRecoveryDiagnosticObservation = api.CommitRecoveryDiagnosticObservation
+type CommitRecoveryDiagnosticRouting = api.CommitRecoveryDiagnosticRouting
+type CommitRecoveryDiagnosticOrdering = api.CommitRecoveryDiagnosticOrdering
+type CommitRecoveryDiagnosticChange = api.CommitRecoveryDiagnosticChange
+
+type CommitRecoveryDiagnosticEstimate = api.CommitRecoveryDiagnosticEstimate
+
+type CommitRecoveryDiagnosticConsumer = api.CommitRecoveryDiagnosticConsumer
+type CommitRecoveryDiagnosticWaiting = api.CommitRecoveryDiagnosticWaiting
+
+type CommitRecoveryConsumerStall = api.CommitRecoveryConsumerStall
+type CommitRecoveryPersistentBlocker = api.CommitRecoveryPersistentBlocker
+
+type CommitRecoveryBlockerIncident = api.CommitRecoveryBlockerIncident
+type CommitRecoveryBlockerTransition = api.CommitRecoveryBlockerTransition
+
+type CommitRecoveryAlertOutbox = api.CommitRecoveryAlertOutbox
+type CommitRecoveryAlertAcknowledgement = api.CommitRecoveryAlertAcknowledgement
+
+// AcknowledgeCommitRecoveryAlerts removes exact pending alerts without live reads.
+func AcknowledgeCommitRecoveryAlerts(status CommitRecoveryStatusResult, acks []CommitRecoveryAlertAcknowledgement) (CommitRecoveryStatusResult, error) {
+	return api.AcknowledgeCommitRecoveryAlerts(status, acks)
+}
+
+// EventConsumerDeliveryHealth combines independent delivery health reads.
+type EventConsumerDeliveryHealth = api.EventConsumerDeliveryHealth
+type EventConsumerPendingSample = api.EventConsumerPendingSample
+
+type EventConsumerHealth = api.EventConsumerHealth
+type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
+type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
+type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
+type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
+
+// EventDeliveryHealthWatchOptions configures health alerts and optional checkpointing.
+type EventDeliveryHealthWatchOptions = api.EventDeliveryHealthWatchOptions
+type EventDeliveryHealthWatchResult = api.EventDeliveryHealthWatchResult
+type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
+type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
+
+type EventConsumerCapacityWaits = api.EventConsumerCapacityWaits
+
+type EventConsumerWaitingReasons = api.EventConsumerWaitingReasons
+
+// EventPendingWaitingReasonCountsComplete verifies an exact known-reason partition.
+func EventPendingWaitingReasonCountsComplete(counts map[string]int64, pending int64) bool {
+	return api.EventPendingWaitingReasonCountsComplete(counts, pending)
+}
+
+// EventDeliveryHealthCheckpoint stores historical watch evidence and pending alerts.
+type EventDeliveryHealthCheckpoint = api.EventDeliveryHealthCheckpoint
+
+// EventDeliveryHealthAcknowledgement selects an exact pending notification.
+type EventDeliveryHealthAcknowledgement = api.EventDeliveryHealthAcknowledgement
+
+func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) error {
+	return api.ValidateEventDeliveryHealthCheckpoint(saved)
+}
+
+func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, acks []EventDeliveryHealthAcknowledgement) (EventDeliveryHealthCheckpoint, error) {
+	return api.AcknowledgeEventDeliveryHealthAlerts(saved, acks)
+}
+
+// EventDeliveryHealthSLOOptions configures sustained window targets.
+type EventDeliveryHealthSLOOptions = api.EventDeliveryHealthSLOOptions
+type EventDeliveryHealthSLOObservation = api.EventDeliveryHealthSLOObservation
+
+func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
+	return api.EvaluateEventConsumerDeliverySLO(h, options)
+}

@@ -614,7 +614,7 @@ checks both providers' wake evidence and all three developer sessions and VM
 identities. Verdict version 20 requires all 38 cases. This qualifies application
 isolation within one instance; native execution requires the designated KVM fleet.
 
-### Strict per-request retry qualification (ADR-1020)
+### Strict per-request retry qualification (ADR-1228)
 
 The strict retry catalog includes four real-VM cases using the instrumented retry caller:
 `req-bounded`, `req-outlier`, `req-no-id`, and `req-no-ack`. Each executes a

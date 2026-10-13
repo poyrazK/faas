@@ -4,12 +4,22 @@ package fcvm
 
 import (
 	"os"
+	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
 // reflinkFile makes dst a copy-on-write clone of src (FICLONE). It fails on
 // filesystems without shared extents, such as ext4.
+// lastUse is a copy's access time, which accountCopy sets on every use.
+func lastUse(info os.FileInfo) time.Time {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return time.Unix(st.Atim.Sec, st.Atim.Nsec)
+	}
+	return info.ModTime()
+}
+
 func reflinkFile(dst, src string) error {
 	in, err := os.Open(src) //nolint:forbidigo // cache-owned base image; read-only source of the clone.
 	if err != nil {

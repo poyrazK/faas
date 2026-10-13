@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,20 +8,21 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{
-		AccountID: e.acct.ID, Slug: "queue-profile", WorkloadClass: state.WorkloadClassWorker,
+	app, err := (*e.Store()).CreateApp(ctx, state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-profile", WorkloadClass: state.WorkloadClassWorker,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodPut, "/v1/apps/queue-profile/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	rec := e.Do(t, http.MethodPut, "/v1/apps/queue-profile/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
@@ -38,12 +39,12 @@ func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
 	if got.App.Slug != app.Slug || got.App.WorkloadClass != "worker" {
 		t.Fatalf("app response = %+v", got.App)
 	}
-	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, got.Binding.ID)
+	triggerID, err := apidserver.QueueBindingTriggerID(ctx, (*e.Store()), app.ID, got.Binding.ID)
 	if err != nil || triggerID == "" {
 		t.Fatalf("consumer projection = %q, err=%v", triggerID, err)
 	}
 
-	stored, err := e.store.AppByID(ctx, app.ID)
+	stored, err := (*e.Store()).AppByID(ctx, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
 		t.Fatalf("stored scaling policy = %+v", stored.ScalingPolicy)
 	}
 
-	rec = e.do(t, http.MethodPut, "/v1/apps/queue-profile/queue-workload", api.QueueWorkloadProfileRequest{
+	rec = e.Do(t, http.MethodPut, "/v1/apps/queue-profile/queue-workload", api.QueueWorkloadProfileRequest{
 		QueueName: "orders", TargetDepth: 5, MaxConcurrency: 3, Force: true,
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -64,7 +65,7 @@ func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
 	if got.Created || got.Binding.QueueName != "orders" || got.Binding.MaxConcurrency != 3 || got.ScalingPolicy == nil || got.ScalingPolicy.Target == nil || got.ScalingPolicy.Target.Value != 5 {
 		t.Fatalf("converged profile = %+v", got)
 	}
-	bindings, err := e.store.ListQueueBindingsForApp(ctx, e.acct.ID, app.ID)
+	bindings, err := (*e.Store()).ListQueueBindingsForApp(ctx, (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,26 +75,26 @@ func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
 }
 
 func TestConfigureQueueWorkloadRejectsQueueMoveWithoutForce(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{
-		AccountID: e.acct.ID, Slug: "queue-conflict", WorkloadClass: state.WorkloadClassWorker,
+	app, err := (*e.Store()).CreateApp(ctx, state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-conflict", WorkloadClass: state.WorkloadClassWorker,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app.ID, Name: "default", QueueName: "payments",
+	if _, err := (*e.Store()).CreateQueueBinding(ctx, state.QueueBinding{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "default", QueueName: "payments",
 		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodPut, "/v1/apps/queue-conflict/queue-workload", api.QueueWorkloadProfileRequest{QueueName: "orders"}, nil)
+	rec := e.Do(t, http.MethodPut, "/v1/apps/queue-conflict/queue-workload", api.QueueWorkloadProfileRequest{QueueName: "orders"}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	stored, err := e.store.AppByID(ctx, app.ID)
+	stored, err := (*e.Store()).AppByID(ctx, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,18 +104,18 @@ func TestConfigureQueueWorkloadRejectsQueueMoveWithoutForce(t *testing.T) {
 }
 
 func TestConfigureQueueWorkloadIsPlanGated(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID, Slug: "queue-free", WorkloadClass: state.WorkloadClassWorker,
+	e := apidserver.Setup(t, api.PlanFree)
+	app, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-free", WorkloadClass: state.WorkloadClassWorker,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodPut, "/v1/apps/queue-free/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	rec := e.Do(t, http.MethodPut, "/v1/apps/queue-free/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status = %d, want 402; body=%s", rec.Code, rec.Body.String())
 	}
-	bindings, err := e.store.ListQueueBindingsForApp(context.Background(), e.acct.ID, app.ID)
+	bindings, err := (*e.Store()).ListQueueBindingsForApp(context.Background(), (*e.Acct()).ID, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,22 +125,22 @@ func TestConfigureQueueWorkloadIsPlanGated(t *testing.T) {
 }
 
 func TestConfigureQueueWorkloadKeepsScopedDefaultsSeparate(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := t.Context()
-	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "queue-profile-scopes"})
+	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "queue-profile-scopes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "queue-profile-scopes", WorkloadClass: state.WorkloadClassWorker})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "queue-profile-scopes", WorkloadClass: state.WorkloadClassWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID, DeploymentScope: "production", Name: "default", QueueName: "orders", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 3})
+	scoped, err := (*e.Store()).CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: (*e.Acct()).ID, AppID: app.ID, DeploymentScope: "production", Name: "default", QueueName: "orders", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []int{http.StatusCreated, http.StatusOK} {
-		rec := e.do(t, http.MethodPut, "/v1/apps/queue-profile-scopes/queue-workload", api.QueueWorkloadProfileRequest{QueueName: "orders", MaxConcurrency: 1}, nil)
+		rec := e.Do(t, http.MethodPut, "/v1/apps/queue-profile-scopes/queue-workload", api.QueueWorkloadProfileRequest{QueueName: "orders", MaxConcurrency: 1}, nil)
 		if rec.Code != status {
 			t.Fatalf("profile status=%d want=%d body=%s", rec.Code, status, rec.Body.String())
 		}
@@ -151,7 +152,7 @@ func TestConfigureQueueWorkloadKeepsScopedDefaultsSeparate(t *testing.T) {
 			t.Fatalf("legacy profile selected scoped default: %+v", got.Binding)
 		}
 	}
-	current, err := e.store.QueueBindingByID(ctx, e.acct.ID, app.ID, scoped.Binding.ID)
+	current, err := (*e.Store()).QueueBindingByID(ctx, (*e.Acct()).ID, app.ID, scoped.Binding.ID)
 	if err != nil || current.DeploymentScope != "production" || current.EnvironmentID != scoped.Binding.EnvironmentID || current.MaxConcurrency != 3 {
 		t.Fatalf("legacy profile changed scoped binding: %+v %v", current, err)
 	}
@@ -161,13 +162,13 @@ func TestConfigureQueueWorkloadKeepsScopedDefaultsSeparate(t *testing.T) {
 // named workload_class, a field the caller never set (production-us hunt #5,
 // H5-27); it now says what the command supports and what to use instead.
 func TestConfigureQueueWorkloadExplainsHTTPApps(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	if _, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID, Slug: "queue-http", WorkloadClass: state.WorkloadClassHTTP,
+	e := apidserver.Setup(t, api.PlanPro)
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-http", WorkloadClass: state.WorkloadClassHTTP,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, http.MethodPut, "/v1/apps/queue-http/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	rec := e.Do(t, http.MethodPut, "/v1/apps/queue-http/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}

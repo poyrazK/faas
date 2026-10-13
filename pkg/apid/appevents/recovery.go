@@ -29,6 +29,12 @@ func (s *Service) writeEventRecovery(w http.ResponseWriter, r *http.Request, sta
 		return
 	}
 	switch {
+	case errors.Is(err, state.ErrEventRecoveryChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "selected workflow recovery targets are no longer available"))
+	case errors.Is(err, state.ErrWorkflowRecoveryReviewConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery review already decided", err.Error()))
+	case errors.Is(err, state.ErrWorkflowRecoveryPolicyConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery policy changed", err.Error()))
 	case errors.Is(err, state.ErrEventRecoveryQuery):
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 	case errors.Is(err, state.ErrEventRecoveryRetryParent):
@@ -43,6 +49,8 @@ func (s *Service) writeEventRecovery(w http.ResponseWriter, r *http.Request, sta
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Event recovery not found", "the recovery target does not belong to this account"))
 	case errors.Is(err, state.ErrEventRecoveryNotificationRetryLimit):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Notification retry limit reached", fmt.Sprintf("at most %d retry decisions per retained job; see /docs/event-driven", api.EventRecoveryNotificationRetryReceiptsMax)))
+	case errors.Is(err, state.ErrWorkflowRecoveryActionReceiptLimit):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery action limit reached", fmt.Sprintf("at most %d action receipts per retained job", api.WorkflowRecoveryActionReceiptsMax)))
 	case errors.Is(err, state.ErrEventRecoveryQuota):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event recovery limit reached", fmt.Sprintf("at most %d active jobs per account; see /docs/event-driven", api.EventRecoveryActiveJobsMax)))
 	case errors.Is(err, state.ErrEventRecoverySelection):
@@ -56,7 +64,7 @@ func (s *Service) writeEventRecovery(w http.ResponseWriter, r *http.Request, sta
 }
 func decodeEventRecovery(r *http.Request) (api.EventRecoveryRequest, error) {
 	var req api.EventRecoveryRequest
-	if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil {
+	if err := httpkit.DecodeJSONSized(r, &req, api.EventRecoveryRequestMaxBytes); err != nil {
 		return req, fmt.Errorf("%w: %w", state.ErrEventRecoveryQuery, err)
 	}
 	if err := req.Validate(); err != nil {
@@ -95,6 +103,10 @@ func (s *Service) CreateEventRecovery(w http.ResponseWriter, r *http.Request, ac
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	if req.WorkflowRuns != nil && !s.Host.WorkflowRuntimeEnabled() {
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
 	}
 	out, err := store.CreateEventRecovery(r.Context(), acct.ID, app.ID, req)

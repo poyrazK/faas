@@ -13,7 +13,7 @@
 // shape and the (a) cursor semantics, (b) nulls-last ordering, and
 // (c) cross-app/cross-account IDOR are each load-bearing enough
 // that future DTO drift must surface here first.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,8 +49,8 @@ func listBuildsTestServer(t *testing.T) (h http.Handler, key string, store *stat
 	if _, err = store.CreateAPIKey(context.Background(), acct.ID, hash, "list-test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	return srv.handler(), pt, store, acct
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	return srv.Handler(), pt, store, acct
 }
 
 // listBuildsGet issues a Bearer-authed GET against `h`. Mirrors

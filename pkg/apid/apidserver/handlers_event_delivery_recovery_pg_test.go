@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -19,11 +19,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // ADR-607 acceptance drives the scheduler; production apid only records intent.
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Public publish/receipt/replay handlers, real fanout and drain, PostgreSQL,
@@ -36,10 +38,10 @@ func TestEventDeliveryRecoveryPostgresHTTP(t *testing.T) {
 }
 
 type eventDeliverySettlementLossStore struct {
-	*state.PgStore
-	target string
-	lost   atomic.Bool
-	claim  state.InvocationClaim
+	PgStore *state.PgStore
+	target  string
+	lost    atomic.Bool
+	claim   state.InvocationClaim
 }
 
 func (s *eventDeliverySettlementLossStore) CompleteInvocationClaim(ctx context.Context, id string, claim state.InvocationClaim, result json.RawMessage) error {
@@ -122,12 +124,12 @@ func (d *eventDeliveryRecoveryDispatcher) InvokeWithTargetStatus(ctx context.Con
 }
 
 func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
-	e := setupPGHandler(t, api.PlanHobby)
-	store := e.store.(*state.PgStore)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	store := (*e.Store()).(*state.PgStore)
 	ctx := t.Context()
-	fixture := &eventDeliveryHTTPFixture{t: t, account: e.acct.ID, roles: map[string]string{}, apps: map[string]string{}, recoveryKind: recoveryKind,
+	fixture := &eventDeliveryHTTPFixture{t: t, account: (*e.Acct()).ID, roles: map[string]string{}, apps: map[string]string{}, recoveryKind: recoveryKind,
 		calls: map[string]int{}, effects: map[string]int{}, seen: map[string]bool{}}
-	apps, subscriptions := seedEventDeliveryRecoveryConsumers(t, store, e.acct.ID, fixture)
+	apps, subscriptions := seedEventDeliveryRecoveryConsumers(t, store, (*e.Acct()).ID, fixture)
 	consumer := httptest.NewServer(fixture)
 	t.Cleanup(consumer.Close)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -138,7 +140,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	published := e.do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "delivery-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}, nil)
+	published := e.Do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "delivery-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}, nil)
 	if published.Code != http.StatusAccepted {
 		t.Fatalf("publish: %d %s", published.Code, published.Body)
 	}
@@ -162,7 +164,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 		ids[i] = rows[0].ID
 	}
 	loss := &eventDeliverySettlementLossStore{PgStore: store, target: ids[1]}
-	drain := sched.NewDrain(loss, engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
+	drain := sched.NewDrain(statetest.NewPg(loss), engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
 	drain.Tick(ctx)
 	initial := readEventDeliveryRecoveryReceipt(t, e)
 	assertEventRecoveryConsumerState(t, initial, subscriptions[0].ID, "completed", 1)
@@ -171,7 +173,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	// A new store/engine/drain must reclaim the abandoned attempt. Its
 	// history says unknown; the handler's deduplication absorbs the repeat.
 	stop()
-	store = state.NewPgStore(e.pool)
+	store = state.NewPgStore((*e.Pool()))
 	engine, err = sched.NewEngine(ctx, store, sched.NewNodeLedger(), nil, nil, "1.10.0", log)
 	if err != nil {
 		t.Fatal(err)
@@ -215,12 +217,12 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	}
 	assertEventRecoveryOutcomes(t, readEventDeliveryRecoveryAttempts(t, e, subscriptions[2].ID), poisonOutcomes)
 	fixture.poisonResolved.Store(true)
-	replayed := e.do(t, action.Method, action.URL, action.Body, nil)
+	replayed := e.Do(t, action.Method, action.URL, action.Body, nil)
 	if replayed.Code != http.StatusAccepted && replayed.Code != http.StatusOK {
 		t.Fatalf("selective recovery: %d %s", replayed.Code, replayed.Body)
 	}
 	if recoveryKind == "handler_replay" {
-		duplicate := e.do(t, action.Method, action.URL, action.Body, nil)
+		duplicate := e.Do(t, action.Method, action.URL, action.Body, nil)
 		var first, second api.AsyncInvokeResponse
 		if json.Unmarshal(replayed.Body.Bytes(), &first) != nil || json.Unmarshal(duplicate.Body.Bytes(), &second) != nil || first.ID == "" || first.ID != second.ID {
 			t.Fatalf("duplicate plain recovery: first=%s second=%s", replayed.Body, duplicate.Body)
@@ -235,7 +237,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	poisonOutcomes["succeeded"] = 1
 	assertEventRecoveryOutcomes(t, poisonHistory, poisonOutcomes)
 	assertEventRecoveryReplayEvidence(t, e, store, apps[2], subscriptions[2].ID, ids[2], recoveryKind, poisonHistory)
-	duplicate := e.do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "delivery-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}, nil)
+	duplicate := e.Do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "delivery-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}, nil)
 	if duplicate.Code != http.StatusAccepted {
 		t.Fatalf("duplicate publication: %d %s", duplicate.Code, duplicate.Body)
 	}
@@ -265,11 +267,11 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	}
 }
 
-func startEventDeliveryRecoveryScheduler(t *testing.T, e pgHandlerEnv, engine *sched.Engine, log *slog.Logger, adopt bool) func() {
+func startEventDeliveryRecoveryScheduler(t *testing.T, e apidserver.PgHandlerEnv, engine *sched.Engine, log *slog.Logger, adopt bool) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- sched.NewLoop(e.pool, engine, log).WithEventRecipientClaims(adopt).Run(ctx) }()
+	go func() { done <- sched.NewLoop((*e.Pool()), engine, log).WithEventRecipientClaims(adopt).Run(ctx) }()
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
@@ -340,9 +342,9 @@ func waitEventRecoveryCondition(t *testing.T, condition func() bool) {
 	}
 }
 
-func readEventDeliveryRecoveryReceipt(t *testing.T, e pgHandlerEnv) api.EventReceiptResponse {
+func readEventDeliveryRecoveryReceipt(t *testing.T, e apidserver.PgHandlerEnv) api.EventReceiptResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodGet, appevents.EventReceiptURL("orders", "delivery-recovery"), nil, nil)
+	rec := e.Do(t, http.MethodGet, appevents.EventReceiptURL("orders", "delivery-recovery"), nil, nil)
 	var receipt api.EventReceiptResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &receipt) != nil || len(receipt.Recipients) != 3 {
 		t.Fatalf("receipt: %d %s", rec.Code, rec.Body)
@@ -350,9 +352,9 @@ func readEventDeliveryRecoveryReceipt(t *testing.T, e pgHandlerEnv) api.EventRec
 	return receipt
 }
 
-func readEventDeliveryRecoveryAttempts(t *testing.T, e pgHandlerEnv, subscription string) []api.InvocationAttemptResponse {
+func readEventDeliveryRecoveryAttempts(t *testing.T, e apidserver.PgHandlerEnv, subscription string) []api.InvocationAttemptResponse {
 	t.Helper()
-	rec := e.do(t, http.MethodGet, appevents.EventReceiptAttemptURL("orders", "delivery-recovery", subscription), nil, nil)
+	rec := e.Do(t, http.MethodGet, appevents.EventReceiptAttemptURL("orders", "delivery-recovery", subscription), nil, nil)
 	var history api.EventReceiptAttemptHistoryResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &history) != nil || history.Coverage != "recorded_attempts_only" {
 		t.Fatalf("attempt history: %d %s", rec.Code, rec.Body)
@@ -410,7 +412,7 @@ func assertEventRecoveredPoison(t *testing.T, receipt api.EventReceiptResponse, 
 	t.Fatalf("recovered consumer missing: %s", subscription)
 }
 
-func assertEventRecoveryReplayEvidence(t *testing.T, e pgHandlerEnv, store *state.PgStore, app state.App, subscription, originalID, kind string, attempts []api.InvocationAttemptResponse) {
+func assertEventRecoveryReplayEvidence(t *testing.T, e apidserver.PgHandlerEnv, store *state.PgStore, app state.App, subscription, originalID, kind string, attempts []api.InvocationAttemptResponse) {
 	t.Helper()
 	if kind == "dead_letter_replay" {
 		deadLetters, err := store.ListDeadLetterEvents(t.Context(), app.ID, 10, "")
@@ -424,7 +426,7 @@ func assertEventRecoveryReplayEvidence(t *testing.T, e pgHandlerEnv, store *stat
 		}
 		return
 	}
-	rec := e.do(t, http.MethodGet, appevents.EventReceiptReplayURL("orders", "delivery-recovery", subscription), nil, nil)
+	rec := e.Do(t, http.MethodGet, appevents.EventReceiptReplayURL("orders", "delivery-recovery", subscription), nil, nil)
 	var history api.EventReceiptReplayHistoryResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &history) != nil || len(history.Replays) != 1 || history.Replays[0].ReplayedFromInvocationID != originalID || history.Replays[0].State != "completed" {
 		t.Fatalf("plain replay lineage: %d %s", rec.Code, rec.Body)

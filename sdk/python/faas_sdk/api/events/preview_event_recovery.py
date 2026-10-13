@@ -101,7 +101,8 @@ def sync_detailed(
             failures remain selectable even when execution or receipt evidence has disappeared;
             admission skips changes rather than following newer work. Ordinary execution mode includes
             publication and materialized backfill recipients, excludes workflows and object
-            notifications, and requires retained admission and execution records. Creation freezes its
+            notifications, and requires retained admission and execution records. Native workflow mode
+            requires explicit workflow_runs and never selects event recipients. Creation freezes its
             own selection; preview is advisory.
 
     Raises:
@@ -141,7 +142,8 @@ def sync(
             failures remain selectable even when execution or receipt evidence has disappeared;
             admission skips changes rather than following newer work. Ordinary execution mode includes
             publication and materialized backfill recipients, excludes workflows and object
-            notifications, and requires retained admission and execution records. Creation freezes its
+            notifications, and requires retained admission and execution records. Native workflow mode
+            requires explicit workflow_runs and never selects event recipients. Creation freezes its
             own selection; preview is advisory.
 
     Raises:
@@ -176,7 +178,8 @@ async def asyncio_detailed(
             failures remain selectable even when execution or receipt evidence has disappeared;
             admission skips changes rather than following newer work. Ordinary execution mode includes
             publication and materialized backfill recipients, excludes workflows and object
-            notifications, and requires retained admission and execution records. Creation freezes its
+            notifications, and requires retained admission and execution records. Native workflow mode
+            requires explicit workflow_runs and never selects event recipients. Creation freezes its
             own selection; preview is advisory.
 
     Raises:
@@ -214,7 +217,8 @@ async def asyncio(
             failures remain selectable even when execution or receipt evidence has disappeared;
             admission skips changes rather than following newer work. Ordinary execution mode includes
             publication and materialized backfill recipients, excludes workflows and object
-            notifications, and requires retained admission and execution records. Creation freezes its
+            notifications, and requires retained admission and execution records. Native workflow mode
+            requires explicit workflow_runs and never selects event recipients. Creation freezes its
             own selection; preview is advisory.
 
     Raises:

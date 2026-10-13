@@ -207,17 +207,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
 		return
 	}
-	workflowIdentity, ok := h.callerWorkflowIdentity(w, r, integration, path)
-	if !ok {
+	// ADR-997: the replay worker calls in process for an account's own
+	// customer AI integrations; nothing else can carry its principal.
+	replay, isReplay := replayPrincipalFromContext(r.Context())
+	if isReplay && !replayAllowed(integration, replay) {
+		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
-	executionIdentity, isExecution, ok := h.callerExecutionIdentity(w, r, integration)
-	if !ok {
-		return
+	var workflowIdentity *WorkflowIdentity
+	var executionIdentity ExecutionIdentity
+	var isExecution bool
+	if !isReplay {
+		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
+			return
+		}
+		if executionIdentity, isExecution, ok = h.callerExecutionIdentity(w, r, integration); !ok {
+			return
+		}
 	}
 	appID := ""
 	principalID := ""
-	if isExecution {
+	if isReplay {
+		principalID = "replay:" + replay.replayID
+	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
 			return
@@ -247,13 +259,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = appID
 	}
 	var allowedRoute bool
-	if isExecution {
+	if isExecution || isReplay {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
 	}
 	if !allowedRoute || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
+		return
+	}
+	aiEndUser, aiAffinity, ok := aiCallerKeys(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_user_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_user_invalid",
+			"X-Gregale-AI-User and X-Gregale-AI-Session must each be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
 		return
 	}
 	var managedAuthorization string
@@ -274,7 +293,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
 	}
-	aiReq, err := readAIRequest(r, integration, path)
+	aiReq, aiForm, err := readAIRequest(r, integration, path)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -294,7 +313,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// ADR-991: guardrails run before admission; the plan carries the call's
 	// reservation into it.
-	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq)
+	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq, aiForm)
+	if aiPlan != nil {
+		h.observeContentPolicy(w, metricIntegrationID, aiPlan.content)
+	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
@@ -317,6 +339,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AIReservedCostMillicents:       reserve.cost,
 		BindingRequestsPerMinute:       copyInt64Pointer(guard.RequestsPerMinute),
 		BindingTokensPerMinute:         copyInt64Pointer(guard.TokensPerMinute),
+		AIEndUser:                      aiEndUser,
+		UserDailyAITokenLimit:          copyInt64Pointer(integration.AIUserDailyTokenLimit),
+		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -368,7 +393,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
-				poolKeys = h.keyPools.order(integration.ID, keys, time.Now())
+				poolKeys = h.keyPools.order(integration.ID, keys, time.Now(), aiAffinity)
 				managedAuthorization = poolKeys[0].Value
 			}
 		} else {
@@ -563,9 +588,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
-		defer h.settleAIUsage(ctx, integration, appID, aiSettlement{
+		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-		}, aiObserver, dependencySpan, metricIntegrationID)
+			endUser: aiEndUser,
+		}
+		if aiPlan != nil {
+			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
+			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
+		}
+		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)

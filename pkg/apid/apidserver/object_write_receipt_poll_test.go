@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 

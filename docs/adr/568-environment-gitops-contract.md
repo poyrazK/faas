@@ -970,6 +970,9 @@ environment or one that manages only environment configuration; a missing or
 null map is rejected. Removing the last workload produces the same reviewed
 prune candidates as any other removal, preserves unmanaged resources and
 other managers, and remains blocked by the workload pruning adapter gate.
+An initially configuration-only environment may converge when no Git-managed
+deployment is serving in its scope. An active managed release or live-scope
+fallback keeps the empty revision pending until reviewed pruning is available.
 
 Source and Dockerfile preparation now persists the exact approved source commit
 separately from its directory/Dockerfile parameters. A commit-only change therefore

@@ -11,10 +11,12 @@ import (
 // time in its period (ADR-991). Limit and Used are tokens for token budgets
 // and millicents for cost budgets.
 type AIBudgetAlert struct {
-	ID               string
-	IntegrationID    string
-	Budget           string
-	AppID            string
+	ID            string
+	IntegrationID string
+	Budget        string
+	AppID         string
+	// EndUser names the end user of a per-user budget (ADR-995).
+	EndUser          string
 	PeriodStart      time.Time
 	ThresholdPercent int
 	Limit            int64
@@ -60,6 +62,8 @@ type aiBudgetCrossing struct {
 	limit       *int64
 	before      int64
 	after       int64
+	// endUser names the end user of a per-user budget (ADR-995).
+	endUser string
 }
 
 // aiBudgetAlertsFor lists the alerts a settlement's budget changes reached.
@@ -68,12 +72,25 @@ func aiBudgetAlertsFor(integrationID string, crossings []aiBudgetCrossing, now t
 	for _, crossing := range crossings {
 		for _, percent := range crossedAIBudgetThresholds(crossing.limit, crossing.before, crossing.after) {
 			alerts = append(alerts, AIBudgetAlert{
-				IntegrationID: integrationID, Budget: crossing.budget, AppID: crossing.appID, PeriodStart: crossing.periodStart,
-				ThresholdPercent: percent, Limit: *crossing.limit, Used: crossing.after, CrossedAt: now,
+				IntegrationID: integrationID, Budget: crossing.budget, AppID: crossing.appID, EndUser: crossing.endUser,
+				PeriodStart: crossing.periodStart, ThresholdPercent: percent, Limit: *crossing.limit, Used: crossing.after, CrossedAt: now,
 			})
 		}
 	}
 	return alerts
+}
+
+// userBudgetCrossings lists one end user's token and cost budget changes
+// for a settlement (ADR-995): before and after are the user's UTC-day
+// totals. The overflow row has no per-user limits, so it never alerts.
+func userBudgetCrossings(endUser string, day time.Time, tokenLimit, costLimit *int64, tokensAfter, costAfter, tokens, cost int64) []aiBudgetCrossing {
+	if endUser == "" || endUser == api.OutboundAIUserOverflow {
+		return nil
+	}
+	return []aiBudgetCrossing{
+		{budget: api.OutboundAIBudgetUserDailyTokens, endUser: endUser, periodStart: day, limit: tokenLimit, before: tokensAfter - tokens, after: tokensAfter},
+		{budget: api.OutboundAIBudgetUserDailyCost, endUser: endUser, periodStart: day, limit: costLimit, before: costAfter - cost, after: costAfter},
+	}
 }
 
 func utcDayStart(t time.Time) time.Time {

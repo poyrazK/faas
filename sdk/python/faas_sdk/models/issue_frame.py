@@ -13,7 +13,7 @@ T = TypeVar("T", bound="IssueFrame")
 
 @_attrs_define
 class IssueFrame:
-    """A sanitized application stack frame used by grouping version 1."""
+    """A sanitized stack frame. Grouping excludes line numbers; in_app selects application evidence."""
 
     file: str
     function: str

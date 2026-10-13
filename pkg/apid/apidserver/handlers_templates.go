@@ -42,6 +42,8 @@ type templateView struct {
 // these out of the <select>.
 func templateDescription(name string) string {
 	switch name {
+	case "durable-entity-node":
+		return "Node.js durable entity with local development, typed clients and object-storage-backed state"
 	case "hello-node":
 		return "minimal Node.js HTTP server — first-touch smoke test"
 	case "hello-python":
@@ -60,6 +62,8 @@ func templateDescription(name string) string {
 		return "Rust function on the binary runtime — static executable built from a Dockerfile"
 	case "s3-uploader":
 		return "S3-compatible PUT/GET adapter — bring your own bucket"
+	case "object-storage-node":
+		return "Node.js app with managed object storage, scoped compute credentials and safe secret reload"
 	case "slack-bot":
 		return "Slack slash-command handler — bring your own tokens"
 	case "rest-api-postgres":

@@ -1,0 +1,8 @@
+# ADR-1201 · Scenario HTTP response body faults
+
+- **Status:** accepted
+- **Date:** 2026-10-12
+- **Decision:** Add `http_malformed_json` and `http_truncated_body` faults to the scenario-scoped internal HTTP service proxy. Both synthesize HTTP 200 with a small JSON prefix; malformed JSON declares the actual prefix length, while truncation declares the longer complete entity length and ends early.
+- **Why:** Status-code faults cannot exercise JSON parser failures and premature response-body EOF handling.
+- **Consequences:** The fault is terminal and does not forward to the dependency. It retains existing authorization, namespace isolation, percentage selection, match counters, expiry and cleanup. HEAD requests skip body faults and do not count as matches. Synthetic bytes and lengths are fixed; no arbitrary payload or unbounded response configuration is introduced. API and gateway upgrades are required. No database migration or VM lifecycle change is needed. HTTP/1 closes a short-body connection; HTTP/2 clients observe a content-length mismatch at stream completion. The example retries only read-only GET requests and checks its attempt/deadline budgets. These faults do not certify write idempotency or simulate a dependency committing a write before losing its response; the checkout lost-ack example covers that separate outcome.
+- **Rejected alternatives:** Hijacking connections would bypass response wrappers and HTTP/2 support. Intercepting arbitrary upstream responses after dependency execution would require a separate protocol-aware forwarding contract. Arbitrary body overrides and configurable payload sizes are deferred.

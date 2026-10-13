@@ -1277,6 +1277,8 @@ type Handler struct {
 	geoReader CountryReader
 	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
+	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
+	botVerifier *BotVerifier
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -2644,6 +2646,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		// cases to a single "don't stamp" path so
 		// the hot path is a single non-nil test.
 		if app.CORSDefaultEnabled != nil && *app.CORSDefaultEnabled && len(app.CORSDefaultOrigins) > 0 {
+			rec.installHeaderOps(corsVaryOps)
 			origin := r.Header.Get("Origin")
 			allowedOrigin := matchOrigin(app.CORSDefaultOrigins, origin)
 			if origin != "" && allowedOrigin != "" && rec != nil {
@@ -2668,6 +2671,9 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		}
 		return false
 	}
+	// From here the response depends on the request's Origin whatever it
+	// is, including when the request has none.
+	rec.installHeaderOps(corsVaryOps)
 	if requestedMethod != "" {
 		allowed := false
 		for _, method := range rule.AllowMethods {
@@ -2780,6 +2786,16 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 	}
 	return origin[:idx], origin[idx+3:], true
 }
+
+// corsVaryOps marks a response whose CORS headers depend on the request's
+// Origin. The gateway stamps Access-Control-Allow-Origin only for an allowed
+// origin and omits it when the request has none, so without Vary: Origin a
+// browser or shared cache that stored one answer (for example a direct page
+// load of a Cache-Control: public resource) replays it to a cross-origin
+// fetch from an allowed origin, which the browser then blocks (production-us
+// hunt #9, H9-130). The platform response cache is unaffected: it captures
+// the response before these ops run and re-applies CORS on every hit.
+var corsVaryOps = []EdgeRuleHeaderOp{{Action: "vary", Name: "Vary", Value: "Origin"}}
 
 // corsDefaultOps is the per-app default CORS header op set (CORS
 // improvements D1). Mirrors the shape of corsResponseOps above
@@ -4619,11 +4635,29 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			return
 		}
 		hdr.Set(op.Name, op.Value)
+	case "vary":
+		// Platform-only (customer header ops validate to add/set/remove):
+		// add one field name to the list unless it is already covered.
+		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
 			hdr.Add(op.Name, op.Value)
 		}
 	}
+}
+
+// addVaryField appends field to the response's Vary list unless the list
+// already names it or is "*".
+func addVaryField(hdr http.Header, field string) {
+	for _, value := range hdr.Values("Vary") {
+		for _, existing := range strings.Split(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
+	}
+	hdr.Add("Vary", field)
 }
 
 // bearerTokenFromHeader is the per-deployment authz branch's
@@ -5664,6 +5698,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
 	// ADR-965: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
@@ -5702,7 +5737,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) {
+			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -6904,11 +6939,14 @@ haveApp:
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 		if burstErr != nil {
+			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
+				burstErr = fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, burstErr)
+			}
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects
 			// remain silent; genuine admission failures use the normal

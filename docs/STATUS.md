@@ -7,6 +7,27 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Combined PostgreSQL rollout readiness — 2026-10-12
+
+[ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
+and durable lifecycle evidence with a separately approved native guest bundle.
+The offline verifier requires the same clean source revision, SQL major, current
+artifact hashes and unexpired evidence. Staging canaries can opt into enforcement;
+partial configuration cannot fall back to legacy approval. Portable race, verdict,
+lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20261012-managed-postgres-rollout-readiness/REPORT.md)
+record the qualification boundary. Supported native execution remains pending; this change
+does not enable production provisioning or alter Neon resources or billing.
+
+## Deployed PostgreSQL starter qualification — 2026-10-12
+
+The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
+thirteen phases, including the shipped Node starter, real public API rotation,
+restored pools and failed-hook cold fallback. The portable public API and restricted
+TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
+record the narrowed API build and outstanding guest execution. The internal GCE
+node failed preflight with existing jail/mount leaks and provides nested diagnostics
+only. Supported native KVM qualification remains pending; provisioning stays disabled.
+
 ## Local built validators and project publication — 2026-10-10
 
 [ADR-948](adr/948-built-validator-artifacts-and-project-publication.md) adds explicit
@@ -309,6 +330,15 @@ full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
+capture the app instance catalog and native member reservations atomically under
+an existing admission fence and ownership epoch. Restart recovery reuses the
+original receipts. Unsupported members, empty/oversized inventories and stale
+authority block the catalog verdict; terminal rows alone are never receipts.
+The `catalog_retired` observation remains separate from external SQL-session
+isolation, route convergence and customer activation. Production provisioning
+and customer activation remain disabled; native KVM acceptance is outstanding.
+
 Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot
 ([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). Current UID
@@ -518,6 +548,28 @@ so each restore ran a fresh handler process. The migration's Up, Down and
 replay passed on Postgres 16.
 Functions without an explicit `idle_timeout_s` park after 30 s on every
 plan (ADR-974, `Limits.DefaultIdleTimeoutS`); apps keep the plan default.
+Functions stream responses and send every header value (ADR-999). All five
+runners share `guest/runners/internal.Serve`. Node Fetch bodies still being
+produced, async-iterable and Python generator bodies, and Go handlers that
+`Flush` stream; every other response is sent whole as before. Evidence,
+2026-10-12 on `gregale-internal-test-1` (`cmd/e2e`
+`TestFunctionStreamingMetal`, full daemon set): a streamed response reached
+the client through the gateway with its first chunk 0.8 ms after the headers
+and the second 1.97 s later, matching the handler's 2 s pause, and with both
+`Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
+runner core.
+Request timeouts have per-plan ceilings: Free 30 s, Hobby 1 min, Pro 5 min,
+Scale 15 min (ADR-1150, `Limits.RequestBudgetMaxMs`). The gateway passes the
+budget left to the guest in `X-Faas-Deadline-Ms`, and the runner bounds an
+invocation by the longer of that and 30 s. Evidence, 2026-10-12 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set): a Pro function with `request_timeout_s=120` and the default
+30 s idle timeout streamed four ticks over 36.1 s through the gateway. Its
+handler saw `X-Faas-Deadline-Ms=119999`, not the 86400000 the client sent.
+The first attempt was cut at 29.5 s: on single-box installs schedd's stats
+poller read only the empty capacity-stream cache, so the idle reaper never
+saw the in-flight request. The poller now reads vmmd `Stats` directly when
+schedd has no owner node.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

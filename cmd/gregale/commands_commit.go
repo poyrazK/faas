@@ -15,6 +15,18 @@ import (
 func cmdCommit(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "recovery-alerts":
+			return cmdCommitRecoveryAlerts(args[1:])
+		case "recovery-status":
+			return cmdCommitRecoveryStatus(args[1:])
+		case "recovery-apply":
+			return cmdCommitRecoveryApply(args[1:])
+		case "recovery-plan":
+			return cmdCommitRecoveryPlan(args[1:])
+		case "delivery-report":
+			return cmdCommitDeliveryReport(args[1:])
+		case "history":
+			return cmdCommitHistory(args[1:])
 		case "doctor":
 			return cmdCommitDoctor(args[1:])
 		case "inspect", "wait":
@@ -22,14 +34,15 @@ func cmdCommit(args []string) int {
 		}
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|inspect|wait|operation|receipt|blocked|replay>", "commit")
+		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|history|delivery-report|recovery-plan|recovery-apply|recovery-status|recovery-alerts|inspect|wait|operation|receipt|blocked|replay>", "commit")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:], "allow-tenant-selection")
 	fs := newFlagSet("commit "+args[0], flag.ContinueOnError)
 	name := fs.String("name", "", "unique account source name")
+	destination := fs.String("destination", "operation", "immutable destination: operation or event")
 	operationPolicy := fs.String("operation-policy", "", "queue policy for managed Operations")
-	contractVersion := fs.Int("contract-version", 1, "immutable source contract version (1 or 2)")
+	contractVersion := fs.Int("contract-version", 1, "immutable source contract version (1, 2 or 3)")
 	allowTenant := fs.Bool("allow-tenant-selection", false, "grant a version 2 source account-owner authority to select linked customers")
 	file := fs.String("file", "", "file containing PostgreSQL connection URL (never print it)")
 	if err := fs.Parse(flags); err != nil {
@@ -39,12 +52,14 @@ func cmdCommit(args []string) int {
 		return 1
 	}
 	verb := args[0]
-	if (*contractVersion != 1 && *contractVersion != 2) || (*allowTenant && *contractVersion != 2) {
+	if (*destination != "operation" && *destination != "event") ||
+		(*destination == "operation" && *contractVersion != 1 && *contractVersion != 2) ||
+		(*destination == "event" && (*contractVersion != 3 || *operationPolicy != "" || *allowTenant)) || (*allowTenant && *contractVersion != 2) {
 		return 1
 	}
 	sourceFlags := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "operation-policy" || f.Name == "contract-version" || f.Name == "allow-tenant-selection" {
+		if f.Name == "destination" || f.Name == "operation-policy" || f.Name == "contract-version" || f.Name == "allow-tenant-selection" {
 			sourceFlags = true
 		}
 	})
@@ -53,7 +68,7 @@ func cmdCommit(args []string) int {
 	}
 	switch verb {
 	case "add":
-		if len(positional) != 1 || strings.TrimSpace(*name) == "" || strings.TrimSpace(*operationPolicy) == "" || *file != "" {
+		if len(positional) != 1 || strings.TrimSpace(*name) == "" || (*destination == "operation" && strings.TrimSpace(*operationPolicy) == "") || *file != "" {
 			return 1
 		}
 	case "connection":
@@ -87,7 +102,7 @@ func cmdCommit(args []string) int {
 	var result any
 	switch verb {
 	case "add":
-		result, err = client.CreateCommitSourceWithOptions(ctx, positional[0], api.CreateCommitSourceRequest{Name: *name, OperationPolicy: *operationPolicy, ContractVersion: *contractVersion, AllowTenantSelection: *allowTenant})
+		result, err = client.CreateCommitSourceWithOptions(ctx, positional[0], api.CreateCommitSourceRequest{Name: *name, Destination: *destination, OperationPolicy: *operationPolicy, ContractVersion: *contractVersion, AllowTenantSelection: *allowTenant})
 	case "pause", "resume":
 		result, err = client.SetCommitSourceEnabled(ctx, positional[0], verb == "resume")
 	case "blocked":

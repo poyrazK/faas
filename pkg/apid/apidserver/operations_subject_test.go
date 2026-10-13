@@ -1,5 +1,5 @@
 // ADR-714: subject queries use the existing authenticated history boundary.
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -62,7 +63,7 @@ func TestDashboardOperationSubjects(t *testing.T) {
 		}
 		ids = append(ids, op.ID)
 	}
-	base := dashboardCustomerOperationsURL(f.app.Slug)
+	base := apidserver.DashboardCustomerOperationsURL(f.app.Slug)
 	query := url.Values{"scope": {dep.Scope}, "subject_type": {"order"}, "subject_id": {ref}, "limit": {"1"}}
 	list := f.get(t, base+"?"+query.Encode(), http.StatusOK)
 	body := list.Body.String()
@@ -82,11 +83,11 @@ func TestDashboardOperationSubjects(t *testing.T) {
 	if strings.Contains(nextBody, ids[2]) || !strings.Contains(nextBody, html.EscapeString(ref)) {
 		t.Fatal("reference pagination exposed another entity")
 	}
-	opts, err := dashboardOperationListOptions(httptest.NewRequest(http.MethodGet, base+"?"+query.Encode(), nil), f.app.ID)
+	opts, err := apidserver.DashboardOperationListOptions(httptest.NewRequest(http.MethodGet, base+"?"+query.Encode(), nil), f.app.ID)
 	if err != nil || opts.SubjectType != "order" || opts.SubjectID != ref {
 		t.Fatalf("dashboard lost selector: %+v %v", opts, err)
 	}
-	related := dashboardOperationSubjectURL(f.app.Slug, dep.Scope, f.tenant.ID, &api.OperationSubject{Type: "order", ID: ref})
+	related := apidserver.DashboardOperationSubjectURL(f.app.Slug, dep.Scope, f.tenant.ID, &api.OperationSubject{Type: "order", ID: ref})
 	u, err := url.Parse(related)
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) DeleteSnapshotRestore(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotRestoreDeletionRequest) (managedpostgres.SnapshotRestoreDeletionObservation, error) {
@@ -128,12 +129,12 @@ func cloneForkCleanupWorkerFixture(t *testing.T, undispatched bool) (cloneCoordi
 		t.Fatal(err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = original.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = original.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := &cloneForkCleanupFailureStore{cloneSnapshotRestoreFailureStore: original}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, p, sourceID
 }
 
@@ -158,7 +159,7 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerRetainsRecoveryAcrossLostRep
 		t.Fatalf("lost identity dispatched DELETE: %v", err)
 	}
 	p.beforeForkDelete = func(ctx context.Context, r managedpostgres.SnapshotRestoreDeletionRequest) error {
-		receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
+		receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
@@ -183,17 +184,17 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerRetainsRecoveryAcrossLostRep
 	if err == nil || p.forkDeletes != 1 || p.forkDeleteObservations != 0 {
 		t.Fatalf("lost operation acknowledgement: %v", err)
 	}
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.deletes != 0 || p.forkDeletes != 1 || p.forkDeleteObservations != 1 {
 		t.Fatalf("pending fork discarded source: %v", err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "retained" {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "retained" {
 		t.Fatalf("pending fork lost source snapshot: %+v %v", receipt, err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,11 +204,11 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerRetainsRecoveryAcrossLostRep
 		t.Fatalf("lost committed retirement reply: %v", err)
 	}
 	before := p.forkDeleteObservations
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.forkDeleteObservations != before || p.deletes != 1 || p.forkCreates != 1 || p.deadlineMissing {
 		t.Fatalf("retirement replay redispatched or lost source cleanup: %v", err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
 		t.Fatalf("terminal receipt lost after source cleanup: %+v %v", receipt, err)
 	}
 }
@@ -215,7 +216,7 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerRetainsRecoveryAcrossLostRep
 func TestPGClonePostgresSnapshotRestoreCleanupWorkerPinsDiscoveredOperationsBeforeTerminalRead(t *testing.T) {
 	f, store, p, sourceID := cloneForkCleanupWorkerFixture(t, false)
 	p.beforeForkDelete = func(ctx context.Context, r managedpostgres.SnapshotRestoreDeletionRequest) error {
-		receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
+		receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
@@ -231,7 +232,7 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerPinsDiscoveredOperationsBefo
 	if err != nil || !complete || p.forkDeletes != 1 || p.forkDeleteObservations != 2 || p.deletes != 0 {
 		t.Fatalf("discovered operation set lacked pinned terminal read: %v %v", complete, err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" {
 		t.Fatalf("independent proof not retired: %+v %v", receipt, err)
 	}
 }
@@ -244,7 +245,7 @@ func TestPGClonePostgresSnapshotRestoreCleanupWorkerClosesUndispatchedReservatio
 	if err != nil || !complete || p.forkCreates != 0 || p.forkDeletes != 0 || p.forkFinds != 0 || p.forkDeleteObservations != 0 {
 		t.Fatalf("undispatched local retirement: %v %v", complete, err)
 	}
-	if receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" || !receipt.RequestStartedAt.IsZero() {
+	if receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || receipt.State != "deleted" || !receipt.RequestStartedAt.IsZero() {
 		t.Fatalf("local retirement receipt: %+v %v", receipt, err)
 	}
 	bad := f.lease

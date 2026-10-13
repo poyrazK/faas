@@ -1,5 +1,5 @@
 // adr: 934
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -41,11 +41,11 @@ func guestIntent(hookID string) durableentity.OutboxIntent {
 
 func TestDurableEntityGuestOutboxLostCommitAckReplayAndRelay(t *testing.T) {
 	e, app, dispatch, bucket := entityAPIFixture(t, false)
-	e.s.durable.OutboxEnabled, e.s.durable.OutboxHandlersEnabled = true, true
+	(*e.s.Durable()).OutboxEnabled, (*e.s.Durable()).OutboxHandlersEnabled = true, true
 	hook := entityOutboxHook(t, e, app)
 	dispatch.guest = entityOutgoingGuest(t, api.DurableEntityOutboxProtocolVersion, []durableentity.OutboxIntent{guestIntent(hook.ID)}, nil)
 	request := entityRequest("reservation")
-	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
@@ -54,7 +54,7 @@ func TestDurableEntityGuestOutboxLostCommitAckReplayAndRelay(t *testing.T) {
 	if first.Code != http.StatusServiceUnavailable || strings.Contains(first.Body.String(), "private-provider") {
 		t.Fatal("uncertain publication was acknowledged or leaked errors", first.Code, first.Body.String())
 	}
-	pending, err := e.s.durable.Engine.PendingOutbox(t.Context(), id)
+	pending, err := (*e.s.Durable()).Engine.PendingOutbox(t.Context(), id)
 	if err != nil || pending.Version != 1 || len(pending.Messages) != 1 {
 		t.Fatal(pending, err)
 	}
@@ -62,13 +62,13 @@ func TestDurableEntityGuestOutboxLostCommitAckReplayAndRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine, e.s.durable.Owner = restarted, uuid.NewString()
+	(*e.s.Durable()).Engine, (*e.s.Durable()).Owner = restarted, uuid.NewString()
 	replay := entityAPIResult(t, e.do(t, http.MethodPost, "/v1/apps/entity-counter/entities/invoke", request, nil))
 	if !replay.Replayed || replay.Version != 1 || dispatch.calls.Load() != 1 {
 		t.Fatal("receipt replay reran the guest", replay)
 	}
 	messageID := pending.Messages[0].ID
-	if err := e.s.durable.DeliverOutbox(t.Context(), durableentity.OutboxWork{Entity: id, MessageID: messageID}); err != nil {
+	if err := (*e.s.Durable()).DeliverOutbox(t.Context(), durableentity.OutboxWork{Entity: id, MessageID: messageID}); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
@@ -90,7 +90,7 @@ func TestDurableEntityGuestOutboxGateKeepsV1Closed(t *testing.T) {
 		for _, handlers := range []bool{false, true} {
 			t.Run(fmt.Sprintf("relay=%t/handlers=%t", relay, handlers), func(t *testing.T) {
 				e, _, dispatch, _ := entityAPIFixture(t, false)
-				e.s.durable.OutboxEnabled, e.s.durable.OutboxHandlersEnabled = relay, handlers
+				(*e.s.Durable()).OutboxEnabled, (*e.s.Durable()).OutboxHandlersEnabled = relay, handlers
 				protocol := api.DurableEntityProtocolVersion
 				want := http.StatusUnprocessableEntity
 				if relay && handlers {
@@ -110,7 +110,7 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 	for _, kind := range []string{"missing", "disabled-hook", "foreign-app", "foreign-account", "account-hook", "account", "app", "plan", "abuse", "allowlist", "handler-gate", "relay-gate", "tenant", "environment"} {
 		t.Run(kind, func(t *testing.T) {
 			e, app, dispatch, bucket := entityAPIFixture(t, kind == "environment")
-			e.s.durable.OutboxEnabled, e.s.durable.OutboxHandlersEnabled = true, true
+			(*e.s.Durable()).OutboxEnabled, (*e.s.Durable()).OutboxHandlersEnabled = true, true
 			hook := entityOutboxHook(t, e, app)
 			request := entityRequest("reservation")
 			if kind == "environment" {
@@ -123,7 +123,7 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 				}
 				request.PlatformTenantID = tenant.ID
 			}
-			id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+			id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 			if problem != nil {
 				t.Fatal(problem)
 			}
@@ -169,11 +169,11 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 				case "abuse":
 					_, err = e.store.SetAccountAbuseHold(t.Context(), e.acct.ID, state.AccountAbuseHoldOperator, time.Now())
 				case "allowlist":
-					delete(e.s.durable.Apps, app.ID)
+					delete((*e.s.Durable()).Apps, app.ID)
 				case "handler-gate":
-					e.s.durable.OutboxHandlersEnabled = false
+					(*e.s.Durable()).OutboxHandlersEnabled = false
 				case "relay-gate":
-					e.s.durable.OutboxEnabled = false
+					(*e.s.Durable()).OutboxEnabled = false
 				case "tenant":
 					_, err = e.store.SetPlatformTenantStatus(t.Context(), e.acct.ID, request.PlatformTenantID, state.PlatformTenantSuspended)
 				case "environment":
@@ -202,7 +202,7 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 			if rec.Code == http.StatusOK || dispatch.calls.Load() != 1 {
 				t.Fatal("outgoing admission rejection did not exercise the guest", rec.Code, dispatch.calls.Load())
 			}
-			view, err := e.s.durable.Engine.Read(t.Context(), id)
+			view, err := (*e.s.Durable()).Engine.Read(t.Context(), id)
 			if err != nil || view.Version != 0 || string(view.Data) != "{}" {
 				t.Fatal("rejected outgoing work changed business state", view, err)
 			}
@@ -219,10 +219,10 @@ func TestDurableEntityGuestOutboxRechecksAdmissionBeforeStatePublication(t *test
 
 func TestDurableEntityGuestOutboxFullQueuePreservesStateAndMessages(t *testing.T) {
 	e, app, dispatch, _ := entityAPIFixture(t, false)
-	e.s.durable.OutboxEnabled, e.s.durable.OutboxHandlersEnabled = true, true
+	(*e.s.Durable()).OutboxEnabled, (*e.s.Durable()).OutboxHandlersEnabled = true, true
 	hook := entityOutboxHook(t, e, app)
 	request := entityRequest("full")
-	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
@@ -231,14 +231,14 @@ func TestDurableEntityGuestOutboxFullQueuePreservesStateAndMessages(t *testing.T
 		for j := range intents {
 			intents[j] = guestIntent(hook.ID)
 		}
-		_, err := e.s.durable.Engine.Invoke(t.Context(), id, uuid.NewString(), durableentity.Request{ID: fmt.Sprint(i), Payload: json.RawMessage(`null`)}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
+		_, err := (*e.s.Durable()).Engine.Invoke(t.Context(), id, uuid.NewString(), durableentity.Request{ID: fmt.Sprint(i), Payload: json.RawMessage(`null`)}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
 			return durableentity.Transition{Data: json.RawMessage(`{"count":0}`), Result: json.RawMessage(`null`), Outbox: intents}, nil
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	before, err := e.s.durable.Engine.PendingOutbox(t.Context(), id)
+	before, err := (*e.s.Durable()).Engine.PendingOutbox(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,11 +247,11 @@ func TestDurableEntityGuestOutboxFullQueuePreservesStateAndMessages(t *testing.T
 	if rec.Code != http.StatusConflict {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	after, err := e.s.durable.Engine.PendingOutbox(t.Context(), id)
+	after, err := (*e.s.Durable()).Engine.PendingOutbox(t.Context(), id)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("full-queue rejection changed pending work", after, err)
 	}
-	view, err := e.s.durable.Engine.Read(t.Context(), id)
+	view, err := (*e.s.Durable()).Engine.Read(t.Context(), id)
 	if err != nil || string(view.Data) != `{"count":0}` || view.Version != before.Version {
 		t.Fatal(view, err)
 	}
@@ -259,9 +259,9 @@ func TestDurableEntityGuestOutboxFullQueuePreservesStateAndMessages(t *testing.T
 
 func TestDurableEntityAlarmGuestCanCommitOneOutgoingIntent(t *testing.T) {
 	e, app, dispatch, _ := entityAPIFixture(t, false)
-	e.s.durable.AlarmsEnabled = true
+	(*e.s.Durable()).AlarmsEnabled = true
 	alarm := scheduleAPIAlarm(t, e, entityRequest("schedule"))
-	e.s.durable.OutboxEnabled, e.s.durable.OutboxHandlersEnabled = true, true
+	(*e.s.Durable()).OutboxEnabled, (*e.s.Durable()).OutboxHandlersEnabled = true, true
 	hook := entityOutboxHook(t, e, app)
 	dispatch.guest = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var call durableentity.HandlerRequest
@@ -271,15 +271,15 @@ func TestDurableEntityAlarmGuestCanCommitOneOutgoingIntent(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]int{"count": 2}, "result": nil, "outbox": []durableentity.OutboxIntent{guestIntent(hook.ID)}})
 	})
 	for range 2 {
-		if err := e.s.durable.DeliverAlarm(t.Context(), alarm); err != nil {
+		if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); err != nil {
 			t.Fatal(err)
 		}
 	}
-	pending, err := e.s.durable.Engine.PendingOutbox(t.Context(), alarm.Entity)
+	pending, err := (*e.s.Durable()).Engine.PendingOutbox(t.Context(), alarm.Entity)
 	if err != nil || pending.Version != 2 || len(pending.Messages) != 1 || pending.Messages[0].Version != 2 || dispatch.calls.Load() != 2 {
 		t.Fatal("alarm replay duplicated outgoing work", pending, err)
 	}
-	view, err := e.s.durable.Engine.Read(t.Context(), alarm.Entity)
+	view, err := (*e.s.Durable()).Engine.Read(t.Context(), alarm.Entity)
 	if err != nil || view.AlarmAt != nil || view.Version != 2 || string(view.Data) != `{"count":2}` {
 		t.Fatal(view, err)
 	}

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type failingPingStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (f *failingPingStore) Ping(_ context.Context) error {
@@ -29,10 +31,10 @@ func (f *failingDebugRegressionReadinessStore) CheckDebugRegressionReadiness(_ c
 }
 
 func TestReadyz_Healthy(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -46,12 +48,12 @@ func TestReadyz_Healthy(t *testing.T) {
 }
 
 func TestReadyz_UnhealthyWhenStoreFails(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	e.s.store = &failingPingStore{Store: e.s.store}
+	e := apidserver.Setup(t, api.PlanFree)
+	(*(*e.S()).Store()) = statetest.NewStore(&failingPingStore{Store: (*(*e.S()).Store())})
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
@@ -62,12 +64,12 @@ func TestReadyz_UnhealthyWhenStoreFails(t *testing.T) {
 }
 
 func TestReadyz_UnhealthyWhenDebuggerRegressionReadFails(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	e.s.store = &failingDebugRegressionReadinessStore{Store: e.s.store}
+	e := apidserver.Setup(t, api.PlanFree)
+	(*(*e.S()).Store()) = &failingDebugRegressionReadinessStore{Store: (*(*e.S()).Store())}
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}

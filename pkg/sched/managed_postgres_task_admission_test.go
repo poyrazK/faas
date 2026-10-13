@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestManagedPostgresFenceBlocksTaskRuntimeAndPrime(t *testing.T) {
@@ -17,7 +18,7 @@ func TestManagedPostgresFenceBlocksTaskRuntimeAndPrime(t *testing.T) {
 			ms, account, app, deployment, tasks := newAppTaskCoordinatorFixture(t, 1, 30, 2048)
 			store := &cutoverFencedStore{MemStore: ms, readErr: readErr}
 			vmm := &fakeVMM{}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			want := state.ErrManagedPostgresAdmissionFenced
 			if readErr != nil {
 				want = readErr

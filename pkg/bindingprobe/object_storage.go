@@ -20,12 +20,30 @@ const objectStorageTimeout = 5 * time.Second
 // signed, path-style ListObjectsV2 request and never follows redirects, writes
 // objects, retries or returns object names or raw provider diagnostics.
 func ObjectStorage(ctx context.Context, prefix string, getenv func(string) string) api.ObjectStorageBindingProbeReport {
+	return objectStorage(ctx, prefix, getenv, "")
+}
+
+// ObjectStorageWrite is opt-in. Write-only credentials never list or download.
+func ObjectStorageWrite(ctx context.Context, prefix, mode string, getenv func(string) string) api.ObjectStorageBindingProbeReport {
+	if !api.ValidObjectStorageWriteProbeMode(mode) {
+		return api.ObjectStorageBindingProbeReport{Error: "object-storage write probe mode is invalid"}
+	}
+	return objectStorage(ctx, prefix, getenv, mode)
+}
+
+func objectStorage(ctx context.Context, prefix string, getenv func(string) string, mode string) api.ObjectStorageBindingProbeReport {
 	report := api.ObjectStorageBindingProbeReport{
 		Environment:   api.ObjectStorageBindingProbeCheck{Status: "not_checked"},
 		Configuration: api.ObjectStorageBindingProbeCheck{Status: "not_checked"},
 		Connection:    api.ObjectStorageBindingProbeCheck{Status: "not_checked"},
 		Authorization: api.ObjectStorageBindingProbeCheck{Status: "not_checked"},
 		BucketAccess:  api.ObjectStorageBindingProbeCheck{Status: "not_checked"},
+	}
+	if mode != "" {
+		report.Mode = mode
+		report.Upload = &api.ObjectStorageBindingProbeCheck{Status: "not_checked"}
+		report.Download = &api.ObjectStorageBindingProbeCheck{Status: "not_checked"}
+		report.Cleanup = &api.ObjectStorageBindingProbeCheck{Status: "not_checked"}
 	}
 	if !api.ValidObjectStorageBindingPrefix(prefix) {
 		report.Environment = api.ObjectStorageBindingProbeCheck{Status: "failed", Detail: "binding prefix is invalid"}
@@ -68,6 +86,9 @@ func ObjectStorage(ctx context.Context, prefix string, getenv func(string) strin
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
+	if mode != "" {
+		return objectStorageWrite(probeContext, client, observation, values[2], report)
+	}
 	output, err := client.ListObjectsV2(probeContext, &s3.ListObjectsV2Input{Bucket: aws.String(values[2]), MaxKeys: aws.Int32(1)})
 	if observation.status == 0 {
 		report.Connection = api.ObjectStorageBindingProbeCheck{Status: "failed", Detail: "could not reach the S3 endpoint; verify DNS, TLS and network access"}

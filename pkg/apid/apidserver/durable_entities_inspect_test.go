@@ -1,5 +1,5 @@
 // adr: 935
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"

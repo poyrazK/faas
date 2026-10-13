@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http/httptest"
@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -33,7 +35,7 @@ func TestParseIssueListFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/issues?"+tt.query.Encode(), nil)
-			got, err := parseIssueListFilter(r, accountID)
+			got, err := apidserver.ParseIssueListFilter(r, accountID)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("parseIssueListFilter error = %v, wantError %v", err, tt.wantError)
 			}

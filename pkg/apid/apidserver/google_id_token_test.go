@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestGoogleIDTokenVerifier_ValidatesClaims(t *testing.T) {
@@ -23,8 +25,8 @@ func TestGoogleIDTokenVerifier_ValidatesClaims(t *testing.T) {
 	}))
 	t.Cleanup(jwks.Close)
 
-	v := newGoogleIDTokenVerifier(nil).(*googleJWKSVerifier)
-	v.jwksURL = jwks.URL
+	v := apidserver.NewGoogleIDTokenVerifier(nil).(*apidserver.GoogleJWKSVerifier)
+	(*v.JwksURL()) = jwks.URL
 	const clientID = "client-123"
 	const nonce = "nonce-123"
 	token := mintGoogleIDToken(t, priv, "google-test", jwt.Claims{
@@ -66,8 +68,8 @@ func TestGoogleIDTokenVerifier_RejectsUntrustedClaims(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := newGoogleIDTokenVerifier(nil).(*googleJWKSVerifier)
-			v.jwksURL = jwks.URL
+			v := apidserver.NewGoogleIDTokenVerifier(nil).(*apidserver.GoogleJWKSVerifier)
+			(*v.JwksURL()) = jwks.URL
 			token := mintGoogleIDToken(t, priv, "google-test", jwt.Claims{
 				Issuer:   tc.issuer,
 				Subject:  "google-subject",

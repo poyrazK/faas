@@ -74,6 +74,7 @@ const (
 	Vmmd_AdoptMigratedInstance_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
 	Vmmd_AcknowledgeMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_RetireManagedPostgresDrain_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RetireManagedPostgresDrain"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -522,6 +523,9 @@ type VmmdClient interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(ctx context.Context, in *CancelLiveMigrationRequest, opts ...grpc.CallOption) (*CancelLiveMigrationResponse, error)
+	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
+	// Generic Destroy and process inventory cannot acknowledge this contract.
+	RetireManagedPostgresDrain(ctx context.Context, in *RetireManagedPostgresDrainRequest, opts ...grpc.CallOption) (*RetireManagedPostgresDrainResponse, error)
 }
 
 type vmmdClient struct {
@@ -1094,6 +1098,16 @@ func (c *vmmdClient) CancelLiveMigration(ctx context.Context, in *CancelLiveMigr
 	return out, nil
 }
 
+func (c *vmmdClient) RetireManagedPostgresDrain(ctx context.Context, in *RetireManagedPostgresDrainRequest, opts ...grpc.CallOption) (*RetireManagedPostgresDrainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireManagedPostgresDrainResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireManagedPostgresDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1540,6 +1554,9 @@ type VmmdServer interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error)
+	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
+	// Generic Destroy and process inventory cannot acknowledge this contract.
+	RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1705,6 +1722,9 @@ func (UnimplementedVmmdServer) AcknowledgeMigration(context.Context, *Acknowledg
 }
 func (UnimplementedVmmdServer) CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelLiveMigration not implemented")
+}
+func (UnimplementedVmmdServer) RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireManagedPostgresDrain not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -2587,6 +2607,24 @@ func _Vmmd_CancelLiveMigration_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_RetireManagedPostgresDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireManagedPostgresDrainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireManagedPostgresDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireManagedPostgresDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireManagedPostgresDrain(ctx, req.(*RetireManagedPostgresDrainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2769,6 +2807,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelLiveMigration",
 			Handler:    _Vmmd_CancelLiveMigration_Handler,
+		},
+		{
+			MethodName: "RetireManagedPostgresDrain",
+			Handler:    _Vmmd_RetireManagedPostgresDrain_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

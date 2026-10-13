@@ -2,15 +2,21 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateOutboundAIReplayRequest } from '../models/CreateOutboundAIReplayRequest.js';
 import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRouteRequest.js';
 import type { CreateOutboundCredentialKeyRequest } from '../models/CreateOutboundCredentialKeyRequest.js';
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAIBudgetAlertList } from '../models/OutboundAIBudgetAlertList.js';
+import type { OutboundAIContentPolicy } from '../models/OutboundAIContentPolicy.js';
+import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIReplay } from '../models/OutboundAIReplay.js';
+import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
+import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
 import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
@@ -366,6 +372,141 @@ export class OutboundService {
     });
   }
   /**
+   * Read one UTC day of AI gateway usage by end user.
+   * Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows are kept for 31 days and listed by cost, then tokens.
+   * @returns OutboundAIUserUsageResponse Per-end-user AI usage for the selected day.
+   * @throws ApiError
+   */
+  public static getOutboundIntegrationAiUserUsage({
+    integration,
+    date,
+    endUser,
+    limit,
+  }: {
+    /**
+     * UUID of the integration whose per-end-user AI usage is being read.
+     */
+    integration: string,
+    /**
+     * UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    date?: string,
+    /**
+     * Read only this end user's row ("~other" reads the overflow row).
+     */
+    endUser?: string,
+    /**
+     * Rows to return, 1 to 1000; defaults to 1000.
+     */
+    limit?: number,
+  }): CancelablePromise<OutboundAIUserUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/users',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'date': date,
+        'end_user': endUser,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Export per-end-user AI gateway usage for a range of UTC days.
+   * Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to, ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+   * @returns binary Per-end-user usage rows.
+   * @throws ApiError
+   */
+  public static exportOutboundIntegrationAiUserUsage({
+    integration,
+    from,
+    to,
+    format = 'ndjson',
+  }: {
+    /**
+     * UUID of the integration whose per-end-user AI usage is exported.
+     */
+    integration: string,
+    /**
+     * First UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    from?: string,
+    /**
+     * Last UTC day as YYYY-MM-DD, not before from; defaults to today.
+     */
+    to?: string,
+    /**
+     * NDJSON lines (the default) or CSV rows with a header.
+     */
+    format?: 'ndjson' | 'csv',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/users/export',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'from': from,
+        'to': to,
+        'format': format,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the built-in AI price catalog of one provider.
+   * Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+   * @returns OutboundAIPriceCatalogResponse The provider's catalog, or the one entry that prices the model.
+   * @throws ApiError
+   */
+  public static getOutboundAiPriceCatalog({
+    provider,
+    model,
+  }: {
+    /**
+     * AI provider whose catalog is listed.
+     */
+    provider: 'openai' | 'anthropic' | 'gemini' | 'azure_openai' | 'bedrock' | 'vertex',
+    /**
+     * Return only the catalog entry that would price this model.
+     */
+    model?: string,
+  }): CancelablePromise<OutboundAIPriceCatalogResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-price-catalog',
+      query: {
+        'provider': provider,
+        'model': model,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
    * Read the AI price list in effect.
    * Requires MFA and read scope (ADR-990).
    * @returns OutboundAIPriceListResponse The price list in effect.
@@ -577,7 +718,7 @@ export class OutboundService {
   }
   /**
    * Page the opt-in AI request log.
-   * Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
+   * Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata. content_captured marks calls whose bodies were captured (ADR-996).
    * @returns OutboundAIRequestLogList One page of logged calls.
    * @throws ApiError
    */
@@ -608,6 +749,152 @@ export class OutboundService {
       query: {
         'limit': limit,
         'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay a captured AI call on other integrations or models.
+   * Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target without streaming; the calls count against the targets' budgets. At most 100 replays per integration per UTC day.
+   * @returns OutboundAIReplay The pending replay.
+   * @throws ApiError
+   */
+  public static createOutboundAiReplay({
+    integration,
+    request,
+    requestBody,
+  }: {
+    /**
+     * UUID of the integration whose captured call is replayed.
+     */
+    integration: string,
+    /**
+     * ID of the request-log entry whose capture is replayed.
+     */
+    request: string,
+    requestBody: CreateOutboundAIReplayRequest,
+  }): CancelablePromise<OutboundAIReplay> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/replays',
+      path: {
+        'integration': integration,
+        'request': request,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The call has no capture that can be resent.`,
+        429: `The integration reached its replays for the UTC day.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI replay and its results.
+   * Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+   * @returns OutboundAIReplay The replay.
+   * @throws ApiError
+   */
+  public static getOutboundAiReplay({
+    replay,
+  }: {
+    /**
+     * UUID of the replay.
+     */
+    replay: string,
+  }): CancelablePromise<OutboundAIReplay> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-replays/{replay}',
+      path: {
+        'replay': replay,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an AI integration's content guardrails.
+   * Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one, request bodies the gateway cannot read are refused.
+   * @returns void
+   * @throws ApiError
+   */
+  public static putOutboundAiContentPolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the customer AI integration.
+     */
+    integration: string,
+    requestBody: OutboundAIContentPolicy,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai-content-policy',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one logged AI call's captured bodies.
+   * Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call without one is not found.
+   * @returns OutboundAIRequestContent The captured bodies.
+   * @throws ApiError
+   */
+  public static getOutboundAiRequestContent({
+    integration,
+    request,
+  }: {
+    /**
+     * UUID of the integration that logged the call.
+     */
+    integration: string,
+    /**
+     * ID of the request-log entry.
+     */
+    request: string,
+  }): CancelablePromise<OutboundAIRequestContent> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/content',
+      path: {
+        'integration': integration,
+        'request': request,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

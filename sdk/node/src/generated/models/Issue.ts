@@ -7,6 +7,10 @@ import type { IssueImpactSummary } from './IssueImpactSummary.js';
  * Durable failure group across releases in one app and environment.
  */
 export type Issue = {
+  /**
+   * Original fingerprint source for a branch created by an occurrence split rule.
+   */
+  readonly split_source_issue_id?: string;
   id: string;
   app_id: string;
   environment: string;

@@ -14,15 +14,22 @@ import (
 )
 
 func isObjectStorageBindingProbeCommand(req apptaskproto.Request) bool {
-	return len(req.Command) > 0 && req.Command[0] == api.AppTaskObjectStorageBindingProbeCommand
+	return len(req.Command) > 0 && (req.Command[0] == api.AppTaskObjectStorageBindingProbeCommand || req.Command[0] == api.AppTaskObjectStorageWriteProbeCommand)
 }
 
 func executeObjectStorageBindingProbeCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout io.Writer) (apptaskproto.Result, error) {
-	if req.CommandShell || len(req.Command) != 2 {
+	write := api.IsObjectStorageWriteProbeCommand(req.Command, req.CommandShell)
+	if !write && (req.CommandShell || len(req.Command) != 2 || req.Command[0] != api.AppTaskObjectStorageBindingProbeCommand) {
 		return appTaskInfraFailure("object_storage_binding_probe_failed", "invalid platform object-storage binding probe request", 1), nil
 	}
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
-	report := bindingprobe.ObjectStorage(ctx, req.Command[1], func(key string) string { return appTaskEnvValue(env, key) })
+	getenv := func(key string) string { return appTaskEnvValue(env, key) }
+	var report api.ObjectStorageBindingProbeReport
+	if write {
+		report = bindingprobe.ObjectStorageWrite(ctx, req.Command[1], req.Command[2], getenv)
+	} else {
+		report = bindingprobe.ObjectStorage(ctx, req.Command[1], getenv)
+	}
 	if err := json.NewEncoder(stdout).Encode(report); err != nil {
 		return apptaskproto.Result{}, err
 	}

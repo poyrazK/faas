@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 668
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -42,7 +42,7 @@ func directJobServer(t *testing.T, kind string) (jobArtifactHTTPFixture, *api.Cl
 	if _, err := f.store.CreateAPIKey(t.Context(), f.account.ID, hash, "direct-files", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	host := httptest.NewServer(f.server.handler())
+	host := httptest.NewServer(f.server.Handler())
 	t.Cleanup(host.Close)
 	owner := api.NewClient(host.URL, key)
 	token, err := owner.CreatePlatformTenantAccessToken(t.Context(), f.tenant.ID, api.CreatePlatformTenantAccessTokenRequest{Name: "browser", Scopes: []string{api.ScopePlatformTenantOperationsRead}})
@@ -148,7 +148,7 @@ func TestOperationJobDirectUploadConcurrentCopies(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f, runtime, _ := directJobServer(t, kind)
-			backend := &competingDirectStorage{StorageBackend: f.server.operation.ArtifactStorage, ready: make(chan struct{})}
+			backend := &competingDirectStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage, ready: make(chan struct{})}
 			f.server.WithOperationArtifactStorage(backend)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -203,7 +203,7 @@ func TestOperationJobDirectUploadRevokedDuringCopy(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f, runtime, _ := directJobServer(t, kind)
-			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: f.server.operation.ArtifactStorage, after: func() {
+			f.server.WithOperationArtifactStorage(&jobArtifactAfterCopy{StorageBackend: (*f.server.Operation()).ArtifactStorage, after: func() {
 				if _, err := f.store.(state.PlatformTenantStore).SetPlatformTenantStatus(t.Context(), f.account.ID, f.tenant.ID, state.PlatformTenantSuspended); err != nil {
 					t.Error(err)
 				}
@@ -265,7 +265,7 @@ func TestOperationJobDirectUploadInterruptedStorage(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f, runtime, _ := directJobServer(t, kind)
-			backend := &interruptedDirectStorage{StorageBackend: f.server.operation.ArtifactStorage}
+			backend := &interruptedDirectStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage}
 			f.server.WithOperationArtifactStorage(backend)
 			if _, err := runtime.UploadJobOperationArtifact(t.Context(), f.op.ID, f.proof, directJobDeclaration(), strings.NewReader(directJobCSV)); err == nil {
 				t.Fatal("lost storage acknowledgement not exercised")
@@ -304,7 +304,7 @@ func TestOperationJobDirectUploadCancellationWhileReceiving(t *testing.T) {
 	for _, kind := range []string{"memory", "postgres"} {
 		t.Run(kind, func(t *testing.T) {
 			f, _, _ := directJobServer(t, kind)
-			backend := &interruptedDirectStorage{StorageBackend: f.server.operation.ArtifactStorage}
+			backend := &interruptedDirectStorage{StorageBackend: (*f.server.Operation()).ArtifactStorage}
 			f.server.WithOperationArtifactStorage(backend)
 			body := io.NopCloser(&cancelDirectRead{Reader: strings.NewReader(directJobCSV), cancel: func() {
 				if _, err := f.store.(state.OperationStore).CancelOperation(t.Context(), f.account.ID, f.tenant.ID, f.op.ID, 1); err != nil {
@@ -312,7 +312,7 @@ func TestOperationJobDirectUploadCancellationWhileReceiving(t *testing.T) {
 				}
 			}})
 			a := state.JobOperationAuthority{RunID: f.proof.RunID, InstanceID: f.proof.InstanceID, Generation: f.proof.Generation, Attempt: f.proof.Attempt, Capability: f.proof.Capability}
-			if _, err := f.server.operation.RetainJobOperationUpload(t.Context(), f.store.(state.OperationJobArtifactStore), f.op.ID, a, directJobDeclaration(), body); err == nil {
+			if _, err := (*f.server.Operation()).RetainJobOperationUpload(t.Context(), f.store.(state.OperationJobArtifactStore), f.op.ID, a, directJobDeclaration(), body); err == nil {
 				t.Fatal("cancelled task committed a receipt")
 			}
 			backend.mu.Lock()
@@ -321,7 +321,7 @@ func TestOperationJobDirectUploadCancellationWhileReceiving(t *testing.T) {
 			if count != 0 {
 				t.Fatal("cancelled task wrote private storage")
 			}
-			transfers, _ := f.server.operation.ArtifactBudgetInUse()
+			transfers, _ := (*f.server.Operation()).ArtifactBudgetInUse()
 			if transfers != 0 {
 				t.Fatal("cancelled upload leaked spool budget")
 			}

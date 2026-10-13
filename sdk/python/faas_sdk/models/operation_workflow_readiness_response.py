@@ -27,8 +27,10 @@ class OperationWorkflowReadinessResponse:
     readiness: OperationWorkflowTransitionReadiness
     """Ready means declared requirements match retained reports and the proposed milestone plan. It does not
     authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only
-    blockers targeting this Operation apply. Staleness and overdue deadlines are advisories rather than undeclared
-    guards."""
+    blockers targeting this Operation apply. Staleness, overdue deadlines, current-state reporting context and
+    pending resolution proofs are advisories rather than undeclared guards. Reporting context uses current pinned
+    expected_states, not invented required transition conditions. Planned reports do not replace this retained
+    context."""
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()

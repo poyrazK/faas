@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,12 +9,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
-	srv, store, acct, app := sourceRefAsyncRouteTestFixture(t)
+	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
 	ctx := context.Background()
 	manifest := &gregalemanifest.Manifest{
 		WorkPolicies:  []gregalemanifest.WorkPolicy{{Name: "document-index", MaxRunningPerKey: 1, PendingUpdates: "keep_latest", DebounceMS: 3000}},
@@ -23,7 +24,7 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
 	if err := manifest.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	staged, problem := srv.applySourceRefManifest(ctx, acct, app, manifest, "", true)
+	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
 	if problem != nil {
 		t.Fatalf("apply manifest: %s", problem.Detail)
 	}
@@ -42,7 +43,7 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/apps/reports/event-subscriptions", nil)
 	request.SetPathValue("slug", app.Slug)
 	recorder := httptest.NewRecorder()
-	srv.appEvents.ListEventSubscriptions(recorder, request, acct)
+	(*srv.AppEvents()).ListEventSubscriptions(recorder, request, acct)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("list subscriptions = %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -53,11 +54,11 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
 	if len(inventory.Subscriptions) != 1 || inventory.Subscriptions[0].WorkPolicy != "document-index" || inventory.Subscriptions[0].WorkKey != "data.document_id" {
 		t.Fatalf("subscription inventory = %+v", inventory)
 	}
-	second, problem := srv.applySourceRefManifest(ctx, acct, app, manifest, "", true)
-	if problem != nil || sourceRefManifestNeedsRollback(second) {
+	second, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
+	if problem != nil || apidserver.SourceRefManifestNeedsRollback(second) {
 		t.Fatalf("idempotent apply = %+v, %+v", second, problem)
 	}
-	if err := srv.rollbackSourceRefManifest(ctx, staged); err != nil {
+	if err := srv.RollbackSourceRefManifest(ctx, staged); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	if _, err := store.AppWorkPolicyByName(ctx, app.ID, "document-index"); !errors.Is(err, state.ErrNotFound) {
@@ -70,7 +71,7 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeEventBinding(t *testing.T) {
 }
 
 func TestSourceRefManifestAppliesWorkPolicyBeforeBrokerBinding(t *testing.T) {
-	srv, store, acct, app := sourceRefAsyncRouteTestFixture(t)
+	srv, store, acct, app := apidserver.SourceRefAsyncRouteTestFixture(t)
 	ctx := context.Background()
 	manifest := &gregalemanifest.Manifest{
 		WorkPolicies: []gregalemanifest.WorkPolicy{{Name: "document-index", MaxRunningPerKey: 1}},
@@ -85,7 +86,7 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeBrokerBinding(t *testing.T) {
 	if err := manifest.ValidateForPlan(acct.Plan); err != nil {
 		t.Fatal(err)
 	}
-	staged, problem := srv.applySourceRefManifest(ctx, acct, app, manifest, "", true)
+	staged, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
 	if problem != nil {
 		t.Fatalf("apply manifest: %s", problem.Detail)
 	}
@@ -98,29 +99,29 @@ func TestSourceRefManifestAppliesWorkPolicyBeforeBrokerBinding(t *testing.T) {
 		binding.KeySelector != "document_id" || binding.FairnessSelector != "tenant_id" {
 		t.Fatalf("binding = %+v, %v", binding, err)
 	}
-	second, problem := srv.applySourceRefManifest(ctx, acct, app, manifest, "", true)
-	if problem != nil || sourceRefManifestNeedsRollback(second) {
+	second, problem := srv.ApplySourceRefManifest(ctx, acct, app, manifest, "", true)
+	if problem != nil || apidserver.SourceRefManifestNeedsRollback(second) {
 		t.Fatalf("idempotent apply = %+v, %+v", second, problem)
 	}
 	updated := *manifest
 	updated.Triggers = append([]gregalemanifest.Trigger(nil), manifest.Triggers...)
 	updated.Triggers[0].WorkKey = "new_document_id"
-	change, problem := srv.applySourceRefManifest(ctx, acct, app, &updated, "", true)
-	if problem != nil || len(change.triggerWorkChanges) != 1 {
+	change, problem := srv.ApplySourceRefManifest(ctx, acct, app, &updated, "", true)
+	if problem != nil || len((*change.TriggerWorkChanges())) != 1 {
 		t.Fatalf("binding update = %+v, %+v", change, problem)
 	}
 	binding, err = store.TriggerWorkBindingByID(ctx, triggers[0].ID.String())
 	if err != nil || binding == nil || binding.KeySelector != "new_document_id" {
 		t.Fatalf("updated binding = %+v, %v", binding, err)
 	}
-	if err := srv.rollbackSourceRefManifest(ctx, change); err != nil {
+	if err := srv.RollbackSourceRefManifest(ctx, change); err != nil {
 		t.Fatalf("binding rollback: %v", err)
 	}
 	binding, err = store.TriggerWorkBindingByID(ctx, triggers[0].ID.String())
 	if err != nil || binding == nil || binding.KeySelector != "document_id" {
 		t.Fatalf("restored binding = %+v, %v", binding, err)
 	}
-	if err := srv.rollbackSourceRefManifest(ctx, staged); err != nil {
+	if err := srv.RollbackSourceRefManifest(ctx, staged); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	triggers, err = store.ListTriggersForApp(ctx, app.ID)

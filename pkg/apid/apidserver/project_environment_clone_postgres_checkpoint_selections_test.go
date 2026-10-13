@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpointselection"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneCheckpointSelectionFailureStore struct {
@@ -144,7 +145,7 @@ func cloneCheckpointSelectionWorkerFixture(t *testing.T) (cloneCoordinatorFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	f.srv.cloneWorkerAdmission = func(context.Context) error { return nil }
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -169,7 +170,7 @@ func cloneCheckpointSelectionWorkerFixture(t *testing.T) (cloneCoordinatorFixtur
 
 func assertCloneCheckpointHold(t *testing.T, f cloneCoordinatorFixture, store *cloneCheckpointSelectionFailureStore) {
 	t.Helper()
-	fences, err := store.ProjectEnvironmentClonePostgresWriteFencesForLease(t.Context(), f.lease)
+	fences, err := store.PgStore.ProjectEnvironmentClonePostgresWriteFencesForLease(t.Context(), f.lease)
 	if err != nil || len(fences) != 1 || fences[0].State != "held" || !fences[0].ReleasedAt.IsZero() {
 		t.Fatalf("closure lost recovery authority: %+v %v", fences, err)
 	}
@@ -189,15 +190,15 @@ func TestPGClonePostgresCheckpointSelectionWorkerRecoversOriginalAfterHandoffAnd
 	if actual, err := f.srv.projectEnvironmentClonePostgresCheckpointSelection(t.Context(), f.lease, plan.source.ID, read); !errors.Is(err, managedpostgres.ErrUnavailable) || !reflect.DeepEqual(actual, checkpointselection.Selection{}) || *reads != 1 {
 		t.Fatalf("lost committed selection: reads=%d err=%v", *reads, err)
 	}
-	original, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+	original, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestPGClonePostgresCheckpointSelectionWorkerRecoversOriginalAfterHandoffAnd
 	if err != nil || !slices.Equal(request.DatabaseNames, []string{"source_private_alpha", "source_private_beta"}) || request.OwnerToken != f.lease.Operation.ID {
 		t.Fatalf("original selection changed: %v", err)
 	}
-	recovered, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+	recovered, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 	if err != nil || !bytes.Equal(original.Sealed.Ciphertext, recovered.Sealed.Ciphertext) || original.Sealed.Fingerprint != recovered.Sealed.Fingerprint || !original.RetainedAt.Equal(recovered.RetainedAt) {
 		t.Fatalf("rotation replaced original intent: %v", err)
 	}
@@ -341,7 +342,7 @@ func TestPGClonePostgresCheckpointConnectionsRejectCatalogueOmissionsAtEitherObs
 			if _, err := f.srv.projectEnvironmentClonePostgresCheckpointSelection(t.Context(), f.lease, plan.source.ID, read); err != nil {
 				t.Fatal(err)
 			}
-			original, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+			original, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -358,7 +359,7 @@ func TestPGClonePostgresCheckpointConnectionsRejectCatalogueOmissionsAtEitherObs
 				t.Fatalf("%s omitted database supplied usable barrier: %v", boundary, err)
 			}
 			assertCloneCheckpointHold(t, f, store)
-			retained, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+			retained, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 			if err != nil || !bytes.Equal(original.Sealed.Ciphertext, retained.Sealed.Ciphertext) {
 				t.Fatalf("%s catalogue drift replaced original selection: %v", boundary, err)
 			}
@@ -390,11 +391,11 @@ func TestPGClonePostgresCheckpointConnectionsRejectPostClosureCancellationAndLea
 					cancel()
 					return nil
 				}
-				if err := store.ReleaseProjectEnvironmentCloneLease(observeCtx, f.lease, 0); err != nil {
+				if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(observeCtx, f.lease, 0); err != nil {
 					return err
 				}
 				var err error
-				f.lease, err = store.ClaimNextProjectEnvironmentClone(observeCtx, uuid.NewString(), time.Minute)
+				f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(observeCtx, uuid.NewString(), time.Minute)
 				return err
 			}
 			l, actual, err := f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(ctx, f.lease, plan)
@@ -414,7 +415,7 @@ func TestPGClonePostgresCheckpointConnectionsRejectPostClosureCancellationAndLea
 				t.Fatalf("post-commit %s returned closure authority: %v", fault, err)
 			}
 			assertCloneCheckpointHold(t, f, store)
-			if _, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID); err != nil {
+			if _, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID); err != nil {
 				t.Fatalf("unknown result lost original selection: %v", err)
 			}
 		})
@@ -434,7 +435,7 @@ func TestPGClonePostgresCheckpointSelectionWorkerRefusesCancelledReadBeforeReten
 	if !errors.Is(err, context.Canceled) || !reflect.DeepEqual(actual, checkpointselection.Selection{}) || *reads != 1 {
 		t.Fatalf("cancelled source read supplied selection: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cancelled source read retained intent: %v", err)
 	}
 	assertCloneCheckpointHold(t, f, store)

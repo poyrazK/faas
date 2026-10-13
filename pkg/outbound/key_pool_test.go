@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -124,10 +125,48 @@ func TestKeyPoolOrderKeepsCoolingKeysLast(t *testing.T) {
 	now := time.Unix(1_000, 0)
 	pools.cool("i", "a", now.Add(time.Minute))
 	pools.cool("i", "b", now.Add(time.Second))
-	if got := pools.order("i", keys, now); got[0].ID != "c" || got[1].ID != "b" || got[2].ID != "a" {
+	if got := pools.order("i", keys, now, ""); got[0].ID != "c" || got[1].ID != "b" || got[2].ID != "a" {
 		t.Fatalf("order = %v", got)
 	}
-	if got := pools.order("i", keys, now.Add(2*time.Minute)); len(got) != 3 || got[0].ID != "b" {
+	if got := pools.order("i", keys, now.Add(2*time.Minute), ""); len(got) != 3 || got[0].ID != "b" {
 		t.Fatalf("after cooldowns, round robin = %v", got)
+	}
+}
+
+// adr: 994 — an affinity key keeps a session on one key, skips a cooling
+// key, and removing a key moves only the sessions that were on it.
+func TestKeyPoolAffinityIsStable(t *testing.T) {
+	var pools keyPoolState
+	keys := []ManagedKey{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}}
+	now := time.Unix(1_000, 0)
+	first := pools.order("i", keys, now, "session-1")[0].ID
+	for i := 0; i < 5; i++ {
+		if got := pools.order("i", keys, now, "session-1")[0].ID; got != first {
+			t.Fatalf("affinity moved from %s to %s", first, got)
+		}
+	}
+	spread := map[string]bool{}
+	for i := 0; i < 64; i++ {
+		spread[pools.order("i", keys, now, "user-"+strconv.Itoa(i))[0].ID] = true
+	}
+	if len(spread) < 3 {
+		t.Fatalf("64 sessions used only keys %v", spread)
+	}
+	pools.cool("i", first, now.Add(time.Minute))
+	if cooled := pools.order("i", keys, now, "session-1"); cooled[0].ID == first || cooled[len(cooled)-1].ID != first {
+		t.Fatalf("a cooling key stayed first: %v", cooled)
+	}
+	var others []ManagedKey
+	for _, key := range keys {
+		if key.ID != first {
+			others = append(others, key)
+		}
+	}
+	for i := 0; i < 64; i++ {
+		affinity := "user-" + strconv.Itoa(i)
+		before := pools.order("j", keys, now, affinity)[0].ID
+		if after := pools.order("j", others, now, affinity)[0].ID; before != first && after != before {
+			t.Fatalf("removing %s moved %s from %s to %s", first, affinity, before, after)
+		}
 	}
 }
