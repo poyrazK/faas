@@ -10396,3 +10396,9 @@ const EventExecutionLineageRepairBatch = 100
 
 const EventExecutionLineageCasesPageDefault = 50
 const EventExecutionLineageCasesPageMax = 200
+
+// Bulk lineage retries persist a bounded fixed selection and evaluate at most this many cases per sweep.
+const EventExecutionLineageRetryJobMaxCases = 200
+const EventExecutionLineageRetryJobBatch = 100
+const EventExecutionLineageRetryJobBodyMaxBytes = 65536
+const EventExecutionLineageRetryReasonMaxBytes = 128

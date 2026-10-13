@@ -97,3 +97,59 @@ repeating the old evaluation. A successful retry records lineage only: it never
 reruns a handler, resets the completed scan cursor, backfills historical outcomes
 or changes an established coverage boundary. Scan counters remain cumulative
 first-scan evidence; use case revision and retry count for explicit retries.
+
+## Retry a reviewed batch
+
+Preview retained unresolved/conflicting cases; `--reason` optionally matches one
+exact reason code. Pagination remains a live listing, not a reservation:
+
+```sh
+gregale --json events subscription-lineage-retry-preview APP SUB --reason missing_root --limit 50
+```
+
+Create a JSON request containing a new UUID and the exact reviewed identities:
+
+```json
+{
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "cases": [
+    {"outbox_id": 123, "expected_revision": 1, "accepted_at": "2026-10-13T10:00:00Z"}
+  ]
+}
+```
+
+Use actual `outbox_id`, `revision` and `accepted_at` values from the preview.
+Submitting up to 200 unique cases validates every guard before creating the job.
+A stale guard returns 409; an unavailable case returns 404. Refresh and review
+before changing the selection. Repeating the same retained UUID with the same
+selection (in any order) returns current progress, including after a lost response.
+Reusing that UUID with a different selection returns 409.
+
+```sh
+gregale --json events subscription-lineage-retry-job-create APP SUB --file retry-request.json
+gregale --json events subscription-lineage-retry-job APP SUB REQUEST_UUID
+```
+
+The API uses GET `execution-reconciliation/retry-preview`, POST
+`execution-reconciliation/retry-jobs`, and GET
+`execution-reconciliation/retry-jobs/{requestID}`. Reads require read scope;
+submission requires deploy/write scope. Go exposes
+`PreviewEventExecutionLineageRetries`, `CreateEventExecutionLineageRetryJob` and
+`GetEventExecutionLineageRetryJob`, with matching Node and Python operations.
+POST returns 202 while pending or 200 for a previously completed job.
+
+The scheduler evaluates at most 100 selected cases across jobs per normal retention
+sweep. Each evaluation commits together with its durable progress checkpoint;
+restarts resume the saved selection. A changed case becomes `changed`, and an
+expired/missing case or removed subscription becomes `unavailable`. Other items
+carry the recorded retry result (`repaired`, `already_associated`, `unresolved` or
+`conflict`). These are recorded evaluations, not live case status. `completed`
+means all selected items were processed; inspect individual outcomes for success.
+Unexpected database errors roll back the item and are retried by a later sweep.
+
+Jobs expire 30 days after creation. Expired jobs are unavailable before physical
+cleanup; use a new UUID and refreshed guards after expiry. Case and receipt
+retention can expire independently while a job is pending. Original receipt
+acceptance and known root incarnation remain fenced. Bulk retries record lineage
+only and preserve scan counters, history-loss markers and established coverage
+boundaries. They never rerun handlers or recreate missing historical evidence.

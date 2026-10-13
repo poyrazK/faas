@@ -179,6 +179,11 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 			return retentionDeleted, 0, err
 		}
 	}
+	if jobs, ok := r.store.(state.EventExecutionLineageRetryJobsStore); ok {
+		if _, err := jobs.AdvanceEventExecutionLineageRetryJobs(ctx, api.EventExecutionLineageRetryJobBatch); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
 	if reconciliation, ok := r.store.(state.EventExecutionReconciliationStore); ok {
 		if _, err := reconciliation.AdvanceEventExecutionReconciliations(ctx, api.EventExecutionReconciliationBatch); err != nil {
 			return retentionDeleted, 0, err

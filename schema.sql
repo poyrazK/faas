@@ -56930,3 +56930,15 @@ CREATE TABLE IF NOT EXISTS event_execution_lineage_retries (
  FOREIGN KEY(subscription_id,outbox_id) REFERENCES event_execution_lineage_cases(subscription_id,outbox_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS event_execution_lineage_retries_expiry_idx ON event_execution_lineage_retries(retain_until);
+
+CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_jobs (
+ subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
+ request_id uuid NOT NULL, account_id uuid NOT NULL, app_id uuid NOT NULL,
+ state text NOT NULL CHECK(state IN ('pending','completed')),
+ snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
+ created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+ retain_until timestamptz NOT NULL CHECK(retain_until>created_at),
+ PRIMARY KEY(subscription_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_pending_idx ON event_execution_lineage_retry_jobs(updated_at,subscription_id,request_id) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_expiry_idx ON event_execution_lineage_retry_jobs(retain_until);

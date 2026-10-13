@@ -516,3 +516,8 @@ type EventExecutionReconciliation = api.EventExecutionReconciliation
 type EventExecutionLineageCase = api.EventExecutionLineageCase
 type EventExecutionLineageCases = api.EventExecutionLineageCases
 type RetryEventExecutionLineageCaseRequest = api.RetryEventExecutionLineageCaseRequest
+
+type EventExecutionLineageRetrySelection = api.EventExecutionLineageRetrySelection
+type CreateEventExecutionLineageRetryJobRequest = api.CreateEventExecutionLineageRetryJobRequest
+type EventExecutionLineageRetryJobItem = api.EventExecutionLineageRetryJobItem
+type EventExecutionLineageRetryJob = api.EventExecutionLineageRetryJob

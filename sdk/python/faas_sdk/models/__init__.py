@@ -586,6 +586,7 @@ from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidat
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
+from .create_event_execution_lineage_retry_job_request import CreateEventExecutionLineageRetryJobRequest
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
@@ -1112,6 +1113,11 @@ from .event_delivery_response_state import EventDeliveryResponseState
 from .event_execution_lineage_case import EventExecutionLineageCase
 from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
 from .event_execution_lineage_cases import EventExecutionLineageCases
+from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
+from .event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
+from .event_execution_lineage_retry_job_item_status import EventExecutionLineageRetryJobItemStatus
+from .event_execution_lineage_retry_job_status import EventExecutionLineageRetryJobStatus
+from .event_execution_lineage_retry_selection import EventExecutionLineageRetrySelection
 from .event_execution_reconciliation import EventExecutionReconciliation
 from .event_execution_reconciliation_status import EventExecutionReconciliationStatus
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
@@ -4623,6 +4629,7 @@ __all__ = (
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
     "CreateEnvironmentGitSourceRequestMode",
+    "CreateEventExecutionLineageRetryJobRequest",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
     "CreateInboundWebhookEndpointRequest",
@@ -5131,6 +5138,11 @@ __all__ = (
     "EventExecutionLineageCase",
     "EventExecutionLineageCases",
     "EventExecutionLineageCaseStatus",
+    "EventExecutionLineageRetryJob",
+    "EventExecutionLineageRetryJobItem",
+    "EventExecutionLineageRetryJobItemStatus",
+    "EventExecutionLineageRetryJobStatus",
+    "EventExecutionLineageRetrySelection",
     "EventExecutionReconciliation",
     "EventExecutionReconciliationStatus",
     "EventFanoutAttemptHistoryResponse",

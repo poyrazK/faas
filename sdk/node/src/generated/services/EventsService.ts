@@ -7,6 +7,7 @@ import type { AppEventPublishStatusResponse } from '../models/AppEventPublishSta
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
+import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -16,6 +17,7 @@ import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
 import type { EventExecutionLineageCase } from '../models/EventExecutionLineageCase.js';
 import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
+import type { EventExecutionLineageRetryJob } from '../models/EventExecutionLineageRetryJob.js';
 import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
@@ -1493,6 +1495,144 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `The combined delivery health request exceeded its bounded deadline.`,
+      },
+    });
+  }
+  /**
+   * Preview unresolved or conflicting retained lineage cases.
+   * Requires read scope. Optional exact reason filter; live pagination, not a reserved selection. Review case acceptance timestamps and revisions before submitting a fixed job selection.
+   * @returns EventExecutionLineageCases Retained eligible cases.
+   * @throws ApiError
+   */
+  public static previewEventExecutionLineageRetries({
+    slug,
+    subscriptionId,
+    reason,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Exact reason code; empty matches all reasons.
+     */
+    reason?: string,
+    /**
+     * Exclusive outbox cursor.
+     */
+    after?: number,
+    /**
+     * Page size; zero selects the default.
+     */
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageCases> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'reason': reason,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, selection or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection.`,
+      },
+    });
+  }
+  /**
+   * Submit a fixed reviewed lineage retry selection.
+   * Requires deploy/write scope. At most 200 unique cases with expected revisions and original acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+   * @returns EventExecutionLineageRetryJob Previously completed job.
+   * @throws ApiError
+   */
+  public static createEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    requestBody: CreateEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier, selection or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained bulk lineage retry progress and per-case results.
+   * Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Results describe recorded evaluations, not live lineage status.
+   * @returns EventExecutionLineageRetryJob Retained job and case results.
+   * @throws ApiError
+   */
+  public static getEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID.
+     */
+    requestId: string,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `Invalid identifier, selection or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection.`,
       },
     });
   }

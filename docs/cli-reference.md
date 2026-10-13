@@ -2282,6 +2282,34 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-retry-preview
+
+Preview retained unresolved lineage cases
+
+`gregale events subscription-lineage-retry-preview [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
+### events subscription-lineage-retry-job-create
+
+Submit a reviewed fixed lineage retry selection
+
+`gregale events subscription-lineage-retry-job-create [--file <PATH>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON request with request_id and guarded cases (maximum 200) |  |
+
+### events subscription-lineage-retry-job
+
+Inspect durable lineage retry progress
+
+`gregale events subscription-lineage-retry-job <app> <subscription-id> <request-id>`
+
 ### events subscription-lineage-cases
 
 List retained lineage repair cases

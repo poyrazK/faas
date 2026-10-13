@@ -253,3 +253,35 @@ VALUES(sqlc.arg(subscription_id)::uuid,sqlc.arg(outbox_id)::bigint,sqlc.arg(requ
 DELETE FROM event_execution_lineage_cases WHERE (subscription_id,outbox_id) IN (SELECT subscription_id,outbox_id FROM event_execution_lineage_cases c WHERE retain_until<=sqlc.arg(now_at)::timestamptz AND NOT EXISTS(SELECT 1 FROM event_execution_lineage_retries r WHERE r.subscription_id=c.subscription_id AND r.outbox_id=c.outbox_id) ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer);
 -- name: PruneEventExecutionLineageRetries :execrows
 DELETE FROM event_execution_lineage_retries WHERE (subscription_id,outbox_id,request_id) IN (SELECT subscription_id,outbox_id,request_id FROM event_execution_lineage_retries WHERE retain_until<=sqlc.arg(now_at)::timestamptz ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer);
+
+-- name: PreviewEventExecutionLineageRetries :many
+SELECT * FROM event_execution_lineage_cases WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND outbox_id>sqlc.arg(after_outbox_id)::bigint AND retain_until>clock_timestamp()
+ AND status IN ('unresolved','conflict') AND (sqlc.arg(reason)::text='' OR reason=sqlc.arg(reason)::text)
+ORDER BY outbox_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: GetEventExecutionLineageRetryJob :one
+SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid AND retain_until>clock_timestamp();
+
+-- name: CreateEventExecutionLineageRetryJob :exec
+INSERT INTO event_execution_lineage_retry_jobs(subscription_id,request_id,account_id,app_id,state,snapshot,created_at,updated_at,retain_until)
+VALUES(sqlc.arg(subscription_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,'pending',sqlc.arg(snapshot)::jsonb,sqlc.arg(created_at)::timestamptz,sqlc.arg(created_at)::timestamptz,sqlc.arg(retain_until)::timestamptz);
+
+-- name: LockNextEventExecutionLineageRetryJob :one
+SELECT j.* FROM event_execution_lineage_retry_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id AND a.status<>'deleted'
+WHERE j.state='pending' AND j.retain_until>clock_timestamp()
+ORDER BY j.updated_at,j.subscription_id,j.request_id FOR UPDATE OF j SKIP LOCKED LIMIT 1;
+
+-- name: SaveEventExecutionLineageRetryJob :exec
+UPDATE event_execution_lineage_retry_jobs SET state=sqlc.arg(state)::text,snapshot=sqlc.arg(snapshot)::jsonb,updated_at=clock_timestamp()
+WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid;
+
+-- name: PruneEventExecutionLineageRetryJobs :execrows
+DELETE FROM event_execution_lineage_retry_jobs WHERE (subscription_id,request_id) IN (
+ SELECT subscription_id,request_id FROM event_execution_lineage_retry_jobs WHERE retain_until<=sqlc.arg(now_at)::timestamptz
+ ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer);
+
+-- name: EventExecutionLineageRetryJobIdentity :one
+SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid;

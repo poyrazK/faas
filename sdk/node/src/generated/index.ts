@@ -299,6 +299,7 @@ export type { CreateDevBridgeResponse } from './models/CreateDevBridgeResponse.j
 export type { CreateEdgeRuleListRequest } from './models/CreateEdgeRuleListRequest.js';
 export type { CreateEdgeRuleRequest } from './models/CreateEdgeRuleRequest.js';
 export type { CreateEnvironmentGitSourceRequest } from './models/CreateEnvironmentGitSourceRequest.js';
+export type { CreateEventExecutionLineageRetryJobRequest } from './models/CreateEventExecutionLineageRetryJobRequest.js';
 export type { CreateExecutionArtifactGrantRequest } from './models/CreateExecutionArtifactGrantRequest.js';
 export type { CreateExecutionRequest } from './models/CreateExecutionRequest.js';
 export type { CreateFinancialBudgetRequest } from './models/CreateFinancialBudgetRequest.js';
@@ -567,6 +568,9 @@ export type { EventDeliveryListResponse } from './models/EventDeliveryListRespon
 export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
 export type { EventExecutionLineageCase } from './models/EventExecutionLineageCase.js';
 export type { EventExecutionLineageCases } from './models/EventExecutionLineageCases.js';
+export type { EventExecutionLineageRetryJob } from './models/EventExecutionLineageRetryJob.js';
+export type { EventExecutionLineageRetryJobItem } from './models/EventExecutionLineageRetryJobItem.js';
+export type { EventExecutionLineageRetrySelection } from './models/EventExecutionLineageRetrySelection.js';
 export type { EventExecutionReconciliation } from './models/EventExecutionReconciliation.js';
 export type { EventFanoutAttemptHistoryResponse } from './models/EventFanoutAttemptHistoryResponse.js';
 export type { EventFanoutAttemptResponse } from './models/EventFanoutAttemptResponse.js';

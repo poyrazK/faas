@@ -30,6 +30,8 @@ func cmdEvents(args []string) int {
 		return cmdEventDeliveryHealthAlerts(args[1:])
 	case "subscription-delivery-health":
 		return cmdEventsSubscriptionDeliveryHealth(args[1:])
+	case "subscription-lineage-retry-preview", "subscription-lineage-retry-job-create", "subscription-lineage-retry-job":
+		return cmdEventsLineageRetryJob(args[1:], args[0])
 	case "subscription-lineage-cases":
 		return cmdEventsLineageCases(args[1:], false)
 	case "subscription-lineage-retry":

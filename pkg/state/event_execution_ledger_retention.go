@@ -46,10 +46,14 @@ func (s *PgStore) PruneEventExecutionLedger(ctx context.Context, now time.Time, 
 	if err != nil {
 		return 0, err
 	}
+	jobs, err := q.PruneEventExecutionLineageRetryJobs(ctx, tx, sqlc.PruneEventExecutionLineageRetryJobsParams{NowAt: pgtypeFromTime(now), BatchLimit: int32(limit)})
+	if err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return int(n + roots + cases + retries), nil
+	return int(n + roots + cases + retries + jobs), nil
 }
 func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time, limit int) (int, error) {
 	if err := ctx.Err(); err != nil {
@@ -62,6 +66,17 @@ func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time,
 	defer m.mu.Unlock()
 	limit = ledgerPruneLimit(limit)
 	casePruned := m.pruneLineageCasesLocked(now, limit)
+	jobPruned := 0
+	for sub, c := range m.eventExecutionCoverage {
+		for id, job := range c.jobs {
+			if jobPruned < limit && !job.RetainUntil.After(now) {
+				delete(c.jobs, id)
+				jobPruned++
+			}
+		}
+		m.eventExecutionCoverage[sub] = c
+	}
+	casePruned += jobPruned
 	keys := []executionLedgerOutcomeKey{}
 	for k, o := range m.eventExecutionOutcomes {
 		if !o.retainUntil.After(now) {

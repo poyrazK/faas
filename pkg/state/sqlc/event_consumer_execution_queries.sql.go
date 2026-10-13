@@ -119,6 +119,34 @@ func (q *Queries) CaptureAssociatedEventCompletion(ctx context.Context, db DBTX,
 	return err
 }
 
+const createEventExecutionLineageRetryJob = `-- name: CreateEventExecutionLineageRetryJob :exec
+INSERT INTO event_execution_lineage_retry_jobs(subscription_id,request_id,account_id,app_id,state,snapshot,created_at,updated_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'pending',$5::jsonb,$6::timestamptz,$6::timestamptz,$7::timestamptz)
+`
+
+type CreateEventExecutionLineageRetryJobParams struct {
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) CreateEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg CreateEventExecutionLineageRetryJobParams) error {
+	_, err := db.Exec(ctx, createEventExecutionLineageRetryJob,
+		arg.SubscriptionID,
+		arg.RequestID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Snapshot,
+		arg.CreatedAt,
+		arg.RetainUntil,
+	)
+	return err
+}
+
 const eventConsumerExecutionAttempts = `-- name: EventConsumerExecutionAttempts :one
 SELECT count(*) FILTER (WHERE outcome='succeeded')::bigint AS successful_attempts,
  count(*) FILTER (WHERE outcome IN ('retry','failed','dead_letter'))::bigint AS failed_attempts,
@@ -698,6 +726,40 @@ func (q *Queries) EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const eventExecutionLineageRetryJobIdentity = `-- name: EventExecutionLineageRetryJobIdentity :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid
+`
+
+type EventExecutionLineageRetryJobIdentityParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageRetryJobIdentity(ctx context.Context, db DBTX, arg EventExecutionLineageRetryJobIdentityParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRetryJobIdentity,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
 const eventExecutionLineageRetryResult = `-- name: EventExecutionLineageRetryResult :one
 SELECT expected_revision,result FROM event_execution_lineage_retries WHERE subscription_id=$1::uuid AND outbox_id=$2::bigint AND request_id=$3::uuid AND retain_until>clock_timestamp()
 `
@@ -717,6 +779,40 @@ func (q *Queries) EventExecutionLineageRetryResult(ctx context.Context, db DBTX,
 	row := db.QueryRow(ctx, eventExecutionLineageRetryResult, arg.SubscriptionID, arg.OutboxID, arg.RequestID)
 	var i EventExecutionLineageRetryResultRow
 	err := row.Scan(&i.ExpectedRevision, &i.Result)
+	return i, err
+}
+
+const getEventExecutionLineageRetryJob = `-- name: GetEventExecutionLineageRetryJob :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid AND retain_until>clock_timestamp()
+`
+
+type GetEventExecutionLineageRetryJobParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) GetEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, getEventExecutionLineageRetryJob,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
 	return i, err
 }
 
@@ -878,6 +974,86 @@ func (q *Queries) LockEventExecutionLineageCoverage(ctx context.Context, db DBTX
 	return i, err
 }
 
+const lockNextEventExecutionLineageRetryJob = `-- name: LockNextEventExecutionLineageRetryJob :one
+SELECT j.subscription_id, j.request_id, j.account_id, j.app_id, j.state, j.snapshot, j.created_at, j.updated_at, j.retain_until FROM event_execution_lineage_retry_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id AND a.status<>'deleted'
+WHERE j.state='pending' AND j.retain_until>clock_timestamp()
+ORDER BY j.updated_at,j.subscription_id,j.request_id FOR UPDATE OF j SKIP LOCKED LIMIT 1
+`
+
+func (q *Queries) LockNextEventExecutionLineageRetryJob(ctx context.Context, db DBTX) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, lockNextEventExecutionLineageRetryJob)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const previewEventExecutionLineageRetries = `-- name: PreviewEventExecutionLineageRetries :many
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
+ AND status IN ('unresolved','conflict') AND ($5::text='' OR reason=$5::text)
+ORDER BY outbox_id LIMIT $6::integer
+`
+
+type PreviewEventExecutionLineageRetriesParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AfterOutboxID  int64
+	Reason         string
+	PageLimit      int32
+}
+
+func (q *Queries) PreviewEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PreviewEventExecutionLineageRetriesParams) ([]EventExecutionLineageCase, error) {
+	rows, err := db.Query(ctx, previewEventExecutionLineageRetries,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterOutboxID,
+		arg.Reason,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageCase{}
+	for rows.Next() {
+		var i EventExecutionLineageCase
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.OutboxID,
+			&i.AccountID,
+			&i.AppID,
+			&i.AcceptedAt,
+			&i.RootInvocationID,
+			&i.RootCreatedAt,
+			&i.Status,
+			&i.Reason,
+			&i.Revision,
+			&i.RetryCount,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneEventExecutionLineageCases = `-- name: PruneEventExecutionLineageCases :execrows
 DELETE FROM event_execution_lineage_cases WHERE (subscription_id,outbox_id) IN (SELECT subscription_id,outbox_id FROM event_execution_lineage_cases c WHERE retain_until<=$1::timestamptz AND NOT EXISTS(SELECT 1 FROM event_execution_lineage_retries r WHERE r.subscription_id=c.subscription_id AND r.outbox_id=c.outbox_id) ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT $2::integer)
 `
@@ -906,6 +1082,25 @@ type PruneEventExecutionLineageRetriesParams struct {
 
 func (q *Queries) PruneEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetriesParams) (int64, error) {
 	result, err := db.Exec(ctx, pruneEventExecutionLineageRetries, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneEventExecutionLineageRetryJobs = `-- name: PruneEventExecutionLineageRetryJobs :execrows
+DELETE FROM event_execution_lineage_retry_jobs WHERE (subscription_id,request_id) IN (
+ SELECT subscription_id,request_id FROM event_execution_lineage_retry_jobs WHERE retain_until<=$1::timestamptz
+ ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT $2::integer)
+`
+
+type PruneEventExecutionLineageRetryJobsParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetryJobsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionLineageRetryJobs, arg.NowAt, arg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -1060,6 +1255,28 @@ func (q *Queries) SaveEventExecutionLineageRetry(ctx context.Context, db DBTX, a
 		arg.ExpectedRevision,
 		arg.Result,
 		arg.RetainUntil,
+	)
+	return err
+}
+
+const saveEventExecutionLineageRetryJob = `-- name: SaveEventExecutionLineageRetryJob :exec
+UPDATE event_execution_lineage_retry_jobs SET state=$1::text,snapshot=$2::jsonb,updated_at=clock_timestamp()
+WHERE subscription_id=$3::uuid AND request_id=$4::uuid
+`
+
+type SaveEventExecutionLineageRetryJobParams struct {
+	State          string
+	Snapshot       []byte
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) SaveEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryJobParams) error {
+	_, err := db.Exec(ctx, saveEventExecutionLineageRetryJob,
+		arg.State,
+		arg.Snapshot,
+		arg.SubscriptionID,
+		arg.RequestID,
 	)
 	return err
 }

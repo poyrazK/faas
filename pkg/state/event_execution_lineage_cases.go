@@ -117,6 +117,19 @@ func (s *PgStore) RetryEventExecutionLineageCase(ctx context.Context, account, a
 		return out, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	out, err = retryEventExecutionLineageCaseTx(ctx, tx, account, app, sub, id, req, nil)
+	if err != nil {
+		return out, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return api.EventExecutionLineageCase{}, err
+	}
+	return out, nil
+}
+
+func retryEventExecutionLineageCaseTx(ctx context.Context, tx pgx.Tx, account, app, sub string, id int64, req api.RetryEventExecutionLineageCaseRequest, accepted *time.Time) (api.EventExecutionLineageCase, error) {
+	var out api.EventExecutionLineageCase
+	var err error
 	q := sqlc.New()
 	_, err = q.EventConsumerExecutionTarget(ctx, tx, sqlc.EventConsumerExecutionTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -139,6 +152,9 @@ func (s *PgStore) RetryEventExecutionLineageCase(ctx context.Context, account, a
 	if err != nil {
 		return out, err
 	}
+	if accepted != nil && !timeFromPgtype(c.AcceptedAt).Equal(*accepted) {
+		return out, ErrConflict
+	}
 	prior, err := q.EventExecutionLineageRetryResult(ctx, tx, sqlc.EventExecutionLineageRetryResultParams{SubscriptionID: owner.SubscriptionID, OutboxID: id, RequestID: mustPgUUID(req.RequestID)})
 	if err == nil {
 		if prior.ExpectedRevision != req.ExpectedRevision {
@@ -147,7 +163,7 @@ func (s *PgStore) RetryEventExecutionLineageCase(ctx context.Context, account, a
 		if err = json.Unmarshal(prior.Result, &out); err != nil {
 			return out, err
 		}
-		return out, tx.Commit(ctx)
+		return out, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
@@ -195,9 +211,6 @@ func (s *PgStore) RetryEventExecutionLineageCase(ctx context.Context, account, a
 	err = q.SaveEventExecutionLineageRetry(ctx, tx, sqlc.SaveEventExecutionLineageRetryParams{SubscriptionID: owner.SubscriptionID, OutboxID: id, RequestID: mustPgUUID(req.RequestID), ExpectedRevision: req.ExpectedRevision, Result: raw, RetainUntil: c.RetainUntil})
 	if err != nil {
 		return out, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return api.EventExecutionLineageCase{}, err
 	}
 	return out, nil
 }
@@ -286,6 +299,10 @@ func (m *MemStore) RetryEventExecutionLineageCase(ctx context.Context, account, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.retryEventExecutionLineageCaseLocked(account, app, sub, id, req, nil)
+}
+func (m *MemStore) retryEventExecutionLineageCaseLocked(account, app, sub string, id int64, req api.RetryEventExecutionLineageCaseRequest, accepted *time.Time) (api.EventExecutionLineageCase, error) {
+	var out api.EventExecutionLineageCase
 	if !m.eventSubscriptionControlTargetLocked(account, app, sub) {
 		return out, ErrNotFound
 	}
@@ -295,6 +312,9 @@ func (m *MemStore) RetryEventExecutionLineageCase(ctx context.Context, account, 
 	now := time.Now().UTC()
 	if !ok || !item.RetainUntil.After(now) {
 		return out, ErrNotFound
+	}
+	if accepted != nil && !item.AcceptedAt.Equal(*accepted) {
+		return out, ErrConflict
 	}
 	key := strconv.FormatInt(id, 10) + ":" + canonicalMemUUID(req.RequestID)
 	if prior, ok := c.retries[key]; ok && prior.retain.After(now) {

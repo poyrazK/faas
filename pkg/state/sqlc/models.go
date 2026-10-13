@@ -2858,6 +2858,18 @@ type EventExecutionLineageRetry struct {
 	RetainUntil      pgtype.Timestamptz
 }
 
+type EventExecutionLineageRetryJob struct {
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	State          string
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
 type EventExecutionOutcome struct {
 	RootInvocationID    pgtype.UUID
 	RootCreatedAt       pgtype.Timestamptz

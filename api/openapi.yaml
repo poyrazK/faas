@@ -33561,6 +33561,162 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview:
+    get:
+      tags: [events]
+      operationId: previewEventExecutionLineageRetries
+      summary: Preview unresolved or conflicting retained lineage cases.
+      description: Requires read scope. Optional exact reason filter; live pagination, not a reserved selection. Review case acceptance timestamps and revisions before submitting a fixed job selection.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: reason
+          in: query
+          description: Exact reason code; empty matches all reasons.
+          schema: { type: string, maxLength: 128 }
+        - name: after
+          in: query
+          description: Exclusive outbox cursor.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: Page size; zero selects the default.
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Retained eligible cases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCases' }
+        '400':
+          description: Invalid identifier, selection or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case guard changed or retained request identity reused with another selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Operation timed out; repeat submission with the same request identity and selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs:
+    post:
+      tags: [events]
+      operationId: createEventExecutionLineageRetryJob
+      summary: Submit a fixed reviewed lineage retry selection.
+      description: Requires deploy/write scope. At most 200 unique cases with expected revisions and original acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEventExecutionLineageRetryJobRequest' }
+      responses:
+        '202':
+          description: Durably accepted pending job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '200':
+          description: Previously completed job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier, selection or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case guard changed or retained request identity reused with another selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Operation timed out; repeat submission with the same request identity and selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}:
+    get:
+      tags: [events]
+      operationId: getEventExecutionLineageRetryJob
+      summary: Inspect retained bulk lineage retry progress and per-case results.
+      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Results describe recorded evaluations, not live lineage status.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Original nonzero submission UUID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Retained job and case results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier, selection or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case guard changed or retained request identity reused with another selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Operation timed out; repeat submission with the same request identity and selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases:
     get:
       tags: [events]
@@ -62466,6 +62622,52 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
 
+    EventExecutionLineageRetrySelection:
+      type: object
+      additionalProperties: false
+      required: [outbox_id, expected_revision, accepted_at]
+      properties:
+        outbox_id: { type: integer, format: int64, minimum: 1 }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+        accepted_at: { type: string, format: date-time, description: Exact original acceptance timestamp from the reviewed case. }
+    CreateEventExecutionLineageRetryJobRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, cases]
+      properties:
+        request_id: { type: string, format: uuid }
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: Unique outbox identities; server normalizes ascending order for idempotency.
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetrySelection' }
+    EventExecutionLineageRetryJobItem:
+      type: object
+      additionalProperties: false
+      required: [selection, status]
+      properties:
+        selection: { $ref: '#/components/schemas/EventExecutionLineageRetrySelection' }
+        status: { type: string, enum: [pending, changed, unavailable, unresolved, conflict, repaired, already_associated] }
+        reason: { type: string }
+        result: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+    EventExecutionLineageRetryJob:
+      type: object
+      additionalProperties: false
+      required: [request_id, subscription_id, app_id, status, processed, items, created_at, updated_at, retain_until]
+      properties:
+        request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, completed] }
+        processed: { type: integer, minimum: 0, maximum: 200 }
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobItem' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
     EventExecutionLineageCase:
       type: object
       additionalProperties: false

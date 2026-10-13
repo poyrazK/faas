@@ -389,3 +389,8 @@ export type { EventExecutionReconciliation } from './generated/models/EventExecu
 export type { EventExecutionLineageCase } from './generated/models/EventExecutionLineageCase.js';
 export type { EventExecutionLineageCases } from './generated/models/EventExecutionLineageCases.js';
 export type { RetryEventExecutionLineageCaseRequest } from './generated/models/RetryEventExecutionLineageCaseRequest.js';
+
+export type { EventExecutionLineageRetrySelection } from './generated/models/EventExecutionLineageRetrySelection.js';
+export type { CreateEventExecutionLineageRetryJobRequest } from './generated/models/CreateEventExecutionLineageRetryJobRequest.js';
+export type { EventExecutionLineageRetryJobItem } from './generated/models/EventExecutionLineageRetryJobItem.js';
+export type { EventExecutionLineageRetryJob } from './generated/models/EventExecutionLineageRetryJob.js';

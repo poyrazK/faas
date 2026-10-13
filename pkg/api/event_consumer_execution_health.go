@@ -132,3 +132,47 @@ func (c *Client) RetryEventExecutionLineageCase(ctx context.Context, app, sub st
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/cases/"+strconv.FormatInt(id, 10)+"/retry", req, &out)
 	return out, err
 }
+
+// EventExecutionLineageRetrySelection fences both the case revision and original receipt acceptance.
+type EventExecutionLineageRetrySelection struct {
+	OutboxID         int64     `json:"outbox_id"`
+	ExpectedRevision int64     `json:"expected_revision"`
+	AcceptedAt       time.Time `json:"accepted_at"`
+}
+type CreateEventExecutionLineageRetryJobRequest struct {
+	RequestID string                                `json:"request_id"`
+	Cases     []EventExecutionLineageRetrySelection `json:"cases"`
+}
+type EventExecutionLineageRetryJobItem struct {
+	Selection EventExecutionLineageRetrySelection `json:"selection"`
+	Status    string                              `json:"status"`
+	Reason    string                              `json:"reason,omitempty"`
+	Result    *EventExecutionLineageCase          `json:"result,omitempty"`
+}
+type EventExecutionLineageRetryJob struct {
+	RequestID      string                              `json:"request_id"`
+	SubscriptionID string                              `json:"subscription_id"`
+	AppID          string                              `json:"app_id"`
+	Status         string                              `json:"status"`
+	Processed      int                                 `json:"processed"`
+	Items          []EventExecutionLineageRetryJobItem `json:"items"`
+	CreatedAt      time.Time                           `json:"created_at"`
+	UpdatedAt      time.Time                           `json:"updated_at"`
+	RetainUntil    time.Time                           `json:"retain_until"`
+}
+
+func (c *Client) PreviewEventExecutionLineageRetries(ctx context.Context, app, sub, reason string, after int64, limit int) (EventExecutionLineageCases, error) {
+	var out EventExecutionLineageCases
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-preview?after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit)+"&reason="+url.QueryEscape(reason), nil, &out)
+	return out, err
+}
+func (c *Client) CreateEventExecutionLineageRetryJob(ctx context.Context, app, sub string, req CreateEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+	var out EventExecutionLineageRetryJob
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs", req, &out)
+	return out, err
+}
+func (c *Client) GetEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string) (EventExecutionLineageRetryJob, error) {
+	var out EventExecutionLineageRetryJob
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID), nil, &out)
+	return out, err
+}
