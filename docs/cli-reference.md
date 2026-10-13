@@ -1451,6 +1451,8 @@ gregale ai routes create --name chat --format openai --target <openai-id> --targ
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
 gregale ai logs show <integration-id> <request-id>
+gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
+gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
 ```
 
 ### ai policy
@@ -1469,6 +1471,21 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+
+### ai content-policy
+
+Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
+
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--email <ACTION>` | e-mail addresses | one of `off` · `redact` · `block` |
+| `--payment-card <ACTION>` | payment card numbers | one of `off` · `redact` · `block` |
+| `--iban <ACTION>` | IBANs | one of `off` · `redact` · `block` |
+| `--secrets <ACTION>` | API keys, tokens and private keys | one of `off` · `redact` · `block` |
+| `--block-term <TERM>` | block requests containing this term, ignoring case (repeat) |  |
+| `--clear-terms` | remove every blocked term first |  |
 
 ### ai app-limit
 
@@ -1503,7 +1520,7 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 
 | Flag | Meaning | |
 |---|---|---|
-| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
+| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears) |  |
 
 ### ai catalog
 
@@ -1572,6 +1589,18 @@ List budget alerts recorded at 80% and 100%
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | alerts to show, 1 to 100 |  |
+
+### ai replay
+
+Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay
+
+`gregale ai replay [--target <TARGET>] [--no-wait] [--timeout <duration>] [show] <integration-id|replay-id> [<request-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] to replay on (repeat, at most 5) |  |
+| `--no-wait` | print the replay without waiting for results |  |
+| `--timeout <duration>` | how long to wait for results (default 3m) |  |
 
 ### ai logs
 

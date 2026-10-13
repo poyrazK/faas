@@ -850,7 +850,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the integration that logged the call.
+        description: UUID of the integration whose captured call is replayed.
         schema: { type: string, format: uuid }
       - name: request
         in: path
@@ -52171,7 +52171,7 @@ components:
         integration_id: { type: string, format: uuid }
         model: { type: [string, 'null'] }
         status: { type: [integer, 'null'] }
-        outcome: { type: [string, 'null'], enum: [known, unknown, error, null] }
+        outcome: { type: [string, 'null'], description: 'known, unknown or error; null when the call did not settle.' }
         error_code: { type: [string, 'null'], description: Problem code of a refused or failed call. }
         input_tokens: { type: integer, format: int64, minimum: 0 }
         output_tokens: { type: integer, format: int64, minimum: 0 }

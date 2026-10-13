@@ -216,7 +216,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
-	isExecution, ok := false, true
+	var isExecution bool
 	if !isReplay {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return

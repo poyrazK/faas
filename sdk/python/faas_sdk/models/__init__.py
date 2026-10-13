@@ -631,6 +631,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
@@ -2575,9 +2576,19 @@ from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
 )
 from .outbound_ai_content_body import OutboundAIContentBody
 from .outbound_ai_content_body_encoding import OutboundAIContentBodyEncoding
+from .outbound_ai_content_policy import OutboundAIContentPolicy
+from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
+from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
+from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
+from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_replay import OutboundAIReplay
+from .outbound_ai_replay_result import OutboundAIReplayResult
+from .outbound_ai_replay_source import OutboundAIReplaySource
+from .outbound_ai_replay_state import OutboundAIReplayState
+from .outbound_ai_replay_target import OutboundAIReplayTarget
 from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
@@ -4660,6 +4671,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
     "CreateOutboundCredentialKeyRequest",
@@ -6488,9 +6500,19 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
     "OutboundAIContentBody",
     "OutboundAIContentBodyEncoding",
+    "OutboundAIContentPolicy",
+    "OutboundAIContentPolicyEmail",
+    "OutboundAIContentPolicyIban",
+    "OutboundAIContentPolicyPaymentCard",
+    "OutboundAIContentPolicySecret",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIReplay",
+    "OutboundAIReplayResult",
+    "OutboundAIReplaySource",
+    "OutboundAIReplayState",
+    "OutboundAIReplayTarget",
     "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",

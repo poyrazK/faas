@@ -483,8 +483,8 @@ func appendContent(text *strings.Builder, raw json.RawMessage) {
 
 func appendParts(text *strings.Builder, parts []outputPart) {
 	for _, part := range parts {
-		switch {
-		case part.Type == "tool_use" || part.Type == "function_call":
+		switch part.Type {
+		case "tool_use", "function_call":
 			text.WriteString("[" + part.Name + "]")
 		default:
 			text.WriteString(part.Text)

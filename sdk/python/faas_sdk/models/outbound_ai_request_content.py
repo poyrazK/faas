@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -18,12 +18,14 @@ T = TypeVar("T", bound="OutboundAIRequestContent")
 @_attrs_define
 class OutboundAIRequestContent:
     """One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers
-    (ADR-996).
+    (ADR-996). Personal data and secrets are redacted (ADR-997).
 
     """
 
     request_id: UUID
     created_at: datetime.datetime
+    request_path: None | str
+    """The provider path of the call; null for captures made before ADR-997."""
     request: OutboundAIContentBody
     """The start of one captured body."""
     response: OutboundAIContentBody
@@ -35,6 +37,9 @@ class OutboundAIRequestContent:
 
         created_at = self.created_at.isoformat()
 
+        request_path: None | str
+        request_path = self.request_path
+
         request = self.request.to_dict()
 
         response = self.response.to_dict()
@@ -45,6 +50,7 @@ class OutboundAIRequestContent:
             {
                 "request_id": request_id,
                 "created_at": created_at,
+                "request_path": request_path,
                 "request": request,
                 "response": response,
             }
@@ -61,6 +67,13 @@ class OutboundAIRequestContent:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        def _parse_request_path(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        request_path = _parse_request_path(d.pop("request_path"))
+
         request = OutboundAIContentBody.from_dict(d.pop("request"))
 
         response = OutboundAIContentBody.from_dict(d.pop("response"))
@@ -68,6 +81,7 @@ class OutboundAIRequestContent:
         outbound_ai_request_content = cls(
             request_id=request_id,
             created_at=created_at,
+            request_path=request_path,
             request=request,
             response=response,
         )

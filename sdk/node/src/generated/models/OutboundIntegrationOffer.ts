@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -58,6 +59,7 @@ export type OutboundIntegrationOffer = {
    * Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
    */
   ai_request_log_content?: boolean;
+  ai_content_policy?: OutboundAIContentPolicy;
   /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */

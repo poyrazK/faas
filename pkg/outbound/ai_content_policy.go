@@ -95,7 +95,7 @@ func skipContentScan(value string) bool {
 		return false
 	}
 	return strings.IndexFunc(value, func(r rune) bool {
-		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '+' || r == '/' || r == '=' || r == '-' || r == '_')
+		return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("+/=-_", r)
 	}) < 0
 }
 

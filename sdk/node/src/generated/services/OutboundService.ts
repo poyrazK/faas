@@ -2,12 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateOutboundAIReplayRequest } from '../models/CreateOutboundAIReplayRequest.js';
 import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRouteRequest.js';
 import type { CreateOutboundCredentialKeyRequest } from '../models/CreateOutboundCredentialKeyRequest.js';
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAIBudgetAlertList } from '../models/OutboundAIBudgetAlertList.js';
+import type { OutboundAIContentPolicy } from '../models/OutboundAIContentPolicy.js';
 import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIReplay } from '../models/OutboundAIReplay.js';
 import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
@@ -747,6 +750,115 @@ export class OutboundService {
         'limit': limit,
         'before': before,
       },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replay a captured AI call on other integrations or models.
+   * Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target without streaming; the calls count against the targets' budgets. At most 100 replays per integration per UTC day.
+   * @returns OutboundAIReplay The pending replay.
+   * @throws ApiError
+   */
+  public static createOutboundAiReplay({
+    integration,
+    request,
+    requestBody,
+  }: {
+    /**
+     * UUID of the integration whose captured call is replayed.
+     */
+    integration: string,
+    /**
+     * ID of the request-log entry whose capture is replayed.
+     */
+    request: string,
+    requestBody: CreateOutboundAIReplayRequest,
+  }): CancelablePromise<OutboundAIReplay> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/replays',
+      path: {
+        'integration': integration,
+        'request': request,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The call has no capture that can be resent.`,
+        429: `The integration reached its replays for the UTC day.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI replay and its results.
+   * Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+   * @returns OutboundAIReplay The replay.
+   * @throws ApiError
+   */
+  public static getOutboundAiReplay({
+    replay,
+  }: {
+    /**
+     * UUID of the replay.
+     */
+    replay: string,
+  }): CancelablePromise<OutboundAIReplay> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-replays/{replay}',
+      path: {
+        'replay': replay,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an AI integration's content guardrails.
+   * Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one, request bodies the gateway cannot read are refused.
+   * @returns void
+   * @throws ApiError
+   */
+  public static putOutboundAiContentPolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the customer AI integration.
+     */
+    integration: string,
+    requestBody: OutboundAIContentPolicy,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai-content-policy',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
