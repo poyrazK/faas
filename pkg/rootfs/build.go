@@ -239,6 +239,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
+	budget := newExtractionBudget(limits.LayerExtractionBudgetBytes())
 	for i, layer := range in.Layers {
 		// The app artifact becomes overlayfs' upper directory after
 		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
@@ -246,8 +247,8 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		// shared base owns guest pseudo-filesystems, so filter image entries
 		// below /dev, /proc, /sys, and /tmp before they can become mounted
 		// staging paths.
-		if err := applyLayerGzForApp(staging, layer); err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+		if err := applyLayerGzForApp(staging, layer, budget); err != nil {
+			return BuildResult{}, layerApplyError(limits, i, err)
 		}
 	}
 	// A customer image must not be able to smuggle the full-rootfs marker
@@ -788,6 +789,17 @@ func (e *ErrTarballExceedsCap) Is(target error) bool {
 	return ok
 }
 
+// layerApplyError wraps a failure to apply image layer i. Exceeding the
+// extraction budget is reported as the plan's app-layer Problem so the
+// customer sees the limit and the observed size, as for the final cap.
+func layerApplyError(limits api.Limits, i int, err error) error {
+	var budgetErr *ErrLayerExtractionExceedsBudget
+	if errors.As(err, &budgetErr) {
+		return api.ErrAppLayerTooLarge(limits, budgetErr.UsedBytes+budgetErr.EntryBytes)
+	}
+	return fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+}
+
 // applyTarballWithCap is the cap-aware variant of ApplyTarball. It
 // streams the tar, accumulates each entry's declared Size into
 // `written`, and bails with *ErrTarballExceedsCap once the running
@@ -839,7 +851,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 		// Keep every staging filesystem operation inside the positive
 		// archive-name validation branch. resolveEntryPath then adds
 		// containment and ancestor-symlink protection.
-		if !strings.Contains(archiveName, "..") {
+		if !hasDotDotComponent(archiveName) {
 			hdr.Name = archiveName
 			// resolveEntryPath rejects absolute names and clamps ancestor
 			// symlinks inside the staging root before applyEntry can create

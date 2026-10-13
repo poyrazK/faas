@@ -2899,6 +2899,21 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
 }
 
+// LayerExtractionBudgetMultiple bounds the regular-file bytes one image build
+// may write while applying OCI layers, as a multiple of EphemeralDiskMaxBytes.
+// Layers are extracted before the final size check, and a small compressed
+// layer can expand without bound, so extraction stops at this budget instead
+// of filling the build disk. The finished artifact must still fit
+// EphemeralDiskMaxMB; the multiple leaves room for files a later layer
+// replaces or deletes.
+const LayerExtractionBudgetMultiple = 2
+
+// LayerExtractionBudgetBytes is the extraction budget for one image build.
+// Zero means the limits value is unset; callers fail closed.
+func (l Limits) LayerExtractionBudgetBytes() int64 {
+	return l.EphemeralDiskMaxBytes() * LayerExtractionBudgetMultiple
+}
+
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
 // cap on meterd's upstream-probe loop. Read by cmd/meterd at boot
 // time and by pkg/meter/upstream_probe.go on each loop tick. NOT a
@@ -5403,8 +5418,16 @@ const (
 	// ceiling so the cold-boot latency contract (§14, wake < 350 ms)
 	// stays predictable. 60s is well above the largest manifest +
 	// image-config GET and a generous safety margin over the
-	// fail-fast PullImageConfig path.
+	// fail-fast PullImageConfig path. Blob downloads use it as the
+	// response-header timeout and as the longest a body read may wait for
+	// data, not as a total: a large layer legitimately takes longer.
 	OCIPullTimeoutSeconds = 60
+
+	// OCIBlobTransferMaxSeconds caps one registry blob transfer, including
+	// the time its consumer spends extracting it. It stops a registry that
+	// trickles bytes just fast enough to never stall from holding a pull open
+	// indefinitely.
+	OCIBlobTransferMaxSeconds = 30 * 60
 
 	// Idle timeout tuning (spec §4.3): app-configurable down to this floor, and
 	// no higher than plan default × this multiplier.
