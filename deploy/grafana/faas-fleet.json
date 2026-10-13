@@ -10,6 +10,91 @@
   "liveNow": false,
   "panels": [
     {
+      "id": 430,
+      "type": "stat",
+      "title": "Firing pages",
+      "description": "Page alerts firing now (ADR-1236: 27 rules, each one needs a human within minutes).",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(ALERTS{alertstate=\"firing\",severity=\"page\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 431,
+      "type": "table",
+      "title": "Firing warn alerts (daily review)",
+      "description": "Every warn alert firing now, by family. ADR-1236 moved 72 former pages here on the condition that this list is reviewed once a day; Alertmanager also sends it as a per-family digest.",
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sort_desc(count by (family, alertname, component) (ALERTS{alertstate=\"firing\",severity=\"warn\"}))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
       "type": "timeseries",
       "title": "Wake latency (ingress and platform gate)",
       "id": 1,
@@ -17,7 +102,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -101,7 +186,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -128,7 +213,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 16
       },
       "datasource": {
         "type": "prometheus",
@@ -172,7 +257,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 16
       },
       "datasource": {
         "type": "prometheus",
@@ -243,7 +328,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -292,7 +377,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -341,7 +426,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "prometheus",
@@ -368,7 +453,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "datasource": {
         "type": "prometheus",
@@ -417,7 +502,7 @@
         "h": 8,
         "w": 16,
         "x": 8,
-        "y": 24
+        "y": 32
       },
       "datasource": {
         "type": "prometheus",
@@ -461,7 +546,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "datasource": {
         "type": "prometheus",
@@ -517,7 +602,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 40
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -575,7 +660,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 40
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -602,7 +687,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 40
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -658,7 +743,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 64
       },
       "datasource": {
         "type": "prometheus",
@@ -726,7 +811,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 64
+        "y": 72
       },
       "datasource": {
         "type": "prometheus",
@@ -788,7 +873,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 64
+        "y": 72
       },
       "datasource": {
         "type": "prometheus",
@@ -836,7 +921,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 80
       },
       "datasource": {
         "type": "prometheus",
@@ -879,7 +964,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 80
+        "y": 88
       },
       "datasource": {
         "type": "prometheus",
@@ -939,7 +1024,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 88
+        "y": 96
       },
       "datasource": {
         "type": "prometheus",
@@ -982,7 +1067,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 88
+        "y": 96
       },
       "datasource": {
         "type": "prometheus",
@@ -1025,7 +1110,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 96
+        "y": 104
       },
       "datasource": {
         "type": "prometheus",
@@ -1085,7 +1170,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 112
       },
       "datasource": {
         "type": "prometheus",
@@ -1153,7 +1238,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 112
       },
       "datasource": {
         "type": "prometheus",
@@ -1196,7 +1281,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 112
+        "y": 120
       },
       "datasource": {
         "type": "prometheus",
@@ -1279,7 +1364,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 112
+        "y": 120
       },
       "datasource": {
         "type": "prometheus",
@@ -1322,7 +1407,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 120
+        "y": 128
       },
       "datasource": {
         "type": "prometheus",
@@ -1365,7 +1450,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 128
+        "y": 136
       },
       "description": "Rate of *_wake_failure_total{reason=...} (issue #1059 / ADR-127). Stacked by reason to surface the dominant failure mode at a glance; legend doubles as the triage table (cross-reference with docs/runbooks/FaasColdBootRatioHigh.md). `after_restore_failed` identifies an opted-in application callback that rejected a restore; `mem_backend_err` is pre-instantiated today even though unreachable in production — the row should read 0.",
       "datasource": {
@@ -1413,7 +1498,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 128
+        "y": 136
       },
       "description": "vmmd_cold_boot_ratio (recording rule — issue #1059 / ADR-127 §5). Threshold 0.30 (yellow) gates FaasColdBootRatioHigh page alert; 0.50 (red) is the fleet-snapshot-saturation point (matches the §12 snapshot_fleet_avg_mb > 200 alert). Sibling of the existing 'Cold-boot fallback rate (5m)' panel (id: 3) which uses the older vmmd_cold_boot_fallback_total counter; this one uses the §6.1 tier split (ADR-074) for the canonical ratio.",
       "datasource": {
@@ -1471,7 +1556,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 136
+        "y": 144
       },
       "description": "p99 wake latency per box — derived from vmmd_wake_latency_seconds_bucket{box,phase} (issue #1059 / ADR-127 §1). With single-control-plane the box label resolves to 'local'; the multi-host rollout replaces this with compute_nodes.id. The aggregated fleet histogram (vmmd_wake_phase_duration_seconds{phase}) is preserved as a sibling for §12 dashboard back-compat — this panel is the operator-facing per-box view.",
       "datasource": {
@@ -1515,7 +1600,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 144
+        "y": 152
       },
       "description": "Stacked rate of POST /v1/apps/{slug}/deployments/{id}/cancel per outcome (ADR-124 + PR #1024 + PR #1181). Counter: apid_ops_total{op=\"deployment_cancel\",outcome} via ObserveDeploymentCancelled at pkg/wire/metrics.go:5686. Closed outcome set: ok / live_forbidden / not_cancellable / error. Free-plan cancel is allowed (no plan_disabled label).",
       "datasource": {
@@ -1563,7 +1648,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 144
+        "y": 152
       },
       "description": "Stacked rate of POST /v1/deployments/{id}/reorder per outcome (ADR-124 + PR #1024). Counter: apid_ops_total{op=\"deployment_reorder\",outcome} via ObserveDeploymentReorder at pkg/wire/metrics.go:5720. Closed outcome set: ok / plan_disabled / not_pending / out_of_range / error. Reorder is Hobby/Pro/Scale only — Free plan hits plan_disabled.",
       "datasource": {
@@ -1611,7 +1696,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 152
+        "y": 160
       },
       "description": "Stacked rate of DELETE /v1/deployments/{id} per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear\",outcome} via ObserveDeploymentCleared at pkg/wire/metrics.go:5727. Closed outcome set: ok / live_forbidden / error. Mirror of cancel/clear §12 success-rate tile (cancel + clear joined on op ∈ {deployment_cancel, deployment_clear}).",
       "datasource": {
@@ -1659,7 +1744,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 152
+        "y": 160
       },
       "description": "Stacked rate of POST /v1/apps/{slug}/deployments/clear-obsolete per outcome (ADR-124 + PR #1181). Counter: apid_ops_total{op=\"deployment_clear_obsolete\",outcome} via ObserveDeploymentClearObsolete at pkg/wire/metrics.go:5748. Closed outcome set: ok / plan_disabled / error. Hobby/Pro/Scale only — Free plan hits plan_disabled. count=0 still emits ok (caller asked, store found nothing).",
       "datasource": {
@@ -1707,7 +1792,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 160
+        "y": 168
       },
       "description": "§12 success-rate tile across all 4 queue-control ops (cancel / reorder / clear / clear-obsolete). Numerator: apid_ops_total{op=~\"deployment_(cancel|reorder|clear|clear_obsolete)\",outcome=\"ok\"}; denominator: same set, all outcomes. Thresholds mirror build-success tile: green ≥0.95, yellow 0.80-0.95, red <0.80. A sustained red means either a state-machine regression (live_forbidden, not_pending, not_cancellable) or a real error burst.",
       "datasource": {
@@ -1763,7 +1848,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 174
       },
       "targets": [
         {
@@ -1807,7 +1892,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 174
       },
       "targets": [
         {
@@ -1860,7 +1945,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 174
+        "y": 182
       },
       "targets": [
         {
@@ -1900,7 +1985,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 174
+        "y": 182
       },
       "targets": [
         {
@@ -1945,7 +2030,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 182
+        "y": 190
       },
       "targets": [
         {
@@ -2004,7 +2089,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 190
+        "y": 198
       },
       "datasource": {
         "type": "prometheus",
@@ -2059,7 +2144,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 190
+        "y": 198
       },
       "datasource": {
         "type": "prometheus",
@@ -2100,7 +2185,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 198
+        "y": 206
       },
       "datasource": {
         "type": "prometheus",
@@ -2133,7 +2218,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 198
+        "y": 206
       },
       "datasource": {
         "type": "prometheus",
@@ -2182,7 +2267,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 206
+        "y": 214
       },
       "datasource": {
         "type": "prometheus",
@@ -2223,7 +2308,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 214
+        "y": 222
       },
       "datasource": {
         "type": "prometheus",
@@ -2256,7 +2341,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 222
+        "y": 230
       },
       "datasource": {
         "type": "prometheus",
@@ -2315,7 +2400,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 222
+        "y": 230
       },
       "datasource": {
         "type": "prometheus",
@@ -2370,7 +2455,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 230
+        "y": 238
       },
       "datasource": {
         "type": "prometheus",
@@ -2411,7 +2496,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 238
+        "y": 246
       },
       "datasource": {
         "type": "prometheus",
@@ -2457,7 +2542,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 246
+        "y": 254
       },
       "datasource": {
         "type": "prometheus",
@@ -2520,7 +2605,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 254
+        "y": 262
       },
       "datasource": {
         "type": "prometheus",
@@ -2579,7 +2664,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 254
+        "y": 262
       },
       "datasource": {
         "type": "prometheus",
@@ -2638,7 +2723,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 262
+        "y": 270
       },
       "datasource": {
         "type": "prometheus",
@@ -2682,7 +2767,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 270
+        "y": 278
       },
       "datasource": {
         "type": "prometheus",
@@ -2726,7 +2811,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 270
+        "y": 278
       },
       "datasource": {
         "type": "prometheus",
@@ -2770,7 +2855,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 278
+        "y": 286
       },
       "datasource": {
         "type": "prometheus",
@@ -2823,7 +2908,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 278
+        "y": 286
       },
       "datasource": {
         "type": "prometheus",
@@ -2862,7 +2947,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 286
+        "y": 294
       },
       "datasource": {
         "type": "prometheus",
@@ -2901,7 +2986,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 294
+        "y": 302
       },
       "datasource": {
         "type": "prometheus",
@@ -2960,7 +3045,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 302
+        "y": 310
       },
       "datasource": {
         "type": "prometheus",
@@ -3005,7 +3090,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 302
+        "y": 310
       },
       "datasource": {
         "type": "prometheus",
@@ -3044,7 +3129,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 310
+        "y": 318
       },
       "datasource": {
         "type": "prometheus",
@@ -3082,7 +3167,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 310
+        "y": 318
       },
       "datasource": {
         "type": "prometheus",
@@ -3117,7 +3202,7 @@
       "type": "timeseries",
       "title": "Init snapshot path outcomes (5m)",
       "description": "Prime and later park outcomes. Reused snapshots and failed reuse cleanup are separate from new captures; before_checkpoint_failed is an application callback failure.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 318},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 326},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
@@ -3134,7 +3219,7 @@
       "type": "timeseries",
       "title": "Init snapshot capture p95 (5m)",
       "description": "Time spent in new terminal init capture, including before_checkpoint. Reuse is excluded. Compare with the RAM-scaled snapshot budget when investigating slow captures.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 318},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 326},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {

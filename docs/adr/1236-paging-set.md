@@ -127,4 +127,8 @@ Pages for components that are not deployed in production (Loki, GCP Ops Agent) o
   the incident, where one does.
 - Warn alerts are only safe to demote to if someone reads them. This ADR
   assumes a daily review of the warn route; without one, `PgBackupStale` and
-  the backlog alerts should go back to page.
+  the backlog alerts should go back to page. To support that review, the
+  warn route groups by family and repeats a still-firing family once a day
+  instead of every four hours, optional `am_*_warn_webhook_url_file`
+  channels keep warns out of the page chat, and the fleet dashboard opens
+  with a firing-pages count and a firing-warn table.
