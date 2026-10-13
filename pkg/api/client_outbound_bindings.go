@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/url"
+	"strconv"
+	"time"
 )
 
 func (c *Client) ListOutboundIntegrationOffers(ctx context.Context) (OutboundIntegrationOfferList, error) {
@@ -34,6 +36,167 @@ func (c *Client) SetOutboundIntegrationDailyBudget(ctx context.Context, integrat
 func (c *Client) SetOutboundIntegrationRequestPolicy(ctx context.Context, integrationID string, policy OutboundRequestPolicy) error {
 	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/request-policy"
 	return c.do(ctx, "PUT", path, PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
+}
+
+// SetOutboundIntegrationAIPolicy replaces a customer integration's complete AI
+// gateway policy (provider, token and cost limits); an empty provider turns
+// it off.
+func (c *Client) SetOutboundIntegrationAIPolicy(ctx context.Context, integrationID string, policy PutOutboundAIPolicyRequest) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai"
+	return c.do(ctx, "PUT", path, policy, nil)
+}
+
+// GetOutboundIntegrationAIPrices returns the price list in effect.
+func (c *Client) GetOutboundIntegrationAIPrices(ctx context.Context, integrationID string) (OutboundAIPriceListResponse, error) {
+	var out OutboundAIPriceListResponse
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-prices"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// SetOutboundIntegrationAIPrices replaces the price list, effective now.
+func (c *Client) SetOutboundIntegrationAIPrices(ctx context.Context, integrationID string, entries []OutboundAIPriceEntry) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-prices"
+	if entries == nil {
+		entries = []OutboundAIPriceEntry{}
+	}
+	return c.do(ctx, "PUT", path, PutOutboundAIPricesRequest{Entries: entries}, nil)
+}
+
+// SetOutboundBindingAIBudget sets or clears one app's daily AI token limit.
+func (c *Client) SetOutboundBindingAIBudget(ctx context.Context, slug, integrationID string, dailyTokenLimit *int64) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-budget"
+	return c.do(ctx, "PUT", path, PutOutboundBindingAIBudgetRequest{DailyTokenLimit: dailyTokenLimit}, nil)
+}
+
+// SetOutboundBindingAIGuardrails replaces one app's AI guardrails (ADR-991).
+func (c *Client) SetOutboundBindingAIGuardrails(ctx context.Context, slug, integrationID string, req PutOutboundBindingAIGuardrailsRequest) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID) + "/ai-guardrails"
+	return c.do(ctx, "PUT", path, req, nil)
+}
+
+func (c *Client) ListOutboundCredentialKeys(ctx context.Context, integrationID string) (OutboundCredentialKeyList, error) {
+	var out OutboundCredentialKeyList
+	return out, c.do(ctx, "GET", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys", nil, &out)
+}
+
+func (c *Client) CreateOutboundCredentialKey(ctx context.Context, integrationID string, req CreateOutboundCredentialKeyRequest) (OutboundCredentialKey, error) {
+	var out OutboundCredentialKey
+	return out, c.do(ctx, "POST", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys", req, &out)
+}
+
+func (c *Client) DeleteOutboundCredentialKey(ctx context.Context, integrationID, keyID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/credential-keys/"+url.PathEscape(keyID), nil, nil)
+}
+
+func (c *Client) ListOutboundAIBudgetAlerts(ctx context.Context, integrationID string, limit int) (OutboundAIBudgetAlertList, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-alerts"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var out OutboundAIBudgetAlertList
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListOutboundAIRequestLog pages the AI request log; pass the previous
+// page's NextBefore to continue.
+func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID string, limit int, before *time.Time) (OutboundAIRequestLogList, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if before != nil {
+		query.Set("before", before.UTC().Format(time.RFC3339Nano))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAIRequestLogList
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetOutboundAIPriceCatalog lists a provider's built-in prices, or with a
+// model the entry that would price it (ADR-994).
+func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model string) (OutboundAIPriceCatalogResponse, error) {
+	query := url.Values{"provider": {provider}}
+	if model != "" {
+		query.Set("model", model)
+	}
+	var out OutboundAIPriceCatalogResponse
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-price-catalog?"+query.Encode(), nil, &out)
+}
+
+// GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
+// date is today and an empty endUser lists the top users (ADR-994).
+func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date, endUser string, limit int) (OutboundAIUserUsageResponse, error) {
+	query := url.Values{}
+	if date != "" {
+		query.Set("date", date)
+	}
+	if endUser != "" {
+		query.Set("end_user", endUser)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/users"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAIUserUsageResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ExportOutboundAIUserUsage downloads the per-end-user usage of the UTC
+// days from through to (empty means today) as "csv" or "ndjson" (the
+// server default) (ADR-995).
+func (c *Client) ExportOutboundAIUserUsage(ctx context.Context, integrationID, from, to, format string) ([]byte, error) {
+	query := url.Values{}
+	for name, value := range map[string]string{"from": from, "to": to, "format": format} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/users/export"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) ListOutboundAIRoutes(ctx context.Context) (OutboundAIRouteList, error) {
+	var out OutboundAIRouteList
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes", nil, &out)
+}
+
+func (c *Client) CreateOutboundAIRoute(ctx context.Context, req CreateOutboundAIRouteRequest) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes", req, &out)
+}
+
+func (c *Client) GetOutboundAIRoute(ctx context.Context, routeID string) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, &out)
+}
+
+func (c *Client) SetOutboundAIRouteTargets(ctx context.Context, routeID string, targets []OutboundAIRouteTarget) error {
+	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", PutOutboundAIRouteTargetsRequest{Targets: targets}, nil)
+}
+
+func (c *Client) DeleteOutboundAIRoute(ctx context.Context, routeID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, nil)
+}
+
+// GetOutboundIntegrationAIUsage reads one UTC day (YYYY-MM-DD, empty for
+// today) of AI usage by caller and model.
+func (c *Client) GetOutboundIntegrationAIUsage(ctx context.Context, integrationID, usageDate string) (OutboundAIUsageResponse, error) {
+	var out OutboundAIUsageResponse
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage"
+	if usageDate != "" {
+		path += "?date=" + url.QueryEscape(usageDate)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 func (c *Client) SetOutboundIntegrationRunsEnabled(ctx context.Context, integrationID string, enabled bool) error {

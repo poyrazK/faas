@@ -4,12 +4,13 @@ import { promisify } from 'node:util'
 import { randomBytes, createHash } from 'node:crypto'
 import http from 'node:http'
 import { readFile, writeFile, rename, unlink, mkdir, lstat, readdir, open } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { constants } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose'
-import { runtimeConfig, limits } from './config.mjs'
+import { runtimeConfig, acceptedContracts, servingContracts, limits } from './config.mjs'
 import { createServer, tokenVerifier } from './server.mjs'
 import { inspect, generate, fingerprint } from './types.mjs'
 import { migrate } from './migrate.mjs'
@@ -17,6 +18,7 @@ import { requestStore } from './dev-requests.mjs'
 import { replayRequest, collectionScenarios } from './request-replay.mjs'
 import { inspector } from './dev-inspector.mjs'
 import { permissions } from './rpc-permissions.mjs'
+import { loadDevProject, verifyProject } from './dev-project.mjs'
 
 const execute = promisify(execFile)
 const postgrestImage = 'postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e'
@@ -28,8 +30,9 @@ class BreakingContract extends DevFailure {
 async function readContract(path, required) {
   try {
     if (!(await lstat(path)).isFile()) throw new DevFailure('Compatibility baseline must be a regular file')
-    const file = await open(path, 'r')
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
+      if (!(await file.stat()).isFile()) throw new DevFailure('Contract must be a regular file')
       const buffer = Buffer.alloc(limits.outputBytes + 1)
       let length = 0
       while (length < buffer.length) {
@@ -46,7 +49,7 @@ async function readContract(path, required) {
   }
 }
 
-async function compareContract(before, snapshot, cli, signal) {
+async function compareContract(before, snapshot, cli, signal, approval = '') {
   const suffix = randomBytes(12).toString('hex')
   const baseline = join(import.meta.dirname, `diff-before-${suffix}.json`)
   const current = join(import.meta.dirname, `diff-after-${suffix}.json`)
@@ -54,19 +57,24 @@ async function compareContract(before, snapshot, cli, signal) {
     await atomicFile(baseline, before, 0o600)
     await atomicFile(current, JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }), 0o600)
     // Use the existing Go comparator, including its strict contract validation.
-    const result = await execute(cli, ['--json', 'data-api', 'diff', '--baseline', baseline, '--current', current], { signal, timeout: 30000, maxBuffer: 2 << 20 })
+    const args = ['--json', 'data-api', 'diff', '--baseline', baseline, '--current', current]
+    if (approval) args.push('--approval', approval)
+    const result = await execute(cli, args, { signal, timeout: 30000, maxBuffer: 2 << 20 })
     const report = JSON.parse(result.stdout)
     if (!Number.isInteger(report.breaking) || report.breaking < 0 || !Array.isArray(report.changes) || report.current_fingerprint !== fingerprint(snapshot)) throw new Error('Invalid comparison')
-    return { baseline_fingerprint: report.baseline_fingerprint, current_fingerprint: report.current_fingerprint, breaking: report.breaking, changes: report.changes }
-  } catch { throw new DevFailure('Schema compatibility comparison failed; check the saved contract version, fingerprint and shape.') }
+    const approved = report.approved ?? 0
+    const unapproved = report.unapproved ?? report.breaking
+    if (!Number.isInteger(approved) || approved < 0 || !Number.isInteger(unapproved) || unapproved < 0 || approved + unapproved !== report.breaking) throw new Error('Invalid approval counts')
+    return { baseline_fingerprint: report.baseline_fingerprint, current_fingerprint: report.current_fingerprint, breaking: report.breaking, approved, unapproved, changes: report.changes }
+  } catch { throw new DevFailure('Schema compatibility comparison failed; check the saved contracts and any approval fingerprints and named changes.') }
   finally { await unlink(baseline).catch(() => {}); await unlink(current).catch(() => {}) }
 }
 
 function compatibilityReport(report, json) {
   if (json) console.log(JSON.stringify({ status: 'compatibility', ...report }))
   else {
-    for (const change of report.changes) console.log(`${change.breaking ? 'breaking' : 'compatible'} ${JSON.stringify(change.path)}: ${change.reason}`)
-    console.log(`${report.changes.length} schema changes, ${report.breaking} breaking.`)
+    for (const change of report.changes) console.log(`${change.approved ? 'approved breaking' : change.breaking ? 'breaking' : 'compatible'} ${JSON.stringify(change.path)}: ${change.reason}`)
+    console.log(`${report.changes.length} schema changes, ${report.breaking} breaking, ${report.approved} approved, ${report.unapproved} unapproved.`)
   }
 }
 
@@ -80,12 +88,12 @@ export async function migrationSource(directory) {
   return hash.digest('hex')
 }
 
-export async function watchMigrations({ directory, initial, signal, reload, report }) {
+export async function watchMigrations({ directory, initial, signal, reload, report, source = () => migrationSource(directory) }) {
   let attempted = initial, candidate = initial, readFailed = false
   while (!signal.aborted) {
     try { await delay(250, undefined, { signal }) } catch { break }
     let current
-    try { current = await migrationSource(directory); readFailed = false }
+    try { current = await source(); readFailed = false }
     catch {
       if (!readFailed) await report('source_unavailable')
       readFailed = true
@@ -125,34 +133,31 @@ async function atomicFile(path, content, mode) {
   finally { await unlink(temporary).catch(() => {}) }
 }
 
-export async function verifyIsolation(url, identities, signal = AbortSignal.timeout(30000)) {
-  const request = (subject, method = 'GET', body, query = '') => fetch(`${url}/rest/v1/notes${query}`, {
-    method, signal, headers: { Authorization: `Bearer ${identities[subject].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  })
-  const require = (condition, message) => { if (!condition) throw new Error(message) }
-  require((await fetch(`${url}/rest/v1/notes`, { signal })).status === 401, 'Unauthenticated access was accepted')
-  const inserted = await request('alice', 'POST', { subject: 'alice', body: 'Local RLS verification' })
-  require(inserted.ok, 'Alice could not create a note')
-  const [note] = await inserted.json()
-  try {
-    const rows = await request('bob', 'GET', undefined, `?id=eq.${note.id}`)
-    require(rows.ok && (await rows.json()).length === 0, 'Bob could read Alice’s note')
-    const update = await request('bob', 'PATCH', { body: 'Forbidden' }, `?id=eq.${note.id}`)
-    require(update.ok && (await update.json()).length === 0, 'Bob could update Alice’s note')
-    require(!(await request('alice', 'POST', { subject: 'bob', body: 'Forbidden' })).ok, 'Cross-subject insertion was accepted')
-    const own = await request('alice', 'GET', undefined, `?id=eq.${note.id}`)
-    require(own.ok && (await own.json())[0]?.body === 'Local RLS verification', 'Alice’s note changed unexpectedly')
-  } finally { require((await request('alice', 'DELETE', undefined, `?id=eq.${note.id}`)).ok, 'Verification note cleanup failed') }
-}
-
 export async function run(options) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required')
+  if (options.check_types && !options.once) throw new DevFailure('--check-types requires --once.')
   if (options.replay && !options.once) throw new DevFailure('--replay requires --once.')
   if (options.scenario && !options.replay) throw new DevFailure('--scenario requires --replay.')
+  let project
+  try { project = await loadDevProject(options) }
+  catch (error) { throw new DevFailure(`Invalid development project: ${error.message}`) }
+  options = { ...options, output: project.output }
+  const readPolicy = async () => {
+    if (!options.accepted_contracts) return undefined
+    try { return acceptedContracts(await readContract(options.accepted_contracts, true)) }
+    catch { throw new DevFailure('Cannot read accepted contracts; use a valid, bounded regular policy file.') }
+  }
+  if (options.accepted_contracts) {
+    const policyInfo = await lstat(options.accepted_contracts)
+    for (const path of [options.output, options.baseline || join(options.directory, '.gregale', 'data-api-contract.json')]) {
+      const info = await lstat(path).catch(() => null)
+      if (resolve(path) === resolve(options.accepted_contracts) || (info && info.dev === policyInfo.dev && info.ino === policyInfo.ino)) throw new DevFailure('Accepted contracts must not alias generated types or the baseline.')
+    }
+    await readPolicy()
+  }
   let replayCollection, scenarios
   if (options.replay) {
-    try { replayCollection = await requestStore(options.replay).read(true) }
+    try { replayCollection = await requestStore(options.replay, { identities: Object.keys(project.identities) }).read(true) }
     catch { throw new DevFailure('Cannot read replay collection; check the path, version 1 or 2 format, size and file type.') }
     try { scenarios = collectionScenarios(replayCollection, options.scenario) }
     catch { throw new DevFailure('Unknown replay scenario; select a name present in the collection.') }
@@ -180,9 +185,9 @@ export async function run(options) {
     let compatibility = null
     const checkCompatibility = async snapshot => {
       if (!acceptedContract) return
-      compatibility = await compareContract(acceptedContract, snapshot, options.cli, controller.signal)
+      compatibility = await compareContract(acceptedContract, snapshot, options.cli, controller.signal, options.approval)
       compatibilityReport(compatibility, options.json)
-      if (options.check_breaking && compatibility.breaking) throw new BreakingContract()
+      if (options.check_breaking && compatibility.unapproved) throw new BreakingContract()
     }
     const acceptContract = async snapshot => {
       const content = JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n'
@@ -230,10 +235,18 @@ export async function run(options) {
         GRANT CONNECT ON DATABASE gregale_dev TO gregale_data_api;`)
     } finally { await owner.end() }
     phase = 'SQL migrations'
-    const migrationDirectory = join(options.directory, 'migrations', 'sql')
-    const initialSource = await migrationSource(migrationDirectory)
+    const migrationDirectory = project.migrations
+    const watchedSource = async () => (await migrationSource(migrationDirectory)) + (options.accepted_contracts ? createHash('sha256').update(await readContract(options.accepted_contracts, true)).digest('hex') : '')
+    const initialSource = await watchedSource()
     const applyMigrations = () => migrate(ownerURL, pathToFileURL(migrationDirectory + '/'))
     await applyMigrations()
+    if (project.seedSQL !== null) {
+      phase = 'local seed data'
+      const seed = new pg.Client({ connectionString: ownerURL })
+      try { await seed.connect(); await seed.query('BEGIN'); await seed.query("SET LOCAL statement_timeout='15s'"); await seed.query(project.seedSQL); await seed.query('COMMIT') }
+      catch (error) { await seed.query('ROLLBACK').catch(() => {}); throw error }
+      finally { await seed.end() }
+    }
     const grants = new pg.Client({ connectionString: ownerURL })
     await grants.connect()
     try {
@@ -253,6 +266,8 @@ export async function run(options) {
     config.snapshot = await inspect(connection.toString(), ['api'])
     config.functions = config.snapshot.functions
     config.fingerprint = fingerprint(config.snapshot)
+    config.acceptedContracts = await readPolicy()
+    try { servingContracts(config) } catch { throw new DevFailure('Accepted contracts are stale; review a policy for the current schema before starting.') }
     phase = 'schema compatibility'
     await checkCompatibility(config.snapshot)
     const internal = new URL(connection); internal.port = '5432'
@@ -269,7 +284,7 @@ export async function run(options) {
     const verify = tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] }))
     let gateway = createServer(config, verify, upstreamPort, readyPort, () => {}).listeners('request')[0]
     let inspectorState = { status: 'starting', ready: false }
-    const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'))
+    const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'), Object.keys(project.identities))
     server = http.createServer((req, res) => {
       if (browser.handle(req, res)) return
       if (gateway) return gateway(req, res)
@@ -284,18 +299,25 @@ export async function run(options) {
       await delay(100, undefined, { signal: controller.signal })
     }
     const identities = {}
-    for (const subject of ['alice', 'bob']) identities[subject] = { subject, token: await new SignJWT({ sub: subject })
+    for (const [name, identity] of Object.entries(project.identities)) identities[name] = { subject: identity.subject, token: await new SignJWT({ ...identity.claims, sub: identity.subject })
       .setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('24h').sign(privateKey) }
-    phase = 'Alice/Bob RLS verification'
-    await verifyIsolation(url, identities, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
-    phase = 'writing generated types'
-    await atomicFile(options.output, generate(config.snapshot), 0o644)
+    phase = 'required project authorization verification'
+    await verifyProject(url, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+    phase = options.check_types ? 'checking committed types' : 'writing generated types'
+    const generatedTypes = generate(config.snapshot)
+    if (options.check_types) {
+      let committedTypes
+      try { committedTypes = await readFile(options.output) }
+      catch { throw new DevFailure('Committed types are missing or unreadable; regenerate with gregale data-api dev --once, then commit the types file.') }
+      if (!committedTypes.equals(Buffer.from(generatedTypes))) throw new DevFailure('Database types are stale; regenerate with gregale data-api dev --once using the same project, config and output options, then commit the types file.')
+    } else await atomicFile(options.output, generatedTypes, 0o644)
     await acceptContract(config.snapshot)
     const checkClient = async () => {
       if (!options.check) return
-      for (const task of ['typecheck', 'test']) {
+      for (const command of project.check.commands) {
+        const task = command[0] === 'npm' ? (command[1] === 'run' ? command[2] : command[1]) : command[0]
         phase = `client ${task} (install the pinned SDK and client dependencies first)`
-        try { await execute('npm', ['run', task], { cwd: join(options.directory, 'client'), signal: controller.signal, timeout: 120000, maxBuffer: 1 << 20 }) }
+        try { await execute(command[0], command.slice(1), { cwd: project.check.directory, signal: controller.signal, timeout: 120000, maxBuffer: 1 << 20 }) }
         catch { throw new Error(`Client ${task} failed; install the pinned SDK and client dependencies first, then check your client code`) }
       }
     }
@@ -334,8 +356,8 @@ export async function run(options) {
     await writeReceipt()
     receiptWritten = true
     clearTimeout(startup)
-    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, client_checked: options.check }))
-    else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\nAlice/Bob RLS isolation verified.`)
+    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check, types_checked: Boolean(options.check_types) }))
+    else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\n${project.legacy ? 'Alice/Bob RLS isolation verified.' : 'Required project authorization scenarios passed.'}`)
     const event = (status, detail) => {
       inspectorState = { ...inspectorState, status, detail, ready: Boolean(gateway) }
       if (options.json) console.log(JSON.stringify({ status, url, fingerprint: config.fingerprint, output: options.output, ready: Boolean(gateway), detail }))
@@ -356,7 +378,9 @@ export async function run(options) {
       phase = 'schema introspection'
       const snapshot = await inspect(connection.toString(), ['api'])
       controller.signal.throwIfAborted()
-      const nextConfig = { ...config, snapshot, functions: snapshot.functions, fingerprint: fingerprint(snapshot) }
+      const nextConfig = { ...config, snapshot, functions: snapshot.functions, fingerprint: fingerprint(snapshot), acceptedContracts: await readPolicy() }
+      phase = 'accepted contracts'
+      try { servingContracts(nextConfig) } catch { throw new DevFailure('Accepted contracts are stale; save a reviewed policy for the migrated schema. Types and the saved contract were preserved.') }
       phase = 'schema compatibility'
       await checkCompatibility(snapshot)
       phase = 'PostgREST schema refresh'
@@ -367,13 +391,13 @@ export async function run(options) {
         try { if ((await fetch(`http://127.0.0.1:${readyPort}/ready`, { signal: readySignal })).ok) break } catch { readySignal.throwIfAborted() }
         await delay(100, undefined, { signal: readySignal })
       }
-      phase = 'Alice/Bob RLS verification'
+      phase = 'required project authorization verification'
       // Verify through a separate loopback listener before adopting the new
       // handler on the public dev URL. The existing session's JWTs stay valid.
       const candidate = createServer(nextConfig, verify, upstreamPort, readyPort, () => {})
       try {
         await new Promise((resolve, reject) => { candidate.once('error', reject); candidate.listen(0, '127.0.0.1', resolve) })
-        await verifyIsolation(`http://127.0.0.1:${candidate.address().port}`, identities, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+        await verifyProject(`http://127.0.0.1:${candidate.address().port}`, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()
       phase = 'writing generated types'
@@ -389,12 +413,12 @@ export async function run(options) {
     const report = async (status, error) => {
       if (status === 'source_unavailable') pause()
       await writeReceipt(status, false)
-      const diagnostic = phase.startsWith('client ') ? 'Fix client code or dependencies; run npm --prefix client run typecheck and npm --prefix client test for diagnostics.' : migrationDiagnostic(error)
-      event(status, status === 'source_unavailable' ? 'Cannot read migrations/sql; restore the directory or files to retry.' : `${phase}: ${diagnostic} ${gateway ? 'The validated API remains available.' : 'The gateway stays paused until migration files are fixed.'}`)
+      const diagnostic = phase.startsWith('client ') ? 'Fix client code or dependencies; run the configured check commands for diagnostics.' : migrationDiagnostic(error)
+      event(status, status === 'source_unavailable' ? 'Cannot read migration sources or the accepted-contracts file; restore the missing files to retry.' : `${phase}: ${diagnostic} ${gateway ? 'The validated API remains available.' : 'The gateway stays paused until migration files are fixed.'}`)
     }
     if (!options.once && options.watch !== false) {
-      if (!options.json) console.log('Watching migrations/sql; add a new migration to refresh the API and types.')
-      await watchMigrations({ directory: migrationDirectory, initial: initialSource, signal: controller.signal, reload, report })
+      if (!options.json) console.log('Watching the configured migrations; add a new migration to refresh the API and types.')
+      await watchMigrations({ directory: migrationDirectory, initial: initialSource, source: watchedSource, signal: controller.signal, reload, report })
     } else if (!options.once) await new Promise(resolve => {
       if (controller.signal.aborted) resolve()
       else controller.signal.addEventListener('abort', resolve, { once: true })

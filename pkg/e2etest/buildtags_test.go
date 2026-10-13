@@ -1,6 +1,10 @@
 package e2etest
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 // TestDaemonBuildTagsMatchesTestBinary — the harness must build its daemons
 // with the same build tag the test binary was compiled with.
@@ -17,7 +21,7 @@ import "testing"
 // This file has no build tag, so it is compiled both with and without `metal`
 // and asserts the value is right in whichever configuration is running.
 func TestDaemonBuildTagsMatchesTestBinary(t *testing.T) {
-	if metalBuild != (daemonBuildTags == "metal") {
+	if metalBuild != slices.Contains(strings.Split(daemonBuildTags, ","), "metal") {
 		t.Fatalf("metal build tag = %v but daemonBuildTags = %q; the daemons "+
 			"would be built with different capabilities than the tests",
 			metalBuild, daemonBuildTags)

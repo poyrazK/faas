@@ -81,7 +81,9 @@ func qualificationSecretKeysMAC(key []byte, keys []string) (string, error) {
 	if len(key) != sha256.Size {
 		return "", state.ErrInvalidArgument
 	}
-	keys = append([]string(nil), keys...)
+	// Guest-init encodes an empty key set as [] rather than null. Keep the
+	// host MAC byte-for-byte identical when a workload has no secrets.
+	keys = append([]string{}, keys...)
 	slices.Sort(keys)
 	encoded, err := json.Marshal(keys)
 	if err != nil {

@@ -838,12 +838,12 @@ func TestBuildEdgeRuleAction_Budget_RejectsNonPositive(t *testing.T) {
 	}
 }
 
-// A budget rule may not widen past the platform ceiling — otherwise a
-// customer could register their way out of api.RequestBudgetMax.
+// A budget rule may not widen past the platform ceiling (ADR-1150); the
+// plan's own ceiling clamps it again at request time.
 func TestBuildEdgeRuleAction_Budget_RejectsOverCeiling(t *testing.T) {
-	over := int(api.RequestBudgetMax.Milliseconds()) + 1
+	over := int(api.RequestBudgetPlanMax.Milliseconds()) + 1
 	if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: over}); err == nil {
-		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetMax)
+		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetPlanMax)
 	}
 }
 
@@ -909,6 +909,35 @@ func TestBuildEdgeRuleAction_EveryVocabKindIsHandled(t *testing.T) {
 			if strings.Contains(err.Error(), "unknown kind") {
 				t.Errorf("kind %q is in edgeRuleKindVocab but has no case in buildEdgeRuleAction", kind)
 			}
+		}
+	}
+}
+
+// Hunt #9: an edge rule created without --match-path stores "/", an exact
+// glob that covers only the root. A maintenance rule made that way returned
+// 503 on / and 200 on every other path, so gates must say so on create.
+func TestWarnRootOnlyProtectiveRule(t *testing.T) {
+	cases := []struct {
+		kind      string
+		pathGiven bool
+		warn      bool
+	}{
+		{kind: "ip", warn: true},
+		{kind: "jwt", warn: true},
+		{kind: "maintenance", warn: true},
+		{kind: "ip", pathGiven: true},
+		{kind: "redirect"},
+		{kind: "cors"},
+	}
+	for _, tc := range cases {
+		var stderr bytes.Buffer
+		old := osStderr
+		osStderr = &stderr
+		warnRootOnlyProtectiveRule(tc.kind, tc.pathGiven)
+		osStderr = old
+		got := strings.Contains(stderr.String(), "covers only the root path")
+		if got != tc.warn {
+			t.Errorf("kind=%s pathGiven=%v: warned=%v, want %v (stderr %q)", tc.kind, tc.pathGiven, got, tc.warn, stderr.String())
 		}
 	}
 }

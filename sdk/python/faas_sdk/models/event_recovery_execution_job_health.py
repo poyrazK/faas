@@ -20,6 +20,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_recovery_execution_summary import EventRecoveryExecutionSummary
+    from ..models.workflow_recovery_execution_attention import WorkflowRecoveryExecutionAttention
 
 
 T = TypeVar("T", bound="EventRecoveryExecutionJobHealth")
@@ -27,9 +28,9 @@ T = TypeVar("T", bound="EventRecoveryExecutionJobHealth")
 
 @_attrs_define
 class EventRecoveryExecutionJobHealth:
-    """Wait age starts at admission completion; prolonged waits do not assert scheduler or handler failure. retain_until is
-    the nominal job retention boundary. Unknown includes admitted items without replay identity. Awaiting saved results
-    counts known terminal observations without saved confirmation.
+    """Wait age starts at admission completion or creation while admission is active; prolonged waits do not assert
+    scheduler or handler failure. retain_until is the nominal job retention boundary. Unknown includes admitted items
+    without replay identity. Awaiting saved results counts known terminal observations without saved confirmation.
 
     """
 
@@ -37,6 +38,7 @@ class EventRecoveryExecutionJobHealth:
     state: EventRecoveryExecutionJobHealthState
     status: EventRecoveryExecutionJobHealthStatus
     completed_at: datetime.datetime
+    """Admission completion time or job creation time while admission is active."""
     wait_age_seconds: float
     retain_until: datetime.datetime
     prolonged_wait: bool
@@ -48,9 +50,15 @@ class EventRecoveryExecutionJobHealth:
     unresolved_count: int
     awaiting_saved_results_count: int
     execution: EventRecoveryExecutionSummary
-    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
-    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission
-    state. Omitted for routing recovery. Saved results share recovery job retention."""
+    """Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal
+    result, then live evidence of the exact admitted generation. Later native resumes report superseded only without
+    an earlier saved terminal result. Missing evidence without a saved result is unknown. Native failed/dead runs
+    count as failed. Counts sum to tracked_count and are separate from job admission state. Omitted for routing
+    recovery. Saved results in both modes share recovery job retention."""
+    attention: WorkflowRecoveryExecutionAttention | Unset = UNSET
+    """Generation-fenced advisory execution monitoring. Capacity and scheduled wait counters describe underlying
+    waits and may overlap deadline exceeded counts. Only the first attention event per job is captured. Detection
+    never cancels or retries work."""
     parent_job_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -85,6 +93,10 @@ class EventRecoveryExecutionJobHealth:
 
         execution = self.execution.to_dict()
 
+        attention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attention, Unset):
+            attention = self.attention.to_dict()
+
         parent_job_id: str | Unset = UNSET
         if not isinstance(self.parent_job_id, Unset):
             parent_job_id = str(self.parent_job_id)
@@ -110,6 +122,8 @@ class EventRecoveryExecutionJobHealth:
                 "execution": execution,
             }
         )
+        if attention is not UNSET:
+            field_dict["attention"] = attention
         if parent_job_id is not UNSET:
             field_dict["parent_job_id"] = parent_job_id
 
@@ -118,6 +132,7 @@ class EventRecoveryExecutionJobHealth:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.event_recovery_execution_summary import EventRecoveryExecutionSummary
+        from ..models.workflow_recovery_execution_attention import WorkflowRecoveryExecutionAttention
 
         d = dict(src_dict)
         job_id = UUID(d.pop("job_id"))
@@ -150,6 +165,13 @@ class EventRecoveryExecutionJobHealth:
 
         execution = EventRecoveryExecutionSummary.from_dict(d.pop("execution"))
 
+        _attention = d.pop("attention", UNSET)
+        attention: WorkflowRecoveryExecutionAttention | Unset
+        if isinstance(_attention, Unset):
+            attention = UNSET
+        else:
+            attention = WorkflowRecoveryExecutionAttention.from_dict(_attention)
+
         _parent_job_id = d.pop("parent_job_id", UNSET)
         parent_job_id: UUID | Unset
         if isinstance(_parent_job_id, Unset):
@@ -173,6 +195,7 @@ class EventRecoveryExecutionJobHealth:
             unresolved_count=unresolved_count,
             awaiting_saved_results_count=awaiting_saved_results_count,
             execution=execution,
+            attention=attention,
             parent_job_id=parent_job_id,
         )
 

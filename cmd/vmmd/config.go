@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -35,6 +36,10 @@ type Config struct {
 	// directory for immutable capture receipts and authorized retirement
 	// tombstones. It is experimental and requires NativeProcessRecovery.
 	NativeSnapshotPublicationRoot string `toml:"native_snapshot_publication_root"`
+	// NativeImageStagingRoot is a pre-created private persistent disk
+	// directory for native image and snapshot output claims. Configure it
+	// before native recovery; it does not enable qualification capture.
+	NativeImageStagingRoot string `toml:"native_image_staging_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -42,9 +47,15 @@ type Config struct {
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
 
-	// PreparedNetworks bounds the optional cache of unused namespaces.
-	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
+	// PreparedNetworks bounds the cache of unused namespaces (ADR-149).
+	// Defaults to api.DefaultPreparedNetworkCacheSize, or to zero under
+	// NativeProcessRecovery; zero disables it; FAAS_PREPARED_NETWORKS
+	// overrides TOML.
 	PreparedNetworks int `toml:"prepared_networks"`
+	// PreparedNetworksExplicit records that vmmd.toml or the environment
+	// chose the size. A default-sized cache yields to a host without the
+	// tenant bridge; an explicit one keeps failing startup.
+	PreparedNetworksExplicit bool `toml:"-"`
 	// RestoreConcurrency bounds simultaneous Firecracker snapshot restores.
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
@@ -52,6 +63,21 @@ type Config struct {
 	// DisableRestorePrefetch turns off the ADR-225 restore working-set
 	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
 	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
+	// DisableFreePageReporting stops attaching the ADR-907 balloon that
+	// returns guest-freed pages to the host. It is on by default on
+	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
+	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// QuietPause enables ADR-957 quiet pause: vmmd pauses an eligible
+	// instance's vCPUs between requests and resumes it on the next one.
+	// Off by default; schedd decides which instances are eligible.
+	// FAAS_QUIET_PAUSE overrides TOML.
+	QuietPause bool `toml:"quiet_pause"`
+	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
+	// reflinked per-account copy of their base with DAX instead of reading
+	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
+	// that holds its base; a path must be on that same mount. Empty or
+	// "off" keeps virtio-blk. FAAS_PMEM_BASE_DIR overrides TOML.
+	PmemBaseDir string `toml:"pmem_base_dir"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -479,6 +505,15 @@ func LoadConfig(path string) (*Config, error) {
 		FailureReportDir:   "/var/lib/faas/vmmd-failures",
 		SocketPath:         "/run/faas/vmmd.sock",
 		RestoreConcurrency: 3,
+		// ADR-149 (amended 2026-10-12): on unless vmmd.toml or
+		// FAAS_PREPARED_NETWORKS sets 0, or native recovery is on
+		// (below), so a node does not depend on an Ansible drop-in to
+		// skip network setup on its restores.
+		PreparedNetworks: api.DefaultPreparedNetworkCacheSize,
+		// ADR-908 (amended 2026-10-12): per-account pmem bases on by
+		// default. Bases without the pmem label, filesystems without
+		// reflink and native recovery all keep virtio-blk.
+		PmemBaseDir: fcvm.PmemBaseDirAuto,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -520,6 +555,7 @@ func LoadConfig(path string) (*Config, error) {
 			VCPUBudget:         sizing.VCPUSlots,
 		},
 	}
+	preparedNetworksSet := false
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -534,10 +570,21 @@ func LoadConfig(path string) (*Config, error) {
 		// overlays ran — issue #938 / PR-A exposes that as a bug
 		// because FAAS_VCPU_BUDGET=0 silently bypassed the
 		// non-positive validator.)
-	} else if err := toml.Unmarshal(b, c); err != nil {
+	} else if md, err := toml.Decode(string(b), c); err != nil {
 		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
+	} else {
+		preparedNetworksSet = md.IsDefined("prepared_networks")
+	}
+	c.PreparedNetworksExplicit = preparedNetworksSet
+	// Native recovery refuses the cache until its claims are journaled
+	// (ADR-568), so the default must not stop such a node from starting.
+	if c.NativeProcessRecovery && !preparedNetworksSet {
+		c.PreparedNetworks = 0
 	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
+		return nil, err
+	}
+	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
 		return nil, err
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -681,6 +728,7 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_PREPARED_NETWORKS must be between 0 and %d", api.MaxPreparedNetworkCacheSize)
 		}
 		c.PreparedNetworks = n
+		c.PreparedNetworksExplicit = true
 	}
 	if v := os.Getenv("FAAS_RESTORE_CONCURRENCY"); v != "" {
 		n, perr := strconv.Atoi(v)
@@ -695,6 +743,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
 		}
 		c.DisableRestorePrefetch = !enabled
+	}
+	if v := os.Getenv("FAAS_QUIET_PAUSE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE must be a boolean (got %q)", v)
+		}
+		c.QuietPause = enabled
+	}
+	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
+		c.PmemBaseDir = v
+	}
+	if v := os.Getenv("FAAS_FREE_PAGE_REPORTING"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
+		}
+		c.DisableFreePageReporting = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
@@ -831,14 +896,22 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
+	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {
+	return validateNativePrivateRootConfig(nativeRecovery, root, "native_image_staging_root")
+}
+
+func validateNativePrivateRootConfig(nativeRecovery bool, root, field string) error {
 	if root == "" {
 		return nil
 	}
 	if !nativeRecovery {
-		return fmt.Errorf("vmmd: native_snapshot_publication_root requires native_process_recovery = true")
+		return fmt.Errorf("vmmd: %s requires native_process_recovery = true", field)
 	}
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator) {
-		return fmt.Errorf("vmmd: native_snapshot_publication_root must be a clean absolute non-root path")
+		return fmt.Errorf("vmmd: %s must be a clean absolute non-root path", field)
 	}
 	return nil
 }

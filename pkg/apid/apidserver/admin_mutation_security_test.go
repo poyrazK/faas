@@ -1,0 +1,106 @@
+package apidserver_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+)
+
+// TestAdminMutationRoutesRejectBearerKeys is a route-table regression guard.
+// All provider-admin writes must require a verified operator session with a
+// fresh step-up; a valid admin-scoped bearer key is not sufficient proof.
+func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*
+	// The caller is an allowlisted operator: even an operator's admin key
+	// is not step-up proof. Non-operators stop earlier with admin_required
+	// (TestOperatorRoutesRefuseCustomers).
+	e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	accountID := "00000000-0000-0000-0000-000000000001"
+	instanceID := "00000000-0000-0000-0000-000000000002"
+	paths := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/v1/admin/accounts/" + accountID + "/credits"},
+		{http.MethodPost, "/v1/admin/managed-postgres/accounting/" + accountID + "/usage-imports"},
+		{http.MethodPost, "/v1/admin/managed-postgres/accounting/" + accountID + "/reconciliations"},
+		{http.MethodPost, "/v1/admin/accounts/" + accountID + "/refunds"},
+		{http.MethodPost, "/v1/admin/github-webhook-secrets"},
+		{http.MethodPost, "/v1/admin/billing-paddle-catalog/sync"},
+		{http.MethodDelete, "/v1/admin/billing-paddle-catalog"},
+		{http.MethodPost, "/v1/admin/billing-reconcile/" + accountID},
+		{http.MethodPost, "/v1/admin/instances/" + instanceID + "/force-park"},
+		{http.MethodPost, "/v1/admin/apps/security-test/force-cold-boot"},
+		{http.MethodPost, "/v1/admin/instances/" + instanceID + "/force-restart"},
+		{http.MethodPost, "/v1/admin/builds/sweep-stuck"},
+		{http.MethodPost, "/v1/admin/ops/jobs/runs/00000000-0000-0000-0000-000000000005/cancel"},
+		{http.MethodPost, "/v1/admin/ops/github/deliveries/00000000-0000-0000-0000-000000000003/retry"},
+		{http.MethodPost, "/v1/admin/ops/github/check-updates/00000000-0000-0000-0000-000000000004/retry"},
+		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/suspend"},
+		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/restore"},
+		{http.MethodPost, "/v1/admin/ops/accounts/" + accountID + "/revoke-sessions"},
+		{http.MethodPost, "/v1/admin/ops/nodes/security-test/drain"},
+		{http.MethodPost, "/v1/admin/ops/nodes/security-test/force-drain"},
+		{http.MethodPost, "/v1/admin/ops/nodes/security-test/activate"},
+		{http.MethodPost, "/v1/admin/ops/nodes/security-test/retire"},
+		{http.MethodDelete, "/v1/compute-nodes/security-test"},
+		{http.MethodPatch, "/v1/admin/config/data_placement_enabled"},
+		{http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback"},
+		{http.MethodPost, "/v1/admin/status/incidents"},
+		{http.MethodPatch, "/v1/admin/status/incidents/11111111-1111-4111-8111-111111111111"},
+		{http.MethodPost, "/v1/admin/status/incidents/11111111-1111-4111-8111-111111111111/updates"},
+		{http.MethodPatch, "/v1/admin/status/incidents/11111111-1111-4111-8111-111111111111/updates/22222222-2222-4222-8222-222222222222"},
+	}
+
+	for _, tc := range paths {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rec := e.Do(t, tc.method, tc.path, nil, nil)
+			apidserver.AssertProblem(t, rec, http.StatusForbidden, api.CodeStepUpRequired)
+		})
+	}
+}
+
+func TestAdminMutationRejectsCrossOriginBrowserRequest(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
+	e.AddAdminSession(t, req)
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(rec, req)
+	apidserver.AssertProblem(t, rec, http.StatusForbidden, api.CodeForbidden)
+}
+
+func TestAdminMutationRequiresIdempotencyKey(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
+	e.AddAdminSession(t, req)
+	rec := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(rec, req)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestAdminMutationAllowsOperationsOrigin(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()) = (*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
+	e.AddAdminSession(t, req)
+	req.Header.Set("Origin", "https://operations.gregale.dev")
+	req.Header.Set("Sec-Fetch-Site", "same-site")
+	req.Header.Set("Idempotency-Key", "test-admin-operations-origin")
+	rec := httptest.NewRecorder()
+	(*e.H()) = (*e.S()).Handler()
+	(*e.H()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}

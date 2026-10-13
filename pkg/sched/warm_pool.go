@@ -416,7 +416,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
 	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
-		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey,
+		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey, MemBytes: snap.MemBytes,
 	})
 	cancel()
 	if err != nil {

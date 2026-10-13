@@ -69,3 +69,27 @@
     almost nothing would match.
   - Run the pass inline in vmmd's capture: it would add seconds of reads to
     every park, which already publishes the snapshot synchronously.
+- **Amended 2026-10-12: share runs of at least 64 KiB.** Every shared range
+  becomes its own extent of the memory file, and a restore reads the file
+  in that layout. Measured on the n2 test node (reflink XFS on persistent
+  disk, Firecracker 1.17, guest 6.18), with a Node app snapshot of 409 MB
+  non-zero pages, 72 MB of which matched blocks of the image the guest read:
+
+  | shared ranges | shared | extents | warm restore | cold restore, before → after |
+  |---|---|---|---|---|
+  | every matching page (the original pass) | 72 MB | 5,150 | unchanged | 1.6–2.8 s → 8.5–8.9 s |
+  | runs of ≥ 16 pages | 48 MB | 605 | unchanged | 1.4–4.0 s → 2.9–8.2 s |
+
+  Page-sized sharing made cold restores 3–5× slower to save 72 MB. The pass
+  now shares only runs of at least 16 pages (`memoryShareMinRun`). A run the
+  kernel refuses, because a block changed after indexing, is retried in
+  16-page chunks rather than page by page. Nodes whose memory files are
+  read cold often can still turn the pass off with
+  `FAAS_SNAPSHOT_MEMORY_SHARING=off`.
+
+  Sharing *between* memory files, on four Node snapshots (976 MB non-zero,
+  298 MB duplicated across them), behaved the same way. Page-sized sharing
+  saved 299 MB in 2,201 extents per file and roughly doubled cold restores.
+  Runs of ≥ 16 pages saved 205 MB in 4 extents per file, with warm and cold
+  restores within noise. That makes cross-file sharing a candidate for a
+  later pass under the same rule.

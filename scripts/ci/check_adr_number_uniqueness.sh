@@ -43,9 +43,10 @@ baseline_file="${ADR_BASELINE_FILE:-$adr_dir/DUPLICATE_NUMBERS_BASELINE.txt}"
 # collide and are skipped on purpose.
 shopt -s nullglob
 adr_numbers=""
-for path in "$adr_dir"/[0-9][0-9][0-9]-*; do
+for path in "$adr_dir"/[0-9]*-*; do
   name="${path##*/}"
-  adr_numbers+="${name:0:3}"$'\n'
+  [[ "$name" =~ ^([0-9]{3,})- ]] || continue
+  adr_numbers+="${BASH_REMATCH[1]}"$'\n'
 done
 shopt -u nullglob
 

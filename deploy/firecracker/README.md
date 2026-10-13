@@ -1,5 +1,9 @@
 # Firecracker 1.7 timer restore correction
 
+> **Superseded by [ADR-983](../../docs/adr/983-firecracker-1-17-and-guest-kernel-6-18.md).**
+> Firecracker 1.8 and later fix the ordering upstream. The patch applies only to
+> v1.7.0 and is kept for the sparse-memory experiment.
+
 `tsc-restore-order.patch` fixes the restore-time ordering described in upstream
 [Firecracker #4666](https://github.com/firecracker-microvm/firecracker/pull/4666).
 It defers `MSR_IA32_TSC_DEADLINE` until all other saved MSRs have been restored.

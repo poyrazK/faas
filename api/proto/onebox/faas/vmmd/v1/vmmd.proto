@@ -511,6 +511,10 @@ service Vmmd {
   // paused VM and returns it to RUNNING; the snapshot stays
   // where it was (the dying vmmd's drive1 + mem are intact).
   rpc CancelLiveMigration(CancelLiveMigrationRequest) returns (CancelLiveMigrationResponse);
+  // Internal, fenced retirement of one PostgreSQL cutover incarnation.
+  // Generic Destroy and process inventory cannot acknowledge this contract.
+  rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
+
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -709,6 +713,14 @@ message AppSpec {
   // Empty keeps the plan defaults. production-us hunt #8: without this field
   // apid stored the override and every VM still ran the plan defaults.
   string liveness_probe_json = 31;
+  // ADR-957 quiet pause: pause this instance's vCPUs after this many
+  // milliseconds with no forwarded request, stream or tail task in flight,
+  // and resume it on the next one. schedd sets it only for eligible
+  // function apps; 0 keeps the instance running between requests. vmmd
+  // also refuses it for private-network attachments, warm-pool, execution,
+  // app-task and qualification instances, and when quiet pause is
+  // disabled in vmmd.toml.
+  int64 quiet_pause_after_ms = 32;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -870,6 +882,11 @@ message SnapshotRef {
   // catalog. Ordinary app snapshots leave it false and cannot cross the
   // dedicated execution restore RPC.
   bool networkless = 7;
+  // mem_bytes is the guest memory length the snapshot was taken with. vmmd
+  // refuses to restore a companion (sidecar) snapshot whose length differs
+  // from the requested guest memory; without it every companion wake fell
+  // back to cold boot. 0 means unknown (older schedd).
+  int64 mem_bytes = 8;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -1452,6 +1469,12 @@ message InstanceStats {
   // the per-destination rate, and the plan's flood ceiling (0 = none).
   google.protobuf.Int64Value egress_flood_drops_per_min = 19;
   int64 egress_flood_drops_limit_per_min = 20;
+  // ADR-957: true while vmmd holds the instance quiet-paused between
+  // requests. The row stays RUNNING and billed; schedd stops counting a
+  // quiet-paused instance's vCPUs toward the node's active vCPU.
+  bool quiet_paused = 21;
+  // When the current quiet pause began; absent while running.
+  google.protobuf.Timestamp quiet_paused_since = 22;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -2546,4 +2569,29 @@ message RestoreEnvironmentQualificationRequest {
 message RestoreEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   WakeResponse wake = 2;
+}
+
+message ManagedPostgresDrainFrame {
+  string id = 1;
+  string cutover_id = 2;
+  string app_id = 3;
+  string deployment_id = 4;
+  string instance_id = 5;
+  string node_id = 6;
+  string wake_id = 7;
+  string owner_node_id = 8;
+  int64 owner_revision = 9;
+  google.protobuf.Timestamp fenced_at = 10;
+}
+message ManagedPostgresDrainProof {
+  string drain_id = 1;
+  string native_generation = 2;
+  string kernel_boot_id = 3;
+  bool processes_exited = 4;
+  bool resources_removed = 5;
+}
+message RetireManagedPostgresDrainRequest { ManagedPostgresDrainFrame frame = 1; }
+message RetireManagedPostgresDrainResponse {
+  ManagedPostgresDrainFrame frame = 1;
+  ManagedPostgresDrainProof proof = 2;
 }

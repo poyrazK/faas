@@ -1,3 +1,4 @@
+# Required for validating external OAuth JWTs and resolving signing keys.
 mcp==2.3.0
 PyJWT[crypto]==2.15.1
 uvicorn==0.54.0

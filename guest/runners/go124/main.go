@@ -15,74 +15,71 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
 
-type envelope struct {
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`
-	Headers map[string]string `json:"headers"`
-	Query   string            `json:"query"`
-	BodyB64 string            `json:"body_b64"`
-	// WaitUntilSec + TailPipePath are the waitUntil(post-response
-	// tail) primitive fields (issue #667 / ADR-078). Default 0/empty
-	// = no tail — backwards-compatible with pre-#667 handlers.
-	//
-	// PR 3 (issue #667 follow-up): the runner-side tail host is
-	// wired in tail_host_integration.go::drainTailHost. The drain
-	// runs after invokeHandler returns and before the response
-	// envelope is written (so the customer's tail_seconds window
-	// ends before the response is read).
-	//
-	// Per-request values (issue #667): WaitUntilSec is the per-task
-	// ceiling (Free 5 / Hobby 15 / Pro 30 / Scale 60 seconds),
-	// stamped by imaged at build time via the FAAS_TAIL_WAIT_SEC
-	// env var; the runner reads the env var on boot and propagates
-	// the value to the handler envelope on every request. TailPipePath
-	// is the per-request JSONL pipe path (imaged formats it as
-	// /tmp/faas-tail-<random>.jsonl per wake, stamped via
-	// FAAS_TAIL_PIPE_PATH) — the runner's tail host drains the pipe
-	// after invokeHandler returns. Empty pipe / 0 ceiling = feature
-	// disabled on this request (backwards-compatible — pre-#667
-	// handlers ignore the new fields).
-	WaitUntilSec int    `json:"wait_until_sec"`
-	TailPipePath string `json:"tail_pipe_path,omitempty"`
-}
+// reportedRuntime is the runtime this runner reports in telemetry, to the
+// restore barrier and to the handler (FAAS_RUNTIME). go124-alpine reports as
+// go124, as before; binary keeps its own identity (ADR-987).
+var reportedRuntime = "go124"
 
-type response struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	BodyB64 string            `json:"body_b64"`
-	// TailErrors is the per-task failure list (issue #667).
-	// Debug-only — surfaced via runner stderr + schedd audit rows,
-	// never via the HTTP response body.
-	TailErrors []string `json:"tail_errors,omitempty"`
-}
+// envelope is the §4.9 request envelope (internal.Envelope), named here so
+// the JSON-tag parity test can pin its wire spelling.
+type envelope = internal.Envelope
 
 func main() {
-	runtime := flag.String("runtime", "go124", "runtime id (informational)")
+	runtime := flag.String("runtime", "go124", "runtime id: go124, go124-alpine or binary")
 	handlerPath := flag.String("handler", "/app/handler", "path to customer handler binary")
 	flag.Parse()
-	if *runtime != "go124" {
-		log.Printf("warning: --runtime=%s ignored; only go124 is supported by this binary", *runtime)
+	switch *runtime {
+	case "binary":
+		// ADR-987: the binary runtime shares this runner and reports its
+		// own identity in telemetry and to the handler.
+		reportedRuntime = "binary"
+	case "go124", "go124-alpine":
+	default:
+		log.Printf("warning: --runtime=%s ignored; this runner serves go124, go124-alpine and binary", *runtime)
 	}
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("go124 runner: handler not found at %s: %v", *handlerPath, err)
+	}
+	// Handlers built on the persistent protocol stay alive between
+	// requests. Starting one here puts the initialized process into the
+	// init snapshot, so a restored VM skips process start and the
+	// handler's own setup on its first request.
+	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
+	persistent, err := workerpool.PrewarmIfSupported(prewarmCtx, handlerSpec(*handlerPath))
+	if err != nil {
+		log.Printf("go124 runner: handler prewarm unavailable: %v", err)
+	}
+	cancelPrewarm()
+	if persistent {
+		// A restored handler would resume with the in-process random state
+		// it held at capture, shared with every sibling restored from the
+		// same snapshot (GHSA-24j2-p895-mwc9, ADR-687). Compiled handlers
+		// have no reseed preload, so on every resume the runner replaces
+		// them before the instance serves traffic; a Go process starts in
+		// milliseconds, and the replacement starts in the background.
+		internal.RegisterRestoreRecycle(reportedRuntime, func() error {
+			workerpool.Recycle()
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, err := workerpool.PrewarmIfSupported(ctx, handlerSpec(*handlerPath)); err != nil {
+					log.Printf("go124 runner: handler restart after restore: %v", err)
+				}
+			}()
+			return nil
+		})
 	}
 
 	// Issue #667 / ADR-078 (PR 3): read the per-request tail
@@ -92,7 +89,7 @@ func main() {
 	// per-request JSONL pipe path the customer's handler appends
 	// waitUntil(promise) registrations to. Empty values = feature
 	// disabled on this request (backwards-compatible with pre-#667
-	// handlers). See tail_host_integration.go.
+	// handlers); internal.Serve drains the pipe.
 	tailWaitSec := envIntDefault("FAAS_TAIL_WAIT_SEC", 0)
 	tailPipePath := os.Getenv("FAAS_TAIL_PIPE_PATH")
 
@@ -102,7 +99,7 @@ func main() {
 	})
 	// Issue #470 / PR #470-FU-B: framework_ready signal fires once
 	// per wake when the runner's first non-5xx response lands.
-	signal := internal.NewRunnerSignal("go124", time.Now())
+	signal := internal.NewRunnerSignal(reportedRuntime, time.Now())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath)
 	})
@@ -129,124 +126,29 @@ func main() {
 	})
 }
 
-// handle runs the §4.9 envelope round-trip through the customer's
-// handler. The runner is the request translator — it knows nothing
-// about Go beyond "exec the file with the handler path" and "pipe
-// the envelope JSON over stdin".
-//
-// Issue #667 / ADR-078 (PR 3): tailWaitSec and tailPipePath are the
-// per-request tail primitives stamped by imaged at build time. The
-// runner passes them through to the handler envelope (so the handler
-// knows the per-task ceiling) and feeds them to drainTailHost after
-// the handler returns (so the runner's tail host can drain the
-// JSONL pipe and emit 0x04 DGRAMs).
+// handle runs one request through the customer's binary via the shared
+// runner core (internal.Serve): a complete §4.9 response, or a streamed one
+// flushed frame by frame (ADR-999).
 func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string) {
-	body, _ := io.ReadAll(r.Body)
-	_ = r.Body.Close()
-	env := envelope{
-		Method:       r.Method,
-		Path:         r.URL.Path,
-		Headers:      headerMap(r.Header),
-		Query:        r.URL.RawQuery,
-		BodyB64:      base64.StdEncoding.EncodeToString(body),
+	internal.Serve(w, r, internal.ServeConfig{
+		Runtime:      reportedRuntime,
+		Spec:         handlerSpec(handlerPath),
 		WaitUntilSec: tailWaitSec,
 		TailPipePath: tailPipePath,
-	}
-
-	started := time.Now()
-	resp, processUsage, err := invokeHandler(r.Context(), handlerPath, env)
-	if err != nil {
-		internal.ObserveGuestExecution(r.Context(), "go124", started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
-		log.Printf("go124 runner: handler error: %v", err)
-		internal.WriteHandlerFailure(w, r, err)
-		return
-	}
-	if resp.Status == 0 {
-		resp.Status = http.StatusOK
-	}
-	evidence := internal.ObserveGuestExecution(r.Context(), "go124", started, resp.Status, nil).WithProcessUsage(processUsage)
-	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
-	// writing the response. The drain runs AFTER invokeHandler
-	// returns (the handler has already written to the JSONL
-	// pipe) and BEFORE the response envelope is written to the
-	// wire + the framework_ready signal fires. The customer's
-	// tail_seconds window therefore ends before the response
-	// is read; the snapshotAndPark 5s watchdog on schedd is
-	// the upper bound if the drain hangs.
-	drainTailHost(r.Context(), env, &resp)
-	internal.ApplyResponseHeaders(w.Header(), resp.Headers)
-	evidence.ApplyResponseHeaders(w.Header())
-	w.WriteHeader(resp.Status)
-	if resp.BodyB64 != "" {
-		decoded, err := base64.StdEncoding.DecodeString(resp.BodyB64)
-		if err != nil {
-			log.Printf("go124 runner: bad body_b64: %v", err)
-			return
-		}
-		_, _ = w.Write(decoded)
-	}
-	// Issue #470 / PR #470-FU-B: fire the framework-ready signal
-	// after the response has been written. Status < 500 → ready.
-	if resp.Status < 500 {
-		signal.SignalReady(time.Since(signal.StartTime()).Milliseconds())
-	}
+		Signal:       signal,
+	})
 }
 
-// invokeHandler spawns the customer's static Go binary at handlerPath
-// and pipes the request envelope over stdin; reads the response
-// envelope from stdout.
-func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, internal.GuestProcessUsage, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(timeoutCtx, handlerPath)
-	cmd.Env = append(os.Environ(), "FAAS_RUNTIME=go124")
-
-	var stdin bytes.Buffer
-	if err := json.NewEncoder(&stdin).Encode(env); err != nil {
-		return response{}, internal.GuestProcessUsage{}, fmt.Errorf("encode envelope: %w", err)
+// handlerSpec describes the customer's binary to the worker pool. The
+// binary is executed directly; its persistent-protocol marker sits in
+// the compiled data section, so the pool scans the whole file.
+func handlerSpec(handlerPath string) workerpool.Spec {
+	return workerpool.Spec{
+		Executable:     handlerPath,
+		Env:            append(os.Environ(), "FAAS_RUNTIME="+reportedRuntime),
+		HandlerPath:    handlerPath,
+		MarkerAnywhere: true,
 	}
-	cmd.Stdin = &stdin
-
-	// Issue #254: tee customer stderr to os.Stderr so it reaches
-	// guest-init's supervisor ring and, from there, `faas logs`.
-	// stdout stays a bare buffer — it is protocol-bearing (the §4.9
-	// envelope is decoded from it below). See the full rationale at
-	// guest/runners/node22/main.go::invokeHandler.
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
-
-	if err := cmd.Run(); err != nil {
-		usage := internal.ProcessResourceUsage(cmd.ProcessState)
-		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
-			return response{}, usage, fmt.Errorf("handler timeout: %w", context.DeadlineExceeded)
-		}
-		return response{}, usage, fmt.Errorf("handler exec: %w (stderr=%s)", err, stderr.String())
-	}
-	usage := internal.ProcessResourceUsage(cmd.ProcessState)
-	var resp response
-	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
-		return response{}, usage, fmt.Errorf("decode response: %w (stdout=%s)", err, stdout.String())
-	}
-	return resp, usage, nil
-}
-
-// headerMap folds http.Header into the lowercase-string-keyed map the
-// §4.9 envelope expects. Multi-value headers are joined with ", ".
-//
-// Note: the implementation preserves Go's canonical header spellings
-// (not lowercased keys) and keeps only v[0] of multi-valued headers —
-// the Node22 runner's doc comment is wrong on both points. The new
-// runners match this implementation, not the comment.
-func headerMap(h http.Header) map[string]string {
-	out := make(map[string]string, len(h))
-	for k, v := range h {
-		if len(v) > 0 {
-			out[k] = v[0]
-		}
-	}
-	return out
 }
 
 // envIntDefault reads an env var as an int; returns fallback if

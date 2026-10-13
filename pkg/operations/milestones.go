@@ -75,7 +75,18 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	workflowTransitions := make(map[string][]api.OperationWorkflowTransition)
 	workflowTransitionsDeclared := make(map[string]bool)
 	workflowVersions := make(map[string]int)
+	workflowRetainedRequirements := make(map[string]map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
 	for i := range spec.WorkflowSteps {
+		playbooks, err := api.CanonicalOperationWorkflowPlaybooks(spec.WorkflowSteps[i].Playbooks)
+		if err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].Playbooks = playbooks
+		conditions, err := api.CanonicalOperationBusinessConditions(spec.WorkflowSteps[i].DecisionConditions)
+		if err != nil {
+			return err
+		}
+		spec.WorkflowSteps[i].DecisionConditions = conditions
 		if spec.WorkflowSteps[i].Version < 0 || spec.WorkflowSteps[i].Version > api.OperationWorkflowContractVersionMax {
 			return fmt.Errorf("operation workflow contract version is invalid")
 		}
@@ -93,6 +104,13 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		stateSet := make(map[string]bool, len(states))
 		for _, state := range states {
 			stateSet[state] = true
+		}
+		for _, condition := range conditions {
+			for _, state := range condition.ExpectedStates {
+				if !stateSet[state] {
+					return fmt.Errorf("condition expectation references an undeclared workflow state")
+				}
+			}
 		}
 		terminalStates := append([]string(nil), spec.WorkflowSteps[i].TerminalStates...)
 		if len(terminalStates) > api.OperationWorkflowStatesMax {
@@ -160,6 +178,54 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 			return fmt.Errorf("operation workflow transition list exceeds its limit")
 		}
 		for j := range transitions {
+			retained, err := api.CanonicalOperationWorkflowRetainedMilestones(transitions[j].RequiredRetainedMilestones)
+			if err != nil {
+				return err
+			}
+			transitions[j].RequiredRetainedMilestones = retained
+			groups, err := api.CanonicalOperationWorkflowRetainedMilestoneGroups(transitions[j].RetainedMilestoneGroups)
+			if err != nil {
+				return err
+			}
+			transitions[j].RetainedMilestoneGroups = groups
+			for _, group := range groups {
+				for _, path := range group.Paths {
+					if path.Decision == nil {
+						continue
+					}
+					if spec.Milestones[path.Decision.Milestone] == nil {
+						return fmt.Errorf("path decision requires a declared milestone")
+					}
+					declared := false
+					for _, step := range spec.WorkflowSteps {
+						version, expected := step.Version, spec.WorkflowSteps[i].Version
+						if version == 0 {
+							version = 1
+						}
+						if expected == 0 {
+							expected = 1
+						}
+						if step.Workflow == spec.WorkflowSteps[i].Workflow && step.Milestone == path.Decision.Milestone && version == expected {
+							declared = true
+						}
+					}
+					if !declared {
+						return fmt.Errorf("path decision requires a milestone in the same workflow contract version")
+					}
+				}
+			}
+
+			selectors := api.OperationWorkflowRetainedSelectors(retained, groups)
+			invalidations, err := api.CanonicalOperationWorkflowRetainedMilestoneInvalidations(transitions[j].RetainedMilestoneInvalidations, selectors)
+			if err != nil {
+				return err
+			}
+			transitions[j].RetainedMilestoneInvalidations = invalidations
+			freshness, err := api.CanonicalOperationWorkflowRetainedMilestoneFreshness(transitions[j].RetainedMilestoneFreshness, selectors)
+			if err != nil {
+				return err
+			}
+			transitions[j].RetainedMilestoneFreshness = freshness
 			if transitions[j].RequiredDependencyWorkflows != nil {
 				workflows := append([]string{}, (*transitions[j].RequiredDependencyWorkflows)...)
 				if len(workflows) > 16 {
@@ -255,6 +321,33 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		spec.WorkflowSteps[i].Transitions = transitions
 	}
 	for _, step := range spec.WorkflowSteps {
+		if workflowRetainedRequirements[step.Workflow] == nil {
+			workflowRetainedRequirements[step.Workflow] = make(map[api.OperationWorkflowRetainedMilestoneRequirement]bool)
+		}
+		for _, edge := range step.Transitions {
+			sources := api.OperationWorkflowRetainedSelectors(edge.RequiredRetainedMilestones, edge.RetainedMilestoneGroups)
+			for _, rule := range edge.RetainedMilestoneInvalidations {
+				sources = append(sources, rule.InvalidatedBy)
+			}
+			for _, requirement := range sources {
+				workflowRetainedRequirements[step.Workflow][requirement] = true
+				if len(workflowRetainedRequirements[step.Workflow]) > api.OperationWorkflowRetainedMilestoneLookupMax {
+					return fmt.Errorf("workflow retained milestone prerequisites exceed lookup limit")
+				}
+				if requirement.Operation == spec.Name {
+					bound := false
+					for _, source := range spec.WorkflowSteps {
+						if source.Workflow == step.Workflow && source.Milestone == requirement.Milestone {
+							bound = true
+							break
+						}
+					}
+					if !bound {
+						return fmt.Errorf("retained milestone prerequisite must reference a declared workflow step")
+					}
+				}
+			}
+		}
 		if !operationName.MatchString(step.Workflow) || len(step.Title) == 0 || len(step.Title) > api.OperationWorkflowTitleMaxBytes ||
 			!utf8.ValidString(step.Title) || strings.TrimSpace(step.Title) != step.Title || strings.ContainsAny(step.Title, "\x00\r\n\t") ||
 			!operationName.MatchString(step.Step) || len(step.Label) == 0 || len(step.Label) > api.OperationWorkflowLabelMaxBytes ||
@@ -369,7 +462,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		}
 		return left.Step < right.Step
 	})
-	return nil
+	return validateWorkflowPlaybookContracts(spec.WorkflowSteps)
 }
 
 func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool {
@@ -377,7 +470,7 @@ func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool
 		return false
 	}
 	for i := range left {
-		if !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
+		if !reflect.DeepEqual(left[i].RetainedMilestoneGroups, right[i].RetainedMilestoneGroups) || !reflect.DeepEqual(left[i].RetainedMilestoneFreshness, right[i].RetainedMilestoneFreshness) || !reflect.DeepEqual(left[i].RetainedMilestoneInvalidations, right[i].RetainedMilestoneInvalidations) || !reflect.DeepEqual(left[i].RequiredRetainedMilestones, right[i].RequiredRetainedMilestones) || !reflect.DeepEqual(left[i].RequiredEffects, right[i].RequiredEffects) || !reflect.DeepEqual(left[i].RequiredInvariants, right[i].RequiredInvariants) || !reflect.DeepEqual(left[i].RequiredDependencyWorkflows, right[i].RequiredDependencyWorkflows) || !reflect.DeepEqual(left[i].RequiredPolicies, right[i].RequiredPolicies) {
 			return false
 		}
 		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {
@@ -455,6 +548,9 @@ func WorkflowStepsForMilestone(spec api.OperationDefinitionSpec, name string, pa
 func ResolveWorkflowInstanceIDs(steps []api.OperationWorkflowSpec, payload []byte) ([]api.OperationWorkflowSpec, error) {
 	resolved := append([]api.OperationWorkflowSpec(nil), steps...)
 	for i := range resolved {
+		resolved[i].DecisionConditions = append([]api.OperationBusinessConditionDefinition(nil), resolved[i].DecisionConditions...)
+	}
+	for i := range resolved {
 		// Previously pinned definitions had no instance selector. Preserve their
 		// workflow grouping while new source declarations provide an explicit ID.
 		if resolved[i].InstanceIDFrom == "" {
@@ -513,6 +609,9 @@ func (c *Contract) CanonicalMilestone(report api.OperationMilestoneRequest) (api
 		matched := false
 		for _, step := range steps {
 			if step.Workflow == decision.Workflow && step.InstanceID == decision.InstanceID {
+				if err := api.ValidateOperationBusinessConditionContract(step.DecisionConditions, *decision); err != nil {
+					return report, err
+				}
 				matched = true
 			}
 		}
@@ -615,6 +714,7 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	allowReconciliation := false
 	contractVersion := 0
 	var requiredMilestones []string
+	var selectedGroups []api.OperationWorkflowRetainedMilestoneGroup
 	for _, step := range c.Spec.WorkflowSteps {
 		if step.Workflow != report.Workflow || step.InstanceIDFrom == "" {
 			continue
@@ -637,6 +737,7 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 			for _, transition := range step.Transitions {
 				if transition.From == report.FromState && transition.To == report.State {
 					transitionAllowed = true
+					selectedGroups = transition.RetainedMilestoneGroups
 					requiredMilestones = append([]string(nil), transition.RequiredMilestones...)
 					for _, effect := range transition.RequiredEffects {
 						requiredMilestones = append(requiredMilestones, effect.Milestone)
@@ -815,9 +916,28 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 		return resolutions[i].Code < resolutions[j].Code
 	})
 	report.BlockerResolutions = resolutions
+	reason, reasonErr := api.CanonicalOperationWorkflowChangeReason(report.ChangeReason)
+	if reasonErr != nil {
+		return report, "", reasonErr
+	}
+	if reason != nil && (report.FromState == "" || reason.Decision.Workflow != report.Workflow || reason.Decision.InstanceID != report.InstanceID) {
+		return report, "", fmt.Errorf("workflow change reason requires a matching workflow transition or metadata update")
+	}
+	report.ChangeReason = reason
+	selections, err := api.CanonicalOperationWorkflowPathSelections(report.SelectedPaths)
+	if err != nil {
+		return report, "", err
+	}
+	if len(selections) > 0 && (report.FromState == "" || report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly || !transitionAllowed) {
+		return report, "", fmt.Errorf("path selections require a declared business transition")
+	}
+	if err := api.ValidateOperationWorkflowPathSelections(selections, selectedGroups); err != nil {
+		return report, "", err
+	}
+	report.SelectedPaths = selections
 	if report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
-		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 {
-			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain no transition evidence")
+		if report.FromState != report.State || len(report.EvidenceMilestones) > 0 && (reason == nil || len(report.EvidenceMilestones) != 1 || report.EvidenceMilestones[0].ID != reason.MilestoneID) {
+			return report, "", fmt.Errorf("metadata-only updates must preserve state and contain only change reason evidence when supplied")
 		}
 		requiredMilestones = nil
 	}

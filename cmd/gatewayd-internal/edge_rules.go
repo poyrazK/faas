@@ -23,10 +23,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -297,6 +299,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	cache, cacheErrs := compileCacheRules(storeRules)
 	respond, respondErrs := compileRespondRules(storeRules)
 	asyncRules, asyncErrs := compileAsyncRules(storeRules)
+	waf, wafErrs := compileWAFRules(storeRules)
 	retry, retryErrs := compileRetryRules(storeRules)
 	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
@@ -317,6 +320,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Cache:          cache,
 		Respond:        respond,
 		Async:          asyncRules,
+		WAF:            waf,
 		Retry:          retry,
 		CircuitBreaker: circuitBreaker,
 	}
@@ -337,6 +341,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, circuitBreakerErrs...)
 	parseErrs = append(parseErrs, respondErrs...)
 	parseErrs = append(parseErrs, asyncErrs...)
+	parseErrs = append(parseErrs, wafErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
 	}
@@ -392,6 +397,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 		for range asyncErrs {
 			g.metrics.ObserveEdgeRuleCompileError("async")
+		}
+		for range wafErrs {
+			g.metrics.ObserveEdgeRuleCompileError("waf")
 		}
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
@@ -926,6 +934,29 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
+// MatchWAF returns the highest-priority kind=waf rule matching the public
+// request (ADR-831 step 1), sharing the per-host cache with every kind.
+func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleWAFResolved {
+	if g == nil || g.cache == nil {
+		return nil
+	}
+	rules, hit := g.cache.GetWAF(host)
+	if !hit {
+		entry, err := g.loadHost(ctx, host)
+		if err != nil {
+			if g.log != nil {
+				g.log.Warn("edge rule loader failed; treating waf rule as miss", "host", host, "err", err)
+			}
+			return nil
+		}
+		g.warnPathGlobErrs(host, entry.PathGlobErrs)
+		rules = entry.WAF
+	}
+	enforced := gateway.PickFirstWAFMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstWAFMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+}
+
 // Reset drops every cached entry. Called by the pg_notify loop in
 // cmd/gatewayd-internal/backend.go on db.NotifyEdgeRuleChanged
 // (mirrors PGBackend.FlushRoutes). Wholesale flush because the
@@ -1085,6 +1116,11 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 		if status == 0 {
 			status = 302 // http.StatusFound — pkg/api Validate already enforced the {301,302,307,308} set
 		}
+		toTemplate, headerTemplates, err := compileRedirectTemplates(r.Action.Redirect)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
 		out = append(out, gateway.EdgeRuleRedirectResolved{
 			ID:                r.ID,
 			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
@@ -1097,6 +1133,8 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 			StatusCode:        status,
 			To:                r.Action.Redirect.To,
 			Headers:           r.Action.Redirect.Headers,
+			ToTemplate:        toTemplate,
+			HeaderTemplates:   headerTemplates,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
@@ -1128,6 +1166,16 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
+		requestOps, err := convertHeaderOps(r.Action.Headers.RequestHeaders)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
+		responseOps, err := convertHeaderOps(r.Action.Headers.ResponseHeaders)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			continue
+		}
 		out = append(out, gateway.EdgeRuleHeadersResolved{
 			ID:                r.ID,
 			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
@@ -1137,8 +1185,8 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			PathGlob:          r.MatchPath,
 			Methods:           buildMethodsMap(r.MatchMethods),
 			MatchHeaders:      buildMatchHeadersMap(r.MatchHeaders),
-			RequestHeaders:    convertHeaderOps(r.Action.Headers.RequestHeaders),
-			ResponseHeaders:   convertHeaderOps(r.Action.Headers.ResponseHeaders),
+			RequestHeaders:    requestOps,
+			ResponseHeaders:   responseOps,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
@@ -1737,6 +1785,51 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 	return out, parseErrs
 }
 
+// compileWAFRules compiles kind=waf rows (ADR-831 step 1). A row whose action
+// is missing or fails the apid bounds (a direct-database write) is dropped
+// rather than inspected with values apid would have rejected.
+func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved, []gateway.PathGlobError) {
+	if len(storeRules) == 0 {
+		return nil, nil
+	}
+	var out []gateway.EdgeRuleWAFResolved
+	var parseErrs []gateway.PathGlobError
+	for i := range storeRules {
+		rule := &storeRules[i]
+		if !rule.Enabled || rule.Kind != state.EdgeRuleKindWAF || rule.Action.WAF == nil {
+			continue
+		}
+		action := api.EdgeRuleWAFAction{
+			Mode:             rule.Action.WAF.Mode,
+			ParanoiaLevel:    rule.Action.WAF.ParanoiaLevel,
+			AnomalyThreshold: rule.Action.WAF.AnomalyThreshold,
+			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
+			InspectBodyBytes: rule.Action.WAF.InspectBodyBytes,
+		}
+		if action.Validate() != nil {
+			continue
+		}
+		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
+			parseErrs = append(parseErrs, errs...)
+			continue
+		}
+		out = append(out, gateway.EdgeRuleWAFResolved{
+			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
+			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.AppID, rule.Mode, rule.Match, rule.MatchLists),
+			Priority:          rule.Priority, PathGlob: rule.MatchPath,
+			Methods:          buildMethodsMap(rule.MatchMethods),
+			MatchHeaders:     buildMatchHeadersMap(rule.MatchHeaders),
+			ParanoiaLevel:    action.ParanoiaLevel,
+			AnomalyThreshold: action.AnomalyThreshold,
+			ExcludeRuleIDs:   action.ExcludeRuleIDs,
+			InspectBodyBytes: action.InspectBodyBytes,
+			Mode:             action.Mode,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out, parseErrs
+}
+
 // compileThrottleRules mirrors compileMaintenanceRules for
 // kind=throttle (ADR-091 D20.5 amendment, issue #881). The
 // compiled slice carries the per-rule RequestsPerSecond + Burst
@@ -1804,13 +1897,15 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
-		// Clamp rps/burst to the minimum-useful positive values.
-		// A 0/0 from a direct-DB write would let the limiter build
-		// a bucket that always-deny (burst=0 means every AllowToken
-		// call consumes a token that was never refilled), and a
-		// negative value would panic the limiter. Floor at {1, 1}.
+		// Replace non-positive rps/burst from a direct-DB write with
+		// {1, 1}: a 0/0 rule would build a bucket that always denies
+		// (burst=0 means every AllowToken call consumes a token that was
+		// never refilled), and a negative value would panic the limiter.
+		// A fractional rps is a real policy that apid accepts (0.1 = one
+		// request per 10 s, e.g. a login throttle) and both limiters refill
+		// fractionally, so it is kept as configured.
 		rps := r.Action.Throttle.RequestsPerSecond
-		if rps < 1 {
+		if !(rps > 0) {
 			rps = 1
 		}
 		burst := r.Action.Throttle.Burst
@@ -1905,12 +2000,13 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			continue
 		}
 		// Clamp the budget to the platform ceiling. Non-positive or
-		// > ceiling → api.RequestBudgetMaxMs (a 0 budget would
+		// > ceiling → api.RequestBudgetPlanMax (a 0 budget would
 		// 504 every request, which is worse than the platform
 		// default; the same defence-in-depth posture as
-		// compileLimitRules silently dropping malformed caps).
+		// compileLimitRules silently dropping malformed caps). The
+		// plan's own ceiling clamps again at request time.
 		budgetMs := r.Action.Budget.BudgetMs
-		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
+		maxBudgetMs := int(api.RequestBudgetPlanMax.Milliseconds())
 		if budgetMs <= 0 || budgetMs > maxBudgetMs {
 			budgetMs = maxBudgetMs
 		}
@@ -2099,14 +2195,30 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			// the caller.
 			continue
 		}
-		d, err := g.validate.CompileSchema(schemaBytes, action.RejectOnUnknown)
-		if err != nil {
+		noBody := len(schemaBytes) == 0
+		if noBody && action.Parameters.Empty() {
 			parseErrs = append(parseErrs, gateway.PathGlobError{
-				RuleID: r.ID, Glob: "validate", Err: err,
+				RuleID: r.ID, Glob: "validate", Err: errors.New("validate rule has neither a body schema nor parameters"),
 			})
 			continue
 		}
-		digest = d
+		if !noBody {
+			d, err := g.validate.CompileSchema(schemaBytes, action.RejectOnUnknown)
+			if err != nil {
+				parseErrs = append(parseErrs, gateway.PathGlobError{
+					RuleID: r.ID, Glob: "validate", Err: err,
+				})
+				continue
+			}
+			digest = d
+		}
+		params, err := g.compileValidateParameters(action.Parameters, r.MatchPath)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{
+				RuleID: r.ID, Glob: "validate.parameters", Err: err,
+			})
+			continue
+		}
 		var contentTypes []string
 		if len(action.ContentTypes) > 0 {
 			contentTypes = append(contentTypes, action.ContentTypes...)
@@ -2145,10 +2257,43 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			RejectUnknownFields: action.RejectOnUnknown,
 			MaxBodyBytes:        action.MaxBodyBytes,
 			ValidateMode:        mode,
+			NoBodySchema:        noBody,
+			Parameters:          params,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
+}
+
+// compileValidateParameters compiles each configured parameter schema and
+// records its property kinds. It re-runs the apid shape checks so a row that
+// bypassed apid is dropped rather than half-applied.
+func (g *gatewaydEdgeRules) compileValidateParameters(p *api.EdgeRuleValidateParameters, matchPath string) (*gateway.EdgeRuleValidateParamsResolved, error) {
+	if p.Empty() {
+		return nil, nil
+	}
+	if prob := p.Validate(matchPath); prob != nil {
+		return nil, errors.New(prob.Detail)
+	}
+	out := &gateway.EdgeRuleValidateParamsResolved{PathTemplate: p.PathTemplate}
+	for _, loc := range []struct {
+		raw  []byte
+		into *gateway.EdgeRuleParamSchemaResolved
+	}{{p.Path, &out.Path}, {p.Query, &out.Query}, {p.Headers, &out.Headers}} {
+		if len(loc.raw) == 0 {
+			continue
+		}
+		kinds, err := api.EdgeRuleParamKinds(loc.raw)
+		if err != nil {
+			return nil, err
+		}
+		digest, err := g.validate.CompileSchema(loc.raw, false)
+		if err != nil {
+			return nil, err
+		}
+		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Kinds: kinds}
+	}
+	return out, nil
 }
 
 // validatePathGlob runs stdlib path.Match(glob, "") to detect a
@@ -2197,15 +2342,44 @@ func buildMatchHeadersMap(headers map[string]string) map[string]string {
 // gateway-side subset type. Same shape; the cmd-side copies
 // instead of importing state from pkg/gateway (pkg/gateway keeps
 // zero-dep-on-pkg/state).
-func convertHeaderOps(in []state.EdgeRuleHeaderOp) []gateway.EdgeRuleHeaderOp {
+func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, error) {
 	if len(in) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]gateway.EdgeRuleHeaderOp, len(in))
 	for i, op := range in {
 		out[i] = gateway.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action}
+		if op.Template {
+			t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
+			if err != nil {
+				return nil, fmt.Errorf("header %q: %w", op.Name, err)
+			}
+			out[i].Template = t
+		}
 	}
-	return out
+	return out, nil
+}
+
+// compileRedirectTemplates compiles a templated redirect (ADR-968). A
+// stored template that no longer compiles drops the rule, like an
+// unparseable match_path.
+func compileRedirectTemplates(a *state.EdgeRuleRedirectAction) (*api.EdgeRuleTemplate, map[string]*api.EdgeRuleTemplate, error) {
+	if !a.Template {
+		return nil, nil, nil
+	}
+	to, err := api.CompileEdgeRuleTemplate(a.To, api.EdgeRuleTemplateRedirect)
+	if err != nil {
+		return nil, nil, fmt.Errorf("to: %w", err)
+	}
+	headers := make(map[string]*api.EdgeRuleTemplate, len(a.Headers))
+	for name, value := range a.Headers {
+		t, err := api.CompileEdgeRuleTemplate(value, api.EdgeRuleTemplateHeader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("header %q: %w", name, err)
+		}
+		headers[name] = t
+	}
+	return to, headers, nil
 }
 
 // gatewaydEdgeRulesAud is the cmd/gatewayd-internal audit thin wrapper

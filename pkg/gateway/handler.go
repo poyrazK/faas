@@ -962,6 +962,11 @@ type Handler struct {
 	// this gateway process and deliberately separate from scraped
 	// metrics, which arrive too late to protect a cold burst.
 	burstPressure *burstPressure
+	// wakeAhead is the opt-in ADR-977 wake-ahead runner; nil disables it.
+	wakeAhead *wakeAheadRunner
+	// routePriorities orders the warm-capacity queue by route (ADR-978);
+	// nil keeps it FIFO.
+	routePriorities *routePriorityCache
 	// vmConcurrency enforces the plan's concurrency_per_vm bound after the
 	// picker selects a concrete instance. Instance slots and FIFO ordering are
 	// gateway-local; production installs a shared admission backend so the
@@ -1257,7 +1262,13 @@ type Handler struct {
 	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
 	// runtime wiring error only when such a rule actually matches.
 	asyncRoutes AsyncRouteEnqueuer
-	operations  OperationRouteEnqueuer
+	// wafInspector evaluates kind=waf samples off the request path
+	// (ADR-831 step 1). Nil disables WAF inspection.
+	wafInspector WAFInspector
+	// wafInline checks headers and URI in-path for warn and block
+	// kind=waf rules (ADR-831 amendment 4). Nil makes them observe.
+	wafInline  WAFInlineChecker
+	operations OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1266,6 +1277,8 @@ type Handler struct {
 	geoReader CountryReader
 	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
+	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
+	botVerifier *BotVerifier
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -2077,8 +2090,11 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 			"reason": "missing_or_malformed_bearer",
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
+		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`"))
+			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2107,7 +2123,8 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "the presented API key is not valid for this app"))
+			"Unauthorized", "the presented API key is not valid for this app").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2465,8 +2482,10 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 		}
 		return false
 	}
-	// Stamp additional response headers (the rule's Headers map).
-	for k, v := range rule.Headers {
+	// Stamp additional response headers (the rule's Headers map); a
+	// templated redirect renders its target and headers first (ADR-968).
+	target, redirectHeaders := expandRedirect(rule, r)
+	for k, v := range redirectHeaders {
 		w.Header().Set(k, v)
 	}
 	status := rule.StatusCode
@@ -2493,7 +2512,7 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 		h.metrics.ObserveEdgeRuleApply("redirect", "success")
 	}
 	//nolint:gosec // rule.To is validated by apid Validate (pkg/api/dto.go:3337-3357) at create time: must be a non-empty URL/path. The customer's free-form redirect target IS the product surface — same posture as Cloudflare's "URL redirect" rules.
-	http.Redirect(w, r, rule.To, status)
+	http.Redirect(w, r, target, status)
 	return true
 }
 
@@ -2537,15 +2556,19 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 		}
 		return false
 	}
+	// Templated values render from the request as it arrived here, before
+	// any request-side op runs (ADR-968).
+	requestOps := expandHeaderOps(rule.RequestHeaders, r)
+	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
 	// Request-side ops: apply directly to r.Header.
-	for _, op := range rule.RequestHeaders {
+	for _, op := range requestOps {
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
 	// applies ops at WriteHeader commit time. Reuses the same
 	// statusRecorder pattern that PR-B streaming introduced.
-	if len(rule.ResponseHeaders) > 0 && rec != nil {
-		rec.installHeaderOps(rule.ResponseHeaders)
+	if len(responseOps) > 0 && rec != nil {
+		rec.installHeaderOps(responseOps)
 	}
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.headers_matched", nil, map[string]any{
@@ -2623,6 +2646,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		// cases to a single "don't stamp" path so
 		// the hot path is a single non-nil test.
 		if app.CORSDefaultEnabled != nil && *app.CORSDefaultEnabled && len(app.CORSDefaultOrigins) > 0 {
+			rec.installHeaderOps(corsVaryOps)
 			origin := r.Header.Get("Origin")
 			allowedOrigin := matchOrigin(app.CORSDefaultOrigins, origin)
 			if origin != "" && allowedOrigin != "" && rec != nil {
@@ -2647,6 +2671,9 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		}
 		return false
 	}
+	// From here the response depends on the request's Origin whatever it
+	// is, including when the request has none.
+	rec.installHeaderOps(corsVaryOps)
 	if requestedMethod != "" {
 		allowed := false
 		for _, method := range rule.AllowMethods {
@@ -2759,6 +2786,16 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 	}
 	return origin[:idx], origin[idx+3:], true
 }
+
+// corsVaryOps marks a response whose CORS headers depend on the request's
+// Origin. The gateway stamps Access-Control-Allow-Origin only for an allowed
+// origin and omits it when the request has none, so without Vary: Origin a
+// browser or shared cache that stored one answer (for example a direct page
+// load of a Cache-Control: public resource) replays it to a cross-origin
+// fetch from an allowed origin, which the browser then blocks (production-us
+// hunt #9, H9-130). The platform response cache is unaffected: it captures
+// the response before these ops run and re-applies CORS on every hit.
+var corsVaryOps = []EdgeRuleHeaderOp{{Action: "vary", Name: "Vary", Value: "Origin"}}
 
 // corsDefaultOps is the per-app default CORS header op set (CORS
 // improvements D1). Mirrors the shape of corsResponseOps above
@@ -3525,6 +3562,15 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) {
 		return false
 	}
+	// Path, query, and header parameters are checked before the body is
+	// read, so a rejected request never pays for buffering.
+	if rule.Parameters != nil && h.validateEdgeRuleParameters(w, r, rec, rule) {
+		return true
+	}
+	if rule.NoBodySchema {
+		h.recordEdgeRuleValidateMatch(r, rule)
+		return false
+	}
 	// Content-Type gate: when the rule restricts Content-Types,
 	// anything outside the list returns 415. Empty
 	// ContentTypes = pass-through (back-compat with rules that
@@ -3601,177 +3647,22 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		ContentType: ct,
 	}, rule)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrValidateSchemaExternalRef):
-			// Compile-time defense fired at runtime —
-			// shouldn't happen if apid-Validate was
-			// correct. 502 signals "the gateway
-			// dependency is broken"; ops will see the
-			// alarm + slog.
-			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				api.CodeBadGateway, "Edge rule compile error",
-				"validate rule contains an external $ref/$id; refusing to validate"))
-		case errors.Is(err, ErrValidateSchemaInvalid),
-			errors.Is(err, ErrValidateSchemaEmpty),
-			errors.Is(err, ErrValidateSchemaTooLarge):
-			// Broken stored schema — deploy bug. 500.
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeInternal, "Edge rule schema error",
-				"validate rule schema is broken"))
-		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeInternal, "Edge rule validator error", err.Error()))
-		}
-		if h.edgeRuleAudit != nil {
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, map[string]any{
-				"rule_id":   rule.ID,
-				"from_host": r.Host,
-				"reason":    "validator_error",
-				"err":       err.Error(),
-			})
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch("validate", "failed")
-			// PR-C: validator error (502 / 500) is a non-2xx
-			// wire write — emit apply error so the §12 chip
-			// surfaces the broken rule.
-			h.metrics.ObserveEdgeRuleApply("validate", "error")
-		}
+		h.writeEdgeRuleValidateError(w, r, rule, err)
 		return true
 	}
 	if !res.OK {
-		// Translate to api.FieldError on the 422 problem+json.
-		// res.FirstError may be nil if the schema failed but
-		// the library returned no FieldError — treat as a
-		// generic 422 with an empty errors slice.
-		var errs []api.FieldError
-		if res.FirstError != nil {
-			errs = []api.FieldError{{
-				Field:    res.FirstError.Field,
-				Expected: res.FirstError.Expected,
-				Got:      res.FirstError.Got,
-			}}
-		}
-		// validate_mode (issue #975 #3 / Mega-Foundation #979-a)
-		// selects the post-failure behavior. Default empty string
-		// == 'block' to match the schema-side default at 00293.
-		// `observe` and `warn` never reject — they count the
-		// failure in the validate_failures metric and let the
-		// proxy leg run. `warn` additionally stamps
-		// X-Validation-Warning: <rule_id> via the statusRecorder
-		// so the customer's API consumer can see the warning
-		// without the gateway changing the response status.
-		//
-		// Body has already been buffered and r.Body restored
-		// above (line ~2384), so the proxy leg reads the same
-		// bytes regardless of mode.
-		mode := rule.ValidateMode
-		if mode == "" {
-			mode = api.ValidateModeBlock
-		}
-		var reason string
-		if res.FirstError != nil {
-			reason = res.FirstError.Reason()
-		} else {
-			reason = reasonOther
-		}
-		if h.metrics != nil {
-			// ADR-128 §5: pass appID + ruleID so the
-			// gateway_validate_failures_total counter can
-			// localize failures to a specific rule on a
-			// specific app. The rule_id label is admitted
-			// through ruleLabelSet (cap 256 per app;
-			// overflow → "__other__") so the Prometheus
-			// series set stays bounded.
-			h.metrics.ObserveEdgeRuleValidateFailure(rule.AppID, rule.ID, mode, reason)
-		}
-		switch mode {
-		case api.ValidateModeObserve:
-			// Counted, no header, no reject. Audit tag
-			// fires so the failure is queryable from the
-			// ledger even when the response is 200.
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				// Match is the "rule fired and returned a
-				// verdict" counter; the per-{mode,reason}
-				// counter is the validate_failures_total
-				// line above. Both increment so the
-				// dashboard can correlate.
-				h.metrics.ObserveEdgeRuleMatch("validate", "match")
-				h.metrics.ObserveEdgeRuleApply("validate", "success")
-			}
-			return false
-		case api.ValidateModeWarn:
-			// Like observe, plus stamp the X-Validation-Warning
-			// header on the proxied response. The header op
-			// goes through the same statusRecorder hook the
-			// CORS / headers rules use, so the value lands
-			// on the response on the way back to the client.
-			// The header value is the rule ID (uuid), not
-			// the failing field — keeps any PII in the
-			// field path out of the response.
-			rec.installHeaderOps([]EdgeRuleHeaderOp{
-				{Action: "set", Name: "X-Validation-Warning", Value: rule.ID},
-			})
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				h.metrics.ObserveEdgeRuleMatch("validate", "match")
-				h.metrics.ObserveEdgeRuleApply("validate", "success")
-			}
-			return false
-		default:
-			// 'block' (and the empty-string coerce) — the
-			// pre-existing 422 path. Behavior preserved.
-			api.WriteProblemWithErrors(w, api.NewProblem(http.StatusUnprocessableEntity,
-				api.CodeRequestValidationFailed, "Invalid request",
-				fmt.Sprintf("body does not match schema for rule %s", rule.ID)), errs)
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				h.metrics.ObserveEdgeRuleMatch("validate", "blocked")
-				// PR-C: 422 schema mismatch is a non-2xx wire
-				// write — emit apply error so the §12 chip
-				// surfaces the customer's malformed payload.
-				h.metrics.ObserveEdgeRuleApply("validate", "error")
-			}
-			return true
-		}
+		// Body has already been buffered and r.Body restored above, so the
+		// proxy leg reads the same bytes in observe and warn modes.
+		return h.handleEdgeRuleValidateMismatch(w, r, rec, rule, res,
+			fmt.Sprintf("body does not match schema for rule %s", rule.ID))
 	}
+	h.recordEdgeRuleValidateMatch(r, rule)
+	return false
+}
+
+// recordEdgeRuleValidateMatch records a request that passed every check of
+// its validate rule.
+func (h *Handler) recordEdgeRuleValidateMatch(r *http.Request, rule *EdgeRuleValidateResolved) {
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_matched", nil, map[string]any{
 			"rule_id":   rule.ID,
@@ -3786,7 +3677,6 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		// Mirrors applyEdgeRuleIP (handler.go:1572).
 		h.metrics.ObserveEdgeRuleApply("validate", "success")
 	}
-	return false
 }
 
 // streamingFor is the canonical 4-conjunct gate that decides
@@ -4546,7 +4436,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4560,6 +4449,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
@@ -4600,9 +4490,10 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 
 // resolveThrottleDimension resolves only trusted, platform-established
 // request concepts. Authentication dimensions come from the verified request
-// context; country comes from the single sanitized X-Forwarded-For hop and the
-// configured GeoIP database. A missing database, forged XFF, lookup error, or
-// uncovered address is unavailable and fails closed.
+// context; ip and country come from the single sanitized X-Forwarded-For hop
+// (country additionally through the configured GeoIP database). A missing
+// database, forged XFF, lookup error, or uncovered address is unavailable and
+// fails closed.
 func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
 	if rule.KeyBy == api.ThrottleKeyByComposite {
 		return h.resolveCompositeThrottleKey(r, rule)
@@ -4696,18 +4587,36 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	return ip, true
 }
 
+// clientIPAliasHeaders are the client-address headers web frameworks read
+// instead of, or before, X-Forwarded-For (Go chi's RealIP checks
+// True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
+// values unchanged, so a workload behind it could be handed a forged client
+// address (hunt #9 H9-67, production-us rc.252).
+var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's
 // single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
 // fail closed by removing the header entirely; the existing IP allowlist and
 // geo paths retain their own deny/unknown handling.
+//
+// The client-address aliases get the same treatment: True-Client-IP and
+// X-Real-IP carry the trusted address, the others and the client's RFC 7239
+// Forwarded header are dropped (Forwarded is not rebuilt, so its proto and
+// host cannot drift from X-Forwarded-*).
 func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
 	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del("Forwarded")
+	for _, name := range clientIPAliasHeaders {
+		r.Header.Del(name)
+	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
+		r.Header.Set("True-Client-IP", ip.String())
+		r.Header.Set("X-Real-IP", ip.String())
 	}
 }
 
@@ -4726,11 +4635,29 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			return
 		}
 		hdr.Set(op.Name, op.Value)
+	case "vary":
+		// Platform-only (customer header ops validate to add/set/remove):
+		// add one field name to the list unless it is already covered.
+		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
 			hdr.Add(op.Name, op.Value)
 		}
 	}
+}
+
+// addVaryField appends field to the response's Vary list unless the list
+// already names it or is "*".
+func addVaryField(hdr http.Header, field string) {
+	for _, value := range hdr.Values("Vary") {
+		for _, existing := range strings.Split(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
+	}
+	hdr.Add("Vary", field)
 }
 
 // bearerTokenFromHeader is the per-deployment authz branch's
@@ -5771,6 +5698,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
 	// ADR-965: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
@@ -5809,7 +5737,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) {
+			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -6055,7 +5983,8 @@ haveApp:
 	// Consumer-attributed traffic always carries a bounded billing route so
 	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
+	routeCarrier := ObservedRouteCarrierFrom(r.Context())
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -6063,6 +5992,7 @@ haveApp:
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
+		routeCarrier.set(preLabel)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
@@ -6190,6 +6120,7 @@ haveApp:
 	// probes from its own address, so an allowlisted app could never deploy
 	// (production-us hunt #5, H5-48).
 	if !deploymentSmoke && h.applyIngressIPAllowlist(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "ip_allowlist", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6205,10 +6136,12 @@ haveApp:
 	// parallel cron-fired path — both gates share the same verifier
 	// (cmd/gatewayd-internal/internal_svc_verifier.go).
 	if !deploymentSmoke && h.applyIngressInternalSvc(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "internal_only", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 	if h.applyEdgeRuleIP(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "ip", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6221,10 +6154,12 @@ haveApp:
 	// fail-open on lookup failure (see applyEdgeRuleGeo for the
 	// metric + audit + slog path).
 	if h.applyEdgeRuleGeo(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "geo", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 	if h.applyEdgeRuleJWT(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "jwt", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6250,6 +6185,7 @@ haveApp:
 	// r.Body). Same posture as validate: short-circuit on deny,
 	// caller MUST `return`.
 	if h.applyEdgeRuleLimit(w, r, streamingFor(h, r, app), app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "limit", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6258,6 +6194,7 @@ haveApp:
 	// requests therefore cannot consume route tokens or schema-buffering
 	// work, and the Content-Length fast path remains allocation-free.
 	if applyPlanRequestBodyLimit(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "body_limit", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6274,8 +6211,23 @@ haveApp:
 	// applyEdgeRuleThrottle's doc for the rationale + the
 	// cross-account audit/metric posture.
 	if h.applyEdgeRuleThrottle(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "throttle", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+
+	// ADR-831 / kind=waf. Placed after the cheap rejections (limit, body
+	// cap, throttle) so rejected traffic is never inspected, and before
+	// validate so a schema 422 is still sampled. Warn and block rules check
+	// headers and URI in-path (~1 ms; block answers 403 here). Every rule
+	// records the body prefix as later stages read it and submits the
+	// sample when ServeHTTP returns, so bodies never delay the request.
+	if blocked, submitWAF := h.applyEdgeRuleWAF(w, r, app, rec); blocked {
+		h.metrics.ObserveEdgeRejection(app.ID, "waf", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	} else if submitWAF != nil {
+		defer submitWAF()
 	}
 
 	// PR-B / kind=validate body gate. Runs AFTER rewrite /
@@ -6876,6 +6828,9 @@ haveApp:
 		return
 	}
 	if !pick.OK {
+		// ADR-977: a cold app starts restoring the services it is measured to
+		// call before its own restore completes. Opt-in; never blocks.
+		h.noteColdWake(r.Context(), app.ID)
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -6966,6 +6921,7 @@ haveApp:
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
 			h.logFleetCapacityRefusal(app.ID, err)
+			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -6983,11 +6939,14 @@ haveApp:
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 		if burstErr != nil {
+			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
+				burstErr = fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, burstErr)
+			}
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects
 			// remain silent; genuine admission failures use the normal
@@ -7087,7 +7046,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -7720,6 +7679,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
+		if platformFailureUnbillable(r, status) {
+			h.metrics.ObservePlatformError(appID, plan)
+		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -8829,12 +8791,23 @@ func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope st
 // not an error: the caller re-reads the endpoint registry and surfaces
 // "no healthy replicas" if the wake genuinely produced nothing.
 func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
+	return h.ensureServiceCapacity(ctx, app, sched.TriggerServiceMesh)
+}
+
+// triggerServiceWakeAhead attributes ADR-977 wake-ahead restores.
+const triggerServiceWakeAhead = sched.TriggerServiceWakeAhead
+
+// ensureServiceCapacity is the shared body of service-mesh and wake-ahead
+// restores. A parked target starting to wake may itself wake its measured
+// targets ahead (ADR-977), up to the depth limit.
+func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger string) error {
 	limits, ok := api.LimitsFor(app.Plan)
 	if !ok {
 		limits = api.Limits{}
 	}
+	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
 	return err
 }
 
@@ -8865,7 +8838,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			idleSeconds = limits.IdleTimeoutS
+			idleSeconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if idleSeconds <= 0 || target.InstanceID == "" {
@@ -9136,10 +9109,48 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				writeFleetCapacityRefusal(w)
 				return
 			}
+			if public, ok := publicWakeFailure(prob); ok {
+				w.Header().Set("Cache-Control", "no-store")
+				api.WriteProblem(w, public)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
+	}
+}
+
+// publicWakeFailure is what an app's visitor sees when its instance could
+// not be started. The wake error's detail is written for the app owner and
+// operators: platform wake/instance ids, component names ("cold boot: vmm:
+// readiness"), and for a crashed workload its last output lines, which
+// routinely include connection strings and other secrets. A public caller gets
+// the stable code and a generic detail; logWakeFailure keeps the original
+// (production-us hunt #9: a crashing app answered every visitor with
+// "500 vmmd operation failed" and the internal wake detail). 503 rather than
+// 502: Cloudflare replaces 502 bodies.
+func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
+	switch p.Code {
+	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
+			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
+	case "internal", api.CodeInternal:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App temporarily unavailable",
+			"the platform could not start this app; retry shortly"), true
+	}
+	return nil, false
+}
+
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+func (h *Handler) logWakeFailure(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) {
+		return
+	}
+	if _, hidden := publicWakeFailure(prob); hidden {
+		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
 }
 

@@ -207,13 +207,14 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	}
 	release()
 	locked = false
-	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
-	defer bootCancel()
-	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(bootCtx, claimed, frame); err != nil {
-		return err
+	// Verified capture backings are copied before the guest can boot. That
+	// materialization is bounded by the qualification lease, while vmmd applies
+	// the guest readiness timeout after snapshot load and resume.
+	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(ctx, claimed, frame); err != nil {
+		return errors.Join(err, context.Cause(ctx))
 	}
 	vmAttempted = true
-	out, err := vm.RestoreEnvironmentQualification(bootCtx, frame, prepared.Spec)
+	out, err := vm.RestoreEnvironmentQualification(ctx, frame, prepared.Spec)
 	if err != nil {
 		return errors.Join(err, context.Cause(ctx))
 	}

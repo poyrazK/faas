@@ -4,12 +4,16 @@
 /* eslint-disable */
 import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+import type { OperationWorkflowChangeReason } from './OperationWorkflowChangeReason.js';
 import type { OperationWorkflowDependency } from './OperationWorkflowDependency.js';
 import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 /**
  * Acknowledgement returned after the platform records an app-reported workflow-state update.
  */
 export type OperationWorkflowStateReportResponse = {
+  change_reason?: OperationWorkflowChangeReason;
+  selected_paths?: Array<OperationWorkflowPathSelection>;
   /**
    * In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references.
    */

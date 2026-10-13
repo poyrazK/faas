@@ -3,8 +3,8 @@ import { requestStore, requestLimit } from './dev-requests.mjs'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 
 // A fragment capability keeps local test identities out of unauthenticated responses.
-export async function inspector(state, requestsPath) {
-  const store = requestStore(requestsPath)
+export async function inspector(state, requestsPath, identities) {
+  const store = requestStore(requestsPath, { identities })
   const key = randomBytes(32).toString('hex')
   const assets = new Map(await Promise.all(['inspector.html', 'inspector.mjs', 'request-replay.mjs'].map(async name => [name, await readFile(new URL(name, import.meta.url))])))
   const prefix = '/__gregale/dev/'

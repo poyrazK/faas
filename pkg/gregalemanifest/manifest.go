@@ -399,6 +399,26 @@ type AsyncRoute struct {
 	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
 }
 
+// TemplatedPathWarnings lists async routes whose match_path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a route only matches
+// the literal braces and never receives traffic. These are warnings, not
+// errors, so an existing manifest keeps deploying; the edge-rules API already
+// rejects new templated paths.
+func (m *Manifest) TemplatedPathWarnings() []string {
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for i, route := range m.AsyncRoutes {
+		if glob, templated := api.EdgeRuleTemplatedPath(route.MatchPath); templated {
+			out = append(out, fmt.Sprintf(
+				"async_routes[%d].match_path %q is an OpenAPI template, not a glob, so the route never matches a request; use %q",
+				i, route.MatchPath, glob))
+		}
+	}
+	return out
+}
+
 // Validate checks the manifest-only constraints for an async route. API-level
 // action validation is shared by constructing the same DTO used by edge rules.
 func (r AsyncRoute) Validate(index int) error {
@@ -1363,12 +1383,13 @@ func (d DatabaseDependency) EffectiveAccess() string {
 // only attaches an existing ready bucket, so adding a manifest entry cannot
 // unexpectedly create billable storage during CI.
 type BucketDependency struct {
-	Bucket     string `yaml:"bucket"`
-	App        string `yaml:"app,omitempty"`
-	Scope      string `yaml:"scope,omitempty"`
-	Permission string `yaml:"permission,omitempty"`
-	Label      string `yaml:"label,omitempty"`
-	Prefix     string `yaml:"prefix,omitempty"`
+	Triggers   *[]api.ObjectStorageComputeTrigger `yaml:"triggers,omitempty"`
+	Bucket     string                             `yaml:"bucket"`
+	App        string                             `yaml:"app,omitempty"`
+	Scope      string                             `yaml:"scope,omitempty"`
+	Permission string                             `yaml:"permission,omitempty"`
+	Label      string                             `yaml:"label,omitempty"`
+	Prefix     string                             `yaml:"prefix,omitempty"`
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -1415,9 +1436,12 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
-	Release       *ReleaseConfig        `yaml:"release,omitempty"`
-	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
-	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
+	// Functions declares several functions deployed from one manifest, each
+	// as its own app (ADR-985). Mutually exclusive with Function.
+	Functions []FunctionSpec   `yaml:"functions,omitempty"`
+	Release   *ReleaseConfig   `yaml:"release,omitempty"`
+	Lifecycle *LifecycleConfig `yaml:"lifecycle,omitempty"`
+	Scaling   *ScalingConfig   `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
 	// inherited by invocations unless a binding or invocation overrides it.
 	RetryPolicy   *RetryPolicyConfig `yaml:"retry_policy,omitempty"`
@@ -1475,10 +1499,11 @@ func (c *ReleaseConfig) Validate() error {
 // manifest cannot reach outside the project by accident. Values are always
 // resolved locally by the CLI; this block never contains secret plaintext.
 type DevConfig struct {
-	EnvFile             string `yaml:"env_file,omitempty"`
-	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
-	Postgres            *bool  `yaml:"postgres,omitempty"`
-	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+	Buckets             []api.DevBucketRequest `yaml:"buckets,omitempty"`
+	EnvFile             string                 `yaml:"env_file,omitempty"`
+	ServiceOverrideFile string                 `yaml:"service_override_file,omitempty"`
+	Postgres            *bool                  `yaml:"postgres,omitempty"`
+	PostgresRegion      string                 `yaml:"postgres_region,omitempty"`
 	// TTL is the environment lease as a Go duration (for example "72h").
 	// The plan ceiling is enforced by the API, not here.
 	TTL string `yaml:"ttl,omitempty"`
@@ -1510,6 +1535,9 @@ func ParseDevTTL(raw string) (time.Duration, error) {
 func (c *DevConfig) Validate() error {
 	if c == nil {
 		return nil
+	}
+	if _, err := api.NormalizeDevBuckets(c.Buckets); err != nil {
+		return fmt.Errorf("dev.buckets: %w", err)
 	}
 	if err := validateDevConfigPath("env_file", c.EnvFile); err != nil {
 		return err
@@ -1701,21 +1729,23 @@ func (w *WorkerSpec) DrainTimeoutSeconds() int {
 
 // WorkerScaleSpec defines autoscaling parameters for background workers.
 type WorkerScaleSpec struct {
-	Min    int     `yaml:"min"`
-	Max    int     `yaml:"max"`
-	Metric string  `yaml:"metric"`
-	Name   string  `yaml:"name,omitempty"`
-	Target float64 `yaml:"target,omitempty"`
+	Min             int     `yaml:"min"`
+	Max             int     `yaml:"max"`
+	Metric          string  `yaml:"metric"`
+	Name            string  `yaml:"name,omitempty"`
+	Target          float64 `yaml:"target,omitempty"`
+	ObserverAppSlug string  `yaml:"observer_app_slug,omitempty"`
 }
 
 // ToAPI converts WorkerScaleSpec to api.WorkerScaling.
 func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	return &api.WorkerScaling{
-		Min:    s.Min,
-		Max:    s.Max,
-		Metric: s.Metric,
-		Name:   s.Name,
-		Target: s.Target,
+		Min:             s.Min,
+		Max:             s.Max,
+		Metric:          s.Metric,
+		Name:            s.Name,
+		Target:          s.Target,
+		ObserverAppSlug: s.ObserverAppSlug,
 	}
 }
 
@@ -1771,6 +1801,14 @@ func (s WorkerScaleSpec) Validate() error {
 	if s.Max < s.Min {
 		return fmt.Errorf("max instances %d cannot be less than min instances %d", s.Max, s.Min)
 	}
+	if s.ObserverAppSlug != "" {
+		if !api.ValidAppSlug(s.ObserverAppSlug) {
+			return fmt.Errorf("observer_app_slug %q is not a valid app slug", s.ObserverAppSlug)
+		}
+		if s.Metric != api.ScalingMetricCustom || s.Name != "mcp_tasks_outstanding" {
+			return fmt.Errorf("observer_app_slug requires the mcp_tasks_outstanding custom metric")
+		}
+	}
 	if s.Metric == "" {
 		if s.Name != "" || s.Target != 0 {
 			return fmt.Errorf("name and target require a worker metric")
@@ -1779,6 +1817,9 @@ func (s WorkerScaleSpec) Validate() error {
 	}
 	if problem := api.ValidateScalingTargets("worker.scale", []api.ScalingTarget{{Metric: s.Metric, Name: s.Name, Value: s.Target}}); problem != nil {
 		return fmt.Errorf("%s", problem.Detail)
+	}
+	if s.Min == 0 && s.Metric == api.ScalingMetricCustom && s.Name == "mcp_tasks_outstanding" && s.ObserverAppSlug == "" {
+		return fmt.Errorf("observer_app_slug is required to scale MCP task workers to zero")
 	}
 	return nil
 }
@@ -2028,6 +2069,9 @@ func (m *Manifest) Validate() error {
 func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
+	}
+	if err := m.validateFunctions(plan); err != nil {
+		return err
 	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
@@ -2358,6 +2402,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 
 	seenBuckets := make(map[string]struct{}, len(m.Buckets))
 	for i, dependency := range m.Buckets {
+		if dependency.Triggers != nil {
+			if _, err := api.NormalizeObjectStorageComputeTriggers(*dependency.Triggers); err != nil {
+				return fmt.Errorf("bucket[%d]: triggers: %w", i, err)
+			}
+		}
 		if strings.TrimSpace(dependency.Bucket) == "" {
 			return fmt.Errorf("bucket[%d]: bucket is required", i)
 		}

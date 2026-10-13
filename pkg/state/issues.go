@@ -17,6 +17,10 @@ type IssueStore interface {
 	RevokeIssueToken(context.Context, string, string) error
 	RecordIssue(context.Context, RecordIssueParams) (api.IssueEventResponse, error)
 	ListIssues(context.Context, string, IssueListFilter, IssueCursor) (api.ListIssuesResponse, error)
+	CreateIssueSplitRule(context.Context, string, string, string, api.IssueSplitMatcher, api.IssueLimits, time.Time) (api.IssueSplitRule, error)
+	SetIssueSplitRuleEnabled(context.Context, string, string, string, string, bool, time.Time) (api.IssueSplitRule, error)
+	UndoIssueSplitRule(context.Context, string, string, string, string, api.IssueSplitRuleUndoRequest, time.Time) (api.IssueSplitRule, error)
+	PreviewIssueSplit(context.Context, string, string, api.IssueSplitMatcher) (api.IssueSplitPreview, error)
 	GetIssueDetail(context.Context, string, string, time.Time, time.Time, IssueDetailCursors) (api.IssueDetail, error)
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
 	GetIssueImpactAlertPolicy(context.Context, string) (api.IssueImpactAlertPolicy, error)
@@ -61,6 +65,7 @@ type IssueListFilter struct {
 }
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")
+var ErrIssueGroupingConflict = errors.New("issue group membership conflicts with requested action")
 var ErrIssueQuota = errors.New("issue storage quota exceeded")
 var ErrIssueRateLimited = errors.New("issue ingestion rate exceeded")
 

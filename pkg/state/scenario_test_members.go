@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +25,14 @@ type ScenarioTestMember struct {
 	RunID     string
 	Workload  string
 	AppID     string
+}
+
+// ScenarioTestDNSChaosPolicy is the verified caller identity and run lease
+// used to fault one private service-name lookup.
+type ScenarioTestDNSChaosPolicy struct {
+	RunID       string
+	CallerAppID string
+	Lease       chaos.Lease
 }
 
 var scenarioTestRunPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -288,6 +298,87 @@ func (s *PgStore) ScenarioTestChaosForCall(ctx context.Context, runID, callerApp
 	return lease, nil
 }
 
+// ScenarioTestDNSChaosByHostIP resolves the live guest identity and its
+// same-run service fault plan in one query. Production callers and targets
+// outside the run return an empty policy without looking up an app through a
+// cached source IP.
+func (s *PgStore) ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, hostIP, targetWorkload string) (ScenarioTestDNSChaosPolicy, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(hostIP))
+	if err != nil || !address.Is4() || !scenarioTestWorkloadPattern.MatchString(targetWorkload) {
+		return ScenarioTestDNSChaosPolicy{}, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx, `with live_callers as (
+		select distinct i.app_id, i.deployment_id
+		from instances i join compute_nodes n on n.id = i.node_id
+		where i.host_ip = $1::inet and i.state in ('running', 'draining')
+		and ($2 = '' or n.name = $2)
+		limit 2
+	), source as (
+		select app_id from live_callers where (select count(*) from live_callers) = 1
+	)
+	select distinct caller.app_id::text, caller.run_id, caller.workload_name,
+		caller.chaos_rules, caller.chaos_expires_at, caller.chaos_generation::text
+		from source
+		join instances i on i.app_id = source.app_id
+		join compute_nodes n on n.id = i.node_id
+		join apps caller_app on caller_app.id = i.app_id
+		join scenario_test_members caller on caller.app_id = i.app_id
+		join scenario_test_members target on target.account_id = caller.account_id
+			and target.run_id = caller.run_id and target.workload_name = $3
+		join apps target_app on target_app.id = target.app_id
+		where i.host_ip = $1::inet and i.state in ('running', 'draining')
+		and ($2 = '' or n.name = $2)
+		and caller_app.status <> 'deleted' and caller_app.preview_pr_state = 'open'
+		and caller_app.preview_expires_at > now()
+		and target_app.status <> 'deleted' and target_app.preview_pr_state = 'open'
+		and target_app.preview_expires_at > now()
+		limit 2`, address.String(), nodeName, targetWorkload)
+	if err != nil {
+		return ScenarioTestDNSChaosPolicy{}, fmt.Errorf("load scenario DNS chaos policy: %w", err)
+	}
+	defer rows.Close()
+	var policy ScenarioTestDNSChaosPolicy
+	var callerWorkload string
+	var rawRules []byte
+	var expiresAt pgtype.Timestamptz
+	var generation pgtype.Text
+	count := 0
+	for rows.Next() {
+		count++
+		if err := rows.Scan(&policy.CallerAppID, &policy.RunID, &callerWorkload, &rawRules, &expiresAt, &generation); err != nil {
+			return ScenarioTestDNSChaosPolicy{}, fmt.Errorf("scan scenario DNS chaos policy: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return ScenarioTestDNSChaosPolicy{}, fmt.Errorf("read scenario DNS chaos policy: %w", err)
+	}
+	if count == 0 {
+		return ScenarioTestDNSChaosPolicy{}, nil
+	}
+	if count != 1 {
+		return ScenarioTestDNSChaosPolicy{}, ErrConflict
+	}
+	if !expiresAt.Valid || !expiresAt.Time.After(time.Now()) {
+		return policy, nil
+	}
+	if err := json.Unmarshal(rawRules, &policy.Lease.Rules); err != nil {
+		return ScenarioTestDNSChaosPolicy{}, fmt.Errorf("decode scenario DNS chaos policy: %w", err)
+	}
+	policy.Lease.CallerWorkload = callerWorkload
+	policy.Lease.ExpiresAt = expiresAt.Time
+	if generation.Valid {
+		policy.Lease.Generation = generation.String
+	}
+	filtered := make([]chaos.Rule, 0, len(policy.Lease.Rules))
+	for _, rule := range policy.Lease.Rules {
+		if rule.To == targetWorkload && (rule.From == "" || rule.From == callerWorkload) {
+			filtered = append(filtered, rule)
+		}
+	}
+	policy.Lease.Rules = filtered
+	return policy, nil
+}
+
 func (s *PgStore) RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error {
 	for _, injection := range injections {
 		if err := validateScenarioChaosInjection(injection); err != nil {
@@ -473,6 +564,70 @@ func (m *MemStore) ScenarioTestChaosForCall(_ context.Context, runID, callerAppI
 		return chaos.Lease{}, nil
 	}
 	return lease, nil
+}
+
+func (m *MemStore) ScenarioTestDNSChaosByHostIP(_ context.Context, nodeName, hostIP, targetWorkload string) (ScenarioTestDNSChaosPolicy, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(hostIP))
+	if err != nil || !address.Is4() || !scenarioTestWorkloadPattern.MatchString(targetWorkload) {
+		return ScenarioTestDNSChaosPolicy{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	callerAppID, callerDeploymentID := "", ""
+	for _, instance := range m.instances {
+		instanceAddress, parseErr := netip.ParseAddr(strings.TrimSpace(instance.HostIP))
+		if parseErr != nil || instanceAddress != address ||
+			(instance.State != string(StateRunning) && instance.State != string(StateDraining)) {
+			continue
+		}
+		if nodeName != "" {
+			node, ok := m.computeNodes[instance.NodeID]
+			if !ok || node.Name != nodeName {
+				continue
+			}
+		}
+		if callerAppID != "" && (callerAppID != instance.AppID || callerDeploymentID != instance.DeploymentID) {
+			return ScenarioTestDNSChaosPolicy{}, nil
+		}
+		callerAppID, callerDeploymentID = instance.AppID, instance.DeploymentID
+	}
+	app, appOK := m.apps[callerAppID]
+	if !appOK || !eligibleScenarioTestApp(app, app.AccountID) {
+		return ScenarioTestDNSChaosPolicy{}, nil
+	}
+	caller, ok := m.scenarioTestMembers[callerAppID]
+	if !ok || callerAppID == "" {
+		return ScenarioTestDNSChaosPolicy{}, nil
+	}
+	targetFound := false
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID != caller.AccountID || member.RunID != caller.RunID || member.Workload != targetWorkload {
+			continue
+		}
+		app, ok := m.apps[member.AppID]
+		if ok && eligibleScenarioTestApp(app, caller.AccountID) {
+			targetFound = true
+			break
+		}
+	}
+	if !targetFound {
+		return ScenarioTestDNSChaosPolicy{}, nil
+	}
+	policy := ScenarioTestDNSChaosPolicy{RunID: caller.RunID, CallerAppID: callerAppID}
+	lease, ok := m.scenarioTestChaosPlans[caller.AccountID+"\x00"+caller.RunID]
+	if !ok || !lease.ExpiresAt.After(time.Now()) {
+		return policy, nil
+	}
+	lease.CallerWorkload = caller.Workload
+	filtered := make([]chaos.Rule, 0, len(lease.Rules))
+	for _, rule := range lease.Rules {
+		if rule.To == targetWorkload && (rule.From == "" || rule.From == caller.Workload) {
+			filtered = append(filtered, rule)
+		}
+	}
+	lease.Rules = filtered
+	policy.Lease = lease
+	return policy, nil
 }
 
 func (m *MemStore) RecordScenarioTestChaosInjections(_ context.Context, injections []chaos.InjectionBatch) error {

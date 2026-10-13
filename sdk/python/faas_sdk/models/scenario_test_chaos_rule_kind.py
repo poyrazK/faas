@@ -1,6 +1,10 @@
 from typing import Literal
 
 ScenarioTestChaosRuleKind = Literal[
+    "dns_latency",
+    "dns_nxdomain",
+    "dns_servfail",
+    "dns_timeout",
     "http_status",
     "latency",
     "tcp_bandwidth",
@@ -12,6 +16,10 @@ ScenarioTestChaosRuleKind = Literal[
 ]
 
 SCENARIO_TEST_CHAOS_RULE_KIND_VALUES: set[ScenarioTestChaosRuleKind] = {
+    "dns_latency",
+    "dns_nxdomain",
+    "dns_servfail",
+    "dns_timeout",
     "http_status",
     "latency",
     "tcp_bandwidth",

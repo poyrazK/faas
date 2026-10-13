@@ -1,10 +1,11 @@
 # ADR-149 · Prepare unused network namespaces before a wake
 
-- **Status:** accepted, opt-in rollout
+- **Status:** accepted; on by default since 2026-10-12 (amendment below)
 - **Date:** 2026-09-05
 - **Amends:** spec §6.2 resource allocation timing and §7 network setup timing.
 - **Decision:** vmmd may hold a bounded cache of fresh network namespaces which
-  have never hosted a VM. The default is disabled. `prepared_networks` in
+  have never hosted a VM. The default was disabled until 2026-10-12 and is
+  now `DefaultPreparedNetworkCacheSize` (4). `prepared_networks` in
   vmmd.toml, overridden by `FAAS_PREPARED_NETWORKS`, selects 0–16 entries.
   Each entry reserves a unique allocator slot, UID, IP, veth pair and TAP and
   contains the complete default network policy and requested egress cap.
@@ -54,6 +55,26 @@
   veth ports can invalidate running namespaces' cached gateway MACs. A first
   private hardware run exposed HTTP timeouts during replenishment on an
   automatically addressed bridge; the platform SSD bridge was already pinned.
+- **Default on (amended 2026-10-12):** The Ansible `vmmd_service` role has
+  set `FAAS_PREPARED_NETWORKS=4` since rollout, but compute nodes joined
+  through `node_join` never received that drop-in. Their vmmd ran with the
+  code default of 0, and prod restores paid `setup_network` p50 66 ms on
+  every wake. The code default is now `DefaultPreparedNetworkCacheSize` (4),
+  so the cache no longer depends on how the node was provisioned.
+  `prepared_networks = 0` or `FAAS_PREPARED_NETWORKS=0` still disables it.
+  Under `native_process_recovery`, which refuses the cache until claims are
+  journaled ([ADR-568](568-environment-gitops-contract.md)), the default is 0;
+  an explicit size is kept so vmmd still reports the conflict. On a host
+  without the tenant bridge (`br-tenants`), a default-sized cache is skipped
+  with a warning, and wakes set up their networks inline; an explicitly
+  configured cache still fails vmmd startup there. Production hosts get the
+  bridge from `br-tenants-up.service`, which `faas-vmmd.service` orders
+  before vmmd.
+  Evidence, Firecracker 1.17 with guest kernel 6.18, 1 GiB guest, nested
+  KVM test node, 20 restores each: restore wall time p50/p90 fell from
+  192/208 ms to 130/172 ms. Network setup ran concurrently with drive
+  staging and competed with it for CPU, so `stage_drives` also fell from
+  80 to 40 ms p50.
 - **Fallback:** A cache miss, an unsupported policy, an expired entry or a
   failed namespace transfer uses the existing setup path. A failed transfer
   must remove its network before its slot is available again. Cache size does

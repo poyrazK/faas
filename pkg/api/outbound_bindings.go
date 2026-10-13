@@ -51,6 +51,114 @@ type OutboundIntegrationOffer struct {
 	OwnerKind            string                `json:"owner_kind"`
 	DailyRequestLimit    *int64                `json:"daily_request_limit"`
 	RequestPolicy        OutboundRequestPolicy `json:"request_policy"`
+	// AIProvider is empty for ordinary integrations. "openai" (the
+	// OpenAI-compatible wire format) or "anthropic" enables token usage
+	// extraction and the optional daily token limit (ADR-988).
+	AIProvider        string `json:"ai_provider,omitempty"`
+	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
+	// Cost limits in millicents per UTC day and calendar month, priced from
+	// the integration's price list (ADR-990).
+	AIDailyCostLimitMillicents   *int64 `json:"ai_daily_cost_limit_millicents"`
+	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
+	// AIRequestLogEnabled records per-call metadata (ADR-991).
+	AIRequestLogEnabled bool `json:"ai_request_log_enabled"`
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit          *int64 `json:"ai_user_daily_token_limit"`
+	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
+}
+
+// Outbound AI providers select the credential handling and the response
+// format the gateway parses for token usage. OpenAI covers any provider that
+// speaks its wire format (ADR-988, ADR-991).
+const (
+	OutboundAIProviderOpenAI      = "openai"
+	OutboundAIProviderAnthropic   = "anthropic"
+	OutboundAIProviderGemini      = "gemini"
+	OutboundAIProviderAzureOpenAI = "azure_openai"
+	OutboundAIProviderBedrock     = "bedrock"
+	OutboundAIProviderVertex      = "vertex"
+)
+
+// ValidOutboundAIProvider accepts the empty value (not an AI integration) and
+// the supported provider formats.
+func ValidOutboundAIProvider(provider string) bool {
+	switch provider {
+	case "", OutboundAIProviderOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini,
+		OutboundAIProviderAzureOpenAI, OutboundAIProviderBedrock, OutboundAIProviderVertex:
+		return true
+	}
+	return false
+}
+
+// ValidOutboundAIPolicy reports whether a provider and optional daily token
+// limit can be stored together. A token limit requires a provider.
+func ValidOutboundAIPolicy(provider string, dailyTokenLimit *int64) bool {
+	if !ValidOutboundAIProvider(provider) {
+		return false
+	}
+	if dailyTokenLimit == nil {
+		return true
+	}
+	return provider != "" && *dailyTokenLimit >= 1 && *dailyTokenLimit <= MaxOutboundAITokensPerDay
+}
+
+// PutOutboundAIPolicyRequest replaces an integration's AI gateway settings.
+// An empty provider turns AI handling off and requires a null token limit.
+type PutOutboundAIPolicyRequest struct {
+	AIProvider                 string `json:"ai_provider"`
+	DailyTokenLimit            *int64 `json:"daily_token_limit"`
+	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
+	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
+	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
+	RequestLogEnabled bool `json:"request_log_enabled"`
+	// UserDailyTokenLimit and UserDailyCostLimitMillicents cap each end
+	// user named by X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
+	UserDailyCostLimitMillicents *int64 `json:"user_daily_cost_limit_millicents,omitempty"`
+}
+
+// Valid reports whether the complete AI policy can be stored.
+func (r PutOutboundAIPolicyRequest) Valid() bool {
+	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
+		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
+		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
+		(!r.RequestLogEnabled || r.AIProvider != "")
+}
+
+// OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
+// an app ID, or "runs" for stateless Runs. InputTokens includes cached reads
+// and cache writes; those are also reported separately.
+type OutboundAIUsageItem struct {
+	Caller               string `json:"caller"`
+	Model                string `json:"model"`
+	Requests             int64  `json:"requests"`
+	ErrorRequests        int64  `json:"error_requests"`
+	UsageUnknownRequests int64  `json:"usage_unknown_requests"`
+	InputTokens          int64  `json:"input_tokens"`
+	CachedInputTokens    int64  `json:"cached_input_tokens"`
+	CacheWriteTokens     int64  `json:"cache_write_tokens"`
+	OutputTokens         int64  `json:"output_tokens"`
+	// CostMillicents is priced from the price list effective at each call,
+	// rounded up per call; zero without a price list (ADR-990).
+	CostMillicents int64 `json:"cost_millicents"`
+}
+
+// OutboundAIUsageResponse reports one UTC day of AI usage for an integration.
+// DailyTokenCount is the settled admission counter for today, and the sum of
+// input and output tokens for an earlier day.
+type OutboundAIUsageResponse struct {
+	UsageDate       string                `json:"usage_date"`
+	AIProvider      string                `json:"ai_provider"`
+	DailyTokenCount int64                 `json:"daily_token_count"`
+	DailyTokenLimit *int64                `json:"daily_token_limit"`
+	ResetsAt        time.Time             `json:"resets_at"`
+	Items           []OutboundAIUsageItem `json:"items"`
+	// Settled cost of usage_date and of its calendar month through that day.
+	DailyCostMillicents        int64  `json:"daily_cost_millicents"`
+	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
+	Month                      string `json:"month"`
+	MonthlyCostMillicents      int64  `json:"monthly_cost_millicents"`
+	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
 }
 
 // OutboundRequestPolicy is the per-integration admission and timeout policy.
@@ -161,6 +269,8 @@ type CreateOutboundIntegrationRequest struct {
 	AllowedPathPrefixes []string               `json:"allowed_path_prefixes"`
 	DailyRequestLimit   *int64                 `json:"daily_request_limit,omitempty"`
 	RequestPolicy       *OutboundRequestPolicy `json:"request_policy,omitempty"`
+	AIProvider          string                 `json:"ai_provider,omitempty"`
+	AIDailyTokenLimit   *int64                 `json:"ai_daily_token_limit,omitempty"`
 }
 
 // PutOutboundRequestPolicyRequest replaces the complete admission policy.
@@ -223,6 +333,13 @@ type OutboundAppBinding struct {
 	AllowedPathPrefixes []string                 `json:"allowed_path_prefixes"`
 	DailyRequestLimit   *int64                   `json:"daily_request_limit"`
 	CreatedAt           time.Time                `json:"created_at"`
+	// AIDailyTokenLimit is this app's own UTC-day AI token limit (ADR-990).
+	AIDailyTokenLimit *int64 `json:"ai_daily_token_limit"`
+	// Per-app AI guardrails (ADR-991); null means unrestricted.
+	AIRequestsPerMinute *int64   `json:"ai_requests_per_minute"`
+	AITokensPerMinute   *int64   `json:"ai_tokens_per_minute"`
+	AIAllowedModels     []string `json:"ai_allowed_models"`
+	AIMaxOutputTokens   *int64   `json:"ai_max_output_tokens"`
 }
 
 // UpdateOutboundBindingPolicyRequest narrows an app's route access within

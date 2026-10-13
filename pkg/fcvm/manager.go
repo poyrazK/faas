@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -442,6 +443,9 @@ type Instance struct {
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
 	Paused bool
+	// QuietPauseAfter is the ADR-957 quiet pause delay; zero means the
+	// instance keeps running between requests (quiet_pause.go).
+	QuietPauseAfter time.Duration
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -746,6 +750,9 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	// outboundRelayEnabled advertises vmmd's streaming relay to
+	// outbound-enabled Runs (ADR-990).
+	outboundRelayEnabled      atomic.Bool
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -812,18 +819,19 @@ type Manager struct {
 	// ADR-472: observed restart survivors have no reconstructed lifecycle
 	// owner. Their slots and IDs stay quarantined; they are never live-map
 	// entries, cleanup identities or permission to replay a failure report.
-	restartQuarantine     map[string]struct{}
-	restartInventoryDone  bool
-	resourceJournal       *ResourceJournal
-	resourceLinks         map[string]ownedResourceLink
-	linkProbe             func(string, int) (*resourceLinkIdentity, error)
-	linkContext           func() (*resourceMountIdentity, error)
-	linkDelete            func(int) error
-	resourceNetworks      map[string]resourceAsset             // observed by this running owner only
-	namespaceProbe        func(string) (*resourceAsset, error) // tests inject kernel observations
-	namespaceContext      func() (*resourceMountIdentity, error)
-	processGenerations    map[string]uint64
-	nextProcessGeneration uint64
+	restartQuarantine          map[string]struct{}
+	restartInventoryDone       bool
+	resourceJournal            *ResourceJournal
+	resourceLinks              map[string]ownedResourceLink
+	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
+	linkContext                func() (*resourceMountIdentity, error)
+	linkDelete                 func(int) error
+	resourceNetworks           map[string]resourceAsset             // observed by this running owner only
+	namespaceProbe             func(string) (*resourceAsset, error) // tests inject kernel observations
+	namespaceContext           func() (*resourceMountIdentity, error)
+	processGenerations         map[string]uint64
+	nextProcessGeneration      uint64
+	managedPostgresDrainNodeID string // configured local compute identity, before serving
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -1160,6 +1168,15 @@ type Manager struct {
 	// host policy so concurrent static-egress and SMTP allowlist changes
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
+
+	// Quiet pause (ADR-957; quiet_pause.go). quietActivity is nil unless
+	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
+	// leaf lock: it is never held while m.mu or a quietState lock is taken.
+	quietActivity QuietActivity
+	quietMetrics  *QuietPauseMetrics
+	quietTick     time.Duration
+	quietMu       sync.Mutex
+	quietStates   map[string]*quietState
 }
 
 type appCPUPolicy struct {
@@ -2772,6 +2789,31 @@ func (m *Manager) ExecutionOutboundIdentity(instance, integrationID string) (acc
 	return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: integration not granted", instance)
 }
 
+// SetOutboundRelayEnabled records whether vmmd serves the ADR-989 relay, so
+// outbound-enabled Runs are told to stream through it (ADR-990).
+func (m *Manager) SetOutboundRelayEnabled(enabled bool) {
+	if m != nil {
+		m.outboundRelayEnabled.Store(enabled)
+	}
+}
+
+// ExecutionRelayIdentity returns the lease-fenced Runs principal and the
+// Run's granted integrations for a relay connection (ADR-990). Unlike
+// ExecutionOutboundIdentity the integration is not known yet, so the grant
+// list travels with the connection and outboundd checks every request.
+func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionID, leaseToken string, integrationIDs []string, err error) {
+	if m == nil {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.ExecutionOnly || inst.ExecutionID == "" || inst.ExecutionLeaseToken == "" || len(inst.ExecutionOutboundIntegrationIDs) == 0 {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	return inst.AccountID, inst.ExecutionID, inst.ExecutionLeaseToken, append([]string(nil), inst.ExecutionOutboundIntegrationIDs...), nil
+}
+
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account
 // principal for a live guest stream under one lock. Keeping the tuple atomic
 // prevents a park/reuse race from mixing identities during runtime secret
@@ -3346,6 +3388,12 @@ type WakeRequest struct {
 	// guest. It is intentionally valid only with Snapshot; cold boots cannot
 	// produce a paused pool entry.
 	KeepPaused bool
+	// QuietPauseAfter (ADR-957) pauses the instance's vCPUs after this long
+	// without a forwarded request, stream or tail task in flight, and resumes
+	// it on the next one. Zero keeps it running between requests. The
+	// Manager ignores it for instances that cannot be paused safely; see
+	// quietPauseAfterFor.
+	QuietPauseAfter time.Duration
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -4165,6 +4213,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// Plan is allocator-side state and must follow the lease's
 	// lifetime.
 	lease.Plan = req.Plan
+	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
@@ -4465,7 +4514,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
-	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly {
+	// Native recovery serializes host helpers and image staging under one
+	// owner. Starting network helpers alongside jail provisioning can leave a
+	// helper in flight when image staging checks the owner's retired effects.
+	// Complete the network before provisioning on native-owned VMs.
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
@@ -4760,6 +4813,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
 		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
@@ -5705,6 +5759,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	if !owner {
 		return flight.killSignal, int32(flight.exitCode), flight.err
 	}
+	// A quiet-paused guest (ADR-957) cannot act on the signal. The stop is
+	// registered now, so the pause pass will not pause it again.
+	m.quietResumeBestEffort(ctx, instance)
 	interruptOnly := false
 	defer func() { m.finishInstanceTeardown(instance, flight, int(exitCode), killSignalSent, interruptOnly, err) }()
 	joinedOperation := m.hasInstanceOperation(instance)
@@ -5763,6 +5820,11 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		return flight.exitCode, flight.err
 	}
 	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, err) }()
+	return m.destroyWithReservation(ctx, context.WithoutCancel(ctx), instance, exportDir)
+}
+
+// The caller retains the teardown reservation through all physical checks.
+func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instance, exportDir string) (exitCode int, err error) {
 	joinedOperation := m.hasInstanceOperation(instance)
 	if err = m.joinForTeardown(ctx, instance); err != nil {
 		return 0, err
@@ -5779,7 +5841,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
-	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
 	}
@@ -5815,6 +5877,25 @@ func (m *Manager) LiveInstances() map[string]*Instance {
 		out[id] = inst
 	}
 	return out
+}
+
+// AppInstanceIDs returns the ids of the ordinary app VMs this Manager runs.
+// Builder, execution, app-task, qualification, job and warm-pool VMs settle
+// through their own lifecycles and are left out. vmmd's live-VM reap uses it
+// to find VMs that outlived their instance row (production-us hunt #9,
+// H9-171).
+func (m *Manager) AppInstanceIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.live))
+	for id, inst := range m.live {
+		if inst == nil || inst.Lease.IsBuilder || inst.ExecutionOnly || inst.AppTaskOnly ||
+			inst.QualificationOnly || inst.IsJob || inst.Paused {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // LastLivenessDestroyAtForDeployment (issue #554 closure /

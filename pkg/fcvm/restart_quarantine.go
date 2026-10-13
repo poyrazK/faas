@@ -1,6 +1,6 @@
 // adr: 472
 // adr: 478
-// adr: 967
+// adr: 971
 package fcvm
 
 import (
@@ -35,7 +35,7 @@ type RestartQuarantineReport struct {
 	JournalRecords, JournalProcessMatches int
 	ReclaimedPreparedRecords              int
 	// ReclaimedDeadRecords counts instance records retired at startup
-	// because their process and kernel resources were gone (ADR-967).
+	// because their process and kernel resources were gone (ADR-971).
 	ReclaimedDeadRecords int
 	// DeadRecordsSkipped is why dead-record retirement kept every record
 	// (an unreadable host inventory), or empty.

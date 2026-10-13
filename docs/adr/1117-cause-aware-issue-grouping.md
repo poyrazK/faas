@@ -1,0 +1,8 @@
+# ADR-1117 · Cause-aware issue grouping
+
+- **Status:** accepted
+- **Date:** 2026-10-11
+- **Decision:** Add opt-in `cause-chain-v1`, grouping version 3. Existing versions 1 and 2 remain byte-for-byte stable. Select the deepest cause in a complete linear chain and use its exception type, stable code or normalized message, and nearest application frame. Use the outer route/status when the selected cause has no usable application frame. Explicit overrides use the outer exception identity and take precedence.
+- **Evidence:** Keep the outer exception and up to eight causes, ordered immediate to deepest. Each cause has bounded, sanitized type, message, code, and at most 32 frames. Persist the full reported chain in the existing JSON envelope; no schema migration is necessary. Explanations verify the original fingerprint and identify the selected zero-based cause index. Chain length and wrapper text do not participate in identity.
+- **Incomplete and ambiguous chains:** Reporters stop at cycles, depth limits, unavailable cause access, or multiple-cause branches, and mark the chain incomplete. Version 3 then groups by the outer exception; it never claims that a partial chain is the root failure. Node follows Error.cause; Python follows explicit __cause__, otherwise unsuppressed __context__; Go follows single errors.Unwrap. Aggregate children are not arbitrarily selected. Go errors carry no native throw-site stack; do not fabricate cause frames from the capture stack.
+- **Routing:** Ownership and split-rule selectors continue matching the outer exception fields. Existing retries, manual regrouping, retention, quotas, and original provenance are unchanged. OTLP may select this strategy but does not infer structured causes from raw strings.

@@ -47,6 +47,9 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
+	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
+
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
@@ -278,6 +281,27 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers":  "ReconcileObjectStorageComputeTriggers",
+	"GET /v1/apps/{slug}/entities/quotas":                    "InspectDurableEntityTenantQuotas",
+	"GET /v1/apps/{slug}/entities/readiness":                 "GetDurableEntityReadiness",
+	"GET /v1/apps/{slug}/entities/quota-migration/plan":      "PlanDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-migration":           "InspectDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/start":    "StartDurableEntityQuotaMigration",
+	"POST /v1/apps/{slug}/entities/quota-migration/step":     "StepDurableEntityQuotaMigration",
+	"GET /v1/apps/{slug}/entities/quota-policy":              "InspectDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/preview":     "PreviewDurableEntityQuotaPolicy",
+	"POST /v1/apps/{slug}/entities/quota-policy/apply":       "ApplyDurableEntityQuotaPolicy",
+	"GET /v1/apps/{slug}/entities/registry":                  "ListDurableEntityRegistry",
+	"POST /v1/apps/{slug}/entities/registry/enable":          "EnableDurableEntityRegistry",
+	"GET /v1/apps/{slug}/entities/registry/cleanup":          "InspectDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/start":   "StartDurableEntityRegistryCleanup",
+	"POST /v1/apps/{slug}/entities/registry/cleanup/step":    "StepDurableEntityRegistryCleanup",
+	"GET /v1/apps/{slug}/entities/retirement":                "PreviewDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/start":         "StartDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/retirement/step":          "StepDurableEntityRetirement",
+	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
+	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
+
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -316,6 +340,10 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                            "SetIssueImpactAlertPolicy",
 	"GET /v1/apps/{slug}/issue-ownership-rules":                                "GetIssueOwnershipRules",
 	"PUT /v1/apps/{slug}/issue-ownership-rules":                                "SetIssueOwnershipRules",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-preview":                     "PreviewIssueSplit",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules":                       "CreateIssueSplitRule",
+	"PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":            "UpdateIssueSplitRule",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":        "UndoIssueSplitRule",
 	"GET /v1/apps/{slug}/issues/{issue_id}":                                    "GetIssue",
 	"POST /v1/apps/{slug}/issues/{issue_id}/actions":                           "ActOnIssue",
 	"POST /v1/apps/{slug}/issue-ingest-tokens":                                 "CreateIssueIngestToken",
@@ -375,136 +403,187 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}": "GetOperationDefinition",
 	"GET /v1/platform-tenant-self/customer-operations/identity":                    "GetPlatformTenantSelfOperationIdentity",
 	// Business workflow observation routes use domain-oriented SDK method names.
-	"GET /v1/apps/{slug}/workflow-attention":                                          "ListAccountWorkflowAttention",
-	"GET /v1/apps/{slug}/workflow-attention/summary":                                  "SummarizeAccountWorkflowAttention",
-	"GET /v1/apps/{slug}/workflow-performance/summary":                                "SummarizeAccountWorkflowPerformance",
-	"GET /v1/apps/{slug}/workflow-performance/instances":                              "ListAccountWorkflowPerformanceInstances",
-	"GET /v1/platform-tenant-self/workflow-performance/summary":                       "SummarizePlatformTenantSelfWorkflowPerformance",
-	"GET /v1/platform-tenant-self/workflow-performance/instances":                     "ListPlatformTenantSelfWorkflowPerformanceInstances",
-	"GET /v1/apps/{slug}/workflow-outcomes":                                           "ListAccountWorkflowOutcomes",
-	"GET /v1/apps/{slug}/workflow-outcomes/summary":                                   "SummarizeAccountWorkflowOutcomes",
-	"POST /v1/apps/{slug}/workflow-readiness":                                         "CheckAccountWorkflowReadiness",
-	"POST /v1/apps/{slug}/workflow-actions/preview":                                   "PreviewAccountWorkflowActions",
-	"GET /v1/platform-tenant-self/workflow-attention":                                 "ListPlatformTenantSelfWorkflowAttention",
-	"GET /v1/platform-tenant-self/workflow-attention/summary":                         "SummarizePlatformTenantSelfWorkflowAttention",
-	"GET /v1/platform-tenant-self/workflow-outcomes":                                  "ListPlatformTenantSelfWorkflowOutcomes",
-	"GET /v1/platform-tenant-self/workflow-outcomes/summary":                          "SummarizePlatformTenantSelfWorkflowOutcomes",
-	"POST /v1/platform-tenant-self/workflow-readiness":                                "CheckPlatformTenantSelfWorkflowReadiness",
-	"POST /v1/platform-tenant-self/workflow-actions/preview":                          "PreviewPlatformTenantSelfWorkflowActions",
-	"POST /v1/apps/{slug}/operations/{id}/recover-receipt":                            "RecoverOperationWithReceipt",
-	"POST /v1/platform-tenant-self/customer-operations/submissions/lookup":            "LookupPlatformTenantSelfOperationSubmission",
-	"GET /v1/apps/{slug}/operation-milestones":                                        "ListAccountBusinessMilestones",
-	"GET /v1/apps/{slug}/operations/{id}/milestones":                                  "GetAccountOperationMilestones",
-	"GET /v1/platform-tenant-self/customer-operation-milestones":                      "ListPlatformTenantSelfBusinessMilestones",
-	"GET /v1/platform-tenant-self/customer-operations/{id}/milestones":                "GetPlatformTenantSelfOperationMilestones",
-	"GET /v1/apps/{slug}/operations":                                                  "ListAccountOperations",
-	"GET /v1/apps/{slug}/operations/{id}/events":                                      "GetAccountOperationEvents",
-	"GET /v1/apps/{slug}/operations/{id}/executions":                                  "GetOperationExecutions",
-	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                             "RetryOperationDelivery",
-	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                         "InspectOperationRecovery",
-	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                           "PreviewOperationRecovery",
-	"POST /v1/apps/{slug}/operations/{id}/recover":                                    "RecoverOperation",
-	"GET /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}":      "DownloadPlatformTenantSelfOperationArtifact",
-	"GET /v1/apps/{slug}/operations/{id}/artifacts/{artifact}":                        "DownloadOperationArtifact",
-	"POST /v1/runtime/operations/{id}/progress":                                       "ReportOperationProgress",
-	"GET /v1/runtime/operations/{id}/control":                                         "GetOperationExecutionControl",
-	"GET /v1/runtime/job-operations/{id}/control":                                     "GetJobOperationExecutionControl",
-	"POST /v1/runtime/job-operations/{id}/progress":                                   "ReportJobOperationProgress",
-	"POST /v1/runtime/job-operations/{id}/result":                                     "PrepareJobOperationResult",
-	"POST /v1/runtime/job-operations/{id}/artifacts":                                  "PrepareJobOperationArtifact",
-	"POST /v1/runtime/job-operations/{id}/artifact-receipts":                          "ReuseJobOperationArtifact",
-	"POST /v1/runtime/job-operations/{id}/artifact-uploads":                           "UploadJobOperationArtifact",
-	"POST /v1/runtime/job-operations/{id}/artifact-upload-receipts":                   "ReuseJobOperationUpload",
-	"GET /v1/runtime/workflow-operations/{id}/control":                                "GetWorkflowOperationExecutionControl",
-	"POST /v1/runtime/workflow-operations/{id}/artifact-receipts":                     "ReuseWorkflowOperationArtifact",
-	"POST /v1/runtime/workflow-operations/{id}/artifacts":                             "PrepareWorkflowOperationArtifact",
-	"POST /v1/runtime/workflow-operations/{id}/artifact-uploads":                      "UploadWorkflowOperationArtifact",
-	"POST /v1/runtime/workflow-operations/{id}/artifact-upload-receipts":              "ReuseWorkflowOperationUpload",
-	"POST /v1/runtime/operations/{id}/artifacts":                                      "AttachOperationArtifact",
-	"POST /v1/runtime/operations/{id}/artifact-uploads":                               "UploadOperationArtifact",
-	"POST /v1/runtime/operations/{id}/artifact-upload-receipts":                       "ReuseOperationUpload",
-	"POST /v1/runtime/operations/{id}/milestones":                                     "ReportOperationMilestone",
-	"POST /v1/runtime/operations/{id}/milestones/validate":                            "ValidateOperationMilestones",
-	"POST /v1/runtime/operations/{id}/workflow-states":                                "ReportOperationWorkflowState",
-	"POST /v1/runtime/operations/{id}/workflow-states/validate":                       "ValidateOperationWorkflowStates",
-	"GET /v1/apps/{slug}/operations/{id}":                                             "GetOperation",
-	"POST /v1/apps/{slug}/operations/{id}/cancel":                                     "CancelOperation",
-	"POST /v1/platform-tenant-self/customer-operations":                               "StartPlatformTenantSelfOperation",
-	"GET /v1/platform-tenant-self/customer-operations":                                "ListPlatformTenantSelfOperations",
-	"GET /v1/platform-tenant-self/customer-operations/{id}":                           "GetPlatformTenantSelfOperation",
-	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                    "GetPlatformTenantSelfOperationEvents",
-	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                   "CancelPlatformTenantSelfOperation",
-	"POST /v1/apps/{slug}/operations":                                                 "SubmitExclusiveOperation",
-	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":            "SubmitExclusiveOperation",
-	"POST /v1/platform-tenant-self/apps/{slug}/operations":                            "SubmitPlatformTenantExclusiveOperation",
-	"POST /v1/apps/{slug}/operations/tasks":                                           "SubmitExclusiveAppTaskOperation",
-	"POST /v1/jobs/{name}/operations":                                                 "SubmitExclusiveJobOperation",
-	"GET /v1/operations/{id}":                                                         "GetExclusiveOperation",
-	"POST /v1/operations/{id}/cancel":                                                 "CancelExclusiveOperation",
-	"GET /v1/platform-tenant-self/operations/{id}":                                    "GetPlatformTenantExclusiveOperation",
-	"POST /v1/platform-tenant-self/operations/{id}/cancel":                            "CancelPlatformTenantExclusiveOperation",
-	"GET /v1/triggers/{id}/work-binding":                                              "GetTriggerWorkBinding",
-	"PUT /v1/triggers/{id}/work-binding":                                              "PutTriggerWorkBinding",
-	"DELETE /v1/triggers/{id}/work-binding":                                           "DeleteTriggerWorkBinding",
-	"GET /v1/outbound/integrations":                                                   "ListOutboundIntegrationOffers",
-	"POST /v1/outbound/integrations":                                                  "CreateOutboundIntegration",
-	"DELETE /v1/outbound/integrations/{integration}":                                  "DeleteOutboundIntegration",
-	"PUT /v1/outbound/integrations/{integration}/runs":                                "SetOutboundIntegrationRunsEnabled",
-	"GET /v1/outbound/integrations/{integration}/usage":                               "GetOutboundIntegrationUsage",
-	"PUT /v1/outbound/integrations/{integration}/budget":                              "SetOutboundIntegrationDailyBudget",
-	"PUT /v1/outbound/integrations/{integration}/request-policy":                      "SetOutboundIntegrationRequestPolicy",
-	"GET /v1/apps/{slug}/outbound-bindings":                                           "ListOutboundAppBindings",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":                             "BindOutboundIntegration",
-	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":                           "UpdateOutboundBindingPolicy",
-	"GET /v1/apps/{slug}/outbound-bindings/{integration}/usage":                       "GetOutboundBindingUsage",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/budget":                      "SetOutboundBindingDailyBudget",
-	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":                          "UnbindOutboundIntegration",
-	"PUT /v1/outbound/integrations/{integration}/credential":                          "PutOutboundCredential",
-	"DELETE /v1/outbound/integrations/{integration}/credential":                       "DeleteOutboundCredential",
-	"GET /v1/apps/{slug}/route-monitor":                                               "GetRouteMonitor",
-	"PUT /v1/apps/{slug}/route-monitor":                                               "SetRouteMonitor",
-	"POST /v1/apps/{slug}/route-monitor/preview":                                      "PreviewRouteMonitor",
-	"GET /v1/apps/{slug}/route-monitor/report":                                        "GetRouteMonitorReport",
-	"GET /v1/apps/{slug}/route-monitor/incidents":                                     "ListRouteMonitorIncidents",
-	"GET /v1/apps/{slug}/route-monitor/incidents/{incident}":                          "GetRouteMonitorIncident",
-	"GET /v1/apps/{slug}/route-health/gate":                                           "GetRouteHealthGate",
-	"PUT /v1/apps/{slug}/route-health/gate":                                           "SetRouteHealthGate",
-	"GET /v1/apps/{slug}/route-health/deployments/{deployment}":                       "GetRouteHealthReport",
-	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation":         "GetRouteHealthInvestigation",
-	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history":               "ListRouteHealthHistory",
-	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}": "GetRouteHealthHistoryEntry",
-	"GET /v1/apps/{slug}/route-requirements":                                          "GetSavedRouteRequirements",
-	"PUT /v1/apps/{slug}/route-requirements":                                          "SaveRouteRequirements",
-	"POST /v1/apps/{slug}/route-requirements/check":                                   "CheckRouteRequirements",
-	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}":                      "GetAutomaticRouteCheck",
-	"POST /v1/apps/{slug}/route-requirements/checks/{deployment}/refresh":             "RefreshAutomaticRouteCheck",
-	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history":              "ListRouteCheckHistory",
-	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}":   "GetRouteCheckHistoryEntry",
-	"GET /v1/apps/{slug}/route-lifecycle/history":                                     "ListRouteLifecycleHistory",
-	"POST /v1/apps/{slug}/route-lifecycle/approvals":                                  "ApproveRouteLifecycle",
-	"GET /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}":                     "GetRouteLifecycleApproval",
-	"GET /v1/apps/{slug}/route-removal/policy":                                        "GetRouteRemovalPolicy",
-	"PUT /v1/apps/{slug}/route-removal/policy":                                        "SetRouteRemovalPolicy",
-	"POST /v1/apps/{slug}/route-removal/approvals":                                    "ApproveRouteRemoval",
-	"GET /v1/apps/{slug}/route-removal/check":                                         "CheckRouteRemoval",
+	"GET /v1/apps/{slug}/workflow-readiness/timeline":                                 "GetAccountWorkflowCoordinationTimeline",
+	"GET /v1/platform-tenant-self/workflow-readiness/timeline":                        "GetPlatformTenantSelfWorkflowCoordinationTimeline",
+	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews":          "ReviewAccountWorkflowPlaybookProgress",
+	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews": "ReviewPlatformTenantSelfWorkflowPlaybookProgress",
+	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress":                       "StartAccountWorkflowPlaybookProgress",
+	"PATCH /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}":                 "UpdateAccountWorkflowPlaybookProgress",
+	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress":              "StartPlatformTenantSelfWorkflowPlaybookProgress",
+	"PATCH /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}":        "UpdatePlatformTenantSelfWorkflowPlaybookProgress",
+	"GET /v1/apps/{slug}/workflow-readiness/case":                                     "GetAccountWorkflowCase",
+	"GET /v1/platform-tenant-self/workflow-readiness/case":                            "GetPlatformTenantSelfWorkflowCase",
+	"GET /v1/apps/{slug}/workflow-readiness/follow-ups":                               "ListAccountWorkflowReadinessFollowUps",
+	"GET /v1/platform-tenant-self/workflow-readiness/follow-ups":                      "ListPlatformTenantSelfWorkflowReadinessFollowUps",
 
-	"GET /v1/apps/{slug}/route-requirements/gate":                 "GetCanaryRouteGate",
-	"PUT /v1/apps/{slug}/route-requirements/gate":                 "SetCanaryRouteGate",
-	"POST /v1/apps/{slug}/route-policy/plan":                      "PlanRoutePolicy",
-	"POST /v1/apps/{slug}/route-policy/apply":                     "ApplyRoutePolicy",
-	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":      "GetRoutePolicyReceipt",
-	"GET /v1/outbound/integrations/{integration}/probe-policy":    "GetOutboundBindingProbePolicy",
-	"PUT /v1/outbound/integrations/{integration}/probe-policy":    "SetOutboundBindingProbePolicy",
-	"DELETE /v1/outbound/integrations/{integration}/probe-policy": "DeleteOutboundBindingProbePolicy",
-	"POST /v1/deployments/{id}/promote-with-application-ack":      "PromoteDeploymentWithBindings",
-	"POST /v1/deployments/{id}/promote":                           "PromoteDeploymentWithBindings",
-	"GET /v1/apps/{slug}/bindings":                                "GetAppBindingInventory",
-	"GET /v1/apps/{slug}/bindings/release-policy":                 "GetBindingReleasePolicy",
-	"PUT /v1/apps/{slug}/bindings/release-policy":                 "SetBindingReleasePolicy",
-	"GET /v1/apps/{slug}/alert-rollbacks":                         "ListAlertRollbacks",
-	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                  "GetAlertRollback",
-	"GET /v1/apps/{slug}/rollbacks/{operation}":                   "GetRollbackOperation",
-	"GET /v1/apps/{slug}/operational-summary":                     "GetAppOperationalSummary",
+	"POST /v1/apps/{slug}/workflow-readiness/subscriptions":                            "CreateAccountWorkflowReadinessSubscription",
+	"GET /v1/apps/{slug}/workflow-readiness/subscriptions":                             "ListAccountWorkflowReadinessSubscriptions",
+	"DELETE /v1/apps/{slug}/workflow-readiness/subscriptions/{id}":                     "DeleteAccountWorkflowReadinessSubscription",
+	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications":          "GetAccountWorkflowReadinessInbox",
+	"POST /v1/platform-tenant-self/workflow-readiness/subscriptions":                   "CreatePlatformTenantSelfWorkflowReadinessSubscription",
+	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions":                    "ListPlatformTenantSelfWorkflowReadinessSubscriptions",
+	"DELETE /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}":            "DeletePlatformTenantSelfWorkflowReadinessSubscription",
+	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications": "GetPlatformTenantSelfWorkflowReadinessInbox",
+	"POST /v1/apps/{slug}/workflow-readiness/compare":                                  "CompareAccountWorkflowReadiness",
+	"POST /v1/platform-tenant-self/workflow-readiness/compare":                         "ComparePlatformTenantSelfWorkflowReadiness",
+	"GET /v1/apps/{slug}/workflow-readiness/queue":                                     "ListAccountWorkflowReadinessQueue",
+	"GET /v1/platform-tenant-self/workflow-readiness/queue":                            "ListPlatformTenantSelfWorkflowReadinessQueue",
+	"GET /v1/apps/{slug}/workflow-attention":                                           "ListAccountWorkflowAttention",
+	"GET /v1/apps/{slug}/workflow-attention/summary":                                   "SummarizeAccountWorkflowAttention",
+	"GET /v1/apps/{slug}/workflow-performance/summary":                                 "SummarizeAccountWorkflowPerformance",
+	"GET /v1/apps/{slug}/workflow-performance/instances":                               "ListAccountWorkflowPerformanceInstances",
+	"GET /v1/platform-tenant-self/workflow-performance/summary":                        "SummarizePlatformTenantSelfWorkflowPerformance",
+	"GET /v1/platform-tenant-self/workflow-performance/instances":                      "ListPlatformTenantSelfWorkflowPerformanceInstances",
+	"GET /v1/apps/{slug}/workflow-outcomes":                                            "ListAccountWorkflowOutcomes",
+	"GET /v1/apps/{slug}/workflow-outcomes/summary":                                    "SummarizeAccountWorkflowOutcomes",
+	"POST /v1/apps/{slug}/workflow-readiness":                                          "CheckAccountWorkflowReadiness",
+	"POST /v1/apps/{slug}/workflow-actions/preview":                                    "PreviewAccountWorkflowActions",
+	"GET /v1/platform-tenant-self/workflow-attention":                                  "ListPlatformTenantSelfWorkflowAttention",
+	"GET /v1/platform-tenant-self/workflow-attention/summary":                          "SummarizePlatformTenantSelfWorkflowAttention",
+	"GET /v1/platform-tenant-self/workflow-outcomes":                                   "ListPlatformTenantSelfWorkflowOutcomes",
+	"GET /v1/platform-tenant-self/workflow-outcomes/summary":                           "SummarizePlatformTenantSelfWorkflowOutcomes",
+	"POST /v1/platform-tenant-self/workflow-readiness":                                 "CheckPlatformTenantSelfWorkflowReadiness",
+	"POST /v1/platform-tenant-self/workflow-actions/preview":                           "PreviewPlatformTenantSelfWorkflowActions",
+	"POST /v1/apps/{slug}/operations/{id}/recover-receipt":                             "RecoverOperationWithReceipt",
+	"POST /v1/platform-tenant-self/customer-operations/submissions/lookup":             "LookupPlatformTenantSelfOperationSubmission",
+	"GET /v1/apps/{slug}/operation-milestones":                                         "ListAccountBusinessMilestones",
+	"GET /v1/apps/{slug}/operations/{id}/milestones":                                   "GetAccountOperationMilestones",
+	"GET /v1/platform-tenant-self/customer-operation-milestones":                       "ListPlatformTenantSelfBusinessMilestones",
+	"GET /v1/platform-tenant-self/customer-operations/{id}/milestones":                 "GetPlatformTenantSelfOperationMilestones",
+	"GET /v1/apps/{slug}/operations":                                                   "ListAccountOperations",
+	"GET /v1/apps/{slug}/operations/{id}/events":                                       "GetAccountOperationEvents",
+	"GET /v1/apps/{slug}/operations/{id}/executions":                                   "GetOperationExecutions",
+	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                              "RetryOperationDelivery",
+	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                          "InspectOperationRecovery",
+	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                            "PreviewOperationRecovery",
+	"POST /v1/apps/{slug}/operations/{id}/recover":                                     "RecoverOperation",
+	"GET /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}":       "DownloadPlatformTenantSelfOperationArtifact",
+	"GET /v1/apps/{slug}/operations/{id}/artifacts/{artifact}":                         "DownloadOperationArtifact",
+	"POST /v1/runtime/operations/{id}/progress":                                        "ReportOperationProgress",
+	"GET /v1/runtime/operations/{id}/control":                                          "GetOperationExecutionControl",
+	"GET /v1/runtime/job-operations/{id}/control":                                      "GetJobOperationExecutionControl",
+	"POST /v1/runtime/job-operations/{id}/progress":                                    "ReportJobOperationProgress",
+	"POST /v1/runtime/job-operations/{id}/result":                                      "PrepareJobOperationResult",
+	"POST /v1/runtime/job-operations/{id}/artifacts":                                   "PrepareJobOperationArtifact",
+	"POST /v1/runtime/job-operations/{id}/artifact-receipts":                           "ReuseJobOperationArtifact",
+	"POST /v1/runtime/job-operations/{id}/artifact-uploads":                            "UploadJobOperationArtifact",
+	"POST /v1/runtime/job-operations/{id}/artifact-upload-receipts":                    "ReuseJobOperationUpload",
+	"GET /v1/runtime/workflow-operations/{id}/control":                                 "GetWorkflowOperationExecutionControl",
+	"POST /v1/runtime/workflow-operations/{id}/artifact-receipts":                      "ReuseWorkflowOperationArtifact",
+	"POST /v1/runtime/workflow-operations/{id}/artifacts":                              "PrepareWorkflowOperationArtifact",
+	"POST /v1/runtime/workflow-operations/{id}/artifact-uploads":                       "UploadWorkflowOperationArtifact",
+	"POST /v1/runtime/workflow-operations/{id}/artifact-upload-receipts":               "ReuseWorkflowOperationUpload",
+	"POST /v1/runtime/operations/{id}/artifacts":                                       "AttachOperationArtifact",
+	"POST /v1/runtime/operations/{id}/artifact-uploads":                                "UploadOperationArtifact",
+	"POST /v1/runtime/operations/{id}/artifact-upload-receipts":                        "ReuseOperationUpload",
+	"POST /v1/runtime/operations/{id}/milestones":                                      "ReportOperationMilestone",
+	"POST /v1/runtime/operations/{id}/milestones/validate":                             "ValidateOperationMilestones",
+	"POST /v1/runtime/operations/{id}/workflow-states":                                 "ReportOperationWorkflowState",
+	"POST /v1/runtime/operations/{id}/workflow-states/validate":                        "ValidateOperationWorkflowStates",
+	"GET /v1/apps/{slug}/operations/{id}":                                              "GetOperation",
+	"POST /v1/apps/{slug}/operations/{id}/cancel":                                      "CancelOperation",
+	"POST /v1/platform-tenant-self/customer-operations":                                "StartPlatformTenantSelfOperation",
+	"GET /v1/platform-tenant-self/customer-operations":                                 "ListPlatformTenantSelfOperations",
+	"GET /v1/platform-tenant-self/customer-operations/{id}":                            "GetPlatformTenantSelfOperation",
+	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                     "GetPlatformTenantSelfOperationEvents",
+	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                    "CancelPlatformTenantSelfOperation",
+	"POST /v1/apps/{slug}/operations":                                                  "SubmitExclusiveOperation",
+	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":             "SubmitExclusiveOperation",
+	"POST /v1/platform-tenant-self/apps/{slug}/operations":                             "SubmitPlatformTenantExclusiveOperation",
+	"POST /v1/apps/{slug}/operations/tasks":                                            "SubmitExclusiveAppTaskOperation",
+	"POST /v1/jobs/{name}/operations":                                                  "SubmitExclusiveJobOperation",
+	"GET /v1/operations/{id}":                                                          "GetExclusiveOperation",
+	"POST /v1/operations/{id}/cancel":                                                  "CancelExclusiveOperation",
+	"GET /v1/platform-tenant-self/operations/{id}":                                     "GetPlatformTenantExclusiveOperation",
+	"POST /v1/platform-tenant-self/operations/{id}/cancel":                             "CancelPlatformTenantExclusiveOperation",
+	"GET /v1/triggers/{id}/work-binding":                                               "GetTriggerWorkBinding",
+	"PUT /v1/triggers/{id}/work-binding":                                               "PutTriggerWorkBinding",
+	"DELETE /v1/triggers/{id}/work-binding":                                            "DeleteTriggerWorkBinding",
+	"GET /v1/outbound/integrations":                                                    "ListOutboundIntegrationOffers",
+	"POST /v1/outbound/integrations":                                                   "CreateOutboundIntegration",
+	"DELETE /v1/outbound/integrations/{integration}":                                   "DeleteOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/runs":                                 "SetOutboundIntegrationRunsEnabled",
+	"GET /v1/outbound/integrations/{integration}/usage":                                "GetOutboundIntegrationUsage",
+	"PUT /v1/outbound/integrations/{integration}/budget":                               "SetOutboundIntegrationDailyBudget",
+	"PUT /v1/outbound/integrations/{integration}/request-policy":                       "SetOutboundIntegrationRequestPolicy",
+	"GET /v1/apps/{slug}/outbound-bindings":                                            "ListOutboundAppBindings",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":                              "BindOutboundIntegration",
+	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":                            "UpdateOutboundBindingPolicy",
+	"GET /v1/apps/{slug}/outbound-bindings/{integration}/usage":                        "GetOutboundBindingUsage",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/budget":                       "SetOutboundBindingDailyBudget",
+	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":                           "UnbindOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/credential":                           "PutOutboundCredential",
+	"DELETE /v1/outbound/integrations/{integration}/credential":                        "DeleteOutboundCredential",
+	"GET /v1/apps/{slug}/route-monitor":                                                "GetRouteMonitor",
+	"PUT /v1/apps/{slug}/route-monitor":                                                "SetRouteMonitor",
+	"POST /v1/apps/{slug}/route-monitor/preview":                                       "PreviewRouteMonitor",
+	"GET /v1/apps/{slug}/route-monitor/report":                                         "GetRouteMonitorReport",
+	"GET /v1/apps/{slug}/route-monitor/incidents":                                      "ListRouteMonitorIncidents",
+	"GET /v1/apps/{slug}/route-monitor/incidents/{incident}":                           "GetRouteMonitorIncident",
+	"GET /v1/apps/{slug}/route-health/gate":                                            "GetRouteHealthGate",
+	"PUT /v1/apps/{slug}/route-health/gate":                                            "SetRouteHealthGate",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}":                        "GetRouteHealthReport",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation":          "GetRouteHealthInvestigation",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history":                "ListRouteHealthHistory",
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}":  "GetRouteHealthHistoryEntry",
+	"GET /v1/apps/{slug}/route-requirements":                                           "GetSavedRouteRequirements",
+	"PUT /v1/apps/{slug}/route-requirements":                                           "SaveRouteRequirements",
+	"POST /v1/apps/{slug}/route-requirements/check":                                    "CheckRouteRequirements",
+	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}":                       "GetAutomaticRouteCheck",
+	"POST /v1/apps/{slug}/route-requirements/checks/{deployment}/refresh":              "RefreshAutomaticRouteCheck",
+	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history":               "ListRouteCheckHistory",
+	"GET /v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}":    "GetRouteCheckHistoryEntry",
+	"GET /v1/apps/{slug}/route-lifecycle/history":                                      "ListRouteLifecycleHistory",
+	"POST /v1/apps/{slug}/route-lifecycle/approvals":                                   "ApproveRouteLifecycle",
+	"GET /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}":                      "GetRouteLifecycleApproval",
+	"GET /v1/apps/{slug}/route-removal/policy":                                         "GetRouteRemovalPolicy",
+	"PUT /v1/apps/{slug}/route-removal/policy":                                         "SetRouteRemovalPolicy",
+	"POST /v1/apps/{slug}/route-removal/approvals":                                     "ApproveRouteRemoval",
+	"GET /v1/apps/{slug}/route-removal/check":                                          "CheckRouteRemoval",
+	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
+	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
+	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
+	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",
+	"PUT /v1/apps/{slug}/route-priorities":                                             "SetRoutePriorities",
+	"DELETE /v1/apps/{slug}/route-priorities":                                          "ResetRoutePriorities",
+	"PUT /v1/outbound/integrations/{integration}/ai":                                   "SetOutboundIntegrationAIPolicy",
+	"GET /v1/outbound/integrations/{integration}/ai-usage":                             "GetOutboundIntegrationAIUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-prices":                            "GetOutboundIntegrationAIPrices",
+	"PUT /v1/outbound/integrations/{integration}/ai-prices":                            "SetOutboundIntegrationAIPrices",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget":                    "SetOutboundBindingAIBudget",
+	"GET /v1/outbound/ai-routes":                                                       "ListOutboundAIRoutes",
+	"POST /v1/outbound/ai-routes":                                                      "CreateOutboundAIRoute",
+	"GET /v1/outbound/ai-routes/{route}":                                               "GetOutboundAIRoute",
+	"PUT /v1/outbound/ai-routes/{route}/targets":                                       "SetOutboundAIRouteTargets",
+	"DELETE /v1/outbound/ai-routes/{route}":                                            "DeleteOutboundAIRoute",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails":                "SetOutboundBindingAIGuardrails",
+	"GET /v1/outbound/integrations/{integration}/credential-keys":                      "ListOutboundCredentialKeys",
+	"POST /v1/outbound/integrations/{integration}/credential-keys":                     "CreateOutboundCredentialKey",
+	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
+	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
+	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
+	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
+
+	"GET /v1/apps/{slug}/route-requirements/gate":                     "GetCanaryRouteGate",
+	"PUT /v1/apps/{slug}/route-requirements/gate":                     "SetCanaryRouteGate",
+	"POST /v1/apps/{slug}/route-policy/plan":                          "PlanRoutePolicy",
+	"POST /v1/apps/{slug}/route-policy/apply":                         "ApplyRoutePolicy",
+	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":          "GetRoutePolicyReceipt",
+	"GET /v1/outbound/integrations/{integration}/probe-policy":        "GetOutboundBindingProbePolicy",
+	"PUT /v1/outbound/integrations/{integration}/probe-policy":        "SetOutboundBindingProbePolicy",
+	"DELETE /v1/outbound/integrations/{integration}/probe-policy":     "DeleteOutboundBindingProbePolicy",
+	"POST /v1/deployments/{id}/promote-with-application-ack":          "PromoteDeploymentWithBindings",
+	"POST /v1/deployments/{id}/promote":                               "PromoteDeploymentWithBindings",
+	"GET /v1/apps/{slug}/bindings":                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/bindings/release-policy":                     "GetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy":                     "SetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy-with-object-storage": "SetObjectStorageBindingReleasePolicy",
+	"GET /v1/apps/{slug}/alert-rollbacks":                             "ListAlertRollbacks",
+	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                      "GetAlertRollback",
+	"GET /v1/apps/{slug}/rollbacks/{operation}":                       "GetRollbackOperation",
+	"GET /v1/apps/{slug}/operational-summary":                         "GetAppOperationalSummary",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -677,30 +756,37 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
-	"GET /v1/apps/{slug}/env-diff":                                                    "GetAppEnvDiff",                        // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
-	"GET /v1/apps/{slug}/openapi":                                                     "GetAppOpenAPI",                        // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
-	"POST /v1/apps/{slug}/openapi":                                                    "ImportAppOpenAPI",                     // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
-	"DELETE /v1/apps/{slug}/openapi":                                                  "DeleteAppOpenAPI",                     // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
-	"POST /v1/apps/{slug}/openapi/dry-run":                                            "DryRunAppOpenAPI",                     // read-only edge-rule suggestions (item #2 D3)
-	"GET /v1/apps/{slug}/openapi/preview":                                             "PreviewAppOpenAPIPolicy",              // read-only declared-vs-observed route-policy preview (roadmap item 11)
-	"POST /v1/apps/{slug}/openapi/apply":                                              "ApplyAppOpenAPIPolicy",                // explicit plan/confirm policy apply
-	"GET /v1/apps/{slug}/openapi/diff":                                                "DiffAppOpenAPIContract",               // ADR-121 production contract gate preview
-	"GET /v1/apps/{slug}/github":                                                      "GetGitHubConnection",
-	"GET /v1/preview/{slug}/environment":                                              "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
-	"GET /v1/apps/{slug}/github/deployment-policy":                                    "GetGitHubDeploymentPolicy",
-	"PATCH /v1/apps/{slug}/github/deployment-policy":                                  "PatchGitHubDeploymentPolicy",
-	"POST /v1/apps/{slug}/github/bind":                                                "BindGitHubConnection",
-	"POST /v1/apps/{slug}/github/sync":                                                "SyncGitHubConnection",
-	"DELETE /v1/apps/{slug}/github":                                                   "DisconnectGitHubConnection",
-	"GET /v1/deployments/{id}":                                                        "GetDeployment",
-	"PATCH /v1/deployments/{id}":                                                      "PatchDeployment",                     // ADR-072 / issue #557 closure; min_instances override
-	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":                            "UpdateAppDataUpstreamCircuitBreaker", // ADR-201 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
-	"DELETE /v1/deployments/{id}":                                                     "ClearDeployment",                     // ADR-124 PR-A; soft-delete (status untouched)
-	"GET /v1/deployments":                                                             "ListDeployments",
-	"GET /v1/deployments/latest-by-app":                                               "ListLatestDeploymentsByApp",
-	"POST /v1/deployments/{id}/reorder":                                               "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
-	"POST /v1/apps/{slug}/deployments/{id}/cancel":                                    "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
-	"POST /v1/apps/{slug}/deployments/clear-obsolete":                                 "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
+	// ADR-426: typed MCP hosting probes and task rollout operations.
+	"GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health": "ProbeMCPInstanceHealth",
+	"POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe": "ProbeMCPInstanceProtocol",
+	"GET /v1/apps/{slug}/mcp-task-compatibility":                                   "GetAppMCPTaskCompatibilityReport",
+	"PUT /v1/apps/{slug}/mcp-task-compatibility":                                   "PutAppMCPTaskCompatibilityReport",
+	"POST /v1/deployments/{id}/mcp-task-hold/retry":                                "RetryDeploymentMCPTaskHold",
+	"GET /v1/apps/{slug}/edge-protection":                                          "GetAppEdgeProtection",    // literal hyphen, like env-diff; follows the spec operationId `getAppEdgeProtection`.
+	"GET /v1/apps/{slug}/env-diff":                                                 "GetAppEnvDiff",           // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
+	"GET /v1/apps/{slug}/openapi":                                                  "GetAppOpenAPI",           // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
+	"POST /v1/apps/{slug}/openapi":                                                 "ImportAppOpenAPI",        // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
+	"DELETE /v1/apps/{slug}/openapi":                                               "DeleteAppOpenAPI",        // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
+	"POST /v1/apps/{slug}/openapi/dry-run":                                         "DryRunAppOpenAPI",        // read-only edge-rule suggestions (item #2 D3)
+	"GET /v1/apps/{slug}/openapi/preview":                                          "PreviewAppOpenAPIPolicy", // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"POST /v1/apps/{slug}/openapi/apply":                                           "ApplyAppOpenAPIPolicy",   // explicit plan/confirm policy apply
+	"GET /v1/apps/{slug}/openapi/diff":                                             "DiffAppOpenAPIContract",  // ADR-121 production contract gate preview
+	"GET /v1/apps/{slug}/github":                                                   "GetGitHubConnection",
+	"GET /v1/preview/{slug}/environment":                                           "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
+	"GET /v1/apps/{slug}/github/deployment-policy":                                 "GetGitHubDeploymentPolicy",
+	"PATCH /v1/apps/{slug}/github/deployment-policy":                               "PatchGitHubDeploymentPolicy",
+	"POST /v1/apps/{slug}/github/bind":                                             "BindGitHubConnection",
+	"POST /v1/apps/{slug}/github/sync":                                             "SyncGitHubConnection",
+	"DELETE /v1/apps/{slug}/github":                                                "DisconnectGitHubConnection",
+	"GET /v1/deployments/{id}":                                                     "GetDeployment",
+	"PATCH /v1/deployments/{id}":                                                   "PatchDeployment",                     // ADR-072 / issue #557 closure; min_instances override
+	"PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker":                         "UpdateAppDataUpstreamCircuitBreaker", // ADR-201 §3: same literal-hyphen case as env-diff above — auto-derivation yields `PatchAppsSlugUpstreamsIdCircuit-breaker`, which is not a legal Go identifier. Follows the spec operationId `updateAppDataUpstreamCircuitBreaker`.
+	"DELETE /v1/deployments/{id}":                                                  "ClearDeployment",                     // ADR-124 PR-A; soft-delete (status untouched)
+	"GET /v1/deployments":                                                          "ListDeployments",
+	"GET /v1/deployments/latest-by-app":                                            "ListLatestDeploymentsByApp",
+	"POST /v1/deployments/{id}/reorder":                                            "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
+	"POST /v1/apps/{slug}/deployments/{id}/cancel":                                 "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
+	"POST /v1/apps/{slug}/deployments/clear-obsolete":                              "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
 	// ADR-202 custom application metrics. Auto-derivation would produce
 	// `GetAppsSlugCustom-metrics` because of the literal hyphen in the
 	// path segment, which is not a Go identifier. Same treatment as
@@ -724,6 +810,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}":                                          "UpdateAPIConsumerPlanLimits",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                          "ListAPIConsumerPlanAssignments",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                         "AssignAPIConsumerPlan",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts":                              "ListAPIConsumerUsageAlerts",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                          "ListAPIConsumerUsageStatements",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}":           "GetAPIConsumerUsageStatement",
@@ -1198,6 +1285,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/inbox":                     "SendAppMessage",
 	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
 	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
+	"GET /v1/commit-sources/{source}/publications":                           "ListCommitPublications",
 	"GET /v1/commit-sources/{source}":                                        "GetCommitSource",
 	"PATCH /v1/commit-sources/{source}":                                      "SetCommitSourceEnabled",
 	"PUT /v1/commit-sources/{source}/connection":                             "PutCommitSourceConnection",
@@ -1219,6 +1307,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-deliveries/attempts":                          "ListEventFanoutAttemptHistory",
 	"GET /v1/events/receipt":                                                 "GetEventReceipt",
 	"GET /v1/events/backlog":                                                 "GetEventBacklog",
+	"GET /v1/events/recipient-blocker":                                       "GetEventRecipientBlocker",
+	"POST /v1/events/recipient-blockers":                                     "GetEventRecipientBlockers",
 	"GET /v1/events/retention":                                               "GetEventRetentionHealth",
 	"GET /v1/events/storage":                                                 "GetEventStorageUsage",
 	"GET /v1/events/receipt/replays":                                         "GetEventReceiptReplays",
@@ -1251,6 +1341,26 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
+	// Workflow recovery policy and operator routes use the public client names.
+	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                         "GetEventRecoveryByRequest",
+	"GET /v1/apps/{slug}/recovery-policy":                                                 "GetWorkflowRecoveryPolicy",
+	"GET /v1/apps/{slug}/recovery-policy/health":                                          "GetWorkflowRecoveryPolicyHealth",
+	"GET /v1/apps/{slug}/recovery-policy/history":                                         "GetWorkflowRecoveryHistory",
+	"GET /v1/apps/{slug}/recovery-policy/queue":                                           "GetWorkflowRecoveryAutomaticQueue",
+	"GET /v1/apps/{slug}/recovery-policy/report":                                          "GetWorkflowRecoveryReport",
+	"GET /v1/apps/{slug}/recovery-policy/reviews":                                         "ListWorkflowRecoveryPolicyReviews",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}":                              "GetWorkflowRecoveryPolicyReview",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status":                       "GetWorkflowRecoveryReviewStatus",
+	"GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}":               "GetWorkflowRecoveryActionReceipt",
+	"POST /v1/apps/{slug}/recovery-policy/change-preview":                                 "PreviewWorkflowRecoveryPolicyChange",
+	"POST /v1/apps/{slug}/recovery-policy/control":                                        "ControlWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/evaluate":                                       "EvaluateWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress": "SuppressWorkflowRecoveryAutomaticAction",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision":                    "DecideWorkflowRecoveryPolicyReview",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancel":                                   "CancelWorkflowRecoveryExecution",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview":                     "PreviewWorkflowRecoveryCancellation",
+	"PUT /v1/apps/{slug}/recovery-policy":                                                 "SetWorkflowRecoveryPolicy",
+
 	// Events delivery controls and durable recovery use descriptive SDK verbs.
 	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                 "PreviewWorkflowEventReplay",
 	"POST /v1/apps/{slug}/workflow-event-replays":                                       "CreateWorkflowEventReplayBackfill",
@@ -1258,6 +1368,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":  "PauseEventSubscription",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume": "ResumeEventSubscription",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                   "GetEventConsumerHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":          "GetEventConsumerDeliveryHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health":         "GetEventConsumerExecutionHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "GetEventSubscriptionRetryPolicy",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "SetEventSubscriptionRetryPolicy",
@@ -1686,7 +1797,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
 
-	"POST /v1/apps/{slug}/github/activity/retry": "RetryGitHubActivity",
+	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
+	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
+	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":            "CheckAccountWorkflowReadinessNotification",
+	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
+	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
 }
 
 func main() {
@@ -1743,9 +1858,16 @@ func (r *reportT) print() {
 	}
 }
 
+// Convenience aliases share a route with its checked path-shaped method.
+// An alias is accounted for only while that route still exists in the spec.
+var methodAliasRoutes = map[string]string{
+	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+}
+
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 	r := reportT{}
 	methodUsage := map[string]bool{} // SDK methods touched by a route
+	routeUsage := map[string]bool{}
 	for path, ops := range spec {
 		for method := range ops {
 			key := strings.ToUpper(method) + " " + path
@@ -1760,10 +1882,11 @@ func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 				r.missing = append(r.missing, fmt.Sprintf("%s → SDK method %q", key, sdkName))
 			}
 			methodUsage[sdkName] = true
+			routeUsage[key] = true
 		}
 	}
 	for m := range methods {
-		if sdkMethodExclude[m] || methodUsage[m] {
+		if sdkMethodExclude[m] || methodUsage[m] || routeUsage[methodAliasRoutes[m]] {
 			continue
 		}
 		r.warn = append(r.warn, m+" (no spec route)")

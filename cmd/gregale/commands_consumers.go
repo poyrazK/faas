@@ -41,9 +41,10 @@ var consumerVerbPositionals = map[string][]string{
 	"plan-update":        {"slug"},
 	"set-plan":           {"slug", "consumer-id"},
 	"plan-history":       {"slug", "consumer-id"},
+	"usage-alerts":       {"slug", "consumer-id"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -58,6 +59,7 @@ type consumerFlags struct {
 	weights                            multiFlag
 	plan                               string
 	maxPerMinute, maxPerMonth          int64
+	alertAt                            string
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -67,8 +69,8 @@ var consumerVerbFlags = map[string][]string{
 	"quote":             {"since", "until"},
 	"completeness":      {"period-start", "period-end", "month"},
 	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from"},
-	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month"},
-	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month"},
+	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
+	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"set-plan":          {"plan", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
@@ -108,6 +110,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.plan, "plan", "", "consumer plan name; \"default\" is the app default plan")
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
+	fs.StringVar(&f.alertAt, "alert-at", "", "comma-separated percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -170,8 +173,8 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		}
 		return nil, nil
 	case "plan-update":
-		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0) {
-			return nil, errors.New("--plan and at least one of --max-requests-per-minute or --max-units-per-month are required")
+		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0 && f.alertAt == "") {
+			return nil, errors.New("--plan and at least one of --max-requests-per-minute, --max-units-per-month, or --alert-at are required")
 		}
 		return nil, nil
 	case "set-plan":

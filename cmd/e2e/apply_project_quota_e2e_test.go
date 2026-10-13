@@ -252,7 +252,10 @@ func TestApplyProject_Quota_CronsNotAllowed(t *testing.T) {
     command: bundle exec rake nightly
 `
 	entries := []struct{ name, body string }{
-		{"faas-cron/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
+		// A published port keeps backend an HTTP service: a portless
+		// build service is a worker, which Free refuses before the cron
+		// quota this test pins (H9-170).
+		{"faas-cron/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n    ports: [\"8080:8080\"]\n"},
 		{"faas-cron/render.yaml", renderYAML},
 		{"faas-cron/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}

@@ -44,16 +44,18 @@ type resumableUploadState struct {
 // uploadStatePath is keyed by the app and absolute archive path so rerunning
 // the same deploy resumes naturally while separate archives can progress in
 // parallel. The path itself is stored only as diagnostic metadata.
-func uploadStatePath(appSlug, archivePath string) (string, error) {
-	abs, err := filepath.Abs(archivePath)
-	if err != nil {
-		return "", fmt.Errorf("absolutize upload archive: %w", err)
-	}
+// uploadStatePath names the resumable state of one upload by what is being
+// uploaded, not where the archive lives: `deploy --path` packs the directory
+// into a fresh temp file on every run, so a path-keyed state never matched
+// and every retry re-uploaded the whole archive (production-us hunt #9: a
+// 76 MiB source restarted from 0% on each retry, leaving a new state file and
+// an open server session each time).
+func uploadStatePath(appSlug, archiveSHA256, optionsSHA256 string) (string, error) {
 	dir, err := uploadStateDir()
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + abs))
+	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + strings.ToLower(archiveSHA256) + "\x00" + optionsSHA256))
 	return filepath.Join(dir, hex.EncodeToString(key[:])+".json"), nil
 }
 
@@ -189,6 +191,50 @@ func lockResumableUploadState(ctx context.Context, path string) (*resumableUploa
 		return nil, errors.New("another Gregale deploy is already uploading this archive")
 	}
 	return &resumableUploadLock{statePath: path, digest: lock, guard: guard}, nil
+}
+
+// isUploadSessionCap reports the per-app open upload session refusal.
+func isUploadSessionCap(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.Problem.Code == api.CodeUploadSessionTooMany
+}
+
+// reclaimAppUploadSessions cancels this CLI's other recorded upload sessions
+// for the app and forgets them. States are keyed by archive and deploy
+// options, so this deploy can never resume them, yet each server session
+// counts against the per-app cap of five until its 24 h TTL: after five
+// failed submissions of edited sources the app could not deploy at all
+// (production-us hunt #9, "Too many upload sessions"). A state another local
+// deploy holds locked is left alone.
+func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePath string) int {
+	dir := filepath.Dir(keepStatePath)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	reclaimed := 0
+	for _, file := range files {
+		name, path := file.Name(), filepath.Join(dir, file.Name())
+		if file.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".") || path == keepStatePath {
+			continue
+		}
+		state, found, err := loadResumableUploadState(path)
+		if err != nil || !found || state.AppSlug != slug || state.APIBase != apiBase() || state.UploadID == "" {
+			continue
+		}
+		lock := flock.New(path+".lock", flock.SetPermissions(0o600))
+		if locked, err := lock.TryLock(); err != nil || !locked {
+			_ = lock.Close()
+			continue
+		}
+		cancelUploadBestEffort(ctx, c, state.UploadID)
+		removeResumableUploadState(path)
+		_ = lock.Unlock()
+		_ = lock.Close()
+		tryRemoveOrphanUploadLock(path)
+		reclaimed++
+	}
+	return reclaimed
 }
 
 type uploadCachePolicy struct {

@@ -18,14 +18,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -37,59 +31,9 @@ import (
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 )
 
-// envelope matches the §4.9 request contract verbatim, extended with
-// the waitUntil(post-response tail) primitive fields (issue #667 /
-// ADR-078). Default 0/empty = no tail (backwards-compatible —
-// pre-#667 handlers ignore the new fields, post-#667 handlers read
-// them to drive ctx.waitUntil(promise)). The runner's tail host is
-// the WaitGroup + per-task context.WithTimeout wired in PR 3 once
-// guest-init lights up the 0x04 DGRAM path; PR 2 ships the envelope
-// shape change only.
-type envelope struct {
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`
-	Headers map[string]string `json:"headers"`
-	Query   string            `json:"query"`
-	BodyB64 string            `json:"body_b64"`
-	// WaitUntilSec is the per-task wall-clock ceiling for any
-	// waitUntil(promise) the handler registers via the tail pipe
-	// (issue #667 §"Rules"). 0 = feature disabled on this request;
-	// the runner's tail host short-circuits to "no tail" and the
-	// handler's waitUntil calls are silently dropped (matching
-	// Vercel Edge / Cloudflare's pre-tail behaviour). Per-plan
-	// value stamped by imaged at build time via BuildEnvWithSecrets
-	// (PR 3).
-	WaitUntilSec int `json:"wait_until_sec"`
-	// TailPipePath is the JSONL pipe the handler appends one line
-	// per waitUntil(promise) registration to. Empty string = no
-	// tail (the handler's __faas_tail.js shim no-ops the waitUntil
-	// global, so legacy customer code keeps working). Per-request
-	// path under /tmp/faas-tail-<random>.jsonl (PR 3).
-	//
-	// PR 3 (issue #667 follow-up): the runner-side tail host is
-	// wired in tail_host_integration.go::drainTailHost. The drain
-	// runs after invokeHandler returns and before the response
-	// envelope is written.
-	TailPipePath string `json:"tail_pipe_path,omitempty"`
-}
-
-// response is the §4.9 response contract, extended with optional
-// tail failure metadata (issue #667 / ADR-078). TailErrors is
-// debug-only — surfaced to the customer via the runner's stderr +
-// the schedd's wake.tail_failed audit row, but never to the
-// HTTP response body (the issue forbids response rewrites). Empty
-// slice = no tail or all tasks completed cleanly.
-type response struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
-	BodyB64 string            `json:"body_b64"`
-	// TailErrors is the per-task failure list (timeouts,
-	// handler-thrown errors, post-MaxBytes). The shape is a
-	// JSON array of strings; omitted from the wire when empty
-	// to keep the response envelope identical to pre-#667 for
-	// handlers that do not use waitUntil.
-	TailErrors []string `json:"tail_errors,omitempty"`
-}
+// envelope is the §4.9 request envelope (internal.Envelope), named here so
+// the JSON-tag parity test can pin its wire spelling.
+type envelope = internal.Envelope
 
 func main() {
 	runtime := flag.String("runtime", "node22", "runtime id (informational)")
@@ -112,8 +56,8 @@ func main() {
 
 	// Issue #667 / ADR-078 (PR 3): per-request tail primitive
 	// knobs (FAAS_TAIL_WAIT_SEC = per-task ceiling, FAAS_TAIL_PIPE_PATH
-	// = JSONL pipe). Empty values = feature disabled. See
-	// tail_host_integration.go.
+	// = JSONL pipe). Empty values = feature disabled;
+	// internal.Serve drains the pipe.
 	tailWaitSec := envIntDefault("FAAS_TAIL_WAIT_SEC", 0)
 	tailPipePath := os.Getenv("FAAS_TAIL_PIPE_PATH")
 
@@ -159,125 +103,20 @@ func main() {
 // about Node beyond "spawn the binary with the handler path" and "pipe
 // the envelope JSON over stdin".
 //
-// Issue #470 / PR #470-FU-B: after the handler's response envelope
-// is parsed, fires the framework-ready signal if the response
-// status is non-5xx (the engine's captureWarmSnapshot waits on
-// the first non-5xx response — 5xx is "framework still warming
-// up", not "ready to capture"). The RunnerSignal's sync.Once
-// collapses parallel calls into one.
+// handle runs one request through the customer's handler via the shared
+// runner core (internal.Serve): a complete §4.9 response, or a streamed one
+// flushed frame by frame (ADR-999).
 func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string) {
-	body, _ := io.ReadAll(r.Body)
-	_ = r.Body.Close()
-	env := envelope{
-		Method:       r.Method,
-		Path:         r.URL.Path,
-		Headers:      headerMap(r.Header),
-		Query:        r.URL.RawQuery,
-		BodyB64:      base64.StdEncoding.EncodeToString(body),
+	internal.Serve(w, r, internal.ServeConfig{
+		Runtime: "node22",
+		Spec: workerpool.Spec{
+			Executable: nodeBinary(), Args: []string{handlerPath},
+			Env: append(os.Environ(), "FAAS_RUNTIME="+"node22"), HandlerPath: handlerPath,
+		},
 		WaitUntilSec: tailWaitSec,
 		TailPipePath: tailPipePath,
-	}
-
-	started := time.Now()
-	resp, processUsage, err := invokeHandler(r.Context(), handlerPath, env)
-	if err != nil {
-		internal.ObserveGuestExecution(r.Context(), "node22", started, http.StatusInternalServerError, err).WithProcessUsage(processUsage).ApplyResponseHeaders(w.Header())
-		log.Printf("node22 runner: handler error: %v", err)
-		internal.WriteHandlerFailure(w, r, err)
-		return
-	}
-	if resp.Status == 0 {
-		resp.Status = http.StatusOK
-	}
-	evidence := internal.ObserveGuestExecution(r.Context(), "node22", started, resp.Status, nil).WithProcessUsage(processUsage)
-	// Issue #667 / ADR-078 (PR 3): drain the tail pipe before
-	// writing the response. The customer's __faas_tail.js shim
-	// has already appended JSONL lines to env.TailPipePath
-	// during the handler's invocation window; the drain runs
-	// AFTER invokeHandler returns and BEFORE the response
-	// envelope is written to the wire.
-	drainTailHost(r.Context(), env, &resp)
-	internal.ApplyResponseHeaders(w.Header(), resp.Headers)
-	evidence.ApplyResponseHeaders(w.Header())
-	w.WriteHeader(resp.Status)
-	if resp.BodyB64 != "" {
-		decoded, err := base64.StdEncoding.DecodeString(resp.BodyB64)
-		if err != nil {
-			log.Printf("node22 runner: bad body_b64: %v", err)
-			return
-		}
-		_, _ = w.Write(decoded)
-	}
-	// Fire the framework-ready signal after the response has been
-	// written. Status < 500 → ready. 5xx is "framework still warming
-	// up" — the engine's wait on the SQL column will continue.
-	if resp.Status < 500 {
-		signal.SignalReady(time.Since(signal.StartTime()).Milliseconds())
-	}
-}
-
-// invokeHandler uses the persistent generated adapter when available and
-// otherwise spawns `node <handlerPath>` for the legacy protocol contract.
-func invokeHandler(ctx context.Context, handlerPath string, env envelope) (response, internal.GuestProcessUsage, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	binary := nodeBinary()
-	handlerEnv := append(os.Environ(), "FAAS_RUNTIME=node22")
-	var pooled response
-	if handled, err := workerpool.InvokeIfSupported(timeoutCtx, workerpool.Spec{
-		Executable: binary, Args: []string{handlerPath}, Env: handlerEnv, HandlerPath: handlerPath,
-	}, env, &pooled); handled {
-		return pooled, internal.GuestProcessUsage{}, err
-	}
-
-	// guest-init deliberately starts workloads with a minimal environment.
-	// Keep the PATH seam testable, but fall back to the stable runtime-image
-	// path when the guest PATH does not contain the interpreter.
-	cmd := exec.CommandContext(timeoutCtx, binary, handlerPath)
-	cmd.Env = handlerEnv
-
-	var stdin bytes.Buffer
-	if err := json.NewEncoder(&stdin).Encode(env); err != nil {
-		return response{}, internal.GuestProcessUsage{}, fmt.Errorf("encode envelope: %w", err)
-	}
-	cmd.Stdin = &stdin
-
-	// Issue #254: customer stderr must reach the host log ring.
-	//
-	// stdout stays a bare buffer — it is protocol-bearing (the §4.9
-	// response envelope is json.Unmarshal'd from it below), so teeing
-	// it would interleave customer writes into the envelope and break
-	// the decode. Capturing customer stdout needs a separate framed
-	// channel; that is a spec change, not a bug fix.
-	//
-	// stderr is NOT protocol-bearing — it is only ever folded into the
-	// exec-error string below — so teeing it to os.Stderr is free. The
-	// runner's os.Stderr is inherited from guest-init (PID1), which
-	// tees its child's output into the supervisor ring via
-	// io.MultiWriter (guest/init/main_linux.go:276). That ring is what
-	// vmmd drains into pkg/fcvm/logbuf and the customer reads over
-	// `faas logs`. Without this tee, exceptions and stack traces — the
-	// bulk of what a customer needs to debug — never leave the VM.
-	//
-	// The in-memory buffer is retained alongside the tee so the
-	// exec-error message keeps its (stderr=...) suffix verbatim.
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
-
-	if err := cmd.Run(); err != nil {
-		usage := internal.ProcessResourceUsage(cmd.ProcessState)
-		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
-			return response{}, usage, fmt.Errorf("handler timeout: %w", context.DeadlineExceeded)
-		}
-		return response{}, usage, fmt.Errorf("handler exec: %w (stderr=%s)", err, stderr.String())
-	}
-	usage := internal.ProcessResourceUsage(cmd.ProcessState)
-	var resp response
-	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
-		return response{}, usage, fmt.Errorf("decode response: %w (stdout=%s)", err, stdout.String())
-	}
-	return resp, usage, nil
+		Signal:       signal,
+	})
 }
 
 func nodeBinary() string {
@@ -285,18 +124,6 @@ func nodeBinary() string {
 		return path
 	}
 	return "/usr/local/bin/node"
-}
-
-// headerMap folds http.Header into the lowercase-string-keyed map the
-// §4.9 envelope expects. Multi-value headers are joined with ", ".
-func headerMap(h http.Header) map[string]string {
-	out := make(map[string]string, len(h))
-	for k, v := range h {
-		if len(v) > 0 {
-			out[k] = v[0]
-		}
-	}
-	return out
 }
 
 // envIntDefault reads an env var as an int; returns fallback if

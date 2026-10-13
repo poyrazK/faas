@@ -15,9 +15,13 @@ import (
 // same weighted units as billing.
 type ConsumerPlanPolicy struct {
 	PlanID               string
+	AppID                string
 	MaxRequestsPerMinute int64
 	MaxUnitsPerMonth     int64
 	RouteWeights         map[string]int64
+	// AlertThresholdsPercent travel to admission, which records crossings
+	// and enqueues consumer.usage_threshold webhooks (ADR-849).
+	AlertThresholdsPercent []int32
 }
 
 func (p ConsumerPlanPolicy) limited() bool {

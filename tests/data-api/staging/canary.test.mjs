@@ -213,7 +213,7 @@ async function journey(t, failure = '') {
     let single = false, deleted = false
     const builder = {
       select: () => builder, eq: () => builder, single: () => { single = true; return builder },
-      delete: () => { deleted = true; return builder }, retry: () => builder,
+      delete: () => { deleted = true; return builder }, insert: () => { builder.then = resolve => resolve({ error: { code: '42501' }, data: null }); return builder }, retry: () => builder,
       then: resolve => { emit(options.onResponse, 'GET', 'rest'); resolve({ error: null, data: deleted ? [{ id: 7 }] : single ? { id: 7, body: 'updated', priority: 0 } : [] }) },
     }
     return builder
@@ -256,6 +256,7 @@ async function journey(t, failure = '') {
         assert.doesNotMatch(JSON.stringify(config), /private-test-token|eyJ/)
         assert.match(await readFile(join(config.migrate.directory, 'gregale.yaml'), 'utf8'), /node release.mjs/)
         assert.equal(await readFile(join(config.migrate.directory, 'rpc-runtime/types.mjs'), 'utf8'), await readFile(join(runner.repoRoot, 'cmd/gregale/templates/data-api/types.mjs'), 'utf8'))
+        assert.equal(await readFile(join(config.migrate.directory, 'rpc-runtime/type-render.mjs'), 'utf8'), await readFile(join(runner.repoRoot, 'cmd/gregale/templates/data-api/type-render.mjs'), 'utf8'))
         syncCount++
         if (syncCount > 1) assert.ok(config.check.command.includes('priority.ts'))
         const hash = syncCount === 1 ? fingerprint : 'b'.repeat(64)
@@ -286,6 +287,8 @@ async function journey(t, failure = '') {
     if (url.endsWith('/openapi.json')) return new Response('{"paths":{"/notes":{},"/rpc/create_note":{"post":{}}}}')
     return new Response('{}', { status: 401 })
   }
+  runner.captureContract = async () => '/simulated/contract.json'
+  runner.qualifyRollout = async () => {}
   // The simulated API is immediately ready; no sleeping or provider access.
   runner.wait = async (read, ready) => { const value = await read(); assert.ok(ready(value), 'simulated operation must be complete'); return value }
   return runner

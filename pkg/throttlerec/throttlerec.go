@@ -364,9 +364,13 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, opts FetchOpti
 // fetchDryRunPreview runs one PromQL per surviving route and
 // returns the preview rows. The query template:
 //
-//	sum_over_time((rate(gateway_requests_by_route_total{app="<id>",route="<r>"}[1m]) > <candidate>) [<range>:1m])
+//	sum_over_time((rate(gateway_requests_by_route_total{app="<id>",route="<r>"}[1m]) > bool <candidate>) [<range>:1m])
 //
-// counts sub-windows where observed_rps > candidate_rps. The 1m
+// counts the 1-minute sub-windows where observed_rps > candidate_rps
+// (over_cap_count's documented meaning). `> bool` yields 1 or 0 per
+// sample; a plain `>` keeps the rate value, which summed request rates
+// instead and under-reported a bursty route by orders of magnitude
+// (hunt #9 H9-46). Burst is not modelled. The 1m
 // step matches the rate() window; the [range:1m] sub-window
 // iteration covers the full recommendation window. NaN/Inf are
 // coerced to 0 via SafeFloat so a Prometheus timeout on one route
@@ -392,7 +396,9 @@ func fetchDryRunPreview(ctx context.Context, fetcher PromQL, log *slog.Logger, o
 	// timestamp.
 	windowStart := nowStr
 	if d, err := time.ParseDuration(rng); err == nil && d > 0 {
-		windowStart = nowStr
+		if end, perr := time.Parse(time.RFC3339Nano, nowStr); perr == nil {
+			windowStart = end.Add(-d).UTC().Format(time.RFC3339Nano)
+		}
 	}
 	preview := make([]api.ThrottlePreviewRow, 0, len(recs))
 	for _, r := range recs {
@@ -402,7 +408,7 @@ func fetchDryRunPreview(ctx context.Context, fetcher PromQL, log *slog.Logger, o
 		// preview is route-name-specific so the route value
 		// itself is a label literal here.
 		q := fmt.Sprintf(
-			`sum_over_time((rate(gateway_requests_by_route_total{app=%q,route=%q}[1m]) > %g) [%s:1m])`,
+			`sum_over_time((rate(gateway_requests_by_route_total{app=%q,route=%q}[1m]) > bool %g) [%s:1m])`,
 			opts.AppID, r.Route, opts.CandidateRPS, rng)
 		overCap, err := fetcher.QueryScalar(ctx, q)
 		if err != nil {

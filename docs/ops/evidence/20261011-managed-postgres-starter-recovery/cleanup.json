@@ -1,0 +1,9 @@
+{
+  "owned_project_get_status": 404,
+  "adapter_inspection_not_found": true,
+  "credential_requests_revoked": 3,
+  "key_delete_status": 200,
+  "revoked_key_authentication_status": 401,
+  "production_provisioning_changed": false,
+  "billing_plan_changed": false
+}

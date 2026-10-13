@@ -45,6 +45,9 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	}
 
 	instance := init.GetInstance()
+	// Instance teardown ends the session through this context (H9-129).
+	ctx, release := s.forwardSessions.track(stream.Context(), instance)
+	defer release()
 	if _, ok := s.vmm.NetnsFor(instance); !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", instance)
 	}
@@ -59,8 +62,11 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 
 	s.beginActivity(instance)
 	defer s.endActivity(instance)
+	if err := s.resumeQuiet(stream.Context(), instance); err != nil {
+		return err
+	}
 
-	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(stream.Context(), pid, port)
+	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, pid, port)
 	if err != nil {
 		return sendTCPInitError(stream, err)
 	}
@@ -78,7 +84,7 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 
 	bodyErrCh, bodyWG := tcpBridgeBodyLoop(stream, stdinW, init.GetMaxBytes())
 	pumpErr := tcpBridgePumpBody(stream, stdoutR, init.GetMaxBytes())
-	bridgeErr := tcpBridgeFinish(cmd, bodyErrCh, bodyWG, stream.Context(), stderr.String())
+	bridgeErr := tcpBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
 	if pumpErr != nil {
 		return pumpErr
 	}
@@ -259,6 +265,9 @@ func tcpBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest,
 
 func tcpBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr string) error {
 	waitErr := cmd.Wait()
+	if instanceStopped(streamCtx) {
+		return status.Error(codes.Unavailable, "TCP stream: instance stopped")
+	}
 	done := make(chan struct{})
 	go func() { bodyWG.Wait(); close(done) }()
 	var bodyErr error
@@ -266,6 +275,9 @@ func tcpBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGro
 	case <-done:
 		bodyErr = <-bodyErrCh
 	case <-streamCtx.Done():
+		if instanceStopped(streamCtx) {
+			return status.Error(codes.Unavailable, "TCP stream: instance stopped")
+		}
 		bodyErr = status.Errorf(codes.Canceled, "TCP stream body: %v", streamCtx.Err())
 	case <-time.After(2 * time.Second):
 		bodyErr = errors.New("TCP stream body did not terminate")

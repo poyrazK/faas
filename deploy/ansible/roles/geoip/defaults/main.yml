@@ -21,7 +21,7 @@ faas_geoip_sha256: "d284ae2e7427fe33d83465e1506b2b21aae47eb8a9b099f8f4dac6a98c99
 faas_geoip_dir: /var/lib/faas/geoip
 faas_geoip_db_path: "{{ faas_geoip_dir }}/dbip-country-lite.mmdb"
 
-# ADR-910: DB-IP ASN Lite (same licence, release cadence and pinning) backs
+# ADR-966: DB-IP ASN Lite (same licence, release cadence and pinning) backs
 # the edge-rule `asn` match field. Must equal the cmd/gatewayd-internal
 # default for FAAS_GEOIP_ASN_DB_PATH.
 faas_geoip_asn_enabled: true

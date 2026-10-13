@@ -698,14 +698,17 @@ func TestServiceProxyRejectsMalformedPathAndEmptyRegistry(t *testing.T) {
 	}
 }
 
-func TestServiceProxyTCPRulesDoNotAffectHTTP(t *testing.T) {
+func TestServiceProxyNetworkRulesDoNotAffectHTTP(t *testing.T) {
+	var matches atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
 			return chaos.Lease{ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{
 				{To: "cache", Kind: chaos.KindTCPLatency, Port: 6379, LatencyMS: 30000, Percent: 100},
 				{To: "cache", Kind: chaos.KindTCPReset, Port: 6379, Percent: 100},
+				{To: "cache", Kind: chaos.KindDNSNXDomain, Percent: 100},
 			}}, nil
 		},
+		ObserveChaosMatch: func(string, string, string, chaos.Rule) { matches.Add(1) },
 	})
 	request := httptest.NewRequest(http.MethodGet, "http://cache/healthz", nil)
 	ctx, cancel := context.WithTimeout(request.Context(), 50*time.Millisecond)
@@ -713,6 +716,9 @@ func TestServiceProxyTCPRulesDoNotAffectHTTP(t *testing.T) {
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()
 	if handled := proxy.applyScenarioChaos(recorder, request, trace.SpanFromContext(ctx), "run", "caller", "cache"); handled || recorder.Header().Get("X-Gregale-Chaos-Injected") != "" || ctx.Err() != nil {
-		t.Fatal("TCP rules affected an HTTP request")
+		t.Fatal("TCP or DNS rules affected an HTTP request")
+	}
+	if matches.Load() != 0 {
+		t.Fatalf("recorded %d HTTP chaos matches for network-only rules", matches.Load())
 	}
 }

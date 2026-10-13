@@ -23,7 +23,7 @@ func loadDevSession(client *Client, target devTarget) (api.DevSessionResponse, e
 	defer cancel()
 	session, err := client.GetDevSession(ctx, target.Project, target.WorkspaceID)
 	if isNotFound(err) {
-		return session, fmt.Errorf("no developer environment for %s from this source directory; start one with `gregale dev`", target.Project)
+		return session, fmt.Errorf("no developer environment for %s from this source directory; start one with `gregale dev`, or pass --name if it was started with a different --name", target.Project)
 	}
 	return session, err
 }
@@ -63,6 +63,10 @@ func cmdDevInfo(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  postgres: %s (%s; binding %s, injected as %s)\n", session.Postgres.Name,
 			session.Postgres.State, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 	}
+	for _, bucket := range session.Buckets {
+		_, _ = fmt.Fprintf(osStdout, "  bucket: %s (%s; %s under %s)\n", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
+	}
+
 	return 0
 }
 

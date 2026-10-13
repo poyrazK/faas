@@ -403,6 +403,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 			Ports:                     portsWithInternal(nil, w.InternalPorts),
+			// ADR-829: project-created apps get the same observe-only guard
+			// as POST /v1/apps. Drafts are create-only, so existing apps keep
+			// whatever they store.
+			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
 			BuildDockerfile: w.Dockerfile,
 		},
@@ -447,11 +451,11 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
 	manifest.ProjectImageHealthcheck = nil
+	if manifest.ExecutionMode == "" {
+		manifest.ExecutionMode = scanExecutionMode(w)
+	}
 	if w.Image == "" {
 		return
-	}
-	if manifest.ExecutionMode == "" {
-		manifest.ExecutionMode = projectImageExecutionMode(w)
 	}
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
@@ -461,6 +465,18 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if len(w.Ports) > 0 {
 		manifest.ProjectImagePort = w.Ports[0]
 	}
+}
+
+// scanExecutionMode is the execution mode a scanned workload's class needs.
+// Image workloads take worker and job modes (#4311). A built worker takes the
+// worker mode too: with the worker class alone, request wakes are refused,
+// the worker reconciler (which owns worker-mode apps) skips it, and nothing
+// restarts it once it parks (production-us hunt #9, H9-170).
+func scanExecutionMode(w reposcan.Workload) string {
+	if w.Image == "" && w.Class != reposcan.ClassWorker {
+		return ""
+	}
+	return projectImageExecutionMode(w)
 }
 
 func projectImageExecutionMode(w reposcan.Workload) string {
