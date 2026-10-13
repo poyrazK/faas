@@ -1,4 +1,4 @@
-# ADR-1152 · Availability architecture: regional cells, three-zone Postgres HA, fenced compute
+# ADR-1237 · Availability architecture: regional cells, three-zone Postgres HA, fenced compute
 
 - **Status:** proposed
 - **Date:** 2026-10-13
@@ -500,7 +500,7 @@ Required mechanisms:
 | P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
-| R · Land the regional branch | Renumber its ADRs past 1152 on the branch, then land it in dark, dependency-ordered PRs. Order: regions, builds, cell identity and directory, image releases, quota protocol, vmmd/sched/fcvm runtime, ingress, provisioning, billing. New apid code goes in `pkg/apid/<domain>` (ADR-982). | Each PR default-off with CI green; no behaviour change while dark |
+| R · Land the regional branch | Renumber its ADRs past the highest number on main, then land it in dark, dependency-ordered PRs. Order: regions, builds, cell identity and directory, image releases, quota protocol, vmmd/sched/fcvm runtime, ingress, provisioning, billing. New apid code goes in `pkg/apid/<domain>` (ADR-982). | Each PR default-off with CI green; no behaviour change while dark |
 | P6 · Activate multi-region (EU cell after launch) | EU cell with off-region backups in a second EU region; directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: other cells unaffected; global app keeps serving from the surviving region; the lost cell is restored from off-region backups within the RPO/RTO targets |
 
 **Order** (owner decision):
