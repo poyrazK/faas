@@ -319,7 +319,7 @@ type Server struct {
 	// here from a row already committed to a peer; without that
 	// distinction it could either strand a paused source or resume
 	// a VM after ownership moved away.
-	nodeID                        string
+	nodeID string
 	// qualificationNodeID is the durable local compute identity used by the
 	// attempt-aware qualification RPCs. A legacy single-box vmmd can use its
 	// seeded default-local row without enabling multi-node migration paths.
@@ -423,6 +423,15 @@ func (s *Server) WithDivergedInstances(diverged *DivergedInstances) *Server {
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
+// WithQualificationNodeID binds private qualification RPCs to the local
+// compute row, including the seeded default-local row in single-box mode.
+func (s *Server) WithQualificationNodeID(nodeID string) *Server {
+	if s != nil {
+		s.qualificationNodeID = strings.TrimSpace(nodeID)
 	}
 	return s
 }

@@ -61,20 +61,20 @@ import (
 // live socket-dialed client.
 type server struct {
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
-	profileBackend        profiling.Backend
-	profileQuerySlots     chan struct{}
-	guestTracingEnabled   bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durable               durable.Service // ADR-977; Host wired in newServer
-	object                object.Service  // ADR-977; Host wired in newServer
-	devBridgeEnabled      bool
-	devBridgeURL          string
-	devBridgeObserver     *devbridge.Observer
-	operation             operation.Service // ADR-977; Host wired in newServer
-	appEvents             appevents.Service // ADR-977; Host wired in newServer
-	featureFlagsEnabled   bool
-	aiGatewayEnabled      bool
-	outboundAI            outboundai.Service // ADR-977; Host wired in newServer
-	flagsWorkloadVerifier *workloadidentity.Verifier
+	profileBackend                         profiling.Backend
+	profileQuerySlots                      chan struct{}
+	guestTracingEnabled                    bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable                                durable.Service // ADR-977; Host wired in newServer
+	object                                 object.Service  // ADR-977; Host wired in newServer
+	devBridgeEnabled                       bool
+	devBridgeURL                           string
+	devBridgeObserver                      *devbridge.Observer
+	operation                              operation.Service // ADR-977; Host wired in newServer
+	appEvents                              appevents.Service // ADR-977; Host wired in newServer
+	featureFlagsEnabled                    bool
+	aiGatewayEnabled                       bool
+	outboundAI                             outboundai.Service // ADR-977; Host wired in newServer
+	flagsWorkloadVerifier                  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
 	objectStorage                 *objectstorage.Registry
