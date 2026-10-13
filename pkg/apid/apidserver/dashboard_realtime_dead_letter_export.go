@@ -2,8 +2,6 @@ package apidserver
 
 import (
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,8 +37,4 @@ func (s *server) renderRealtimeDeadLetterExport(w http.ResponseWriter, r *http.R
 	req.SetPathValue("channel", q.Get("channel"))
 	req.SetPathValue("group", q.Get("group"))
 	s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ExportRealtimeConsumerGroupDeadLetters))(w, req, acct)
-}
-
-func realtimeInspectorDeadLetterExportURL(slug, endpoint, channel, group string) string {
-	return "/dashboard/apps/" + url.PathEscape(slug) + "/realtime/dead-letters/export?" + url.Values{"endpoint_id": {endpoint}, "channel": {channel}, "group": {group}, "limit": {strconv.Itoa(api.RealtimeConsumerGroupDeadLetterExportMaxRows)}}.Encode()
 }

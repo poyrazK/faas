@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -126,64 +127,15 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	connectionID := "sse_" + uuid.NewString()
-	allowed := func() bool {
-		if ctx.Err() != nil || m.closed.Load() || node.revoked.Load() {
-			return false
-		}
-		if usesTicket {
-			claims, e := m.readTicket(ctx, id, token)
-			if e != nil || claims.Principal != principal {
-				return false
-			}
-			for _, allowed := range claims.Channels {
-				if allowed == channel {
-					return true
-				}
-			}
-			return false
-		}
-		current := *node.config.Load()
-		if current.ClientAuth.Mode != AuthModeOIDCJWT {
-			return false
-		}
-		authCtx, stop := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
-		defer stop()
-		verified, e := m.cfg.JWTAuthorizer.Authorize(authCtx, token, current.ClientAuth)
-		if e != nil {
-			return false
-		}
-		// Custom hooks may project a principal; revalidate the same projection.
-		if current.Authorize != nil {
-			verified, e = current.Authorize(authCtx, r)
-		}
-		if e != nil || verified != principal {
-			return false
-		}
-		if !usesTicket && m.cfg.AccessPreview {
-			accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)
-			access, e := m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, id, principal)
-			done()
-			if e != nil || sessionRevoked(access, issued) || channelDenied(access, channel) {
-				return false
-			}
-		}
-		parent, scope, e := api.ParseRealtimeActivityScope(channel)
-		if e != nil {
-			return false
-		}
-		permission := "read"
-		if scope != "" {
-			permission = "read_activity"
-		}
-		allow, e := authorizer.AuthorizeChannel(authCtx, Event{ID: "evt_" + uuid.NewString(), Type: EventAuthorizeChannel,
-			EndpointID: id, AppID: current.AppID, AccountID: current.AccountID, ConnectionID: connectionID,
-			Principal: principal, Channel: channel, Permission: permission, ActivityParentChannel: parent, ActivityScope: scope,
-			At: time.Now().UTC(), CallbackURL: current.CallbackURL, CallbackAuthToken: current.CallbackAuthToken})
-		return e == nil && allow
-	}
-	if !allowed() {
+	auth := &sseAuthorization{m: m, node: node, r: r, authorizer: authorizer, endpointID: id, channel: channel,
+		principal: principal, token: token, connectionID: "sse_" + uuid.NewString(), usesTicket: usesTicket,
+		issued: issued, ticketExpiry: ticketExpiry}
+	switch auth.check(ctx) {
+	case sseDenied:
 		http.Error(w, "not authorized", http.StatusForbidden)
+		return
+	case sseUnavailable:
+		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if !m.tryReserve(node) {
@@ -240,11 +192,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for {
-		if !allowed() {
-			if usesTicket && !time.Now().Before(ticketExpiry) {
-				return
-			}
-			send("error", "", map[string]string{"code": "access_revoked"})
+		if !auth.admit(ctx, send) {
 			return
 		}
 		if page.HistoryUnavailable || after > page.LatestSequence || (len(page.Messages) == 0 && after < page.LatestSequence) {
@@ -256,25 +204,10 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 				send("resync_required", "", map[string]string{"code": "sequence_gap"})
 				return
 			}
-			if ctx.Err() != nil || node.revoked.Load() {
+			// Recheck durable denies before each outbound event against a
+			// snapshot at most realtimeAccessRefreshInterval old.
+			if !auth.admit(ctx, send) {
 				return
-			}
-			// Recheck durable denies immediately before each outbound event.
-			if usesTicket && !allowed() {
-				if !time.Now().Before(ticketExpiry) {
-					return
-				}
-				send("error", "", map[string]string{"code": "access_revoked"})
-				return
-			}
-			if !usesTicket && m.cfg.AccessPreview {
-				accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)
-				access, e := m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, id, principal)
-				done()
-				if e != nil || sessionRevoked(access, issued) || channelDenied(access, channel) {
-					send("error", "", map[string]string{"code": "access_revoked"})
-					return
-				}
 			}
 			seq := strconv.FormatInt(message.Sequence, 10)
 			if message.Expired(time.Now().UTC()) {
@@ -307,8 +240,138 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		}
 		page, err = read()
 		if err != nil {
-			send("error", "", map[string]string{"code": "history_read_failed"})
+			// Transient: end the stream so the client reconnects from its cursor.
 			return
 		}
 	}
+}
+
+type sseVerdict uint8
+
+const (
+	sseAllowed sseVerdict = iota
+	sseDenied
+	// sseUnavailable covers lookup failures, timeouts and stream expiry. The
+	// stream ends without an error event, so clients reconnect and the next
+	// request repeats full authentication; only definitive denies are terminal.
+	sseUnavailable
+)
+
+// sseReauthorizeInterval bounds how often an open stream repeats identity
+// verification and the application channel callback. Durable denies and ticket
+// state still refresh every realtimeAccessRefreshInterval, as on WebSockets.
+const sseReauthorizeInterval = 30 * time.Second
+
+type sseAuthorization struct {
+	m                                                   *Manager
+	node                                                *endpointState
+	r                                                   *http.Request
+	authorizer                                          ChannelAuthorizer
+	endpointID, channel, principal, token, connectionID string
+	usesTicket                                          bool
+	issued, ticketExpiry                                time.Time
+	authorizedAt, refreshedAt                           time.Time
+}
+
+// admit reports whether the stream may continue. A definitive deny is sent to
+// the client as access_revoked; anything else ends the stream silently.
+func (a *sseAuthorization) admit(ctx context.Context, send func(string, string, any) bool) bool {
+	switch a.check(ctx) {
+	case sseAllowed:
+		return true
+	case sseDenied:
+		send("error", "", map[string]string{"code": "access_revoked"})
+	}
+	return false
+}
+
+func (a *sseAuthorization) check(ctx context.Context) sseVerdict {
+	if ctx.Err() != nil || a.m.closed.Load() || a.node.revoked.Load() {
+		return sseUnavailable
+	}
+	now := time.Now()
+	if a.usesTicket {
+		return a.checkTicket(ctx, now)
+	}
+	if now.Sub(a.authorizedAt) >= sseReauthorizeInterval {
+		if verdict := a.authorize(ctx); verdict != sseAllowed {
+			return verdict
+		}
+		a.authorizedAt = now
+	}
+	return a.checkAccess(ctx, now)
+}
+
+func (a *sseAuthorization) checkTicket(ctx context.Context, now time.Time) sseVerdict {
+	if !now.Before(a.ticketExpiry) {
+		return sseUnavailable
+	}
+	if now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
+		return sseAllowed
+	}
+	claims, err := a.m.readTicket(ctx, a.endpointID, a.token)
+	if err != nil {
+		return sseUnavailable
+	}
+	if claims.Principal != a.principal || !slices.Contains(claims.Channels, a.channel) {
+		return sseDenied
+	}
+	a.refreshedAt = now
+	return sseAllowed
+}
+
+func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
+	current := *a.node.config.Load()
+	if current.ClientAuth.Mode != AuthModeOIDCJWT {
+		return sseDenied
+	}
+	authCtx, stop := context.WithTimeout(ctx, a.m.cfg.CallbackTimeout)
+	defer stop()
+	verified, err := a.m.cfg.JWTAuthorizer.Authorize(authCtx, a.token, current.ClientAuth)
+	// Custom hooks may project a principal; revalidate the same projection.
+	if err == nil && current.Authorize != nil {
+		verified, err = current.Authorize(authCtx, a.r)
+	}
+	if err != nil {
+		return sseUnavailable
+	}
+	if verified != a.principal {
+		return sseDenied
+	}
+	parent, scope, err := api.ParseRealtimeActivityScope(a.channel)
+	if err != nil {
+		return sseDenied
+	}
+	permission := "read"
+	if scope != "" {
+		permission = "read_activity"
+	}
+	allow, err := a.authorizer.AuthorizeChannel(authCtx, Event{ID: "evt_" + uuid.NewString(), Type: EventAuthorizeChannel,
+		EndpointID: a.endpointID, AppID: current.AppID, AccountID: current.AccountID, ConnectionID: a.connectionID,
+		Principal: a.principal, Channel: a.channel, Permission: permission, ActivityParentChannel: parent, ActivityScope: scope,
+		At: time.Now().UTC(), CallbackURL: current.CallbackURL, CallbackAuthToken: current.CallbackAuthToken})
+	if err != nil {
+		return sseUnavailable
+	}
+	if !allow {
+		return sseDenied
+	}
+	return sseAllowed
+}
+
+func (a *sseAuthorization) checkAccess(ctx context.Context, now time.Time) sseVerdict {
+	if !a.m.cfg.AccessPreview || now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
+		return sseAllowed
+	}
+	accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)
+	access, err := a.m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, a.endpointID, a.principal)
+	done()
+	if err != nil {
+		return sseUnavailable
+	}
+	if sessionRevoked(access, a.issued) || channelDenied(access, a.channel) {
+		return sseDenied
+	}
+	a.refreshedAt = now
+	return sseAllowed
 }

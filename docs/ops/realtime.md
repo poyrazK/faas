@@ -2941,8 +2941,10 @@ repeat; apply events idempotently. Cancellation uses AbortSignal.
 SSE is receive-only, with one retained channel per HTTP connection. It shares
 connection and node subscription limits with WebSockets, and retains one bounded
 history page rather than a growing output queue. Slow writes hit the existing
-write deadline and disconnect. Identity/channel authorization is rechecked during
-polling and durable access controls before each event; failure closes the stream.
+write deadline and disconnect. Identity/channel authorization is rechecked at most
+every 30 seconds and durable access controls before each event (snapshot at most one
+second old). A definitive deny sends `access_revoked`; transient lookup, callback or
+history failures close the stream without an error event so clients reconnect.
 SSE connections are not represented in the WebSocket connection directory,
 presence or connect/disconnect callbacks. No ACK, durable server checkpoint,
 inbox, signal or client publish operation is provided by this transport.

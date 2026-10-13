@@ -21,11 +21,17 @@ Messages carry base64 data and retained metadata; SSE event IDs are sequences.
 No silent cursor reset occurs. SSE subscriptions do not provide ACKs, server
 checkpoints, inbox delivery, presence or ephemeral signals.
 
-Streams run for at most five minutes, revalidate identity and channel authorization
-between pages/polls and check durable denies before each message. Authorization
-failures terminate; partial in-flight writes cannot be recalled. Polling runs at
-no more than the existing resume poll interval and at most one second between
-idle checks. Heartbeat frames keep idle streams active. Each write has the existing
+Streams run for at most five minutes. Identity verification and the application
+channel callback repeat at most every 30 seconds per stream; durable denies and
+ticket state are checked before each message and between polls against a snapshot
+at most one second old, matching WebSocket access monitoring. A definitive deny
+(callback refusal, changed principal, denied channel, revoked session, ticket
+scope change) sends `access_revoked` and terminates; partial in-flight writes
+cannot be recalled. Lookup failures, callback errors or timeouts, history read
+failures and stream expiry end the stream without an error event, so clients
+reconnect and the next request repeats full authentication. Polling runs at no
+more than the existing resume poll interval and at most one second between idle
+checks. Heartbeat frames keep idle streams active. Each write has the existing
 write deadline; the server retains one bounded history page and has no outbound
 queue. Both endpoint and node connection reservations and node subscription slots
 are shared with WebSockets. SSE has no WebSocket connection directory entry or
