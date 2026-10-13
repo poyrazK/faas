@@ -85,6 +85,11 @@ func field[T any](over any, name string) T {
 	if !f.IsValid() {
 		panic(fmt.Sprintf("statetest: %T has no %s field", over, name))
 	}
+	if f.IsZero() {
+		// A nil store, as with an embedded nil: only the fake's overrides may be called.
+		var zero T
+		return zero
+	}
 	s, ok := f.Interface().(T)
 	if !ok {
 		panic(fmt.Sprintf("statetest: %T.%s is %s, not %s", over, name, f.Type(), reflect.TypeFor[T]()))

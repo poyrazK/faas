@@ -411,7 +411,7 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
-	@for f in faas-fleet.json warm-snapshot.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
+	@for f in faas-fleet.json warm-snapshot.json dev-loop.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
 	  if [ -f "deploy/grafana/$$f" ] && [ -f "deploy/ansible/roles/grafana/files/$$f" ]; then \
 	    a=$$(shasum -a 256 "deploy/grafana/$$f" | awk '{print $$1}'); \
 	    b=$$(shasum -a 256 "deploy/ansible/roles/grafana/files/$$f" | awk '{print $$1}'); \
@@ -588,6 +588,21 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-scenario-restart-acceptance test-scenario-restart-acceptance test-scenario-dependency-postgres
+native-scenario-restart-acceptance: ## Verify native checkout batches, restart checkpoint matrix, pending recovery, failure/cancellation and cleanup
+	@GO="$(GO)" bash scripts/ci/run-native-scenario-restart-acceptance.sh
+
+test-scenario-restart-acceptance: ## Portable native-gate contracts, Node fixtures and manifest checks; no native VM claim
+	@python3 scripts/ci/scenario-restart-native_test.py
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@node --test examples/scenario-checkout/test/checkout.test.mjs examples/scenario-checkout/test/durable.test.mjs examples/scenario-checkout/test/batch.test.mjs examples/scenario-checkout/test/native-probe.test.mjs examples/scenario-checkout/test/pool-exhaustion.test.mjs examples/scenario-http-write/test/write.test.mjs examples/scenario-http-write/test/in-flight.test.mjs examples/scenario-http-write/test/retry-budget.test.mjs examples/scenario-http-write/test/circuit-breaker.test.mjs examples/scenario-http-write/test/bulkhead.test.mjs examples/scenario-http-write/test/combined.test.mjs examples/scenario-http-write/test/isolation.test.mjs examples/scenario-http-write/test/request-correlation.test.mjs examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@$(GO) test ./cmd/gregale -run '^TestNativePoolCancellationRealCommandAndProxy$$|^TestNativeTransportNegativeAssertionsRealTCP$$|^TestRequestDeadline|^TestPoolExhaustion|^TestConnectionLeak|^TestDeclared.*Campaign|^TestCheckout.*ExampleManifest$$|^TestScenarioNativeAcceptanceHarness$$|^TestHTTPInFlightExampleManifest$$|^TestHTTPRestartMatrix|^TestHTTPDependencyRestart|^TestScenarioSecretEnvironment|^TestScenarioRestartInFlight' -race -count=1
+
+test-scenario-dependency-postgres: ## Verify dependency crash/replay and plaintext/TLS COMMIT faults, latency, bandwidth, read cuts, SSL/auth connection stalls, deployed COMMIT acknowledgement loss/deadlines, bandwidth restrictions, deployed read interruption/SSLRequest stalls, application retry budgets/circuit breakers/bulkheads, combined policies, repeated outage/recovery cycles, dependency isolation and recovery against Postgres 16
+	@node --test examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@python3 scripts/ci/scenario-dependency-postgres.py
+
 .PHONY: native-profiling-acceptance
 native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters and native restore with evidence
 	@result=0; bash scripts/ci/run-native-profiling-acceptance.sh || result=$$?; \
@@ -1448,6 +1463,10 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 test-environment-gitops-core: ## Strict contract, planner, worker, and real PostgreSQL lease/revision acceptance (no KVM).
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required; GitOps core acceptance refuses a skipped PostgreSQL run"; exit 1)
 	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
+
+.PHONY: test-environment-gitops-native
+test-environment-gitops-native: ## Isolated native API/worker/queue/guest acceptance with strict pass and leak gates.
+	@GO="$(GO)" bash scripts/test-environment-gitops-native.sh
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.

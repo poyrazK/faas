@@ -753,7 +753,12 @@ const (
 	// per million tokens; cost limits are millicents per UTC day or month.
 	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
 	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
-	OutboundAIPriceEntriesMax                 = 64
+	// Media prices (ADR-997): the ceiling of a per-image and a per-audio-
+	// minute price. Character prices are per million characters and share
+	// the per-million-token ceiling.
+	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
+	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
+	OutboundAIPriceEntriesMax                        = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -777,13 +782,50 @@ const (
 	OutboundAIBudgetAlertFullPercent            = 100
 	// Per-end-user attribution (ADR-994): the distinct X-Gregale-AI-User
 	// values rolled up per integration and UTC day (later ones aggregate
-	// under "~other" and only integration and app budgets limit them), how
-	// long those rollups stay, the page size of their listing and the
+	// under "~other"; with per-user limits set they are refused, ADR-996),
+	// how long those rollups stay, the page size of their listing and the
 	// longest end-user or session ID.
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
 	OutboundAIUserIDMaxBytes         = 64
+	// Opt-in content capture (ADR-996): the bytes kept of each logged
+	// call's request and response body, the captures per integration and
+	// UTC day, and how long they stay.
+	OutboundAIRequestContentMaxBytes      = 32 << 10
+	OutboundAIContentCapturesPerDay       = 1_000
+	OutboundAIRequestContentRetentionDays = 3
+	// Media metering (ADR-997): the images one call may reserve, the output
+	// tokens reserved per image when a model is not priced per image, the
+	// audio bitrate and audio tokens per second used to reserve an upload
+	// before its duration is known, and the response tail read for usage
+	// when a JSON response is larger than the parse limit.
+	OutboundAIImagesPerCallMax                  = 10
+	OutboundAIImageReserveOutputTokens    int64 = 8_192
+	OutboundAIAudioReserveBytesPerSecond  int64 = 2_000
+	OutboundAIAudioReserveTokensPerSecond int64 = 50
+	OutboundAIUsageTailBytes                    = 64 << 10
+	// The start of a multipart upload larger than the buffer that is read
+	// for its model field, and the size reserved for an audio upload of
+	// unknown length.
+	OutboundAIFormPrefixMaxBytes         = 64 << 10
+	OutboundAIAudioReserveMaxBytes int64 = 25 << 20
+	// Content guardrails (ADR-997): the blocked terms one integration may
+	// list and the longest term, and the bytes past a capture's limit that
+	// are scanned so a secret cut at the limit is still redacted.
+	OutboundAIBlockedTermsMax         = 32
+	OutboundAIBlockedTermMaxBytes     = 128
+	OutboundAICaptureRedactSlackBytes = 4 << 10
+	// Replay and compare (ADR-997): targets per replay, replays per
+	// integration and UTC day, how long replays stay, the output text kept
+	// per result, the deadline of one replayed call, and how long a replay
+	// may run before it is failed as interrupted.
+	OutboundAIReplayTargetsMax              = 5
+	OutboundAIReplaysPerDay                 = 100
+	OutboundAIReplayRetentionDays           = 3
+	OutboundAIReplayOutputTextMaxBytes      = 4 << 10
+	OutboundAIReplayCallTimeoutSeconds      = 120
+	OutboundAIReplayInterruptedAfterMinutes = 15
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -1020,6 +1062,10 @@ const (
 	// using the normal developer build.
 	DevPatchMaxEntries       = 200
 	DevPatchMaxBytes   int64 = 8 << 20
+	// DevWatchMinRAMMB is the smallest developer app RAM that may run watch
+	// mode (ADR-1170): development servers need far more memory than the
+	// production server of the same app.
+	DevWatchMinRAMMB = 512
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4545,7 +4591,7 @@ const (
 	MeasuredChargeHeadroomPercent = 25
 	// QuietPauseAfterMillis is how long an eligible function instance sits
 	// with nothing in flight before vmmd pauses its vCPUs until the next
-	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
@@ -4568,7 +4614,7 @@ const (
 	MeasuredEvictionTargetPercent = 90
 	// QuietPauseMaxVCPUOvercommitPercent caps a node's booked vCPU and CPU
 	// millicores, quiet-paused instances included, at this share of its
-	// budget under quiet pause admission (ADR-957); the gates otherwise
+	// budget under quiet pause admission (ADR-1151); the gates otherwise
 	// count only active instances. The ADR's simulation peaked at 265%.
 	QuietPauseMaxVCPUOvercommitPercent = 300
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
@@ -8625,6 +8671,17 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 const MeterCatchUpWindow = 24 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
 
+// MeterUsageFinalAfter is how long after a minute starts meterd may still write
+// compute usage for it: the catch-up window, the sampler's newest-closed-minute
+// offset, and one tick of skew. The provider pusher delivers an hour only when
+// every minute up to its end is recorded compute-complete or older than this,
+// so late catch-up rows can never land in an hour already delivered (ADR-1162).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+
+// SpendCapJobDeferInterval is how long a queued job task of an account at its
+// monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
+const SpendCapJobDeferInterval = time.Minute
+
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
@@ -9626,6 +9683,17 @@ const (
 	ServiceWakeAheadCacheTTL = 30 * time.Second
 )
 
+// RouteEvidenceWindow is how far back apid reads gateway-measured route
+// feature outcomes (wake-ahead, priority queue) for customers (ADR-1152).
+// RouteAdviceMinShed is how many requests the queue must have turned away or
+// displaced in that window before the advisor suggests route priorities.
+const (
+	RouteEvidenceWindow = 24 * time.Hour
+	RouteAdviceMinShed  = 10
+	// A priority suggestion proposes at most this many critical routes.
+	RouteAdviceMaxCriticalRoutes = 3
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.
@@ -10543,3 +10611,10 @@ const (
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
+
+// Bounded S3 checksum snapshots and object-attribute wire metadata.
+const MaxObjectMultipartChecksumSnapshotBytes = 2 << 20
+const MaxObjectChecksumValueBytes = 128
+const MaxObjectAttributesHeaderBytes = 128
+const MaxObjectStorageClassBytes = 64
+const MaxObjectAttributesSelections = 5

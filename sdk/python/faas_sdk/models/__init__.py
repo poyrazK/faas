@@ -285,6 +285,8 @@ from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
 from .app_streaming_status_cap_kind import AppStreamingStatusCapKind
 from .app_streaming_status_status import AppStreamingStatusStatus
+from .app_task_attach_info import AppTaskAttachInfo
+from .app_task_attach_info_subprotocol import AppTaskAttachInfoSubprotocol
 from .app_task_failure import AppTaskFailure
 from .app_task_list_response import AppTaskListResponse
 from .app_task_response import AppTaskResponse
@@ -595,6 +597,7 @@ from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidat
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
+from .create_environment_git_source_request_provider import CreateEnvironmentGitSourceRequestProvider
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
@@ -642,6 +645,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
@@ -801,6 +805,7 @@ from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_suspected_dependency import DebugSuspectedDependency
+from .debug_suspected_dependency_reason import DebugSuspectedDependencyReason
 from .debug_suspected_dependency_type import DebugSuspectedDependencyType
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
@@ -905,6 +910,7 @@ from .dev_sync_history_summary import DevSyncHistorySummary
 from .dev_sync_phase import DevSyncPhase
 from .dev_sync_phase_phase import DevSyncPhasePhase
 from .dev_sync_phase_status import DevSyncPhaseStatus
+from .dev_watch import DevWatch
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
@@ -1077,6 +1083,7 @@ from .environment_git_source import EnvironmentGitSource
 from .environment_git_source_spec import EnvironmentGitSourceSpec
 from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpecApprovalPolicy
 from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
+from .environment_git_source_spec_provider import EnvironmentGitSourceSpecProvider
 from .environment_git_source_update import EnvironmentGitSourceUpdate
 from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
 from .environment_job_schedule import EnvironmentJobSchedule
@@ -2624,9 +2631,22 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_content_body import OutboundAIContentBody
+from .outbound_ai_content_body_encoding import OutboundAIContentBodyEncoding
+from .outbound_ai_content_policy import OutboundAIContentPolicy
+from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
+from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
+from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
+from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_replay import OutboundAIReplay
+from .outbound_ai_replay_result import OutboundAIReplayResult
+from .outbound_ai_replay_source import OutboundAIReplaySource
+from .outbound_ai_replay_state import OutboundAIReplayState
+from .outbound_ai_replay_target import OutboundAIReplayTarget
+from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
@@ -3279,6 +3299,7 @@ from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_advice_evidence import RouteAdviceEvidence
 from .route_advice_impact import RouteAdviceImpact
 from .route_advice_response import RouteAdviceResponse
+from .route_advice_setting import RouteAdviceSetting
 from .route_advice_suggestion import RouteAdviceSuggestion
 from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
@@ -3468,6 +3489,10 @@ from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
 from .route_priorities_response import RoutePrioritiesResponse
 from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_queue_class import RoutePriorityQueueClass
+from .route_priority_queue_class_class import RoutePriorityQueueClassClass
+from .route_priority_queue_stats import RoutePriorityQueueStats
+from .route_priority_queue_stats_source import RoutePriorityQueueStatsSource
 from .route_priority_rule import RoutePriorityRule
 from .route_priority_rule_class import RoutePriorityRuleClass
 from .route_priority_rule_method import RoutePriorityRuleMethod
@@ -3532,6 +3557,7 @@ from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesRespon
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
 from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
+from .scenario_test_chaos_rule_status_code_type_0 import ScenarioTestChaosRuleStatusCodeType0
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -3600,7 +3626,10 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_learned import ServiceWakeAheadLearned
+from .service_wake_ahead_learned_source import ServiceWakeAheadLearnedSource
 from .service_wake_ahead_response import ServiceWakeAheadResponse
+from .service_wake_ahead_target import ServiceWakeAheadTarget
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -4428,6 +4457,8 @@ __all__ = (
     "AppStreamingStatus",
     "AppStreamingStatusCapKind",
     "AppStreamingStatusStatus",
+    "AppTaskAttachInfo",
+    "AppTaskAttachInfoSubprotocol",
     "AppTaskFailure",
     "AppTaskListResponse",
     "AppTaskResponse",
@@ -4695,6 +4726,7 @@ __all__ = (
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
     "CreateEnvironmentGitSourceRequestMode",
+    "CreateEnvironmentGitSourceRequestProvider",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
     "CreateInboundWebhookEndpointRequest",
@@ -4736,6 +4768,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
     "CreateOutboundCredentialKeyRequest",
@@ -4885,6 +4918,7 @@ __all__ = (
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
     "DebugSuspectedDependency",
+    "DebugSuspectedDependencyReason",
     "DebugSuspectedDependencyType",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
@@ -4989,6 +5023,7 @@ __all__ = (
     "DevSyncPhase",
     "DevSyncPhasePhase",
     "DevSyncPhaseStatus",
+    "DevWatch",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
@@ -5159,6 +5194,7 @@ __all__ = (
     "EnvironmentGitSourceSpec",
     "EnvironmentGitSourceSpecApprovalPolicy",
     "EnvironmentGitSourceSpecMode",
+    "EnvironmentGitSourceSpecProvider",
     "EnvironmentGitSourceUpdate",
     "EnvironmentGitSourceUpdateMode",
     "EnvironmentJobSchedule",
@@ -6602,9 +6638,22 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIContentBody",
+    "OutboundAIContentBodyEncoding",
+    "OutboundAIContentPolicy",
+    "OutboundAIContentPolicyEmail",
+    "OutboundAIContentPolicyIban",
+    "OutboundAIContentPolicyPaymentCard",
+    "OutboundAIContentPolicySecret",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIReplay",
+    "OutboundAIReplayResult",
+    "OutboundAIReplaySource",
+    "OutboundAIReplayState",
+    "OutboundAIReplayTarget",
+    "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",
@@ -7203,6 +7252,7 @@ __all__ = (
     "RouteAdviceEvidence",
     "RouteAdviceImpact",
     "RouteAdviceResponse",
+    "RouteAdviceSetting",
     "RouteAdviceSuggestion",
     "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
@@ -7392,6 +7442,10 @@ __all__ = (
     "RoutePolicyRuleUsage",
     "RoutePrioritiesResponse",
     "RoutePrioritiesResponseSource",
+    "RoutePriorityQueueClass",
+    "RoutePriorityQueueClassClass",
+    "RoutePriorityQueueStats",
+    "RoutePriorityQueueStatsSource",
     "RoutePriorityRule",
     "RoutePriorityRuleClass",
     "RoutePriorityRuleMethod",
@@ -7456,6 +7510,7 @@ __all__ = (
     "ScenarioTestChaosRule",
     "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
+    "ScenarioTestChaosRuleStatusCodeType0",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
@@ -7520,7 +7575,10 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadLearned",
+    "ServiceWakeAheadLearnedSource",
     "ServiceWakeAheadResponse",
+    "ServiceWakeAheadTarget",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",

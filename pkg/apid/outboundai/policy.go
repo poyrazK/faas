@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -56,7 +56,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		Provider: req.AIProvider, DailyTokenLimit: req.DailyTokenLimit,
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
-		UserDailyCostLimit: req.UserDailyCostLimitMillicents,
+		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }
@@ -100,7 +100,7 @@ func usageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageResponse {
 			Caller: item.Caller, Model: item.Model, Requests: item.Requests, ErrorRequests: item.ErrorRequests,
 			UsageUnknownRequests: item.UsageUnknownRequests, InputTokens: item.InputTokens,
 			CachedInputTokens: item.CachedInputTokens, CacheWriteTokens: item.CacheWriteTokens, OutputTokens: item.OutputTokens,
-			CostMillicents: item.CostMillicents,
+			CostMillicents: item.CostMillicents, Images: item.Images, AudioSeconds: item.AudioSeconds, Characters: item.Characters,
 		})
 	}
 	return out
@@ -172,4 +172,29 @@ func (s *Service) PutPrices(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	err := store.SetOutboundAIPrices(r.Context(), acct.ID, integrationID, req.Entries)
 	s.writeResult(w, err, "customer outbound integration not found", invalid)
+}
+
+// contentPolicyInvalidDetail explains a rejected content policy (ADR-997).
+const contentPolicyInvalidDetail = "email, payment_card, iban and secret must be off, redact or block; blocked_terms at most 32 " +
+	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider"
+
+// PutContentPolicy replaces a customer AI integration's content guardrails
+// (ADR-997).
+func (s *Service) PutContentPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID, ok := integrationPathID(w, r)
+	if !ok {
+		return
+	}
+	var policy api.OutboundAIContentPolicy
+	if err := httpkit.DecodeJSONSized(r, &policy, 16<<10); err != nil || !policy.Valid() {
+		problem(w, http.StatusBadRequest, api.CodeValidation, contentPolicyInvalidDetail)
+		return
+	}
+	store, ok := s.Host.Store().(state.OutboundAIContentPolicyStore)
+	if !ok {
+		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "Outbound AI gateway settings are unavailable")
+		return
+	}
+	err := store.SetOutboundAIContentPolicy(r.Context(), acct.ID, integrationID, policy)
+	s.writeResult(w, err, "customer outbound integration not found", contentPolicyInvalidDetail)
 }

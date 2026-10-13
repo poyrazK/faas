@@ -822,7 +822,7 @@ paths:
       tags: [outbound]
       operationId: listOutboundAIRequestLog
       summary: Page the opt-in AI request log.
-      description: Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
+      description: Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata. content_captured marks calls whose bodies were captured (ADR-996).
       parameters:
         - name: limit
           in: query
@@ -840,6 +840,128 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIRequestLogList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose captured call is replayed.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry whose capture is replayed.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIReplay
+      summary: Replay a captured AI call on other integrations or models.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target without
+        streaming; the calls count against the targets' budgets. At most 100 replays per integration per UTC day.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIReplayRequest' }
+      responses:
+        '202':
+          description: The pending replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIReplay' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The call has no capture that can be resent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: The integration reached its replays for the UTC day.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-replays/{replay}:
+    parameters:
+      - name: replay
+        in: path
+        required: true
+        description: UUID of the replay.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIReplay
+      summary: Read an AI replay and its results.
+      description: Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+      responses:
+        '200':
+          description: The replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIReplay' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-content-policy:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the customer AI integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundAIContentPolicy
+      summary: Replace an AI integration's content guardrails.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one, request
+        bodies the gateway cannot read are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
+      responses:
+        '204': { description: The policy was replaced. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/content:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRequestContent
+      summary: Read one logged AI call's captured bodies.
+      description: Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call without one is not found.
+      responses:
+        '200':
+          description: The captured bodies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRequestContent' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -5333,6 +5455,54 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks/{id}/attach:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: attachAppTask
+      summary: Attach to an interactive app task (WebSocket).
+      description: |
+        ADR-1037. Served by the compute gateway, not apid. Requires the account
+        credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+        task's create response, and the `gregale-app-task-attach-v1`
+        WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+        size. The token is consumed by the first successful attach. Binary
+        messages start with a type byte: client 0x01 stdin, 0x02 resize
+        (rows, cols as big-endian uint16), 0x03 stdin close; server 0x10
+        attached, 0x11 stdout, 0x12 stderr, 0x13 terminal JSON
+        (`status`, `exit_code`, `failure`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: rows
+          in: query
+          required: false
+          description: Initial terminal height for TTY sessions; defaults to 24.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+        - name: cols
+          in: query
+          required: false
+          description: Initial terminal width for TTY sessions; defaults to 80.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '101':
+          description: Switching to the attach WebSocket.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The task VM is still starting; retry after the Retry-After interval.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The session ended, already has a client, or its attach window closed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account:
     get:
@@ -48404,12 +48574,21 @@ components:
           enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
-      description: Select a Git definition in the project repository; repository identities are verified by
-        the server.
+      description: Select a Git definition. GitHub uses the project's bound repository;
+        GitLab.com requires an account OAuth connection, a repository path and an explicit ref.
+        Repository identity is verified by the server. GitLab.com currently supports report
+        mode, manual approval and prune=false.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
+          default: github
+        repository:
+          type: string
+          description: Canonical GitLab.com group/project path, including subgroups when present.
         ref:
           type: string
-          description: Git ref selecting candidates; defaults to the project production branch.
+          description: Git ref selecting candidates; GitHub defaults to the project production branch.
         manifest_path:
           type: string
           minLength: 1
@@ -48432,7 +48611,7 @@ components:
       additionalProperties: false
     PreviewEnvironmentGitRevisionRequest:
       type: object
-      description: An exact GitHub commit to fetch and review.
+      description: An exact Git commit to fetch and review.
       properties:
         commit_sha:
           type: string
@@ -48736,6 +48915,9 @@ components:
       type: object
       description: Pinned repository identity and source-of-truth controls for one environment.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
         repository_id:
           type: integer
           format: int64
@@ -48763,6 +48945,7 @@ components:
         prune:
           type: boolean
       required:
+      - provider
       - repository_id
       - installation_id
       - repository
@@ -49859,11 +50042,11 @@ components:
           items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
     RouteAdviceSuggestion:
       type: object
-      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is empty and setting carries the proposal."
       required: [id, kind, method, route, title, rationale, evidence, impact, rules]
       properties:
         id: {"type": "string", "description": "Stable for the same kind, method and route."}
-        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle", "wake_ahead", "priority"]}
         method: {"type": "string"}
         route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
         title: {"type": "string"}
@@ -49876,6 +50059,16 @@ components:
         rules:
           type: array
           items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+        setting: { $ref: '#/components/schemas/RouteAdviceSetting' }
+    RouteAdviceSetting:
+      type: object
+      description: "The app setting a wake_ahead or priority suggestion proposes; apply it through PUT /v1/apps/{slug}/service-wake-ahead or PUT /v1/apps/{slug}/route-priorities."
+      properties:
+        wake_ahead: {"type": "boolean", "description": "Turn service wake-ahead on."}
+        route_priorities:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteAdviceEvidence:
       type: object
       description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
@@ -49910,6 +50103,32 @@ components:
         slug: {"type": "string"}
         enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+        learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
+    ServiceWakeAheadLearned:
+      type: object
+      description: "What the gateways measured for this caller app (ADR-1152): its top service edges and what wake-ahead did over the evidence window. Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, caller_wakes, targets]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the outcome counts, for example 24h."}
+        caller_wakes: {"type": "integer", "format": "int64", "description": "Cold wakes of this app the evidence covers (older wakes decay)."}
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceWakeAheadTarget' }
+    ServiceWakeAheadTarget:
+      type: object
+      description: "One measured caller-to-service edge and its wake-ahead outcomes."
+      required: [app_id, slug, call_share, cold_share, qualifies, started, used, unused, failed]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        slug: {"type": "string"}
+        call_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of cold wakes followed by a call to this service."}
+        cold_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of those calls that found it parked or woken ahead."}
+        qualifies: {"type": "boolean", "description": "The edge meets the wake-ahead thresholds."}
+        started: {"type": "integer", "format": "int64"}
+        used: {"type": "integer", "format": "int64"}
+        unused: {"type": "integer", "format": "int64"}
+        failed: {"type": "integer", "format": "int64"}
     SetServiceWakeAheadRequest:
       type: object
       description: "Turns service wake-ahead on or off for one app."
@@ -49937,6 +50156,27 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RoutePriorityRule' }
         updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+        queue: { $ref: '#/components/schemas/RoutePriorityQueueStats' }
+    RoutePriorityQueueStats:
+      type: object
+      description: "How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, classes]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the counts, for example 24h."}
+        classes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityQueueClass' }
+    RoutePriorityQueueClass:
+      type: object
+      description: "Queue outcomes for one priority class."
+      required: [class, queued, displacing, displaced, rejected]
+      properties:
+        class: {"type": "string", "enum": ["critical", "normal", "bulk"]}
+        queued: {"type": "integer", "format": "int64", "description": "Requests that waited for capacity."}
+        displacing: {"type": "integer", "format": "int64", "description": "Requests that took a lower class's queue place."}
+        displaced: {"type": "integer", "format": "int64", "description": "Requests that lost their place to a higher class."}
+        rejected: {"type": "integer", "format": "int64", "description": "Requests turned away because the queue was full."}
     SetRoutePrioritiesRequest:
       type: object
       description: "Replaces the saved route priorities; an empty list saves none."
@@ -52147,7 +52387,11 @@ components:
           description: Calendar-month cost limit priced from the integration's price list (ADR-990).
         ai_request_log_enabled:
           type: boolean
-          description: Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
+          description: Whether every settled AI call writes one metadata row to the request log (ADR-991).
+        ai_request_log_content:
+          type: boolean
+          description: Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
+        ai_content_policy: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -52224,6 +52468,9 @@ components:
         request_log_enabled:
           type: boolean
           description: Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
+        request_log_content:
+          type: boolean
+          description: Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -52239,9 +52486,9 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters]
       properties:
-        caller: { type: string, description: 'App UUID, or "runs" for stateless Runs.' }
+        caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
@@ -52251,6 +52498,9 @@ components:
         cache_write_tokens: { type: integer, format: int64, minimum: 0 }
         output_tokens: { type: integer, format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0, description: 'Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an unpriced model.' }
+        images: { type: integer, format: int64, minimum: 0, description: Images billed per image (ADR-997). }
+        audio_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of transcribed audio. }
+        characters: { type: integer, format: int64, minimum: 0, description: Characters of speech input. }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -52428,7 +52678,11 @@ components:
           maximum: 100000000000
     OutboundAIPriceEntry:
       type: object
-      description: Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins), in millicents per million tokens. Absent cached or cache-write prices use the input price.
+      description: >-
+        Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins). Token prices
+        are millicents per million tokens; absent cached, cache-write and input-image prices use the input price and an
+        absent output-image price uses the output price. Media prices (ADR-997) are per image, per minute of input audio
+        and per million input characters, and are zero when absent.
       required: [model_prefix, input_millicents_per_mtok, output_millicents_per_mtok]
       properties:
         model_prefix: { type: string, minLength: 1, maxLength: 128 }
@@ -52436,6 +52690,11 @@ components:
         cached_input_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
         cache_write_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
         output_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        input_image_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        output_image_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        millicents_per_image: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per image when a call reports no output image tokens. }
+        millicents_per_audio_minute: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per minute of transcribed audio. }
+        millicents_per_million_characters: { type: integer, format: int64, minimum: 0, maximum: 1000000000, description: Charged per million characters of speech input. }
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -52615,8 +52874,8 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIBudgetAlert' }
     OutboundAIRequestLogEntry:
       type: object
-      description: One settled AI call's metadata (ADR-991). No request or response content is kept.
-      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user]
+      description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured]
       properties:
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -52634,6 +52893,108 @@ components:
         ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
         attempts: { type: integer, minimum: 0 }
         end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
+        content_captured: { type: boolean, description: Whether the call's bodies can be read from its content endpoint (ADR-996). }
+    OutboundAIContentBody:
+      type: object
+      description: The start of one captured body.
+      required: [body, encoding, truncated, content_type]
+      properties:
+        body: { type: string, description: 'The captured bytes as text, or base64 when they are not UTF-8.' }
+        encoding: { type: string, enum: [utf-8, base64] }
+        truncated: { type: boolean, description: 'True when the body was longer than the 32 KiB kept, or streamed without buffering.' }
+        content_type: { type: [string, 'null'], description: The response Content-Type; null for requests. }
+    OutboundAIRequestContent:
+      type: object
+      description: One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers (ADR-996). Personal data and secrets are redacted (ADR-997).
+      required: [request_id, created_at, request_path, request, response]
+      properties:
+        request_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        request_path: { type: [string, 'null'], description: The provider path of the call; null for captures made before ADR-997. }
+        request: { $ref: '#/components/schemas/OutboundAIContentBody' }
+        response: { $ref: '#/components/schemas/OutboundAIContentBody' }
+    OutboundAIContentPolicy:
+      type: object
+      description: >-
+        An integration's content guardrails (ADR-997). Each detector is off, redacts its findings before the request
+        reaches the provider, or blocks the request. A request containing a blocked term, compared without case, is
+        blocked. The gateway checks the string values of JSON bodies and the text fields of forms.
+      required: [email, payment_card, iban, secret, blocked_terms]
+      properties:
+        email: { type: string, enum: ['', 'off', redact, block] }
+        payment_card: { type: string, enum: ['', 'off', redact, block] }
+        iban: { type: string, enum: ['', 'off', redact, block] }
+        secret: { type: string, enum: ['', 'off', redact, block], description: 'API keys, tokens and private keys.' }
+        blocked_terms:
+          type: array
+          maxItems: 32
+          items: { type: string, minLength: 1, maxLength: 128 }
+    OutboundAIReplayTarget:
+      type: object
+      description: One integration a captured call is replayed on; a target on another provider than the captured call's needs a model.
+      required: [integration_id]
+      properties:
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128 }
+    CreateOutboundAIReplayRequest:
+      type: object
+      description: Replay a captured call on up to 5 targets (ADR-997).
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/OutboundAIReplayTarget' }
+    OutboundAIReplaySource:
+      type: object
+      description: The captured call a replay resends.
+      required: [model, status, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, output_text]
+      properties:
+        model: { type: string }
+        status: { type: integer }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        output_text: { type: [string, 'null'], description: Text read from the captured response. }
+    OutboundAIReplayResult:
+      type: object
+      description: One target's replayed call. status is null without a response and outcome null when the call was refused before it reached the provider.
+      required: [integration_id, model, status, outcome, error_code, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, output_text, response]
+      properties:
+        integration_id: { type: string, format: uuid }
+        model: { type: [string, 'null'] }
+        status: { type: [integer, 'null'] }
+        outcome: { type: [string, 'null'], description: 'known, unknown or error; null when the call did not settle.' }
+        error_code: { type: [string, 'null'], description: Problem code of a refused or failed call. }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        output_text: { type: string, maxLength: 4096, description: 'Up to 4 KiB of the response text, redacted.' }
+        response: { $ref: '#/components/schemas/OutboundAIContentBody' }
+    OutboundAIReplay:
+      type: object
+      description: A replay of one captured call and, once done, its results in target order (ADR-997).
+      required: [id, integration_id, request_id, state, error_code, created_at, finished_at, targets, source, results]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, running, done, failed] }
+        error_code: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIReplayTarget' }
+        source: { $ref: '#/components/schemas/OutboundAIReplaySource' }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIReplayResult' }
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.
@@ -58145,6 +58506,19 @@ components:
           format: int64
           minimum: 3600
           description: How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
+        watch:
+          $ref: '#/components/schemas/DevWatch'
+
+    DevWatch:
+      description: Watch mode (ADR-1170). The environment runs this development server instead of the production build, and live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not require authentication.
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: One-line command that starts the development server, for example "npm run dev".
 
     RegisterScenarioTestRequest:
       description: Complete set of developer sessions in one isolated scenario run.
@@ -58182,12 +58556,18 @@ components:
       type: object
       required: [to, kind, percent, seed]
       properties:
+        correlation_scope: { type: string, pattern: '^[0-9a-f]{16}$', description: Optional strict per-request HTTP attempt scope; requires a full-coverage latency/status rule with an explicit source. }
         from: { type: string, minLength: 3, maxLength: 40 }
         to: { type: string, minLength: 3, maxLength: 40 }
-        kind: { type: string, enum: [latency, http_status, dns_latency, dns_timeout, dns_servfail, dns_nxdomain, tcp_latency, tcp_bandwidth, tcp_timeout, tcp_reset, tcp_connect_timeout, tcp_connect_refused] }
+        kind: { type: string, enum: [latency, http_status, http_malformed_json, http_truncated_body, http_response_lost, dns_latency, dns_timeout, dns_servfail, dns_nxdomain, tcp_latency, tcp_bandwidth, tcp_timeout, tcp_reset, tcp_connect_timeout, tcp_connect_refused] }
         percent: { type: integer, minimum: 1, maximum: 100 }
         latency_ms: { type: integer, minimum: 1, maximum: 30000 }
-        status_code: { type: integer, minimum: 500, maximum: 599 }
+        status_code:
+          description: Synthetic HTTP status; accepts 429 or 500 through 599.
+          oneOf:
+            - { type: integer, enum: [429] }
+            - { type: integer, minimum: 500, maximum: 599 }
+        retry_after_seconds: { type: integer, minimum: 1, maximum: 30, description: Optional Retry-After delta-seconds header. Only valid for http_status with status_code 429 or 503. }
         seed: { type: integer, minimum: 0 }
         port: { type: integer, minimum: 1, maximum: 65535, description: Required target port for TCP rules. }
         direction: { type: string, enum: [upstream, downstream, both], description: TCP direction relative to the calling application. Defaults to both; connection faults require both. }
@@ -58305,6 +58685,7 @@ components:
           type: array
           description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
           items: { $ref: '#/components/schemas/DevBucketResponse' }
+        watch: { $ref: '#/components/schemas/DevWatch' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.
@@ -73319,7 +73700,7 @@ components:
       properties:
         instance_id: { type: string, description: "Authorized active runtime instance ID." }
         workload_name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', description: "Sidecar workload name. Omitted for the main workload." }
-        runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm], description: "Current active instance state." }
+        runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm, frozen], description: "Current active instance state." }
         reload_support: { type: string, enum: [enabled, disabled, unknown], description: "Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted metadata." }
         reported: { type: boolean, description: "Whether this runtime has reported a guest-init outcome. False is unknown, never success." }
         version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only when reported is true." }
@@ -77280,8 +77661,13 @@ components:
         Gregale HTTPS service-binding canary and is handled by guest-init.
         `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
         configured outbound probe; the server supplies immutable gateway routing metadata.
+        `interactive=true` admits an ADR-1037 session (operator-gated): the
+        command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
+        and bounds the session, no output is retained, and the create
+        response carries a one-time `attach` credential for
+        GET /v1/apps/{slug}/tasks/{id}/attach. `tty` allocates a terminal.
       type: object
-      required: [command]
+      required: []
       additionalProperties: false
       properties:
         verification_deployment_id: { type: string, format: uuid, description: "Exact source deployment for a reserved binding verification probe; omit for the current manual-task selection." }
@@ -77293,7 +77679,18 @@ components:
           items: { type: string, maxLength: 4096 }
         command_shell: { type: boolean, default: false }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
-        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive sessions." }
+        interactive: { type: boolean, default: false, description: "Admit an interactive session (ADR-1037). The command is required unless interactive." }
+        tty: { type: boolean, default: false, description: "Allocate a pseudo-terminal; requires interactive." }
+
+    AppTaskAttachInfo:
+      description: One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response.
+      type: object
+      required: [token, path, subprotocol]
+      properties:
+        token: { type: string, description: "Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach." }
+        path: { type: string, description: "Gateway WebSocket path for this task." }
+        subprotocol: { type: string, enum: [gregale-app-task-attach-v1] }
 
     AppTaskFailure:
       description: Bounded customer-visible failure details for an app task.
@@ -77340,6 +77737,8 @@ components:
         finished_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        interactive: { type: boolean, description: "Present on the create response of an interactive session." }
+        attach: { $ref: '#/components/schemas/AppTaskAttachInfo' }
 
     AppTaskListResponse:
       description: |
@@ -81658,6 +82057,7 @@ components:
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
         dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
+        error_type: { type: string, maxLength: 96, pattern: '^[A-Za-z0-9._:$/-]+$', description: "Failure class of an error span, from the error.type attribute or the first recorded exception.type (for example QueryTimeout or 503). Exception messages and stack traces are never retained." }
 
     DebugCriticalPathSpan:
       type: object
@@ -81697,7 +82097,7 @@ components:
     DebugDependencyLatencyItem:
       type: object
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
-      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
+      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression, failure_regression]
       properties:
         type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
@@ -81722,6 +82122,8 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
+        failure_regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline." }
+        top_error_type: { type: string, maxLength: 96, description: "Most frequent span failure class, from the current side when it has failures." }
 
     DebugDependencyImpactEdge:
       type: object
@@ -81914,7 +82316,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [dependency_failure, request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -82068,7 +82470,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency most likely behind this route regression (ADR-958): the one whose p95 regressed most between the previous and the regressed deployment, else one that started failing more often. Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
@@ -82077,6 +82479,10 @@ components:
         p95_base_ms: { type: integer, format: int64, minimum: 0 }
         p95_ms: { type: integer, format: int64, minimum: 0 }
         regression_factor: { type: number, minimum: 0 }
+        reason: { type: string, enum: [latency, failures], description: "latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded before failure attribution, which are latency suspects." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_type: { type: string, maxLength: 96 }
 
     DebugRegressionActionRequest:
       type: object

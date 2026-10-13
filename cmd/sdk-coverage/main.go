@@ -51,6 +51,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":               true, // ADR-1037 WebSocket attach; the CLI drives it directly
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
@@ -569,6 +570,10 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
 	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content":        "GetOutboundAIRequestContent",
+	"POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays":       "CreateOutboundAIReplay",
+	"GET /v1/outbound/ai-replays/{replay}":                                             "GetOutboundAIReplay",
+	"PUT /v1/outbound/integrations/{integration}/ai-content-policy":                    "SetOutboundAIContentPolicy",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
 	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",

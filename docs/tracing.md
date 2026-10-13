@@ -39,6 +39,21 @@ says so directly, for example:
 The same comparison is available for the whole app under dependency latency
 (`deployment_comparison`).
 
+Failures are compared the same way. A span that ends with error status counts
+as a failed call, and its failure class is kept: the `error.type` attribute,
+or the type of the first recorded exception (`QueryTimeout`, `503`). Exception
+messages and stack traces are never retained, since they often contain request
+data. When a request fails while one of its dependency calls failed, the
+evidence names that call:
+
+> The request failed while its call to postgresql "SELECT orders" failed with QueryTimeout.
+
+A dependency that fails materially more often than on the previous deployment
+is flagged as `failure_regression`. That needs at least 3 failed calls, and an
+error rate at least 5 percentage points and twice above baseline:
+
+> http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
+
 ## What is traced
 
 On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale

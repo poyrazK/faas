@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.dev_bucket_request import DevBucketRequest
     from ..models.dev_postgres_request import DevPostgresRequest
+    from ..models.dev_watch import DevWatch
 
 
 T = TypeVar("T", bound="UpsertDevSessionRequest")
@@ -39,6 +40,11 @@ class UpsertDevSessionRequest:
     lease_seconds: int | Unset = UNSET
     """How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's
     developer lease maximum return 403 plan_limit_developer_lease."""
+    watch: DevWatch | Unset = UNSET
+    """Watch mode (ADR-1170). The environment runs this development server instead of the production build, and
+    live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
+    next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
+    or does not require authentication."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +71,10 @@ class UpsertDevSessionRequest:
 
         lease_seconds = self.lease_seconds
 
+        watch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.watch, Unset):
+            watch = self.watch.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -80,6 +90,8 @@ class UpsertDevSessionRequest:
             field_dict["buckets"] = buckets
         if lease_seconds is not UNSET:
             field_dict["lease_seconds"] = lease_seconds
+        if watch is not UNSET:
+            field_dict["watch"] = watch
 
         return field_dict
 
@@ -87,6 +99,7 @@ class UpsertDevSessionRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.dev_bucket_request import DevBucketRequest
         from ..models.dev_postgres_request import DevPostgresRequest
+        from ..models.dev_watch import DevWatch
 
         d = dict(src_dict)
         _type_ = d.pop("type", UNSET)
@@ -123,6 +136,13 @@ class UpsertDevSessionRequest:
 
         lease_seconds = d.pop("lease_seconds", UNSET)
 
+        _watch = d.pop("watch", UNSET)
+        watch: DevWatch | Unset
+        if isinstance(_watch, Unset):
+            watch = UNSET
+        else:
+            watch = DevWatch.from_dict(_watch)
+
         upsert_dev_session_request = cls(
             type_=type_,
             runtime=runtime,
@@ -130,6 +150,7 @@ class UpsertDevSessionRequest:
             postgres=postgres,
             buckets=buckets,
             lease_seconds=lease_seconds,
+            watch=watch,
         )
 
         upsert_dev_session_request.additional_properties = d

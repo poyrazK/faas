@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentAudit
 AppendDeploymentLog
 AppendDeploymentStage
 AppendEventWithTrace
@@ -279,7 +278,6 @@ ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
 ListAllEventsPaged
-ListAllInstances
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
@@ -478,7 +476,6 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
-RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -512,7 +509,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

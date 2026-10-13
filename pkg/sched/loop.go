@@ -2379,15 +2379,16 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
-	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps and
-	// suspended accounts from the table source of truth on every reaper tick so
-	// a restart or missed lifecycle notification cannot leave unbillable VMs
-	// live. This runs before the normal idle snapshot.
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
+	// suspended accounts and accounts at their spend cap (ADR-1162) from the
+	// table source of truth on every reaper tick so a restart or missed
+	// lifecycle notification cannot leave unbillable VMs live. This runs
+	// before the normal idle snapshot.
 	for _, app := range apps {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
-				mustPark = account.Status == state.AccountSuspended || account.AbuseHeld()
+				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}

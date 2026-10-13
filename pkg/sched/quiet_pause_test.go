@@ -1,4 +1,4 @@
-// adr: 957 — schedd asks vmmd to quiet-pause only function apps that serve
+// adr: 1151 — schedd asks vmmd to quiet-pause only function apps that serve
 // HTTP, woken as ordinary instances, outside private networks.
 package sched
 

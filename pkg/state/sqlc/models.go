@@ -1056,6 +1056,15 @@ type AppTask struct {
 	BindingVerification  []byte
 }
 
+type AppTaskAttachSession struct {
+	TaskID            pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	NodeID            pgtype.Text
+	NodeRecordedAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
 type AppTcpListener struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -2336,6 +2345,12 @@ type DevSourcePatch struct {
 	ApplyError       pgtype.Text
 }
 
+type DevWatchSetting struct {
+	AppID     pgtype.UUID
+	Command   string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -2537,6 +2552,7 @@ type EnvironmentGitSource struct {
 	SourceDefinitionDigest string
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
+	Provider               string
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -3594,6 +3610,17 @@ type GithubWebhookSecret struct {
 	SecretValue    []byte
 	UpgradedAt     pgtype.Timestamptz
 	UpgradedBy     string
+}
+
+type GitlabOauthConnection struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	Version           int64
+	ConnectedAt       pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type GooseDbVersion struct {
@@ -5480,6 +5507,8 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionSnapshot         []byte
 	ProtectionLeaseToken       string
 	ProtectionVerified         bool
+	ChecksumSnapshot           []byte
+	ChecksumVerified           bool
 }
 
 type ObjectStorageRequestMetric struct {
@@ -5828,12 +5857,17 @@ type OutboundAiBudgetAlert struct {
 }
 
 type OutboundAiPriceEntry struct {
-	PriceListID                  pgtype.UUID
-	ModelPrefix                  string
-	InputMillicentsPerMtok       int64
-	CachedInputMillicentsPerMtok pgtype.Int8
-	CacheWriteMillicentsPerMtok  pgtype.Int8
-	OutputMillicentsPerMtok      int64
+	PriceListID                    pgtype.UUID
+	ModelPrefix                    string
+	InputMillicentsPerMtok         int64
+	CachedInputMillicentsPerMtok   pgtype.Int8
+	CacheWriteMillicentsPerMtok    pgtype.Int8
+	OutputMillicentsPerMtok        int64
+	InputImageMillicentsPerMtok    pgtype.Int8
+	OutputImageMillicentsPerMtok   pgtype.Int8
+	MillicentsPerImage             pgtype.Int8
+	MillicentsPerAudioMinute       pgtype.Int8
+	MillicentsPerMillionCharacters pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -5841,6 +5875,52 @@ type OutboundAiPriceList struct {
 	IntegrationID pgtype.UUID
 	EffectiveFrom pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiReplay struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	IntegrationID        pgtype.UUID
+	LogID                pgtype.UUID
+	TargetIntegrationIds []pgtype.UUID
+	TargetModels         []string
+	State                string
+	ErrorCode            pgtype.Text
+	SourceOutputText     pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+}
+
+type OutboundAiReplayResult struct {
+	ReplayID            pgtype.UUID
+	Position            int16
+	TargetIntegrationID pgtype.UUID
+	Model               pgtype.Text
+	Status              pgtype.Int2
+	Outcome             pgtype.Text
+	ErrorCode           pgtype.Text
+	InputTokens         int64
+	OutputTokens        int64
+	CostMillicents      int64
+	DurationMs          int32
+	TtfbMs              pgtype.Int4
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType pgtype.Text
+	OutputText          string
+}
+
+type OutboundAiRequestContent struct {
+	LogID               pgtype.UUID
+	IntegrationID       pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	RequestBody         []byte
+	RequestTruncated    bool
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType pgtype.Text
+	RequestPath         pgtype.Text
 }
 
 type OutboundAiRequestLog struct {
@@ -5893,6 +5973,9 @@ type OutboundAiUsageDaily struct {
 	OutputTokens         int64
 	UpdatedAt            pgtype.Timestamptz
 	CostMillicents       int64
+	Images               int64
+	AudioSeconds         int64
+	Characters           int64
 }
 
 type OutboundAiUserUsageDaily struct {
@@ -5965,6 +6048,12 @@ type OutboundIntegration struct {
 	AiRequestLogEnabled            bool
 	AiUserDailyTokenLimit          pgtype.Int8
 	AiUserDailyCostLimitMillicents pgtype.Int8
+	AiRequestLogContent            bool
+	AiContentEmail                 string
+	AiContentPaymentCard           string
+	AiContentIban                  string
+	AiContentSecret                string
+	AiContentBlockedTerms          []string
 }
 
 type OutboundIntegrationApp struct {

@@ -169,7 +169,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 	translated := route.Format == api.OutboundAIRouteFormatOpenAI
 	if translated && (!replayable || r.Method != http.MethodPost || !openAIRoutePath(providerPath)) {
 		writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
-			"OpenAI-format routes accept buffered chat completions and embeddings requests only", "")
+			"OpenAI-format routes accept buffered chat completions, Responses and embeddings requests only", "")
 		return
 	}
 	targets := route.Targets
@@ -220,9 +220,11 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // openAIRoutePath reports whether an openai-format route can translate the
-// provider path: chat completions (ADR-991) or embeddings (ADR-995).
+// provider path: chat completions (ADR-991), embeddings (ADR-995) or
+// Responses API requests (ADR-996).
 func openAIRoutePath(providerPath string) bool {
-	return strings.HasSuffix(providerPath, "/chat/completions") || strings.HasSuffix(providerPath, "/embeddings")
+	return strings.HasSuffix(providerPath, "/chat/completions") || strings.HasSuffix(providerPath, "/embeddings") ||
+		strings.HasSuffix(providerPath, "/responses")
 }
 
 // bufferRouteBody keeps a body of at most the AI buffer bound for replay

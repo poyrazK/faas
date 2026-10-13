@@ -3264,7 +3264,11 @@ type AccountData struct {
 	// /dashboard/install/connect with this token + the matching named
 	// faas_csrf_github_connect sidecar cookie. Same envelope shape as
 	// the delete / restore tokens above — sealed by (action, account_id).
-	ConnectGithubConfirmToken string
+	ConnectGithubConfirmToken    string
+	GitLabOAuthAvailable         bool
+	GitLabUsername               string
+	GitLabConnectConfirmToken    string
+	GitLabDisconnectConfirmToken string
 	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
 	// a dedicated cookie name because the account page renders several
 	// independently action-bound forms at once.

@@ -1460,12 +1460,12 @@ func (s *Server) beginActivity(instanceID string) {
 	s.activity.Begin(instanceID)
 }
 
-// quietResumer is the ADR-957 capability fcvm.Manager provides.
+// quietResumer is the ADR-1151 capability fcvm.Manager provides.
 type quietResumer interface {
 	QuietResume(ctx context.Context, instance string) error
 }
 
-// resumeQuiet resumes a quiet-paused instance (ADR-957) before the bridge
+// resumeQuiet resumes a quiet-paused instance (ADR-1151) before the bridge
 // dials its guest. Callers mark activity first, so the pause pass cannot
 // pause the guest again while the forward runs. A failed resume fails the
 // forward fast instead of letting it hang on a paused guest.
@@ -1480,7 +1480,7 @@ func (s *Server) resumeQuiet(ctx context.Context, instanceID string) error {
 	return nil
 }
 
-// quietReporter reports an instance's ADR-957 quiet pause state.
+// quietReporter reports an instance's ADR-1151 quiet pause state.
 type quietReporter interface {
 	QuietPauseState(instance string) (paused bool, since time.Time)
 }

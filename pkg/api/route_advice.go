@@ -5,7 +5,17 @@ const (
 	RouteAdviceKindCache    = "cache"
 	RouteAdviceKindAsync    = "async"
 	RouteAdviceKindThrottle = "throttle"
+	// App-level setting suggestions (ADR-1152); they carry Setting, not Rules.
+	RouteAdviceKindWakeAhead = "wake_ahead"
+	RouteAdviceKindPriority  = "priority"
 )
+
+// RouteAdviceSetting is the app setting a wake_ahead or priority suggestion
+// proposes. Applying it goes through the setting's own API.
+type RouteAdviceSetting struct {
+	WakeAhead       *bool               `json:"wake_ahead,omitempty"`
+	RoutePriorities []RoutePriorityRule `json:"route_priorities,omitempty"`
+}
 
 // RouteAdviceResponse is GET /v1/apps/{slug}/routes/advice: edge-rule
 // suggestions derived from retained request telemetry. Nothing is applied;
@@ -34,6 +44,7 @@ type RouteAdviceSuggestion struct {
 	Impact    RouteAdviceImpact       `json:"impact"`
 	Cautions  []string                `json:"cautions,omitempty"`
 	Rules     []CreateEdgeRuleRequest `json:"rules"`
+	Setting   *RouteAdviceSetting     `json:"setting,omitempty"`
 }
 
 // RouteAdviceEvidence is the observed traffic a suggestion rests on.

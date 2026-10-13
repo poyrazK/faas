@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/chaos"
-	"math"
 )
 
 func validateTestConnectionAttempts(phase testLoadChaosPhaseSpec) error {
@@ -12,8 +11,11 @@ func validateTestConnectionAttempts(phase testLoadChaosPhaseSpec) error {
 	if spec == nil {
 		return nil
 	}
-	if !testHTTPNamePattern.MatchString(spec.Request) || spec.MinRequests < 1 || spec.MinRequests > testLoadMaxRequests || math.IsNaN(spec.MaxAttemptsPerRequest) || math.IsInf(spec.MaxAttemptsPerRequest, 0) || spec.MaxAttemptsPerRequest <= 0 || spec.MaxAttemptsPerRequest > 1000 {
-		return fmt.Errorf("phase %q connection_attempts requires a named request, min_requests between 1 and %d, and max_attempts_per_request above 0 and at most 1000", phase.Name, testLoadMaxRequests)
+	if spec.PerRequest {
+		return fmt.Errorf("phase %q per_request requires HTTP dependency attempts; TCP streams do not carry request IDs", phase.Name)
+	}
+	if err := validateTestAttemptBudget(phase.Name, "connection_attempts", spec); err != nil {
+		return err
 	}
 	if len(phase.Rules) != 1 {
 		return fmt.Errorf("phase %q connection_attempts requires exactly one TCP fault rule", phase.Name)
