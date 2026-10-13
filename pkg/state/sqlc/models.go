@@ -1902,19 +1902,24 @@ type DatabaseRoleVerifier struct {
 }
 
 type DatabaseVm struct {
-	DatabaseID     pgtype.UUID
-	NodeID         string
-	PostgresMajor  int32
-	VcpuCount      int32
-	MemMib         int32
-	VolumeBytes    int64
-	State          string
-	Bootstrapped   bool
-	AlwaysOn       bool
-	LastError      pgtype.Text
-	LastActiveAt   pgtype.Timestamptz
-	StateChangedAt pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	State                string
+	Bootstrapped         bool
+	AlwaysOn             bool
+	LastBackupAt         pgtype.Timestamptz
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
+	RestoreLeaseUntil    pgtype.Timestamptz
+	LastError            pgtype.Text
+	LastActiveAt         pgtype.Timestamptz
+	StateChangedAt       pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
 }
 
 type DeadLetterEvent struct {

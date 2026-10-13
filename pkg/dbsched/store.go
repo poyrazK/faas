@@ -37,6 +37,8 @@ var (
 	ErrNoCapacity      = errors.New("dbsched: no database node has capacity")
 	ErrConflict        = errors.New("dbsched: database is in another state")
 	ErrNodeUnavailable = errors.New("dbsched: database node unavailable")
+	// ErrInvalid reports a request that cannot be carried out as asked.
+	ErrInvalid = errors.New("dbsched: invalid request")
 )
 
 // Node is one database node.
@@ -60,7 +62,15 @@ type VM struct {
 	Bootstrapped bool
 	// AlwaysOn databases are never parked for idleness; the keep-warm sweep
 	// wakes them when found parked (scale_to_zero = false).
-	AlwaysOn       bool
+	AlwaysOn bool
+	// LastBackupAt is the last successful base backup (zero: none).
+	LastBackupAt time.Time
+	// RestoreWindowSeconds is how far back the database may be restored.
+	RestoreWindowSeconds int64
+	// RestoreSource and RestoreTarget record a point-in-time restore: the
+	// database recovered from and the instant. Both are empty otherwise.
+	RestoreSource  string
+	RestoreTarget  time.Time
 	LastError      string
 	LastActiveAt   time.Time
 	StateChangedAt time.Time
@@ -86,8 +96,9 @@ type Store interface {
 	Get(ctx context.Context, id string) (VM, error)
 	List(ctx context.Context, states ...State) ([]VM, error)
 	// Place inserts vm as provisioning on the active node with the most
-	// free volume capacity that fits it. An existing row is returned
-	// unchanged, so provisioning retries converge.
+	// free volume capacity that fits it; a set vm.NodeID allows only that
+	// node. An existing row is returned unchanged, so provisioning retries
+	// converge.
 	Place(ctx context.Context, vm VM) (VM, error)
 	// AdmitWake moves a parked database to waking if its node's RAM
 	// ceiling admits the VM's billable memory. A database already waking
@@ -100,6 +111,12 @@ type Store interface {
 	// SetAlwaysOn changes whether idle parking applies. A deleting
 	// database is ErrConflict.
 	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error
+	// RecordBackup stamps a successful base backup.
+	RecordBackup(ctx context.Context, id string, at time.Time) error
+	// ClaimRestore takes the lease on a provisioning restore (held zero)
+	// or renews the lease held, returning the new lease. A lease another
+	// replica holds, or a database no longer restoring, is ErrConflict.
+	ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
 }
@@ -129,12 +146,13 @@ type nodeUsage struct {
 }
 
 // pickNode chooses the active node with the most free volume capacity that
-// still fits volumeBytes. Ties break on node id for determinism.
-func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64) (Node, bool) {
+// still fits volumeBytes; a non-empty pin allows only that node. Ties break
+// on node id for determinism.
+func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin string) (Node, bool) {
 	var best Node
 	var bestFree int64 = -1
 	for _, n := range nodes {
-		if n.Lifecycle != NodeActive {
+		if n.Lifecycle != NodeActive || (pin != "" && n.ID != pin) {
 			continue
 		}
 		free := n.VolumeCapacityBytes - usage[n.ID].volumeBytes

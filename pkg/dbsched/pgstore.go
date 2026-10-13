@@ -71,12 +71,17 @@ func (s *PgStore) Nodes(ctx context.Context) ([]Node, error) {
 }
 
 func vmFromRow(r sqlc.DatabaseVm) VM {
-	return VM{
+	vm := VM{
 		DatabaseID: uuid.UUID(r.DatabaseID.Bytes).String(), NodeID: r.NodeID, Major: int(r.PostgresMajor),
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
-		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
+		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
+		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time,
 	}
+	if r.RestoreSource.Valid {
+		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
+	}
+	return vm
 }
 
 func (s *PgStore) Get(ctx context.Context, id string) (VM, error) {
@@ -139,7 +144,7 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if err != nil {
 			return VM{}, err
 		}
-		node, ok := pickNode(nodes, usage, vm.VolumeBytes)
+		node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID)
 		if !ok {
 			return VM{}, ErrNoCapacity
 		}
@@ -154,10 +159,18 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if node.VolumeCapacityBytes-usage[node.ID].volumeBytes < vm.VolumeBytes {
 			return VM{}, ErrNoCapacity
 		}
-		if _, err := s.q.InsertDatabaseVM(ctx, tx, sqlc.InsertDatabaseVMParams{
+		params := sqlc.InsertDatabaseVMParams{
 			DatabaseID: key, NodeID: node.ID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount),
 			MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes, AlwaysOn: vm.AlwaysOn,
-		}); err != nil {
+			RestoreWindowSeconds: vm.RestoreWindowSeconds,
+		}
+		if vm.RestoreSource != "" {
+			if params.RestoreSource, err = pgUUID(vm.RestoreSource); err != nil {
+				return VM{}, err
+			}
+			params.RestoreTarget = pgtype.Timestamptz{Time: vm.RestoreTarget, Valid: true}
+		}
+		if _, err := s.q.InsertDatabaseVM(ctx, tx, params); err != nil {
 			return VM{}, fmt.Errorf("dbsched: insert %s: %w", vm.DatabaseID, err)
 		}
 		return s.get(ctx, tx, vm.DatabaseID)
@@ -221,6 +234,41 @@ func (s *PgStore) transition(ctx context.Context, db sqlc.DBTX, id string, from 
 		return ErrConflict
 	}
 	return nil
+}
+
+func (s *PgStore) RecordBackup(ctx context.Context, id string, at time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.RecordDatabaseVMBackup(ctx, s.pool, sqlc.RecordDatabaseVMBackupParams{At: pgtype.Timestamptz{Time: at, Valid: true}, DatabaseID: key})
+	if err != nil {
+		return fmt.Errorf("dbsched: record backup %s: %w", id, err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	until, err := s.q.ClaimDatabaseVMRestore(ctx, s.pool, sqlc.ClaimDatabaseVMRestoreParams{
+		LeaseSeconds: lease.Seconds(), DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := s.Get(ctx, id); err != nil {
+			return time.Time{}, err
+		}
+		return time.Time{}, ErrConflict
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dbsched: claim restore %s: %w", id, err)
+	}
+	return until.Time, nil
 }
 
 func (s *PgStore) SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error {

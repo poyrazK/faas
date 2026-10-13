@@ -2599,6 +2599,10 @@ message StartDatabaseRequest {
   // Optional volume ceilings per service class; zero means unlimited.
   int64 volume_bandwidth_bytes_per_sec = 5;
   int64 volume_ops_per_sec = 6;
+  // A point-in-time restore boot (ADR-1027): the empty volume becomes
+  // restore_source as of restore_target. Both or neither.
+  string restore_source = 7;
+  google.protobuf.Timestamp restore_target = 8;
 }
 
 message StartDatabaseResponse {
@@ -2614,12 +2618,15 @@ message StopDatabaseResponse {}
 
 message DatabaseControlRequest {
   string database_id = 1;
-  // One of status, bootstrap, admin_sql. Stop goes through StopDatabase.
+  // One of status, bootstrap, admin_sql, basebackup, flush_wal. Stop goes
+  // through StopDatabase.
   string op = 2;
   // admin_sql only: statements run as the superuser, stopping at the first
   // error; atomic batches wrap themselves in BEGIN/COMMIT.
   // Sensitive (can carry role passwords): never logged.
   string sql = 3;
+  // flush_wal only: the instant the archive must cover.
+  google.protobuf.Timestamp after = 4;
 }
 
 message DatabaseControlResponse {
@@ -2629,6 +2636,8 @@ message DatabaseControlResponse {
   string error_code = 3;
   // PostgreSQL SQLSTATE of a failed admin_sql batch.
   string sqlstate = 4;
+  // Id of the base backup a basebackup op stored (ADR-1027).
+  string backup = 5;
 }
 
 message DatabaseSessionFrame {

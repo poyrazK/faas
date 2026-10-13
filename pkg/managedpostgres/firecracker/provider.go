@@ -17,10 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -37,6 +39,7 @@ type Scheduler interface {
 	SetDatabaseAlwaysOn(ctx context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	// ParkDatabase suspends a database; only the scale-to-zero prober uses it.
 	ParkDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	RestoreDatabase(ctx context.Context, in *scheddpb.RestoreDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -63,6 +66,10 @@ type Config struct {
 	Majors          []int
 	Classes         map[managedpostgres.ServiceClass]shape
 	MaxStorageBytes int64
+	// MaxRestoreWindowSeconds turns point-in-time restore on when positive
+	// (set only where dbbackupd archives the database nodes' WAL) and bounds
+	// a spec's restore window.
+	MaxRestoreWindowSeconds int64
 	// CredentialKey derives each credential's password and SCRAM salt
 	// (at least 32 bytes, from the variable secret_env.credential_key names).
 	// Issuing the same identity again yields the same login, which the
@@ -81,6 +88,7 @@ const (
 	settingDatabase   = "database_name"
 	settingMajors     = "postgres_majors"
 	settingMaxStorage = "max_storage_bytes"
+	settingMaxRestore = "max_restore_window_seconds"
 )
 
 // ParseConfig reads the backend settings. Class shapes are fixed and
@@ -134,6 +142,13 @@ func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 		}
 		cfg.MaxStorageBytes = max
 	}
+	if v := s[settingMaxRestore]; v != "" {
+		window, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || window < 0 {
+			return Config{}, fmt.Errorf("firecracker: invalid max_restore_window_seconds %q", v)
+		}
+		cfg.MaxRestoreWindowSeconds = window
+	}
 	return cfg, nil
 }
 
@@ -170,10 +185,10 @@ func (p *Provider) WithConnector(c Connector) *Provider {
 
 var _ managedpostgres.Provider = (*Provider)(nil)
 
-// Capabilities states what the backend does today. It has no point-in-time
-// restore or usage meters yet (ADR-1027 phasing), so it accepts only specs
-// without a restore window and reports no usage. A database switches
-// between scale-to-zero and always-on in place.
+// Capabilities states what the backend does today. Point-in-time restore is
+// on where the deployment archives WAL (max_restore_window_seconds); there
+// are no usage meters yet (ADR-1027 phasing). A database switches between
+// scale-to-zero and always-on in place.
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	classes := make([]managedpostgres.ServiceClass, 0, len(p.cfg.Classes))
 	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
@@ -182,13 +197,15 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		}
 	}
 	return managedpostgres.Capabilities{
-		PostgresMajors:    append([]int(nil), p.cfg.Majors...),
-		ServiceClasses:    classes,
-		Availability:      []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
-		ScaleToZero:       true,
-		ScaleToZeroUpdate: true,
-		MaxStorageBytes:   p.cfg.MaxStorageBytes,
+		PostgresMajors:          append([]int(nil), p.cfg.Majors...),
+		ServiceClasses:          classes,
+		Availability:            []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		ScaleToZero:             true,
+		ScaleToZeroUpdate:       true,
+		MaxStorageBytes:         p.cfg.MaxStorageBytes,
+		PointInTimeRestore:      p.cfg.MaxRestoreWindowSeconds > 0,
+		MaxRestoreWindowSeconds: p.cfg.MaxRestoreWindowSeconds,
 	}
 }
 
@@ -198,11 +215,8 @@ func (p *Provider) Provision(ctx context.Context, req managedpostgres.ProvisionR
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	shape := p.cfg.Classes[req.Spec.Class]
-	rt, err := p.scheduler.ProvisionDatabase(ctx, &scheddpb.ProvisionDatabaseRequest{
-		DatabaseId: req.ResourceID, PostgresMajor: int32(req.Spec.PostgresMajor), VcpuCount: int32(shape.vcpus),
-		MemMib: int32(shape.memMiB), VolumeBytes: req.Spec.StorageLimitBytes, AlwaysOn: !req.Spec.ScaleToZero,
-	})
+	id := resourceUUID(req.ResourceID)
+	rt, err := p.scheduler.ProvisionDatabase(ctx, p.provisionRequest(id, req.Spec))
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
 	}
@@ -213,10 +227,32 @@ func (p *Provider) Provision(ctx context.Context, req managedpostgres.ProvisionR
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if err := p.admin(ctx, req.ResourceID, init); err != nil {
+	if err := p.admin(ctx, id, init); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return p.Inspect(ctx, req.ResourceID)
+	return p.Inspect(ctx, id)
+}
+
+func (p *Provider) provisionRequest(id string, spec managedpostgres.Spec) *scheddpb.ProvisionDatabaseRequest {
+	shape := p.cfg.Classes[spec.Class]
+	return &scheddpb.ProvisionDatabaseRequest{
+		DatabaseId: id, PostgresMajor: int32(spec.PostgresMajor), VcpuCount: int32(shape.vcpus),
+		MemMib: int32(shape.memMiB), VolumeBytes: spec.StorageLimitBytes, AlwaysOn: !spec.ScaleToZero,
+		RestoreWindowSeconds: spec.RestoreWindowSeconds,
+	}
+}
+
+// resourceNamespace scopes the database ids derived from resource ids.
+var resourceNamespace = uuid.MustParse("6f1b7c2e-0d4a-5e8f-9b3c-1a2d3e4f5a6b")
+
+// resourceUUID is the schedd database id of a resource id: the id itself
+// when it is a UUID (Gregale's database ids are), otherwise a name-based
+// UUID of it, so a retry with the same resource id names the same VM.
+func resourceUUID(resourceID string) string {
+	if id, err := uuid.Parse(resourceID); err == nil && len(resourceID) == 36 {
+		return id.String()
+	}
+	return uuid.NewSHA1(resourceNamespace, []byte(resourceID)).String()
 }
 
 // supports admits only specs Inspect reports back unchanged, since the
@@ -244,8 +280,13 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 
 func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.ObservedDatabase {
 	// The dataset is the database's volume, which only this resource id
-	// names; a future restore creates a new id.
+	// names; a restore creates a new id.
 	obs := managedpostgres.ObservedDatabase{ProviderResourceID: rt.GetDatabaseId(), DataResourceID: rt.GetDatabaseId(), ComputeState: managedpostgres.ComputeStateUnknown}
+	if rt.GetRestoreSourceId() != "" && rt.GetRestoreTarget() != nil {
+		// Schedd's record of what the volume was recovered from, fixed when
+		// the restore was placed.
+		obs.RestoreLineage = &managedpostgres.RestoreLineage{SourceResourceID: rt.GetRestoreSourceId(), PointInTime: rt.GetRestoreTarget().AsTime()}
+	}
 	switch rt.GetState() {
 	case "parked":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateSuspended
@@ -268,7 +309,7 @@ func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.Observ
 func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 	spec := managedpostgres.Spec{
 		Region: p.cfg.Region, PostgresMajor: int(rt.GetPostgresMajor()), Availability: managedpostgres.AvailabilitySingleZone,
-		ScaleToZero: !rt.GetAlwaysOn(), StorageLimitBytes: rt.GetVolumeBytes(),
+		ScaleToZero: !rt.GetAlwaysOn(), StorageLimitBytes: rt.GetVolumeBytes(), RestoreWindowSeconds: rt.GetRestoreWindowSeconds(),
 	}
 	for class, s := range p.cfg.Classes {
 		if int32(s.vcpus) == rt.GetVcpuCount() && int32(s.memMiB) == rt.GetMemMib() {
@@ -294,23 +335,43 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: req.ResourceID, AlwaysOn: !req.Spec.ScaleToZero})
+	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: resourceUUID(req.ResourceID), AlwaysOn: !req.Spec.ScaleToZero})
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
 	}
 	return p.observed(rt), nil
 }
 
-// Restore: not yet (ADR-1027 phasing).
-func (p *Provider) Restore(context.Context, managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
-	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+// Restore creates the database as the source recovered to the point in
+// time, from the source's archived WAL and base backups (ADR-1027
+// durability). Schedd restores it in the background: the database reports
+// pending until it has recovered, promoted and taken its own first base
+// backup. Repeating the request returns the same database.
+func (p *Provider) Restore(ctx context.Context, req managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	if req.ResourceID == "" || req.SourceResourceID == "" || req.ResourceID == req.SourceResourceID || req.PointInTime.IsZero() {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	if !p.Capabilities().PointInTimeRestore {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+	}
+	if err := p.supports(req.Spec); err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	rt, err := p.scheduler.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{
+		Database: p.provisionRequest(resourceUUID(req.ResourceID), req.Spec), SourceDatabaseId: req.SourceResourceID,
+		PointInTime: timestamppb.New(req.PointInTime),
+	})
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, providerError(err)
+	}
+	return p.observed(rt), nil
 }
 
 // Delete removes the VM, its volume and every published verifier.
 func (p *Provider) Delete(ctx context.Context, req managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
 	id := req.ProviderResourceID
 	if id == "" {
-		id = req.ResourceID
+		id = resourceUUID(req.ResourceID)
 	}
 	if _, err := p.scheduler.DeleteDatabase(ctx, &scheddpb.DatabaseRef{DatabaseId: id}); err != nil && status.Code(err) != codes.NotFound {
 		return managedpostgres.DeleteResult{}, providerError(err)

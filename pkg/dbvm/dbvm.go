@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -46,6 +47,9 @@ type Spec struct {
 	// Archive turns WAL archiving on in the guest; set only when the host
 	// relays archive streams (pkg/dbarchive).
 	Archive bool
+	// RestoreTarget, when set, boots the empty volume as a point-in-time
+	// restore to that instant; it needs Archive.
+	RestoreTarget time.Time
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -59,6 +63,8 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("dbvm: %d MiB is too little memory for postgres", s.MemSizeMiB)
 	case s.GuestCID < 3:
 		return fmt.Errorf("dbvm: guest cid %d is reserved", s.GuestCID)
+	case !s.RestoreTarget.IsZero() && !s.Archive:
+		return errors.New("dbvm: a point-in-time restore needs the archive")
 	}
 	return nil
 }
@@ -72,11 +78,14 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 		return fcvm.VMConfig{}, err
 	}
 	bootArgs, err := fcvm.DatabaseBootArgs(s.Major)
-	if err == nil && s.Archive {
-		bootArgs += " " + dbguest.ArchiveArg
-	}
 	if err != nil {
 		return fcvm.VMConfig{}, fmt.Errorf("dbvm: %w", err)
+	}
+	if s.Archive {
+		bootArgs += " " + dbguest.ArchiveArg
+	}
+	if !s.RestoreTarget.IsZero() {
+		bootArgs += " " + dbguest.RestoreTargetArg(s.RestoreTarget)
 	}
 	return fcvm.VMConfig{
 		BootSource: fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},

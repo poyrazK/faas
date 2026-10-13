@@ -16,18 +16,28 @@ import (
 // fakeVMM models vmmd plus guest-init: volumes, running VMs and whether a
 // volume was bootstrapped.
 type fakeVMM struct {
-	mu           sync.Mutex
-	volumes      map[string]bool // id -> bootstrapped
-	running      map[string]bool
-	calls        []string
-	startErr     error
-	controlErr   error
+	mu         sync.Mutex
+	volumes    map[string]bool // id -> bootstrapped
+	running    map[string]bool
+	calls      []string
+	startErr   error
+	controlErr error
+	// archive makes basebackup succeed; otherwise the guest reports
+	// archiving off.
+	archive      bool
 	adminResp    dbguest.Response
 	lastAdminSQL string
+	// restoreBoots are the targets of restore boots; restoreFail makes
+	// them fail, and restoreHold keeps them recovering until closed.
+	restoreBoots []time.Time
+	restoring    map[string]bool
+	restoreFail  bool
+	restoreHold  chan struct{}
+	flushes      map[string]time.Time
 }
 
 func newFakeVMM() *fakeVMM {
-	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}}
+	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}}
 }
 
 func (f *fakeVMM) record(call string) {
@@ -63,6 +73,10 @@ func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
 		return errors.New("no volume")
 	}
 	f.running[vm.DatabaseID] = true
+	if vm.RestoreSource != "" && !vm.Bootstrapped {
+		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
+		f.restoring[vm.DatabaseID] = true
+	}
 	return nil
 }
 
@@ -71,6 +85,7 @@ func (f *fakeVMM) Stop(_ context.Context, _ Node, id string) error {
 	defer f.mu.Unlock()
 	f.record("stop")
 	delete(f.running, id)
+	delete(f.restoring, id)
 	return nil
 }
 
@@ -88,10 +103,37 @@ func (f *fakeVMM) Control(_ context.Context, _ Node, id string, req dbguest.Requ
 		f.record("bootstrap")
 		f.volumes[id] = true
 		return dbguest.Response{State: dbguest.StateReady}, nil
+	case dbguest.OpBaseBackup:
+		if !f.archive {
+			return dbguest.Response{State: dbguest.StateReady, Error: dbguest.ErrCodeArchiveOff}, nil
+		}
+		f.record("basebackup")
+		return dbguest.Response{State: dbguest.StateReady, Backup: "20261013T000000Z"}, nil
 	case dbguest.OpAdminSQL:
 		f.record("admin_sql")
 		f.lastAdminSQL = req.SQL
 		return f.adminResp, nil
+	case dbguest.OpFlushWAL:
+		if !f.archive {
+			return dbguest.Response{State: dbguest.StateReady, Error: dbguest.ErrCodeArchiveOff}, nil
+		}
+		f.record("flush")
+		f.flushes[id] = req.After
+		return dbguest.Response{State: dbguest.StateReady}, nil
+	}
+	if f.restoring[id] {
+		switch {
+		case f.restoreFail:
+			return dbguest.Response{State: dbguest.StateFailed, Error: dbguest.ErrCodeRestoreFailed}, nil
+		case f.restoreHold != nil:
+			select {
+			case <-f.restoreHold:
+			default:
+				return dbguest.Response{State: dbguest.StateStarting}, nil
+			}
+		}
+		f.volumes[id] = true
+		return dbguest.Response{State: dbguest.StateReady}, nil
 	}
 	if !f.volumes[id] {
 		return dbguest.Response{State: dbguest.StateNeedsBootstrap}, nil

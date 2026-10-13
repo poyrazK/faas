@@ -1,0 +1,16 @@
+# Managed by Ansible (dbbackupd_service). ADR-1027 durability.
+socket_path = "{{ dbbackupd_socket_path }}"
+store_dir = "{{ dbbackupd_store_dir }}"
+ops_addr = "127.0.0.1:9110"
+{% if dbbackupd_s3_bucket | length > 0 %}
+
+[remote]
+endpoint = "{{ dbbackupd_s3_endpoint }}"
+region = "{{ dbbackupd_s3_region }}"
+bucket = "{{ dbbackupd_s3_bucket }}"
+prefix = "{{ dbbackupd_s3_prefix }}"
+path_style = {{ dbbackupd_s3_path_style | bool | lower }}
+access_key_id_path = "/etc/faas/dbbackupd/s3-access-key-id"
+secret_access_key_path = "/etc/faas/dbbackupd/s3-secret-access-key"
+upload_interval = "{{ dbbackupd_upload_interval }}"
+{% endif %}

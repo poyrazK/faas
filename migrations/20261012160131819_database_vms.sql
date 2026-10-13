@@ -40,12 +40,28 @@ CREATE TABLE IF NOT EXISTS database_vms (
     -- Always-on databases are never parked for idleness, and schedd wakes
     -- them when they are found parked (scale_to_zero = false).
     always_on boolean NOT NULL DEFAULT false,
+    -- Last successful base backup (ADR-1027 durability); the scheduler
+    -- backs up running databases older than its interval.
+    last_backup_at timestamptz,
+    -- How far back the customer may restore; WAL and base backups are kept
+    -- at least this long.
+    restore_window_seconds bigint NOT NULL DEFAULT 0
+        CHECK (restore_window_seconds >= 0),
+    -- A point-in-time restore's lineage: the database whose archive this
+    -- one was recovered from, and the instant. Fixed at placement.
+    restore_source uuid,
+    restore_target timestamptz,
+    -- The schedd replica running a restore holds this lease and renews it.
+    restore_lease_until timestamptz,
     -- Stable error code of the last failed transition; never free text.
     last_error text
         CHECK (last_error IS NULL OR last_error ~ '^[a-z_]{1,64}$'),
     last_active_at timestamptz,
     state_changed_at timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT database_vms_restore_lineage
+        CHECK ((restore_source IS NULL) = (restore_target IS NULL)
+            AND restore_source IS DISTINCT FROM database_id)
 );
 
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx

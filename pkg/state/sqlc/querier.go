@@ -183,6 +183,10 @@ type Querier interface {
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
+	// Takes (held is NULL) or renews (held is the current lease) the lease on
+	// a provisioning restore. The lease is the database clock's, so replicas'
+	// clocks do not matter.
+	ClaimDatabaseVMRestore(ctx context.Context, db DBTX, arg ClaimDatabaseVMRestoreParams) (pgtype.Timestamptz, error)
 	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueLegacyWorkflowRunParams) (WorkflowRun, error)
 	// The scheduler's fair dispatcher handles both native and Operations runs.
 	// The legacy-only claim above remains available to callers that must preserve
@@ -2960,6 +2964,7 @@ type Querier interface {
 	RecordAppSecretRuntimeReloadObservation(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadObservationParams) (int64, error)
 	RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error)
 	RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
+	RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg RecordDatabaseVMBackupParams) (int64, error)
 	// The first acknowledgement wins; later instances applying the same
 	// generation do not move the recorded time.
 	RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (int64, error)

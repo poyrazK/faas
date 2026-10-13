@@ -3182,6 +3182,31 @@ func (q *Queries) ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 	return i, err
 }
 
+const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = $3::timestamptz)
+RETURNING restore_lease_until
+`
+
+type ClaimDatabaseVMRestoreParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// Takes (held is NULL) or renews (held is the current lease) the lease on
+// a provisioning restore. The lease is the database clock's, so replicas'
+// clocks do not matter.
+func (q *Queries) ClaimDatabaseVMRestore(ctx context.Context, db DBTX, arg ClaimDatabaseVMRestoreParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMRestore, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var restore_lease_until pgtype.Timestamptz
+	err := row.Scan(&restore_lease_until)
+	return restore_lease_until, err
+}
+
 const claimDueLegacyWorkflowRun = `-- name: ClaimDueLegacyWorkflowRun :one
 UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
 WHERE id=$1::uuid AND operation_id IS NULL AND
@@ -17353,7 +17378,8 @@ func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetD
 
 const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17370,6 +17396,11 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.State,
 		&i.Bootstrapped,
 		&i.AlwaysOn,
+		&i.LastBackupAt,
+		&i.RestoreWindowSeconds,
+		&i.RestoreSource,
+		&i.RestoreTarget,
+		&i.RestoreLeaseUntil,
 		&i.LastError,
 		&i.LastActiveAt,
 		&i.StateChangedAt,
@@ -20828,20 +20859,25 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 }
 
 const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
-INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on, state)
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
+    restore_window_seconds, restore_source, restore_target, state)
 VALUES ($1, $2, $3, $4,
-    $5, $6, $7, 'provisioning')
+    $5, $6, $7, $8,
+    $9, $10, 'provisioning')
 ON CONFLICT (database_id) DO NOTHING
 `
 
 type InsertDatabaseVMParams struct {
-	DatabaseID    pgtype.UUID
-	NodeID        string
-	PostgresMajor int32
-	VcpuCount     int32
-	MemMib        int32
-	VolumeBytes   int64
-	AlwaysOn      bool
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	AlwaysOn             bool
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
 }
 
 func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
@@ -20853,6 +20889,9 @@ func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatab
 		arg.MemMib,
 		arg.VolumeBytes,
 		arg.AlwaysOn,
+		arg.RestoreWindowSeconds,
+		arg.RestoreSource,
+		arg.RestoreTarget,
 	)
 	if err != nil {
 		return 0, err
@@ -30346,7 +30385,8 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 
 const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30369,6 +30409,11 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.State,
 			&i.Bootstrapped,
 			&i.AlwaysOn,
+			&i.LastBackupAt,
+			&i.RestoreWindowSeconds,
+			&i.RestoreSource,
+			&i.RestoreTarget,
+			&i.RestoreLeaseUntil,
 			&i.LastError,
 			&i.LastActiveAt,
 			&i.StateChangedAt,
@@ -61038,6 +61083,24 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
+UPDATE database_vms SET last_backup_at = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type RecordDatabaseVMBackupParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg RecordDatabaseVMBackupParams) (int64, error) {
+	result, err := db.Exec(ctx, recordDatabaseVMBackup, arg.At, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordEnvironmentGitOpsEvent = `-- name: RecordEnvironmentGitOpsEvent :exec

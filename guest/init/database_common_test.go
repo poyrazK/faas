@@ -2,9 +2,14 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseMemTotalKiB(t *testing.T) {
@@ -113,7 +118,7 @@ func TestDatabaseHBAKeepsSuperuserLocal(t *testing.T) {
 			rules = append(rules, strings.Join(strings.Fields(line), " "))
 		}
 	}
-	want := []string{"local all postgres peer", "local all all scram-sha-256"}
+	want := []string{"local all postgres peer", "local replication postgres peer", "local all all scram-sha-256"}
 	if !slices.Equal(rules, want) {
 		t.Fatalf("pg_hba rules = %q, want %q", rules, want)
 	}
@@ -181,5 +186,79 @@ func TestLookupPasswdUser(t *testing.T) {
 	}
 	if _, _, ok := lookupPasswdUser(passwd, "missing"); ok {
 		t.Fatal("missing user found")
+	}
+}
+
+// adr: 1027 — a base backup can only write regular files and directories
+// inside the data directory.
+func TestExtractBaseTarRefusesEscapesAndLinks(t *testing.T) {
+	build := func(entries ...tar.Header) []byte {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for _, h := range entries {
+			h := h
+			body := ""
+			if h.Typeflag == tar.TypeReg {
+				body = "x"
+				h.Size = 1
+			}
+			if err := tw.WriteHeader(&h); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = tw.Write([]byte(body))
+		}
+		_ = tw.Close()
+		return buf.Bytes()
+	}
+	uid, gid := os.Getuid(), os.Getgid()
+	good := build(tar.Header{Name: "base/", Typeflag: tar.TypeDir, Mode: 0o700}, tar.Header{Name: "base/1/2", Typeflag: tar.TypeReg, Mode: 0o600}, tar.Header{Name: "PG_VERSION", Typeflag: tar.TypeReg, Mode: 0o600})
+	dir := t.TempDir()
+	if err := extractBaseTar(bytes.NewReader(good), dir, uid, gid); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(dir, "base", "1", "2")); err != nil || string(body) != "x" {
+		t.Fatalf("extracted = %q, %v", body, err)
+	}
+	for name, bad := range map[string][]byte{
+		"parent escape": build(tar.Header{Name: "../evil", Typeflag: tar.TypeReg, Mode: 0o600}),
+		"nested escape": build(tar.Header{Name: "base/../../evil", Typeflag: tar.TypeReg, Mode: 0o600}),
+		"absolute":      build(tar.Header{Name: "/etc/evil", Typeflag: tar.TypeReg, Mode: 0o600}),
+		"symlink":       build(tar.Header{Name: "pg_wal", Typeflag: tar.TypeSymlink, Linkname: "/etc"}),
+		"hard link":     build(tar.Header{Name: "x", Typeflag: tar.TypeLink, Linkname: "PG_VERSION"}),
+	} {
+		if err := extractBaseTar(bytes.NewReader(bad), t.TempDir(), uid, gid); err == nil {
+			t.Errorf("%s: extracted", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "evil")); err == nil {
+		t.Fatal("a file escaped the data directory")
+	}
+}
+
+func TestRecoverySettingsTargetAndPromote(t *testing.T) {
+	got := strings.Join(recoverySettings(time.Date(2026, 10, 13, 9, 30, 15, 250000000, time.UTC)), " ")
+	for _, want := range []string{
+		"-c restore_command=/sbin/init archive-wal get %f %p",
+		"-c recovery_target_time=2026-10-13 09:30:15.25+00",
+		"-c recovery_target_action=promote",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("recovery settings missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestArchivePendingCountsReadyFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"000000010000000000000001.done", "000000010000000000000002.ready", "00000002.history.ready"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := archivePending(dir); err != nil || n != 2 {
+		t.Fatalf("pending = %d, %v; want 2", n, err)
+	}
+	if _, err := archivePending(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("a missing status directory counted as drained")
 	}
 }

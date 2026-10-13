@@ -84,8 +84,10 @@ func (h Header) Validate() error {
 // Request is one guest request.
 type Request struct {
 	Op   string `json:"op"`
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 	Size int64  `json:"size,omitempty"`
+	// Target is OpGetBackup's recovery target time (RFC 3339).
+	Target string `json:"target,omitempty"`
 }
 
 // Response answers one request. For OpGetWAL, Size payload bytes follow a
@@ -93,6 +95,8 @@ type Request struct {
 type Response struct {
 	Error string `json:"error,omitempty"`
 	Size  int64  `json:"size,omitempty"`
+	// Name is the backup id of OpPutBackup and OpGetBackup.
+	Name string `json:"name,omitempty"`
 }
 
 // WriteLine writes v as one JSON line.

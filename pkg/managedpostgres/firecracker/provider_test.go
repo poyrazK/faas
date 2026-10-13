@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -28,6 +30,7 @@ type fakeScheduler struct {
 	mu        sync.Mutex
 	vms       map[string]*scheddpb.DatabaseRuntime
 	provision []*scheddpb.ProvisionDatabaseRequest
+	restores  []*scheddpb.RestoreDatabaseRequest
 	admin     []string
 	// adminRun, when set, executes admin batches (the pg test runs them
 	// through psql); otherwise they succeed.
@@ -53,8 +56,29 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 		state = "failed"
 	}
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: in.GetDatabaseId(), State: state, PostgresMajor: in.GetPostgresMajor(),
-		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn()}
+		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn(),
+		RestoreWindowSeconds: in.GetRestoreWindowSeconds()}
 	f.vms[in.GetDatabaseId()] = rt
+	return rt, nil
+}
+
+// RestoreDatabase places the restore provisioning, as schedd does before
+// restoring it in the background.
+func (f *fakeScheduler) RestoreDatabase(_ context.Context, in *scheddpb.RestoreDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restores = append(f.restores, in)
+	if _, ok := f.vms[in.GetSourceDatabaseId()]; !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	d := in.GetDatabase()
+	if rt, ok := f.vms[d.GetDatabaseId()]; ok {
+		return rt, nil
+	}
+	rt := &scheddpb.DatabaseRuntime{DatabaseId: d.GetDatabaseId(), State: "provisioning", PostgresMajor: d.GetPostgresMajor(),
+		VcpuCount: d.GetVcpuCount(), MemMib: d.GetMemMib(), VolumeBytes: d.GetVolumeBytes(), AlwaysOn: d.GetAlwaysOn(),
+		RestoreWindowSeconds: d.GetRestoreWindowSeconds(), RestoreSourceId: in.GetSourceDatabaseId(), RestoreTarget: in.GetPointInTime()}
+	f.vms[d.GetDatabaseId()] = rt
 	return rt, nil
 }
 
@@ -253,6 +277,12 @@ func TestParseConfig(t *testing.T) {
 	if cfg.Port != 6432 || cfg.TLSMode != "require" || cfg.Database != "app_db" || len(cfg.Majors) != 2 || cfg.MaxStorageBytes != 2<<30 {
 		t.Fatalf("overrides = %+v", cfg)
 	}
+	if cfg.MaxRestoreWindowSeconds != 0 {
+		t.Fatalf("point-in-time restore on by default: %+v", cfg)
+	}
+	if cfg, err = ParseConfig(base(settingMaxRestore, "604800")); err != nil || cfg.MaxRestoreWindowSeconds != 604800 {
+		t.Fatalf("restore window = %+v, %v", cfg, err)
+	}
 
 	invalid := []struct {
 		name string
@@ -268,6 +298,8 @@ func TestParseConfig(t *testing.T) {
 		{"major too old", base(settingMajors, "13")},
 		{"major not a number", base(settingMajors, "17,x")},
 		{"storage under 1 GiB", base(settingMaxStorage, "1048576")},
+		{"negative restore window", base(settingMaxRestore, "-1")},
+		{"restore window not a number", base(settingMaxRestore, "7d")},
 	}
 	for _, tc := range invalid {
 		if _, err := ParseConfig(tc.cfg); err == nil {
@@ -589,8 +621,9 @@ func TestDeleteRemovesVMAndVerifiers(t *testing.T) {
 func TestUnsupportedOperations(t *testing.T) {
 	p, _, _ := newTestProvider(t)
 	ctx := context.Background()
-	if _, err := p.Restore(ctx, managedpostgres.RestoreRequest{}); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Errorf("restore = %v", err)
+	restore := managedpostgres.RestoreRequest{ResourceID: "1b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e", SourceResourceID: testDatabaseID, Spec: devSpec(), PointInTime: time.Now()}
+	if _, err := p.Restore(ctx, restore); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Errorf("restore without point-in-time restore configured = %v", err)
 	}
 	usage, err := p.Usage(ctx, testDatabaseID, managedpostgres.UsageWindow{})
 	if err != nil || len(usage.Readings) != 0 {
@@ -640,5 +673,106 @@ func TestSQLBatchesRefuseUnvalidatedInput(t *testing.T) {
 		if !rolePattern.MatchString(name) {
 			t.Errorf("%s role %q fails its own pattern", access, name)
 		}
+	}
+}
+
+func newPITRProvider(t *testing.T) (*Provider, *fakeScheduler) {
+	t.Helper()
+	cfg := testConfig(t)
+	cfg.MaxRestoreWindowSeconds = 7 * 86400
+	sched := newFakeScheduler()
+	p, err := New(cfg, sched, newFakeVerifiers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p, sched
+}
+
+func TestCapabilitiesWithPointInTimeRestore(t *testing.T) {
+	p, _ := newPITRProvider(t)
+	caps := p.Capabilities()
+	if err := caps.Validate(); err != nil || !caps.PointInTimeRestore || caps.MaxRestoreWindowSeconds != 7*86400 {
+		t.Fatalf("capabilities = %+v, %v", caps, err)
+	}
+	spec := devSpec()
+	spec.RestoreWindowSeconds = 86400
+	if err := caps.Supports(spec); err != nil {
+		t.Fatalf("window within the maximum unsupported: %v", err)
+	}
+	spec.RestoreWindowSeconds = 8 * 86400
+	if err := caps.Supports(spec); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("window over the maximum = %v", err)
+	}
+}
+
+// TestRestoreRelaysAndReportsLineage pins what the service checks: the
+// lineage comes back from schedd's record, the spec (window included)
+// round-trips, and the restore is pending until schedd parks it.
+func TestRestoreRelaysAndReportsLineage(t *testing.T) {
+	p, sched := newPITRProvider(t)
+	ctx := context.Background()
+	spec := devSpec()
+	spec.RestoreWindowSeconds = 86400
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	if obs, err := p.Inspect(ctx, testDatabaseID); err != nil || obs.Spec != spec || obs.RestoreLineage != nil {
+		t.Fatalf("source = %+v, %v", obs, err)
+	}
+	const target = "1b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"
+	point := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
+	req := managedpostgres.RestoreRequest{ResourceID: target, SourceResourceID: testDatabaseID, Spec: spec, PointInTime: point, IdempotencyKey: "restore-x"}
+	obs, err := p.Restore(ctx, req)
+	if err != nil || obs.ProviderResourceID != target || obs.Status != managedpostgres.ProviderStatusPending || obs.Spec != spec {
+		t.Fatalf("restore = %+v, %v", obs, err)
+	}
+	if obs.RestoreLineage == nil || obs.RestoreLineage.SourceResourceID != testDatabaseID || !obs.RestoreLineage.PointInTime.Equal(point) {
+		t.Fatalf("lineage = %+v", obs.RestoreLineage)
+	}
+	sent := sched.restores[0]
+	if sent.GetSourceDatabaseId() != testDatabaseID || !sent.GetPointInTime().AsTime().Equal(point) || sent.GetDatabase().GetMemMib() != 512 || sent.GetDatabase().GetRestoreWindowSeconds() != 86400 {
+		t.Fatalf("restore request = %+v", sent)
+	}
+	sched.setState(target, "parked")
+	if obs, err := p.Inspect(ctx, target); err != nil || obs.Status != managedpostgres.ProviderStatusReady || obs.RestoreLineage == nil || obs.Spec != spec {
+		t.Fatalf("restored = %+v, %v", obs, err)
+	}
+
+	for name, mutate := range map[string]func(*managedpostgres.RestoreRequest){
+		"no source":   func(r *managedpostgres.RestoreRequest) { r.SourceResourceID = "" },
+		"no point":    func(r *managedpostgres.RestoreRequest) { r.PointInTime = time.Time{} },
+		"into itself": func(r *managedpostgres.RestoreRequest) { r.ResourceID = r.SourceResourceID },
+	} {
+		bad := req
+		mutate(&bad)
+		if _, err := p.Restore(ctx, bad); !errors.Is(err, managedpostgres.ErrInvalid) {
+			t.Errorf("%s: %v, want ErrInvalid", name, err)
+		}
+	}
+	tooLong := req
+	tooLong.Spec.RestoreWindowSeconds = 30 * 86400
+	if _, err := p.Restore(ctx, tooLong); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Errorf("window over the maximum = %v", err)
+	}
+	missing := req
+	missing.ResourceID, missing.SourceResourceID = "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e", "3b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"
+	if _, err := p.Restore(ctx, missing); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Errorf("missing source = %v", err)
+	}
+}
+
+func TestResourceUUIDIsStable(t *testing.T) {
+	if got := resourceUUID(testDatabaseID); got != testDatabaseID {
+		t.Fatalf("a UUID resource id changed: %s", got)
+	}
+	if got := resourceUUID(strings.ToUpper(testDatabaseID)); got != testDatabaseID {
+		t.Fatalf("an upper-case UUID was not canonicalized: %s", got)
+	}
+	a, b := resourceUUID("qualification-restore-0123"), resourceUUID("qualification-restore-0123")
+	if a != b || a == resourceUUID("qualification-restore-0124") {
+		t.Fatalf("derived ids not stable and distinct: %s %s", a, b)
+	}
+	if _, err := uuid.Parse(a); err != nil {
+		t.Fatal(err)
 	}
 }

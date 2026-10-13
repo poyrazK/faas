@@ -1,0 +1,162 @@
+// Command dbbackupd keeps native managed databases' WAL and base backups
+// (ADR-1027 durability). It runs on each database node: vmmd relays every
+// database VM's archive stream to its unix socket after stamping the
+// database id, dbbackupd stores it durably on local disk, and an uploader
+// ships it to S3-compatible storage. Restores read local copies first and
+// fall back to the bucket. See pkg/dbarchive.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+func main() {
+	configPath := flag.String("config", "/etc/faas/dbbackupd.toml", "path to dbbackupd.toml")
+	flag.Parse()
+	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, *configPath, log); err != nil {
+		log.Error("dbbackupd: exiting", "err", err)
+		os.Exit(1)
+	}
+}
+
+// metrics are dbbackupd's off-node recovery point: how much archive is
+// still only on this node, and for how long.
+type metrics struct {
+	pendingFiles  prometheus.Gauge
+	pendingOldest prometheus.Gauge
+	uploadErrors  prometheus.Counter
+}
+
+func newMetrics(reg prometheus.Registerer) *metrics {
+	m := &metrics{
+		pendingFiles: prometheus.NewGauge(prometheus.GaugeOpts{Name: "dbarchive_pending_files",
+			Help: "Archived WAL and base backup files not yet uploaded off the node."}),
+		pendingOldest: prometheus.NewGauge(prometheus.GaugeOpts{Name: "dbarchive_pending_oldest_seconds",
+			Help: "Age of the oldest archive file not yet uploaded: the off-node recovery point."}),
+		uploadErrors: prometheus.NewCounter(prometheus.CounterOpts{Name: "dbarchive_upload_errors_total",
+			Help: "Upload passes that stopped on an error."}),
+	}
+	reg.MustRegister(m.pendingFiles, m.pendingOldest, m.uploadErrors)
+	return m
+}
+
+func run(ctx context.Context, configPath string, log *slog.Logger) error {
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	local, err := dbarchive.NewLocalStore(cfg.StoreDir)
+	if err != nil {
+		return fmt.Errorf("dbbackupd: store: %w", err)
+	}
+	store := &dbarchive.TieredStore{LocalStore: local}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	m := newMetrics(reg)
+	if cfg.Remote != nil {
+		s3cfg, err := cfg.Remote.s3Config()
+		if err != nil {
+			return err
+		}
+		remote, err := dbarchive.NewS3Remote(s3cfg)
+		if err != nil {
+			return err
+		}
+		store.Remote, store.Prefix = remote, cfg.Remote.Prefix
+		uploader := &dbarchive.Uploader{Store: local, Remote: remote, Prefix: cfg.Remote.Prefix, OnPending: func(n int, oldest time.Duration) {
+			m.pendingFiles.Set(float64(n))
+			m.pendingOldest.Set(oldest.Seconds())
+		}}
+		go uploader.Run(ctx, cfg.Remote.UploadInterval, func(err error) {
+			m.uploadErrors.Inc()
+			log.Warn("dbbackupd: upload pass failed", "err", err)
+		})
+	} else {
+		log.Warn("dbbackupd: no remote configured; the archive lives only on this node")
+	}
+
+	ln, err := listenUnix(cfg.SocketPath)
+	if err != nil {
+		return err
+	}
+	var probe wire.ReadyzProbe
+	listening := probe.Register()
+	if err := serveOps(ctx, cfg.OpsAddr, reg, &probe, log); err != nil {
+		_ = ln.Close()
+		return err
+	}
+	listening.Set(true, "")
+	stopNotify := daemonunit.NotifyReadyWhen(ctx, probe.ReadyFunc())
+	defer stopNotify()
+	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
+	defer stopWatchdog()
+	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil)
+	return (&dbarchive.Server{Store: store, Backups: store, Log: log}).Serve(ctx, ln)
+}
+
+// listenUnix replaces a stale socket and keeps it owner-only: vmmd, the
+// only client, runs as root.
+func listenUnix(path string) (net.Listener, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("dbbackupd: listen %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}
+
+// serveOps serves /healthz, /readyz and /metrics until ctx ends.
+func serveOps(ctx context.Context, addr string, reg *prometheus.Registry, probe *wire.ReadyzProbe, log *slog.Logger) error {
+	if addr == "" {
+		return nil
+	}
+	mux := http.NewServeMux()
+	wire.ControlMuxLite(mux, probe.ReadyFunc(), probe.ReasonFunc())
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("dbbackupd: ops listen %s: %w", addr, err)
+	}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("dbbackupd: ops server", "err", err)
+		}
+	}()
+	return nil
+}

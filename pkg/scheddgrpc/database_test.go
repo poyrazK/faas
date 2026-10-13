@@ -8,11 +8,13 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -27,6 +29,7 @@ type fakeDatabases struct {
 	admin     dbguest.Response
 	adminSQL  string
 	provision dbsched.ProvisionRequest
+	restore   dbsched.RestoreRequest
 }
 
 func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
@@ -42,6 +45,10 @@ func (f *fakeDatabases) Admin(_ context.Context, _, sql string) (dbguest.Respons
 }
 func (f *fakeDatabases) Delete(context.Context, string) error            { return f.err }
 func (f *fakeDatabases) Get(context.Context, string) (dbsched.VM, error) { return f.vm, f.err }
+func (f *fakeDatabases) Restore(_ context.Context, req dbsched.RestoreRequest) (dbsched.VM, error) {
+	f.restore = req
+	return f.vm, f.err
+}
 func (f *fakeDatabases) SetAlwaysOn(_ context.Context, _ string, alwaysOn bool) (dbsched.VM, error) {
 	vm := f.vm
 	vm.AlwaysOn = alwaysOn
@@ -98,6 +105,10 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 			_, err := s.ProvisionDatabase(c, &scheddpb.ProvisionDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, VcpuCount: 1, MemMib: 384, VolumeBytes: 1 << 30})
 			return err
 		}, codes.PermissionDenied},
+		{"pgproxyd cannot restore", callerPgproxy, func(c context.Context) error {
+			_, err := s.RestoreDatabase(c, &scheddpb.RestoreDatabaseRequest{})
+			return err
+		}, codes.PermissionDenied},
 		{"unix socket caller", "", func(c context.Context) error { _, err := s.GetDatabase(c, ref); return err }, codes.OK},
 	}
 	for _, tc := range cases {
@@ -134,6 +145,7 @@ func TestDatabaseErrorsMapToStableCodes(t *testing.T) {
 		dbsched.ErrNoCapacity:                 codes.ResourceExhausted,
 		dbsched.ErrConflict:                   codes.FailedPrecondition,
 		dbsched.ErrNodeUnavailable:            codes.Unavailable,
+		dbsched.ErrInvalid:                    codes.InvalidArgument,
 		errors.New("dial tcp 10.0.0.9: boom"): codes.Internal,
 	}
 	for in, want := range cases {
@@ -157,5 +169,33 @@ func TestDatabaseAdminRelaysSQLState(t *testing.T) {
 	resp, err := s.DatabaseAdmin(asCaller(callerAPID), &scheddpb.DatabaseAdminRequest{DatabaseId: testDBID, Sql: "CREATE ROLE app"})
 	if err != nil || resp.GetSqlstate() != "42710" || resp.GetErrorCode() != dbguest.ErrCodeAdminSQLFailed || f.adminSQL != "CREATE ROLE app" {
 		t.Fatalf("admin = %v, %v (sql %q)", resp, err, f.adminSQL)
+	}
+}
+
+func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
+	const sourceID = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	target := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
+	f := &fakeDatabases{vm: dbsched.VM{DatabaseID: testDBID, NodeID: "db-a", State: dbsched.StateProvisioning,
+		RestoreSource: sourceID, RestoreTarget: target, RestoreWindowSeconds: 3600}}
+	s := New(nil, nil, nil).WithDatabases(f)
+	ctx := asCaller(callerAPID)
+	database := &scheddpb.ProvisionDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, VcpuCount: 1, MemMib: 512, VolumeBytes: 1 << 30, RestoreWindowSeconds: 3600}
+	for name, req := range map[string]*scheddpb.RestoreDatabaseRequest{
+		"no database":     {SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)},
+		"no point":        {Database: database, SourceDatabaseId: sourceID},
+		"bad source":      {Database: database, SourceDatabaseId: "nope", PointInTime: timestamppb.New(target)},
+		"itself":          {Database: database, SourceDatabaseId: testDBID, PointInTime: timestamppb.New(target)},
+		"negative window": {Database: &scheddpb.ProvisionDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, VcpuCount: 1, MemMib: 512, VolumeBytes: 1 << 30, RestoreWindowSeconds: -1}, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)},
+	} {
+		if _, err := s.RestoreDatabase(ctx, req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: %v, want InvalidArgument", name, err)
+		}
+	}
+	rt, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)})
+	if err != nil || rt.GetState() != "provisioning" || rt.GetRestoreSourceId() != sourceID || !rt.GetRestoreTarget().AsTime().Equal(target) || rt.GetRestoreWindowSeconds() != 3600 {
+		t.Fatalf("restore = %v, %v", rt, err)
+	}
+	if f.restore.Source != sourceID || !f.restore.Target.Equal(target) || f.restore.MemMiB != 512 || f.restore.RestoreWindowSeconds != 3600 {
+		t.Fatalf("request not relayed: %+v", f.restore)
 	}
 }

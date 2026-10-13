@@ -13,12 +13,14 @@ type MemStore struct {
 	mu    sync.Mutex
 	nodes map[string]Node
 	vms   map[string]VM
-	now   func() time.Time
+	// leases are restore leases by database id.
+	leases map[string]time.Time
+	now    func() time.Time
 }
 
 // NewMemStore returns an empty MemStore.
 func NewMemStore() *MemStore {
-	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, now: time.Now}
+	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, leases: map[string]time.Time{}, now: time.Now}
 }
 
 var _ Store = (*MemStore)(nil)
@@ -87,7 +89,7 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	for _, n := range m.nodes {
 		nodes = append(nodes, n)
 	}
-	node, ok := pickNode(nodes, m.usageLocked(), vm.VolumeBytes)
+	node, ok := pickNode(nodes, m.usageLocked(), vm.VolumeBytes, vm.NodeID)
 	if !ok {
 		return VM{}, ErrNoCapacity
 	}
@@ -155,6 +157,18 @@ func (m *MemStore) Touch(_ context.Context, id string, at time.Time) error {
 	return nil
 }
 
+func (m *MemStore) RecordBackup(_ context.Context, id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State == StateDeleting {
+		return ErrConflict
+	}
+	vm.LastBackupAt = at
+	m.vms[id] = vm
+	return nil
+}
+
 func (m *MemStore) SetAlwaysOn(_ context.Context, id string, alwaysOn bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -182,4 +196,21 @@ func (m *MemStore) Delete(_ context.Context, id string) error {
 	}
 	delete(m.vms, id)
 	return nil
+}
+
+func (m *MemStore) ClaimRestore(_ context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return time.Time{}, ErrNotFound
+	}
+	current, leased := m.leases[id]
+	now := m.now()
+	if vm.State != StateProvisioning || vm.RestoreSource == "" || (leased && !current.Before(now) && !current.Equal(held)) {
+		return time.Time{}, ErrConflict
+	}
+	next := now.Add(lease)
+	m.leases[id] = next
+	return next, nil
 }

@@ -144,6 +144,7 @@ var OptionalRegistry = []Entry{
 	{Name: "bridged", Unit: UnitBridged, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9098"}},
 	{Name: "apid-clone-worker", Unit: UnitApidCloneWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
 	{Name: "pgproxyd", Unit: UnitPgproxyd, Role: RoleDatabase, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:5432", ReadyzURL: "http://127.0.0.1:9109/readyz"}},
+	{Name: "dbbackupd", Unit: UnitDbbackupd, Role: RoleDatabase, Critical: false, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas-dbbackupd/dbbackupd.sock", ReadyzURL: "http://127.0.0.1:9110/readyz"}},
 }
 
 // UnitEntries returns fresh registry storage containing both always-on and

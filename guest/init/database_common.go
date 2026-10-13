@@ -1,13 +1,18 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Database-mode layout (ADR-1027). drive0 is the read-only base carrying
@@ -17,8 +22,11 @@ const (
 	databaseVolumeDevice = "/dev/vdb"
 	databaseMountPoint   = "/var/lib/postgresql"
 	databasePGData       = databaseMountPoint + "/data"
-	databaseSocketDir    = "/run/postgresql"
-	databaseOSUser       = "postgres"
+	// databaseRestoreMarker records that a restore's base backup is fully
+	// extracted; until it exists a restore boot starts the extraction over.
+	databaseRestoreMarker = databaseMountPoint + "/restore-extracted"
+	databaseSocketDir     = "/run/postgresql"
+	databaseOSUser        = "postgres"
 	// databaseMaxConnections stays small: clients reach the database
 	// through the platform proxy, which pools connections.
 	databaseMaxConnections = 25
@@ -119,8 +127,27 @@ func databaseInitdbArgs(major int) []string {
 // reachable only by the admin control op running as the postgres OS user.
 const databaseHBA = `# Managed by guest-init (ADR-1027). Do not edit.
 local all postgres peer
+local replication postgres peer
 local all all scram-sha-256
 `
+
+// databaseBaseBackupArgs streams a tar base backup of the whole cluster to
+// stdout. WAL is not included (-X none): the archive holds it, and the
+// server waits for the backup's end WAL to be archived before finishing,
+// so the backup history file is archived when the stream ends.
+func databaseBaseBackupArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/pg_basebackup",
+		"-h", databaseSocketDir,
+		"-U", databaseOSUser,
+		"-D", "-",
+		"-F", "tar",
+		"-X", "none",
+		"-c", "fast",
+		"--no-manifest",
+		"-l", "gregale",
+	}
+}
 
 // databasePsqlArgs runs an admin batch from stdin as the superuser,
 // stopping at the first error and reporting it as a SQLSTATE. Batches that
@@ -182,4 +209,82 @@ func lookupPasswdUser(passwd []byte, name string) (uid, gid int, ok bool) {
 		return u, g, true
 	}
 	return 0, 0, false
+}
+
+// databaseRestoreCommand fetches each WAL file recovery asks for from the
+// restore source's archive, through the host relay.
+const databaseRestoreCommand = "/sbin/init archive-wal get %f %p"
+
+// recoverySettings are the targeted-recovery parameters of a restore boot.
+func recoverySettings(target time.Time) []string {
+	return []string{
+		"-c", "restore_command=" + databaseRestoreCommand,
+		"-c", "recovery_target_time=" + target.UTC().Format("2006-01-02 15:04:05.999999+00"),
+		"-c", "recovery_target_action=promote",
+	}
+}
+
+// extractBaseTar writes a pg_basebackup tar into dir. It accepts only
+// regular files and directories inside dir: a backup can never write
+// outside the data directory or plant a link.
+func extractBaseTar(r io.Reader, dir string, uid, gid int) error {
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := filepath.Clean(hdr.Name)
+		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			return fmt.Errorf("unsafe path %q in base backup", hdr.Name)
+		}
+		target := filepath.Join(dir, name)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // validated path inside the data directory
+			if err != nil {
+				return err
+			}
+			// The backup is this cluster's own data from the host's archive;
+			// the volume's size bounds what it can write.
+			if _, err := io.Copy(f, tr); err != nil { //nolint:gosec // bounded by the volume, see above
+				_ = f.Close()
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported entry %q (type %c) in base backup", hdr.Name, hdr.Typeflag)
+		}
+		if err := os.Lchown(target, uid, gid); err != nil {
+			return err
+		}
+	}
+}
+
+// archivePending counts the WAL files PostgreSQL has marked ready to
+// archive (<name>.ready in pg_wal/archive_status) and not yet shipped.
+func archivePending(statusDir string) (int, error) {
+	entries, err := os.ReadDir(statusDir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".ready") {
+			n++
+		}
+	}
+	return n, nil
 }

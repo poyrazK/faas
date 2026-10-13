@@ -8,12 +8,23 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 )
+
+// BackupStore holds base backups.
+type BackupStore interface {
+	PutBackup(ctx context.Context, databaseID string, r io.Reader, now time.Time) (BackupManifest, error)
+	SelectBackup(ctx context.Context, wal Store, databaseID string, target time.Time) (BackupManifest, error)
+	OpenBackup(databaseID, id string) (io.ReadCloser, error)
+}
 
 // Server answers relayed guest streams on dbbackupd's socket.
 type Server struct {
 	Store Store
-	Log   *slog.Logger
+	// Backups holds base backups; nil refuses backup ops.
+	Backups BackupStore
+	Log     *slog.Logger
+	now     func() time.Time
 }
 
 // Serve accepts streams until ctx ends or ln fails.
@@ -57,11 +68,15 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			}
 			return
 		}
-		if !ValidWALName(req.Name) {
+		if (req.Op == OpPutWAL || req.Op == OpGetWAL) && !ValidWALName(req.Name) {
 			_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 			return
 		}
 		switch req.Op {
+		case OpPutBackup, OpGetBackup:
+			if !s.handleBackup(ctx, conn, br, header, req) {
+				return
+			}
 		case OpPutWAL:
 			if req.Size <= 0 || req.Size > MaxWALBytes {
 				_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
@@ -100,4 +115,54 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// handleBackup serves one backup op and reports whether the stream is still
+// usable.
+func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header, req Request) bool {
+	if s.Backups == nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return false
+	}
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	if req.Op == OpPutBackup {
+		body := &chunkReader{r: br}
+		m, err := s.Backups.PutBackup(ctx, header.DatabaseID, body, now())
+		if err != nil {
+			s.Log.Warn("dbarchive: base backup failed", "database_id", header.DatabaseID, "err", err)
+			_ = WriteLine(conn, Response{Error: codeFor(err)})
+			return false
+		}
+		s.Log.Info("dbarchive: base backup stored", "database_id", header.DatabaseID, "backup", m.ID, "bytes", m.Bytes)
+		return WriteLine(conn, Response{Name: m.ID}) == nil
+	}
+	source := header.DatabaseID
+	if header.RestoreSource != "" {
+		source = header.RestoreSource
+	}
+	target, err := time.Parse(time.RFC3339Nano, req.Target)
+	if err != nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return false
+	}
+	m, err := s.Backups.SelectBackup(ctx, s.Store, source, target)
+	if err != nil {
+		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
+	}
+	rc, err := s.Backups.OpenBackup(source, m.ID)
+	if err != nil {
+		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
+	}
+	defer func() { _ = rc.Close() }()
+	if WriteLine(conn, Response{Name: m.ID}) != nil {
+		return false
+	}
+	bw := bufio.NewWriterSize(conn, 256<<10)
+	if _, err := writeChunks(bw, rc); err != nil {
+		return false
+	}
+	return bw.Flush() == nil
 }

@@ -59,7 +59,8 @@
       become_user: postgres
 
 # Order: release + mTLS + firewall, then Firecracker with the release's
-# signed guest kernel, then vmmd in database mode, then pgproxyd.
+# signed guest kernel, then the archive keeper, then vmmd in database mode
+# (which archives through it when dbbackupd_enabled), then pgproxyd.
 - name: Converge database nodes
   hosts: database_nodes
   become: true
@@ -69,5 +70,6 @@
   roles:
     - role: database_node
     - role: firecracker
+    - role: dbbackupd_service
     - role: database_vmmd
     - role: pgproxyd_service

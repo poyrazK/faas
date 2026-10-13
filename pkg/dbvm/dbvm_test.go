@@ -79,6 +79,9 @@ func TestBuildConfigRejectsInvalidSpecs(t *testing.T) {
 		"too little memory": func(s *Spec) { s.MemSizeMiB = 64 },
 		"reserved cid":      func(s *Spec) { s.GuestCID = 2 },
 		"unsupported major": func(s *Spec) { s.Major = 12 },
+		"restore without archive": func(s *Spec) {
+			s.RestoreTarget = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -88,6 +91,26 @@ func TestBuildConfigRejectsInvalidSpecs(t *testing.T) {
 				t.Fatal("BuildConfig accepted an invalid spec")
 			}
 		})
+	}
+}
+
+// TestBuildConfigRestoreBoot pins the restore boot: the guest reads the
+// target from the kernel command line and needs archiving to fetch WAL.
+func TestBuildConfigRestoreBoot(t *testing.T) {
+	s := validSpec()
+	s.Archive = true
+	s.RestoreTarget = time.Date(2026, 10, 13, 9, 30, 0, 500, time.FixedZone("x", 3600))
+	cfg, err := BuildConfig(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, ok, err := dbguest.RestoreTarget(cfg.BootSource.BootArgs)
+	if err != nil || !ok || !target.Equal(s.RestoreTarget) || !dbguest.ArchiveEnabled(cfg.BootSource.BootArgs) {
+		t.Fatalf("boot args %q: target %v %v %v", cfg.BootSource.BootArgs, target, ok, err)
+	}
+	s.RestoreTarget = time.Time{}
+	if cfg, _ := BuildConfig(s); strings.Contains(cfg.BootSource.BootArgs, dbguest.RestoreTargetArgKey) {
+		t.Fatalf("plain boot carries a restore target: %q", cfg.BootSource.BootArgs)
 	}
 }
 

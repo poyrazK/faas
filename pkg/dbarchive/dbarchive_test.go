@@ -23,6 +23,11 @@ const (
 // the relay header the way vmmd does.
 func serve(t *testing.T, store Store) func(Header) *Client {
 	t.Helper()
+	return serveServer(t, &Server{Store: store})
+}
+
+func serveServer(t *testing.T, server *Server) func(Header) *Client {
+	t.Helper()
 	short, err := os.MkdirTemp("", "dba") // unix socket paths are short on macOS
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +40,7 @@ func serve(t *testing.T, store Store) func(Header) *Client {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { _ = (&Server{Store: store}).Serve(ctx, ln); close(done) }()
+	go func() { _ = server.Serve(ctx, ln); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	return func(h Header) *Client {
 		conn, err := net.Dial("unix", sock)

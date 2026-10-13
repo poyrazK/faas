@@ -331,17 +331,60 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   off-node recovery point, and it is exported as a metric.
 - **Base backups.** guest-init's `basebackup` control op runs
   `pg_basebackup -Ft -X none` against the local socket and streams the tar
-  to dbbackupd over the same vsock path. schedd schedules them per
-  database.
+  to dbbackupd over the same vsock path, which stores it zstd-compressed
+  with a manifest parsed from its `backup_label`. schedd takes the first
+  one while provisioning, and its backup sweep takes another for any
+  running database whose last backup (`database_vms.last_backup_at`) is
+  older than a day. A parked database is not woken for a backup: its WAL
+  is archived, and the next wake backs it up.
 - **Point-in-time restore** always creates a new database, never an
-  overwrite (the portable contract). schedd places a new VM. guest-init,
-  booting in restore mode, pulls the newest base backup before the target
-  time from dbbackupd, then recovers with
-  `restore_command = archive-wal get` (segments fetched lazily from the
-  source's archive) and `recovery_target_time`, then promotes.
+  overwrite (the portable contract). It can take longer than an RPC, so
+  `RestoreDatabase` only places it, and schedd restores it in the
+  background:
+  - Placement is pinned to the source's node, where its base backups are.
+    The row records the lineage (`restore_source`, `restore_target`),
+    which Inspect reports back as `RestoreLineage`.
+  - The job holds a lease in `database_vms.restore_lease_until` (the
+    database clock's) and renews it. Any schedd replica resumes a restore
+    whose lease lapsed, so a schedd restart does not strand it. Deleting a
+    restoring database cancels the job first.
+  - Recovery to a time stops only at a commit after it, and PostgreSQL
+    fails the recovery when the archive ends first. So the job first wakes
+    the source and runs its `flush_wal` op: wait until the guest clock
+    passes the target, commit a transaction that takes an xid, switch WAL,
+    and wait until that segment is archived.
+  - The restore VM boots with `gregale.restore_target` on its kernel line
+    and the relay's restore source. guest-init pulls the newest base backup
+    whose stop time (from the archived `.backup` history file) is at or
+    before the target, extracts it (regular files and directories only,
+    never outside the data directory), and recovers with
+    `restore_command = archive-wal get` and `recovery_target_time`, then
+    promotes. It reports ready only after `pg_is_in_recovery()` is false.
+    A boot interrupted before extraction finished starts it over; one
+    interrupted later resumes recovery.
+  - The restored database archives to its own archive on its new timeline.
+    The job takes its first base backup, stops it and parks it
+    bootstrapped; later boots are ordinary.
+  - The restore carries the source's roles with their verifiers, but
+    pgproxyd authenticates against verifiers published per database id, so
+    the source's logins do not reach it (`restore_credentials_isolated`).
 - **vmmd stays a relay.** It holds no storage credentials and parses no
   backup data. dbbackupd holds the object-storage credentials, the catalog
   and retention.
+- **dbbackupd** (`cmd/dbbackupd`, role `dbbackupd_service`) runs on every
+  database node as its own user. It serves vmmd's relays on
+  `/run/faas-dbbackupd/dbbackupd.sock`, fsyncs to `/srv/db/archive`, and
+  uploads WAL and base backups (data before manifest) to an S3-compatible
+  bucket under a prefix. Reads fall back to the bucket for WAL.
+  `dbarchive_pending_oldest_seconds` is the off-node recovery point.
+  Enabling it renders `archive_socket` into vmmd.toml, which turns
+  archiving on for every database VM booted afterwards.
+- Metal (`TestMetalPointInTimeRestore`, nested test node): base backup
+  1.8 s, source flush 0.3 s, restore to ready 3.7 s, stops 0.1–0.6 s. The
+  restore holds exactly the commits before the target, takes writes, and
+  boots normally afterwards.
+- Not yet: retention and pruning, base-backup reads from the bucket (so a
+  restore after node loss), and restore onto another node.
 
 ### Driver
 
@@ -363,9 +406,15 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   objects (`P0001` fails the batch). Revoke deletes the verifier first, so
   the proxy refuses the role before the VM is woken to disable it.
 - **Admission** is strict because the service fails a database whose
-  observed spec differs from the requested one. The driver refuses any
-  restore window, an unbounded volume and other regions with
-  `ErrUnsupported`. `Capabilities` advertises no PITR and no usage meters.
+  observed spec differs from the requested one. The driver refuses an
+  unbounded volume and other regions with `ErrUnsupported`, and a restore
+  window unless the backend's settings carry `max_restore_window_seconds`
+  (set only where dbbackupd archives). The window round-trips through
+  `database_vms.restore_window_seconds`. No usage meters yet.
+- **Restore** calls `RestoreDatabase` and reports the database pending
+  until schedd parks it. A resource id that is not a UUID (qualification
+  names restores `qualification-restore-<hash>`) maps to a name-based UUID,
+  so retries reach the same VM.
 - **Always-on** (`scale_to_zero=false`) is a `database_vms.always_on` flag:
   - Idle parking skips the database.
   - schedd's sweep also wakes always-on databases it finds parked. It
@@ -406,16 +455,23 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     and data surviving rotation.
   - `ProbeComputePolicy` switches the database to always-on and back.
   - Fixtures are dropped as the superuser through `DatabaseAdmin`.
+  - `PrepareRestore`, `VerifyRestore` and `CleanupRestore` write a marker
+    into a schema-owned fixture, pick a point a whole second after it, and
+    overwrite it after the point; the restore must hold the first marker.
+    `VerifyRestoreCredentialIsolation` points the source's login at the
+    restore and requires pgproxyd to reject it.
   - `TestQualifyProviderPasses` runs all 25 checks against PostgreSQL 16;
-    `TestMetalQualifyProvider` runs them against real database VMs.
+    `TestMetalQualifyProvider` runs them against real database VMs, and
+    `TestMetalQualifyProviderWithRestore` adds the restore checks.
 
-Not yet: class/storage resize, Restore and usage.
+Not yet: class/storage resize and usage.
 
 Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 
 ```json
 {"id": "native-eu", "driver": "firecracker", "region": "eu-central",
- "settings": {"host_suffix": "db.gregale.dev", "schedd_target": "unix:///run/faas/schedd.sock"},
+ "settings": {"host_suffix": "db.gregale.dev", "schedd_target": "unix:///run/faas/schedd.sock",
+              "max_restore_window_seconds": "604800"},
  "secret_env": {"credential_key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
 ```
 

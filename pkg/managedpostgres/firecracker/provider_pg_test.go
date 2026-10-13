@@ -322,3 +322,97 @@ func TestQualifyProviderPasses(t *testing.T) {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}
 }
+
+// TestRestoreProbeSQL runs the restore data probe's SQL for real: the
+// runtime credential can write the schema-owned fixture, the point lies
+// between the two commits, and verification is not vacuous.
+func TestRestoreProbeSQL(t *testing.T) {
+	dsn := os.Getenv("FAAS_DBVM_SQL_DSN")
+	if dsn == "" {
+		t.Skip("FAAS_DBVM_SQL_DSN (a disposable PostgreSQL superuser DSN) not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	base, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix := make([]byte, 4)
+	_, _ = rand.Read(suffix)
+	dbName := "gregale_r" + hex.EncodeToString(suffix)
+	cfg, err := ParseConfig(managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.test", settingDatabase: dbName}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.CredentialKey = testCredentialKey
+	sched, verifiers := newFakeScheduler(), newFakeVerifiers()
+	sched.adminRun = psqlAdmin(t, dsn)
+	p, err := New(cfg, sched, verifiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.WithConnector(func(ctx context.Context, m managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
+		c := base.Copy()
+		c.User, c.Password, c.Database, c.TLSConfig, c.Fallbacks = m.Username, m.Password, m.Database, nil, nil
+		return pgx.ConnectConfig(ctx, c)
+	})
+	super, err := pgx.ConnectConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var role string
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = super.Exec(ctx, "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)")
+		_, _ = super.Exec(ctx, "GRANT CONNECT ON DATABASE postgres, template1 TO PUBLIC")
+		if role != "" {
+			_, _ = super.Exec(ctx, "DROP ROLE IF EXISTS "+role)
+		}
+		_ = super.Close(ctx)
+	})
+	id := uuid.NewString()
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()}); err != nil {
+		t.Fatal(err)
+	}
+	material, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: "probe", Access: managedpostgres.CredentialReadWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role = material.Username
+	started := time.Now()
+	probe, err := p.PrepareRestore(ctx, id, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.PointInTime.Before(started) || probe.PointInTime.After(time.Now()) || probe.Marker == "" {
+		t.Fatalf("probe point %v outside [%v, now]", probe.PointInTime, started)
+	}
+	// Unrestored, the marker was overwritten after the point.
+	if err := p.VerifyRestore(ctx, id, material, probe); err == nil {
+		t.Fatal("verification passed on the source: the probe is vacuous")
+	}
+	dbConfig := base.Copy()
+	dbConfig.Database = dbName
+	db, err := pgx.ConnectConfig(ctx, dbConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owner string
+	if err := db.QueryRow(ctx, "SELECT tableowner FROM pg_tables WHERE tablename = $1", restoreFixture).Scan(&owner); err != nil || owner != schemaOwner {
+		t.Fatalf("fixture owner = %q, %v", owner, err)
+	}
+	// Stand in for a restore to the point: the first marker is back.
+	if _, err := db.Exec(ctx, "UPDATE public."+restoreFixture+" SET marker = $1", probe.Marker); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close(ctx)
+	if err := p.VerifyRestore(ctx, id, material, probe); err != nil {
+		t.Fatalf("verification after the stand-in restore: %v", err)
+	}
+	if err := p.CleanupRestore(ctx, id, material); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.VerifyRestore(ctx, id, material, probe); err == nil {
+		t.Fatal("fixture survived cleanup")
+	}
+}

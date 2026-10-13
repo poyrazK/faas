@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -32,6 +33,7 @@ type DatabaseScheduler interface {
 	Delete(ctx context.Context, id string) error
 	Get(ctx context.Context, id string) (dbsched.VM, error)
 	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) (dbsched.VM, error)
+	Restore(ctx context.Context, req dbsched.RestoreRequest) (dbsched.VM, error)
 }
 
 // WithDatabases enables the database RPCs.
@@ -70,11 +72,23 @@ func (s *Server) databaseScheduler(ctx context.Context, allowed ...string) (Data
 }
 
 func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
-	return &scheddpb.DatabaseRuntime{
+	rt := &scheddpb.DatabaseRuntime{
 		DatabaseId: vm.DatabaseID, NodeId: vm.NodeID, State: string(vm.State),
 		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
 		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
-		AlwaysOn: vm.AlwaysOn,
+		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
+	}
+	if vm.RestoreSource != "" {
+		rt.RestoreTarget = timestamppb.New(vm.RestoreTarget)
+	}
+	return rt
+}
+
+func provisionRequest(req *scheddpb.ProvisionDatabaseRequest) dbsched.ProvisionRequest {
+	return dbsched.ProvisionRequest{
+		DatabaseID: req.GetDatabaseId(), Major: int(req.GetPostgresMajor()), VcpuCount: int(req.GetVcpuCount()),
+		MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(), AlwaysOn: req.GetAlwaysOn(),
+		RestoreWindowSeconds: req.GetRestoreWindowSeconds(),
 	}
 }
 
@@ -83,16 +97,34 @@ func (s *Server) ProvisionDatabase(ctx context.Context, req *scheddpb.ProvisionD
 	if err != nil {
 		return nil, err
 	}
-	pr := dbsched.ProvisionRequest{
-		DatabaseID: req.GetDatabaseId(), Major: int(req.GetPostgresMajor()), VcpuCount: int(req.GetVcpuCount()),
-		MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(), AlwaysOn: req.GetAlwaysOn(),
-	}
+	pr := provisionRequest(req)
 	if err := pr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	vm, err := d.Provision(ctx, pr)
 	if err != nil {
 		return nil, s.databaseStatus("provision", err)
+	}
+	return databaseRuntime(vm), nil
+}
+
+// RestoreDatabase places a point-in-time restore; schedd runs it in the
+// background and GetDatabase reports it provisioning until it is done.
+func (s *Server) RestoreDatabase(ctx context.Context, req *scheddpb.RestoreDatabaseRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetDatabase() == nil || req.GetPointInTime().CheckValid() != nil {
+		return nil, status.Error(codes.InvalidArgument, "restore needs a database and a point in time")
+	}
+	rr := dbsched.RestoreRequest{ProvisionRequest: provisionRequest(req.GetDatabase()), Source: req.GetSourceDatabaseId(), Target: req.GetPointInTime().AsTime()}
+	if err := rr.Validate(); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	vm, err := d.Restore(ctx, rr)
+	if err != nil {
+		return nil, s.databaseStatus("restore", err)
 	}
 	return databaseRuntime(vm), nil
 }
@@ -200,6 +232,8 @@ func (s *Server) databaseStatus(op string, err error) error {
 		code = codes.FailedPrecondition
 	case errors.Is(err, dbsched.ErrNodeUnavailable):
 		code = codes.Unavailable
+	case errors.Is(err, dbsched.ErrInvalid):
+		code = codes.InvalidArgument
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		code = codes.DeadlineExceeded
 	default:

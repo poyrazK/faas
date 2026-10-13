@@ -48,6 +48,8 @@ type ProvisionRequest struct {
 	VolumeBytes int64
 	// AlwaysOn keeps the database running (scale_to_zero = false).
 	AlwaysOn bool
+	// RestoreWindowSeconds is how far back the database may be restored.
+	RestoreWindowSeconds int64
 }
 
 // Validate rejects a request that cannot become a database VM.
@@ -64,6 +66,8 @@ func (r ProvisionRequest) Validate() error {
 		return fmt.Errorf("dbsched: memory %d MiB out of range", r.MemMiB)
 	case r.VolumeBytes < minVolumeBytes || r.VolumeBytes > maxVolumeBytes:
 		return fmt.Errorf("dbsched: volume size %d out of range", r.VolumeBytes)
+	case r.RestoreWindowSeconds < 0:
+		return fmt.Errorf("dbsched: restore window %d out of range", r.RestoreWindowSeconds)
 	}
 	return nil
 }
@@ -83,6 +87,16 @@ type Config struct {
 	ReadyTimeout time.Duration
 	// WakeWait bounds how long a wake waits for another replica's wake.
 	WakeWait time.Duration
+	// BackupInterval is how old a running database's last base backup
+	// may get before the backup sweep takes another.
+	BackupInterval time.Duration
+	// BackupTimeout bounds one base backup.
+	BackupTimeout time.Duration
+	// RestoreTimeout bounds one point-in-time restore attempt.
+	RestoreTimeout time.Duration
+	// RestoreLease is how long a restore's lease lasts unrenewed; another
+	// replica resumes the restore once it lapses.
+	RestoreLease time.Duration
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are
@@ -95,6 +109,9 @@ type Scheduler struct {
 	log   *slog.Logger
 	now   func() time.Time
 	locks sync.Map // database id -> *sync.Mutex
+	// restores are the restores this process runs, by database id.
+	restores  sync.Map // database id -> *restoreRun
+	restoreWG sync.WaitGroup
 }
 
 // New builds a Scheduler with defaults for zero Config fields.
@@ -107,6 +124,18 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.WakeWait <= 0 {
 		cfg.WakeWait = time.Minute
+	}
+	if cfg.BackupInterval <= 0 {
+		cfg.BackupInterval = 24 * time.Hour
+	}
+	if cfg.BackupTimeout <= 0 {
+		cfg.BackupTimeout = time.Hour
+	}
+	if cfg.RestoreTimeout <= 0 {
+		cfg.RestoreTimeout = 2 * time.Hour
+	}
+	if cfg.RestoreLease <= 0 {
+		cfg.RestoreLease = 2 * time.Minute
 	}
 	if log == nil {
 		log = slog.Default()
@@ -143,9 +172,15 @@ func (s *Scheduler) Provision(ctx context.Context, req ProvisionRequest) (VM, er
 	}
 	unlock := s.lock(req.DatabaseID)
 	defer unlock()
-	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn})
+	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
+		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds})
 	if err != nil || vm.State != StateProvisioning {
 		return vm, err
+	}
+	if vm.RestoreSource != "" {
+		// A restore provisions itself; bootstrapping it would init a new
+		// cluster over the recovery.
+		return vm, ErrConflict
 	}
 	node, err := s.node(ctx, vm.NodeID)
 	if err != nil {
@@ -181,10 +216,80 @@ func (s *Scheduler) bootstrap(ctx context.Context, node Node, vm VM) (string, er
 	if err := s.waitReady(ctx, node, vm.DatabaseID); err != nil {
 		return errCodeNotReady, err
 	}
+	// The first base backup makes the database restorable from its first
+	// minute. It is best-effort: a node without archiving, or a failed
+	// backup, does not fail provisioning; the backup sweep retries.
+	s.takeBackup(ctx, node, vm.DatabaseID)
 	if err := s.vmm.Stop(ctx, node, vm.DatabaseID); err != nil {
 		return errCodeStop, err
 	}
 	return "", nil
+}
+
+// takeBackup runs one base backup on a running database and records it.
+// It reports whether a backup was stored.
+func (s *Scheduler) takeBackup(ctx context.Context, node Node, id string) bool {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.BackupTimeout)
+	defer cancel()
+	resp, err := s.vmm.Control(ctx, node, id, dbguest.Request{Op: dbguest.OpBaseBackup})
+	if err == nil && resp.Error == dbguest.ErrCodeArchiveOff {
+		return false
+	}
+	if err != nil || resp.Error != "" || resp.Backup == "" {
+		s.log.Warn("dbsched: base backup failed", "database_id", id, "err", errors.Join(err, guestError(resp)))
+		return false
+	}
+	if err := s.store.RecordBackup(context.WithoutCancel(ctx), id, s.now()); err != nil {
+		s.log.Warn("dbsched: record backup", "database_id", id, "err", err)
+	}
+	s.log.Info("dbsched: base backup stored", "database_id", id, "backup", resp.Backup)
+	return true
+}
+
+// BackupDue backs up, one at a time, running databases whose last base
+// backup is older than BackupInterval. Parked databases are not woken for
+// it: their WAL is archived, and a backup follows their next wake.
+func (s *Scheduler) BackupDue(ctx context.Context) (int, error) {
+	running, err := s.store.List(ctx, StateRunning)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := s.now().Add(-s.cfg.BackupInterval)
+	taken := 0
+	for _, vm := range running {
+		if !vm.Bootstrapped || vm.LastBackupAt.After(cutoff) {
+			continue
+		}
+		node, err := s.node(ctx, vm.NodeID)
+		if err != nil {
+			continue
+		}
+		// A backup is activity: keep the idle sweep from parking it mid-stream.
+		_ = s.store.Touch(ctx, vm.DatabaseID, s.now())
+		if s.takeBackup(ctx, node, vm.DatabaseID) {
+			taken++
+		}
+	}
+	return taken, nil
+}
+
+// RunBackupLoop runs BackupDue every interval until ctx ends. It is apart
+// from the idle loop: a backup can take minutes and must not delay parking.
+func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := s.BackupDue(ctx); err != nil {
+				s.log.Warn("dbsched: backup sweep failed", "err", err)
+			} else if n > 0 {
+				s.log.Info("dbsched: base backups taken", "count", n)
+			}
+		}
+	}
 }
 
 func guestError(resp dbguest.Response) error {
@@ -195,7 +300,12 @@ func guestError(resp dbguest.Response) error {
 }
 
 func (s *Scheduler) waitReady(ctx context.Context, node Node, id string) error {
-	ctx, cancel := context.WithTimeout(ctx, s.cfg.ReadyTimeout)
+	return s.pollReady(ctx, node, id, s.cfg.ReadyTimeout, 20*time.Millisecond)
+}
+
+// pollReady polls the guest every interval until it is ready or failed.
+func (s *Scheduler) pollReady(ctx context.Context, node Node, id string, timeout, every time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
 		resp, err := s.vmm.Control(ctx, node, id, dbguest.Request{Op: dbguest.OpStatus})
@@ -208,7 +318,7 @@ func (s *Scheduler) waitReady(ctx context.Context, node Node, id string) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("dbsched: %s not ready: %w", id, errors.Join(ctx.Err(), err))
-		case <-time.After(20 * time.Millisecond):
+		case <-time.After(every):
 		}
 	}
 }
@@ -345,6 +455,7 @@ func (s *Scheduler) Admin(ctx context.Context, id, sql string) (dbguest.Response
 // Delete stops a database if needed and removes its volume and record.
 // Deleting a missing database succeeds.
 func (s *Scheduler) Delete(ctx context.Context, id string) error {
+	s.stopRestore(id)
 	unlock := s.lock(id)
 	defer unlock()
 	vm, err := s.store.Get(ctx, id)
@@ -459,7 +570,11 @@ func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
 // Recover settles transitions a previous schedd process left in flight:
 // a waking or parking database is stopped and parked. Its next wake boots
 // it again; PostgreSQL recovers from its WAL if the stop was unclean.
+// Restores resume in the background.
 func (s *Scheduler) Recover(ctx context.Context) error {
+	if err := s.ResumeRestores(ctx); err != nil {
+		return err
+	}
 	stuck, err := s.store.List(ctx, StateWaking, StateParking)
 	if err != nil {
 		return err
@@ -499,6 +614,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				s.log.Warn("dbsched: keep-warm sweep failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("dbsched: woke always-on databases", "count", n)
+			}
+			if err := s.ResumeRestores(ctx); err != nil {
+				s.log.Warn("dbsched: restore sweep failed", "err", err)
 			}
 		}
 	}

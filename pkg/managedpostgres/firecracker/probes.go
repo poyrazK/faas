@@ -23,10 +23,12 @@ import (
 // qualification resources, never during customer reconciliation, and
 // connect the way an app does: through pgproxyd with issued credentials.
 var (
-	_ managedpostgres.ScaleToZeroProber         = (*Provider)(nil)
-	_ managedpostgres.CredentialPrivilegeProber = (*Provider)(nil)
-	_ managedpostgres.ReadOnlyCredentialProber  = (*Provider)(nil)
-	_ managedpostgres.ComputePolicyProber       = (*Provider)(nil)
+	_ managedpostgres.ScaleToZeroProber                = (*Provider)(nil)
+	_ managedpostgres.CredentialPrivilegeProber        = (*Provider)(nil)
+	_ managedpostgres.ReadOnlyCredentialProber         = (*Provider)(nil)
+	_ managedpostgres.ComputePolicyProber              = (*Provider)(nil)
+	_ managedpostgres.RestoreDataProber                = (*Provider)(nil)
+	_ managedpostgres.RestoreCredentialIsolationProber = (*Provider)(nil)
 )
 
 // connectEndpoint dials the material's direct endpoint with its TLS mode.
@@ -454,6 +456,86 @@ func (p *Provider) verifyMarker(ctx context.Context, m managedpostgres.Credentia
 	}
 	if readOnly && !permissionDenied(ctx, conn, "UPDATE "+table+" SET value='forbidden'") {
 		return managedpostgres.ErrUnavailable
+	}
+	return nil
+}
+
+// restoreFixture is the restore probe's table. It is owned by the schema
+// owner, so the runtime credentials of the source and of the restore reach
+// it through default privileges.
+const restoreFixture = "gregale_qualification_restore_probe"
+
+// PrepareRestore writes a marker, picks a point in time after it, then
+// overwrites it: a restore to that point must hold the first marker. The
+// point is a whole second ahead of the first commit, read from the
+// database clock, and the overwrite waits until the point has passed.
+func (p *Provider) PrepareRestore(ctx context.Context, id string, material managedpostgres.CredentialMaterial) (managedpostgres.RestoreProbe, error) {
+	create := fmt.Sprintf("\\connect %s\nSET ROLE %s;\nCREATE TABLE IF NOT EXISTS public.%s (id integer PRIMARY KEY CHECK (id = 1), marker text NOT NULL);\n",
+		p.cfg.Database, schemaOwner, restoreFixture)
+	if err := p.admin(ctx, id, create); err != nil {
+		return managedpostgres.RestoreProbe{}, err
+	}
+	conn, err := p.connect(ctx, material)
+	if err != nil {
+		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	probe := managedpostgres.RestoreProbe{Marker: probeKey("restore-")}
+	table := "public." + restoreFixture
+	if _, err := conn.Exec(ctx, "INSERT INTO "+table+" (id, marker) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET marker = EXCLUDED.marker", probe.Marker); err != nil {
+		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
+	}
+	if err := conn.QueryRow(ctx, "SELECT date_trunc('second', clock_timestamp()) + interval '1 second'").Scan(&probe.PointInTime); err != nil {
+		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())))::double precision + 0.01)", probe.PointInTime); err != nil {
+		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
+	}
+	if _, err := conn.Exec(ctx, "UPDATE "+table+" SET marker = $1 WHERE id = 1", "after-"+probe.Marker); err != nil {
+		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
+	}
+	probe.PointInTime = probe.PointInTime.UTC()
+	return probe, nil
+}
+
+// VerifyRestore reads the marker through the restore's own credential.
+func (p *Provider) VerifyRestore(ctx context.Context, _ string, material managedpostgres.CredentialMaterial, probe managedpostgres.RestoreProbe) error {
+	if probe.Marker == "" || probe.PointInTime.IsZero() {
+		return managedpostgres.ErrInvalid
+	}
+	conn, err := p.connect(ctx, material)
+	if err != nil {
+		return managedpostgres.ErrUnavailable
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var marker string
+	if err := conn.QueryRow(ctx, "SELECT marker FROM public."+restoreFixture+" WHERE id = 1").Scan(&marker); err != nil || marker != probe.Marker {
+		return managedpostgres.ErrUnavailable
+	}
+	return nil
+}
+
+// CleanupRestore drops the probe table from the source.
+func (p *Provider) CleanupRestore(ctx context.Context, id string, _ managedpostgres.CredentialMaterial) error {
+	if err := p.dropFixtures(ctx, id, restoreFixture); err != nil {
+		return managedpostgres.ErrUnavailable
+	}
+	return nil
+}
+
+// VerifyRestoreCredentialIsolation proves the restore's login works and
+// the source's login, pointed at the restore, is rejected: the restored
+// volume carries the source's roles, but pgproxyd authenticates against
+// verifiers published per database.
+func (p *Provider) VerifyRestoreCredentialIsolation(ctx context.Context, source, restored managedpostgres.CredentialMaterial) error {
+	if err := p.ping(ctx, restored); err != nil {
+		return managedpostgres.ErrUnavailable
+	}
+	crossed := source
+	crossed.Endpoints = restored.Endpoints
+	crossed.Database = restored.Database
+	if !p.loginRejected(ctx, crossed) {
+		return managedpostgres.ErrConflict
 	}
 	return nil
 }

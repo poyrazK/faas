@@ -130,10 +130,21 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 		mem < minDatabaseMemMiB || mem > maxDatabaseMemMiB || req.GetVolumeBandwidthBytesPerSec() < 0 || req.GetVolumeOpsPerSec() < 0 {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "database VM shape out of range")
 	}
-	return dbvm.BootRequest{
+	boot := dbvm.BootRequest{
 		ID: req.GetDatabaseId(), Major: major, VcpuCount: vcpus, MemSizeMiB: mem,
 		VolumeRateLimiter: volumeRateLimiter(req.GetVolumeBandwidthBytesPerSec(), req.GetVolumeOpsPerSec()),
-	}, nil
+		RestoreSource:     req.GetRestoreSource(),
+	}
+	if req.GetRestoreTarget() != nil {
+		if err := req.GetRestoreTarget().CheckValid(); err != nil {
+			return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "invalid restore target")
+		}
+		boot.RestoreTarget = req.GetRestoreTarget().AsTime()
+	}
+	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() {
+		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a restore names its source and target")
+	}
+	return boot, nil
 }
 
 // volumeRateLimiter turns per-second ceilings into Firecracker token
@@ -172,6 +183,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 		return nil, err
 	}
 	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql()}
+	if req.GetAfter() != nil {
+		control.After = req.GetAfter().AsTime()
+	}
 	if control.Op == dbguest.OpStop {
 		return nil, status.Error(codes.InvalidArgument, "stop a database with StopDatabase")
 	}
@@ -183,7 +197,7 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 		return nil, s.databaseStatus("control", err)
 	}
 	return &vmmdpb.DatabaseControlResponse{
-		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState,
+		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState, Backup: resp.Backup,
 	}, nil
 }
 

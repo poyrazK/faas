@@ -2,6 +2,7 @@
 package dbarchive
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -104,4 +105,38 @@ func TestTieredStoreFallsBackToRemote(t *testing.T) {
 	if entries, _ := os.ReadDir(store.dir + "/" + dbA + "/wal"); len(entries) != 1 {
 		t.Fatalf("temporary fetch files left behind: %v", entries)
 	}
+}
+
+// Base backups leave the node too, data before manifest, so a remote
+// manifest never names missing data.
+func TestUploaderShipsBackupsDataFirst(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+	start := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+	m, err := store.PutBackup(ctx, dbA, bytes.NewReader(baseTar(t, "0/2000028", "000000010000000000000002", start, "rows")), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &orderedRemote{memRemote: memRemote{objects: map[string][]byte{}}}
+	u := &Uploader{Store: store, Remote: remote, Prefix: "native"}
+	if n, err := u.RunOnce(ctx); err != nil || n != 2 {
+		t.Fatalf("shipped %d, %v", n, err)
+	}
+	data, manifest := BaseKey("native", dbA, m.ID+".tar.zst"), BaseKey("native", dbA, m.ID+".json")
+	if len(remote.order) != 2 || remote.order[0] != data || remote.order[1] != manifest {
+		t.Fatalf("upload order = %v", remote.order)
+	}
+	if n, _ := u.RunOnce(ctx); n != 0 {
+		t.Fatalf("second pass shipped %d", n)
+	}
+}
+
+type orderedRemote struct {
+	memRemote
+	order []string
+}
+
+func (o *orderedRemote) Put(ctx context.Context, key string, r io.ReadSeeker, size int64) error {
+	o.order = append(o.order, key)
+	return o.memRemote.Put(ctx, key, r, size)
 }

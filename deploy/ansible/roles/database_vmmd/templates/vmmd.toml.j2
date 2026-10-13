@@ -10,6 +10,10 @@ tls_ca_path = "/etc/faas/tls/ca/ca.crt"
 [database_vms]
 kernel_path = "/srv/fc/kernel/{{ fc_release | regex_replace('^v', '') }}"
 volume_root = "{{ database_vmmd_volume_root }}"
+{% if dbbackupd_enabled | default(false) | bool %}
+# Every database VM archives its WAL through dbbackupd (ADR-1027).
+archive_socket = "{{ dbbackupd_socket_path | default('/run/faas-dbbackupd/dbbackupd.sock') }}"
+{% endif %}
 
 [database_vms.images]
 {% for major, image in database_vmmd_postgres_images.items() %}

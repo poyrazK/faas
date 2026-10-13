@@ -47,6 +47,8 @@ const (
 	jailBase     = "base.ext4"
 	jailVolume   = "volume.img"
 	jailIDPrefix = "db-"
+	// maxUnixPath is the longest unix socket path Linux accepts.
+	maxUnixPath = 107
 )
 
 var databaseIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -91,6 +93,9 @@ type BootRequest struct {
 	// RestoreSource names the database whose archive this one recovers
 	// from; the relay stamps it so restore_command reads that archive.
 	RestoreSource string
+	// RestoreTarget boots the (empty) volume as a point-in-time restore of
+	// RestoreSource to that instant.
+	RestoreTarget time.Time
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -143,6 +148,15 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 	}
 	if real, err := filepath.EvalSymlinks(fc); err == nil {
 		fc = real
+	}
+	if cfg.ArchiveSocket != "" {
+		// The relay listens where Firecracker delivers the guest's archive
+		// connections, deep in the jail; a unix socket path has 107 bytes.
+		probe := &databaseVM{root: filepath.Join(cfg.JailBase, filepath.Base(fc), jailIDPrefix+strings.Repeat("0", 36), "root")}
+		r := &Runtime{}
+		if path := r.archiveUDSPath(probe); len(path) > maxUnixPath {
+			return nil, fmt.Errorf("dbvm: jail base %s is too long for the archive relay socket (%d > %d bytes)", cfg.JailBase, len(path), maxUnixPath)
+		}
 	}
 	bases := make(map[int]string, len(cfg.Bases))
 	for major, path := range cfg.Bases {
@@ -238,6 +252,14 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if err := validID(req.ID); err != nil {
 		return err
 	}
+	if (req.RestoreSource == "") != req.RestoreTarget.IsZero() || req.RestoreSource == req.ID {
+		return errors.New("dbvm: a restore names another source database and a target")
+	}
+	if req.RestoreSource != "" {
+		if err := validID(req.RestoreSource); err != nil {
+			return err
+		}
+	}
 	base, ok := r.base(req.Major)
 	if !ok {
 		return fmt.Errorf("%w %d", ErrUnknownMajor, req.Major)
@@ -312,6 +334,7 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
+		RestoreTarget: req.RestoreTarget,
 	})
 	if err != nil {
 		return err

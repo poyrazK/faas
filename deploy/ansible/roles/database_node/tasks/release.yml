@@ -94,3 +94,4 @@
   notify:
     - restart faas-vmmd
     - restart faas-pgproxyd
+    - restart faas-dbbackupd

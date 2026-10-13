@@ -1,0 +1,116 @@
+---
+# dbbackupd_service — the archive keeper of native managed databases
+# (ADR-1027 durability) on a database node. It runs as its own user; its
+# bucket credentials are owner-only files it refuses to read otherwise.
+
+- name: dbbackupd_service — require a database node and complete S3 inputs
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups['database_nodes'] | default([]))
+      - dbbackupd_s3_bucket | length == 0 or (dbbackupd_s3_access_key_id | length > 0 and dbbackupd_s3_secret_access_key | length > 0)
+    fail_msg: >-
+      dbbackupd runs only on hosts in the database_nodes group, and a bucket
+      needs dbbackupd_s3_access_key_id and dbbackupd_s3_secret_access_key.
+  when: dbbackupd_enabled | bool
+
+- name: dbbackupd_service — create the service group
+  ansible.builtin.group:
+    name: faas-dbbackupd
+    system: true
+
+- name: dbbackupd_service — create the service user
+  ansible.builtin.user:
+    name: faas-dbbackupd
+    group: faas-dbbackupd
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: dbbackupd_service — create the archive directory (local NVMe)
+  ansible.builtin.file:
+    path: "{{ dbbackupd_store_dir }}"
+    state: directory
+    owner: faas-dbbackupd
+    group: faas-dbbackupd
+    mode: "0700"
+
+- name: dbbackupd_service — create the secret directory
+  ansible.builtin.file:
+    path: /etc/faas/dbbackupd
+    state: directory
+    owner: root
+    group: faas-dbbackupd
+    mode: "0750"
+
+- name: dbbackupd_service — install the bucket credentials
+  ansible.builtin.copy:
+    content: "{{ item.value }}\n"
+    dest: "/etc/faas/dbbackupd/{{ item.name }}"
+    owner: faas-dbbackupd
+    group: faas-dbbackupd
+    mode: "0400"
+  loop:
+    - { name: s3-access-key-id, value: "{{ dbbackupd_s3_access_key_id }}" }
+    - { name: s3-secret-access-key, value: "{{ dbbackupd_s3_secret_access_key }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when:
+    - dbbackupd_enabled | bool
+    - dbbackupd_s3_bucket | length > 0
+  notify: restart faas-dbbackupd
+
+- name: dbbackupd_service — render dbbackupd.toml
+  ansible.builtin.template:
+    src: dbbackupd.toml.j2
+    dest: /etc/faas/dbbackupd.toml
+    owner: root
+    group: faas-dbbackupd
+    mode: "0640"
+  notify: restart faas-dbbackupd
+
+- name: dbbackupd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-dbbackupd.service
+    dest: /etc/systemd/system/faas-dbbackupd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-dbbackupd
+
+# Binaries arrive with the release, never from this role.
+- name: dbbackupd_service — check for the released binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/dbbackupd
+  register: dbbackupd_binary
+
+- name: dbbackupd_service — enable and start
+  ansible.builtin.systemd_service:
+    name: faas-dbbackupd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - dbbackupd_enabled | bool
+    - dbbackupd_binary.stat.exists
+
+- name: dbbackupd_service — note a missing release
+  ansible.builtin.debug:
+    msg: >-
+      dbbackupd is configured but /opt/faas/current/bin/dbbackupd is
+      missing; it starts on the converge after a release containing it.
+  when:
+    - dbbackupd_enabled | bool
+    - not dbbackupd_binary.stat.exists
+
+- name: dbbackupd_service — wait for readiness
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9110/readyz
+    status_code: 200
+  register: dbbackupd_ready
+  retries: 30
+  delay: 2
+  until: dbbackupd_ready.status == 200
+  when:
+    - dbbackupd_enabled | bool
+    - dbbackupd_binary.stat.exists

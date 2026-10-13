@@ -1,0 +1,23 @@
+---
+# ADR-1027: dbbackupd keeps native databases' WAL and base backups on a
+# database node and ships them to object storage. When enabled, vmmd turns
+# archiving on in every database VM (database_vmmd renders archive_socket),
+# and the managed-Postgres backend may offer point-in-time restore
+# (settings.max_restore_window_seconds). Off by default.
+dbbackupd_enabled: false
+
+# Local archive on the node's NVMe, next to the volumes.
+dbbackupd_store_dir: /srv/db/archive
+dbbackupd_socket_path: /run/faas-dbbackupd/dbbackupd.sock
+
+# Off-node copy. Leave dbbackupd_s3_bucket empty to keep the archive on the
+# node only (a node loss then loses every restore point).
+dbbackupd_s3_endpoint: ""
+dbbackupd_s3_region: ""
+dbbackupd_s3_bucket: ""
+dbbackupd_s3_prefix: native-postgres
+dbbackupd_s3_path_style: false
+dbbackupd_upload_interval: "10s"
+# Credentials scoped to the bucket prefix (Ansible Vault).
+dbbackupd_s3_access_key_id: ""
+dbbackupd_s3_secret_access_key: ""

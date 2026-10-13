@@ -17,7 +17,7 @@ import (
 )
 
 // Remote is off-node object storage for the archive. Keys are
-// <prefix>/<database-id>/wal/<name>.
+// <prefix>/<database-id>/wal/<name> and <prefix>/<database-id>/base/<name>.
 type Remote interface {
 	Put(ctx context.Context, key string, r io.ReadSeeker, size int64) error
 	// Get writes the object to w; a missing object is ErrNotFound.
@@ -27,6 +27,11 @@ type Remote interface {
 // WALKey is the remote key of a WAL file.
 func WALKey(prefix, databaseID, name string) string {
 	return strings.TrimSuffix(prefix, "/") + "/" + databaseID + "/wal/" + name
+}
+
+// BaseKey is the remote key of a base backup file (data or manifest).
+func BaseKey(prefix, databaseID, name string) string {
+	return strings.TrimSuffix(prefix, "/") + "/" + databaseID + "/base/" + name
 }
 
 // S3Config reaches an S3-compatible bucket.
@@ -150,7 +155,9 @@ func markUploaded(dir, databaseID, name string) error {
 	return f.Close()
 }
 
-// Uploader ships locally archived WAL that is not yet off the node.
+// Uploader ships locally archived WAL and base backups that are not yet
+// off the node. A backup's data goes before its manifest, so a remote
+// manifest always names complete data.
 type Uploader struct {
 	Store  *LocalStore
 	Remote Remote
@@ -161,8 +168,40 @@ type Uploader struct {
 	now       func() time.Time
 }
 
-// RunOnce uploads every pending WAL file and returns how many it shipped.
-// A failed upload stops the pass; the next pass retries it.
+// archiveFile is one local archive file and its remote key.
+type archiveFile struct {
+	name, path, key string
+}
+
+// files lists a database's archive files in upload order: WAL, then each
+// backup's data before its manifest.
+func (u *Uploader) files(databaseID string) []archiveFile {
+	var out []archiveFile
+	walDir := filepath.Join(u.Store.dir, databaseID, "wal")
+	if entries, err := os.ReadDir(walDir); err == nil {
+		for _, e := range entries {
+			if ValidWALName(e.Name()) {
+				out = append(out, archiveFile{e.Name(), filepath.Join(walDir, e.Name()), WALKey(u.Prefix, databaseID, e.Name())})
+			}
+		}
+	}
+	baseDir := filepath.Join(u.Store.dir, databaseID, "base")
+	if entries, err := os.ReadDir(baseDir); err == nil {
+		for _, e := range entries {
+			id, ok := strings.CutSuffix(e.Name(), ".json")
+			if !ok || !ValidBackupID(id) {
+				continue
+			}
+			for _, name := range []string{id + ".tar.zst", e.Name()} {
+				out = append(out, archiveFile{name, filepath.Join(baseDir, name), BaseKey(u.Prefix, databaseID, name)})
+			}
+		}
+	}
+	return out
+}
+
+// RunOnce uploads every pending archive file and returns how many it
+// shipped. A failed upload stops the pass; the next pass retries it.
 func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 	now := time.Now
 	if u.now != nil {
@@ -179,26 +218,19 @@ func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 		if !db.IsDir() || !ValidDatabaseID(db.Name()) {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(u.Store.dir, db.Name(), "wal"))
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if !ValidWALName(f.Name()) {
-				continue
-			}
-			if _, err := os.Stat(uploadedMarker(u.Store.dir, db.Name(), f.Name())); err == nil {
+		for _, f := range u.files(db.Name()) {
+			if _, err := os.Stat(uploadedMarker(u.Store.dir, db.Name(), f.name)); err == nil {
 				continue
 			}
 			if firstErr == nil {
-				firstErr = u.upload(ctx, db.Name(), f.Name())
+				firstErr = u.upload(ctx, db.Name(), f)
 				if firstErr == nil {
 					shipped++
 					continue
 				}
 			}
 			pending++
-			if info, err := f.Info(); err == nil && now().Sub(info.ModTime()) > oldest {
+			if info, err := os.Stat(f.path); err == nil && now().Sub(info.ModTime()) > oldest {
 				oldest = now().Sub(info.ModTime())
 			}
 		}
@@ -209,12 +241,8 @@ func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 	return shipped, firstErr
 }
 
-func (u *Uploader) upload(ctx context.Context, databaseID, name string) error {
-	path, err := u.Store.walPath(databaseID, name)
-	if err != nil {
-		return err
-	}
-	f, err := os.Open(path) //nolint:gosec,forbidigo // a path built by walPath
+func (u *Uploader) upload(ctx context.Context, databaseID string, file archiveFile) error {
+	f, err := os.Open(file.path) //nolint:gosec,forbidigo // a path listed under the store root
 	if err != nil {
 		return err
 	}
@@ -223,10 +251,10 @@ func (u *Uploader) upload(ctx context.Context, databaseID, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := u.Remote.Put(ctx, WALKey(u.Prefix, databaseID, name), f, info.Size()); err != nil {
+	if err := u.Remote.Put(ctx, file.key, f, info.Size()); err != nil {
 		return err
 	}
-	return markUploaded(u.Store.dir, databaseID, name)
+	return markUploaded(u.Store.dir, databaseID, file.name)
 }
 
 // Run uploads every interval until ctx ends.

@@ -73,6 +73,32 @@ func TestNewRuntimeRejectsIncompleteOrSharedJail(t *testing.T) {
 	}
 }
 
+// TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay: the relay socket
+// lives inside each jail, and Linux caps unix socket paths at 107 bytes.
+func TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay(t *testing.T) {
+	dir := t.TempDir()
+	fc := filepath.Join(dir, "firecracker")
+	if err := os.WriteFile(fc, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := RuntimeConfig{
+		VolumeRoot: "/v", KernelPath: "/k", Bases: map[int]string{17: "/b"}, ParentCgroup: "p",
+		FirecrackerBin: fc, Leases: &fakeLeaser{}, ArchiveSocket: "/run/faas-dbbackupd/dbbackupd.sock",
+	}
+	cfg.JailBase = "/srv/fc/dbjail"
+	if _, err := NewRuntime(cfg); err != nil {
+		t.Fatalf("production jail base rejected: %v", err)
+	}
+	cfg.JailBase = "/mnt/e2e-scratch/dbvm-dev/a-jail-base-named-far-too-long"
+	if _, err := NewRuntime(cfg); err == nil {
+		t.Fatal("a jail base too deep for the relay socket was accepted")
+	}
+	cfg.ArchiveSocket = ""
+	if _, err := NewRuntime(cfg); err != nil {
+		t.Fatalf("without archiving the depth does not matter: %v", err)
+	}
+}
+
 func TestRuntimePathsAndJailNaming(t *testing.T) {
 	rt := testRuntime(t, &fakeLeaser{})
 	if got := rt.VolumePath(testID); got != filepath.Join(rt.cfg.VolumeRoot, testID+".img") {

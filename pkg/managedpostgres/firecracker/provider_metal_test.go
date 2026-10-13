@@ -33,6 +33,7 @@ import (
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbcreds"
 	"github.com/onebox-faas/faas/pkg/dbroute"
 	"github.com/onebox-faas/faas/pkg/dbsched"
@@ -256,10 +257,25 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
+	// dbbackupd's role: every VM archives WAL and base backups here.
+	archiveDir, archiveSock := filepath.Join(workdir, "driver-archive"), filepath.Join(workdir, "driver-archive.sock")
+	_ = os.RemoveAll(archiveDir)
+	t.Cleanup(func() { _ = os.RemoveAll(archiveDir) })
+	archive, err := dbarchive.NewLocalStore(archiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(archiveSock)
+	archiveLn, err := net.Listen("unix", archiveSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = (&dbarchive.Server{Store: archive, Backups: archive}).Serve(ctx, archiveLn) }()
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
-		JailBase: filepath.Join(workdir, "driverjail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
+		JailBase: filepath.Join(workdir, "djail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &driverLeaser{},
+		ArchiveSocket: archiveSock,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -293,6 +309,7 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 		t.Fatal(err)
 	}
 	cfg.CredentialKey = testCredentialKey
+	cfg.MaxRestoreWindowSeconds = 7 * 86400
 	verifiers := newFakeVerifiers()
 	p, err := New(cfg, client, verifiers)
 	if err != nil {
@@ -361,4 +378,39 @@ func TestMetalQualifyProvider(t *testing.T) {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}
 	t.Logf("qualified in %v: %d checks; scale-to-zero wake %d ms", time.Since(started).Round(time.Millisecond), len(report.Checks), report.ScaleToZero.WakeLatencyMS)
+}
+
+// adr: 1027 — point-in-time restore qualified against the real stack:
+// archiving VMs, schedd's background restore (source flush, guest
+// recovery, promotion, first backup) and the restore probers through
+// pgproxy, including that the source's login cannot reach the restore.
+func TestMetalQualifyProviderWithRestore(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the driver metal test")
+	}
+	st := newMetalStack(t, workdir, base)
+	st.p.WithConnector(connectThroughProxy(st.proxyAddr))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	id := uuid.NewString()
+	t.Cleanup(func() { _ = st.sched.Delete(context.Background(), id) })
+	spec := devSpec()
+	spec.RestoreWindowSeconds = 86400
+	started := time.Now()
+	report, err := managedpostgres.QualifyProvider(ctx, st.p, managedpostgres.QualificationOptions{
+		ProviderName: Driver, ResourceID: id, Spec: spec, Mutating: true, Timeout: 12 * time.Minute, PollInterval: 200 * time.Millisecond,
+	})
+	for _, check := range report.Checks {
+		if !check.Passed {
+			t.Logf("check %s failed: %s", check.Name, check.Error)
+		}
+	}
+	if err != nil {
+		t.Fatalf("QualifyProvider = %v", err)
+	}
+	if report.Restore == nil || !report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.CredentialsIsolated || !report.Restore.Deleted {
+		t.Fatalf("restore evidence = %+v", report.Restore)
+	}
+	t.Logf("qualified with restore in %v: %d checks", time.Since(started).Round(time.Millisecond), len(report.Checks))
 }

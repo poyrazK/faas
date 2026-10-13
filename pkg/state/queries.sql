@@ -18467,19 +18467,38 @@ GROUP BY n.id ORDER BY n.id;
 
 -- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
-INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on, state)
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
+    restore_window_seconds, restore_source, restore_target, state)
 VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc.arg(vcpu_count),
-    sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), 'provisioning')
+    sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), sqlc.arg(restore_window_seconds),
+    sqlc.narg(restore_source), sqlc.narg(restore_target), 'provisioning')
 ON CONFLICT (database_id) DO NOTHING;
+
+-- name: ClaimDatabaseVMRestore :one
+-- Takes (held is NULL) or renews (held is the current lease) the lease on
+-- a provisioning restore. The lease is the database clock's, so replicas'
+-- clocks do not matter.
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = sqlc.narg(held)::timestamptz)
+RETURNING restore_lease_until;
+
+-- name: RecordDatabaseVMBackup :execrows
+UPDATE database_vms SET last_backup_at = sqlc.arg(at)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: SetDatabaseVMAlwaysOn :execrows
 UPDATE database_vms SET always_on = sqlc.arg(always_on)

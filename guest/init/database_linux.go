@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -32,12 +33,16 @@ import (
 // cold boot. Database VMs are never memory-snapshotted.
 
 const (
-	databaseControlTimeout  = 2 * time.Minute
-	databaseReadyPoll       = 5 * time.Millisecond
-	databaseFastStopWait    = 60 * time.Second
-	databaseQuitStopWait    = 10 * time.Second
+	databaseControlTimeout = 2 * time.Minute
+	databaseReadyPoll      = 5 * time.Millisecond
+	databaseFastStopWait   = 60 * time.Second
+	databaseQuitStopWait   = 10 * time.Second
 	// databaseArchiveDrainWait bounds the pre-stop archive drain.
 	databaseArchiveDrainWait = 15 * time.Second
+	// databaseArchiveFlushWait bounds a restore's archive flush.
+	databaseArchiveFlushWait = 60 * time.Second
+	// databaseBackupTimeout bounds one base backup stream.
+	databaseBackupTimeout   = time.Hour
 	databaseAdminSQLTimeout = 60 * time.Second
 )
 
@@ -56,8 +61,11 @@ type databaseGuest struct {
 	memKiB int64
 	// archive ships WAL to the host (ADR-1027 durability).
 	archive bool
-	uid    int
-	gid    int
+	// restoreTarget, when set, makes an empty volume a point-in-time
+	// restore of the relay's restore source.
+	restoreTarget time.Time
+	uid           int
+	gid           int
 
 	mu         sync.Mutex
 	state      dbguest.State
@@ -68,11 +76,11 @@ type databaseGuest struct {
 	stopOnce   sync.Once
 }
 
-func runDatabaseGuest(log *slog.Logger, major int, archive bool) error {
+func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &databaseGuest{log: log, major: major, archive: archive, exited: make(chan struct{}), done: make(chan struct{})}
+	g := &databaseGuest{log: log, major: major, archive: archive, restoreTarget: restoreTarget, exited: make(chan struct{}), done: make(chan struct{})}
 	g.prepare()
 	control, err := listenGuestVsockBacklog(dbguest.ControlPort, 8)
 	if err != nil {
@@ -87,7 +95,11 @@ func runDatabaseGuest(log *slog.Logger, major int, archive bool) error {
 	}
 	go g.serveControl(control)
 	go g.serveData(data)
-	if g.currentState() == dbguest.StateStarting {
+	switch {
+	case g.currentState() == dbguest.StateNeedsBootstrap && !g.restoreTarget.IsZero():
+		g.setState(dbguest.StateStarting)
+		go g.restoreAndStart()
+	case g.currentState() == dbguest.StateStarting:
 		g.startPostgres()
 	}
 	<-g.done
@@ -131,6 +143,13 @@ func (g *databaseGuest) prepare() {
 }
 
 func (g *databaseGuest) decideClusterState() {
+	if !g.restoreTarget.IsZero() {
+		// A restore whose extraction never finished starts over.
+		if _, err := os.Stat(databaseRestoreMarker); errors.Is(err, os.ErrNotExist) {
+			g.setState(dbguest.StateNeedsBootstrap)
+			return
+		}
+	}
 	version, err := os.ReadFile(filepath.Join(databasePGData, "PG_VERSION"))
 	if errors.Is(err, os.ErrNotExist) {
 		g.setState(dbguest.StateNeedsBootstrap)
@@ -204,6 +223,11 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 	case req.Op == dbguest.OpStop:
 		g.stop()
 		resp = g.response()
+	case req.Op == dbguest.OpBaseBackup:
+		_ = conn.SetDeadline(time.Now().Add(databaseBackupTimeout))
+		resp = g.baseBackup()
+	case req.Op == dbguest.OpFlushWAL:
+		resp = g.flushArchive(req.After)
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }
@@ -239,11 +263,62 @@ func (g *databaseGuest) initCluster() error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
+	return g.writeHBA()
+}
+
+func (g *databaseGuest) writeHBA() error {
 	hba := filepath.Join(databasePGData, "pg_hba.conf")
 	if err := os.WriteFile(hba, []byte(databaseHBA), 0o600); err != nil {
 		return err
 	}
 	return os.Chown(hba, g.uid, g.gid)
+}
+
+// baseBackup streams pg_basebackup's tar to the host archive. Nothing of it
+// is logged or returned but the backup id.
+func (g *databaseGuest) baseBackup() dbguest.Response {
+	resp := g.response()
+	switch {
+	case !g.archive:
+		resp.Error = dbguest.ErrCodeArchiveOff
+		return resp
+	case g.currentState() != dbguest.StateReady:
+		resp.Error = dbguest.ErrCodeNotReady
+		return resp
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), databaseBackupTimeout)
+	defer cancel()
+	args := databaseBaseBackupArgs(g.major)
+	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	var stderr bytes.Buffer
+	cmd.Stderr = &limitedWriter{w: &stderr, n: 4096}
+	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		resp.Error = dbguest.ErrCodeBackupFailed
+		return resp
+	}
+	conn, err := dialHostArchive()
+	var id string
+	if err == nil {
+		id, err = dbarchive.NewClient(conn).PutBackup(stdout)
+		_ = conn.Close()
+	}
+	if err != nil {
+		_ = cmd.Process.Kill()
+	}
+	if waitErr := cmd.Wait(); err == nil {
+		err = waitErr
+	}
+	if err != nil {
+		g.log.Warn("database base backup failed", "err", err, "pg_basebackup", stderr.String())
+		resp.Error = dbguest.ErrCodeBackupFailed
+		return resp
+	}
+	resp.Backup = id
+	return resp
 }
 
 // adminSQL runs a control-plane batch as the superuser. The SQL can carry
@@ -303,7 +378,16 @@ func (g *databaseGuest) asDatabaseUser(cmd *exec.Cmd) *exec.Cmd {
 }
 
 func (g *databaseGuest) startPostgres() {
+	// pg_hba.conf is ours: rewrite it every start so existing volumes pick
+	// up template changes (the replication line base backups need).
+	if err := g.writeHBA(); err != nil {
+		g.fail(dbguest.ErrCodeStartFailed, "write pg_hba.conf", err)
+		return
+	}
 	args := databaseServerArgs(g.major, g.memKiB, g.archive)
+	if !g.restoreTarget.IsZero() {
+		args = append(args, recoverySettings(g.restoreTarget)...)
+	}
 	cmd := g.asDatabaseUser(exec.Command(args[0], args[1:]...))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -337,6 +421,12 @@ func (g *databaseGuest) awaitReady() {
 		case <-time.After(databaseReadyPoll):
 		}
 		if data, err := os.ReadFile(pidFile); err == nil && postmasterReady(data) {
+			// A restoring server accepts read-only connections while it
+			// recovers; it is ready only once promoted.
+			if !g.restoreTarget.IsZero() && !g.awaitPromotion() {
+				g.fail(dbguest.ErrCodeRestoreFailed, "recovery did not promote", nil)
+				return
+			}
 			g.mu.Lock()
 			if g.state == dbguest.StateStarting {
 				g.state = dbguest.StateReady
@@ -394,23 +484,67 @@ func (g *databaseGuest) shutdown(postmaster *os.Process) {
 func (g *databaseGuest) drainArchive() {
 	ctx, cancel := context.WithTimeout(context.Background(), databaseArchiveDrainWait)
 	defer cancel()
-	target, err := g.query(ctx, "SELECT pg_walfile_name(pg_switch_wal())")
-	if err != nil || target == "" {
-		g.log.Warn("database archive drain: switch failed", "err", err)
-		return
+	if err := g.switchAndArchive(ctx); err != nil {
+		g.log.Warn("database archive drain failed", "err", err)
 	}
+}
+
+// switchAndArchive switches to a new WAL segment and waits until the
+// archiver has shipped every completed one. It watches archive_status
+// rather than segment names: a switch with no WAL since the previous one
+// does nothing and reports the segment still in use, which is never
+// archived.
+func (g *databaseGuest) switchAndArchive(ctx context.Context) error {
+	if _, err := g.query(ctx, "SELECT pg_switch_wal()"); err != nil {
+		return fmt.Errorf("switch wal: %w", err)
+	}
+	statusDir := filepath.Join(databasePGData, "pg_wal", "archive_status")
 	for {
-		archived, err := g.query(ctx, "SELECT coalesce(last_archived_wal, '') FROM pg_stat_archiver")
-		if err == nil && len(archived) >= 24 && archived[:24] >= target {
-			return
+		pending, err := archivePending(statusDir)
+		if err == nil && pending == 0 {
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			g.log.Warn("database archive drain timed out", "target", target, "archived", archived)
-			return
-		case <-time.After(200 * time.Millisecond):
+			return fmt.Errorf("%d files still unarchived: %w", pending, errors.Join(ctx.Err(), err))
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// flushArchive makes the archive cover after for a point-in-time restore:
+// recovery to a time stops only at a commit record past it, so the guest
+// waits until its clock passes after, commits a transaction that takes a
+// transaction id, and ships the segment holding that commit.
+func (g *databaseGuest) flushArchive(after time.Time) dbguest.Response {
+	resp := g.response()
+	switch {
+	case !g.archive:
+		resp.Error = dbguest.ErrCodeArchiveOff
+		return resp
+	case g.currentState() != dbguest.StateReady:
+		resp.Error = dbguest.ErrCodeNotReady
+		return resp
+	case time.Until(after) > dbguest.MaxFlushAhead:
+		resp.Error = dbguest.ErrCodeInvalidRequest
+		return resp
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), databaseArchiveFlushWait)
+	defer cancel()
+	if wait := time.Until(after); wait >= 0 {
+		time.Sleep(wait + time.Millisecond)
+	}
+	_, err := g.query(ctx, "SELECT pg_current_xact_id()")
+	if err == nil {
+		err = g.switchAndArchive(ctx)
+	}
+	if err != nil {
+		g.log.Warn("database archive flush failed", "err", err)
+		resp = g.response()
+		resp.Error = dbguest.ErrCodeFlushFailed
+		return resp
+	}
+	return g.response()
 }
 
 // query runs one read-only statement as the superuser and returns its

@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -102,9 +103,15 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.StartDatabase(ctx, &vmmdpb.StartDatabaseRequest{
+	req := &vmmdpb.StartDatabaseRequest{
 		DatabaseId: vm.DatabaseID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemSizeMib: int32(vm.MemMiB),
-	})
+	}
+	// Only the first boot of a restored database recovers; once
+	// bootstrapped it boots from its own volume.
+	if vm.RestoreSource != "" && !vm.Bootstrapped {
+		req.RestoreSource, req.RestoreTarget = vm.RestoreSource, timestamppb.New(vm.RestoreTarget)
+	}
+	_, err = c.StartDatabase(ctx, req)
 	return tolerate(err, codes.FailedPrecondition)
 }
 
@@ -123,12 +130,16 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL})
+	in := &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL}
+	if !req.After.IsZero() {
+		in.After = timestamppb.New(req.After)
+	}
+	resp, err := c.DatabaseControl(ctx, in)
 	if status.Code(err) == codes.FailedPrecondition {
 		return dbguest.Response{}, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
 	}
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	return dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate()}, nil
+	return dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup()}, nil
 }

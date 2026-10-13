@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -33,6 +34,10 @@ const (
 	// sets it only when it relays archive streams: archiving into nothing
 	// would grow pg_wal without bound.
 	ArchiveArg = "gregale.archive=1"
+	// RestoreTargetArgKey boots an empty volume as a point-in-time restore:
+	// guest-init pulls the restore source's base backup and recovers to the
+	// target (RFC 3339, UTC), then promotes.
+	RestoreTargetArgKey = "gregale.restore_target"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -60,7 +65,20 @@ const (
 	OpAdminSQL Op = "admin_sql"
 	// OpStop shuts PostgreSQL down cleanly; the VM powers off afterwards.
 	OpStop Op = "stop"
+	// OpBaseBackup streams a pg_basebackup to the host's archive
+	// (ADR-1027) and returns its id in Response.Backup. It needs a ready
+	// database with archiving on.
+	OpBaseBackup Op = "basebackup"
+	// OpFlushWAL makes the archive cover Request.After: once the guest
+	// clock has passed it, the guest commits a transaction (a commit record
+	// a point-in-time restore to After can stop at), switches WAL and waits
+	// until that segment is archived. A restore needs it: recovery to a
+	// time fails unless a commit after that time is archived.
+	OpFlushWAL Op = "flush_wal"
 )
+
+// MaxFlushAhead bounds how far in the future OpFlushWAL's After may be.
+const MaxFlushAhead = 5 * time.Second
 
 // State is the guest's database lifecycle state.
 type State string
@@ -84,6 +102,10 @@ const (
 	ErrCodeStartFailed        = "start_failed"
 	ErrCodeVolumeFailed       = "volume_failed"
 	ErrCodeAdminSQLFailed     = "admin_sql_failed"
+	ErrCodeBackupFailed       = "backup_failed"
+	ErrCodeArchiveOff         = "archive_off"
+	ErrCodeRestoreFailed      = "restore_failed"
+	ErrCodeFlushFailed        = "flush_failed"
 )
 
 // Request is one control request line.
@@ -92,6 +114,8 @@ type Request struct {
 	// SQL is the admin statement batch for OpAdminSQL. It can carry role
 	// passwords and is never logged or echoed.
 	SQL string `json:"sql,omitempty"`
+	// After is OpFlushWAL's instant.
+	After time.Time `json:"after,omitzero"`
 }
 
 // Response answers one control request.
@@ -101,14 +125,21 @@ type Response struct {
 	Error string `json:"error,omitempty"`
 	// SQLState is the PostgreSQL error code of a failed admin request.
 	SQLState string `json:"sqlstate,omitempty"`
+	// Backup is the id of the base backup OpBaseBackup stored.
+	Backup string `json:"backup,omitempty"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.
 func (r Request) Validate() error {
 	switch r.Op {
-	case OpStatus, OpStop, OpBootstrap:
-		if r.SQL != "" {
-			return fmt.Errorf("%s: unexpected sql", r.Op)
+	case OpStatus, OpStop, OpBootstrap, OpBaseBackup:
+		if r.SQL != "" || !r.After.IsZero() {
+			return fmt.Errorf("%s: unexpected arguments", r.Op)
+		}
+		return nil
+	case OpFlushWAL:
+		if r.SQL != "" || r.After.IsZero() {
+			return errors.New("flush_wal: needs only an instant")
 		}
 		return nil
 	case OpAdminSQL:
@@ -117,6 +148,9 @@ func (r Request) Validate() error {
 		}
 		if strings.ContainsRune(r.SQL, 0) {
 			return errors.New("admin_sql: sql contains NUL")
+		}
+		if !r.After.IsZero() {
+			return errors.New("admin_sql: unexpected instant")
 		}
 		return nil
 	default:
@@ -131,6 +165,26 @@ func BootArgs(major int) (string, error) {
 		return "", fmt.Errorf("unsupported postgres major %d", major)
 	}
 	return ModeArg + " " + MajorArgKey + "=" + strconv.Itoa(major), nil
+}
+
+// RestoreTargetArg renders the restore target boot argument.
+func RestoreTargetArg(target time.Time) string {
+	return RestoreTargetArgKey + "=" + target.UTC().Format(time.RFC3339Nano)
+}
+
+// RestoreTarget reports the point-in-time restore target on the kernel
+// command line, if any.
+func RestoreTarget(cmdline string) (time.Time, bool, error) {
+	for _, field := range strings.Fields(cmdline) {
+		if value, ok := strings.CutPrefix(field, RestoreTargetArgKey+"="); ok {
+			t, err := time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				return time.Time{}, true, fmt.Errorf("invalid %s %q", RestoreTargetArgKey, value)
+			}
+			return t, true, nil
+		}
+	}
+	return time.Time{}, false, nil
 }
 
 // ArchiveEnabled reports whether the kernel command line turns WAL

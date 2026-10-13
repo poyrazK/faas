@@ -257,3 +257,67 @@ func TestStoreAlwaysOn(t *testing.T) {
 		})
 	}
 }
+
+// TestStoreRestorePlacementAndLease pins a restore to its node, keeps its
+// lineage and lets one holder at a time run it.
+func TestStoreRestorePlacementAndLease(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 50 << 30, Lifecycle: NodeActive},
+			)
+			source := newVM(1<<30, 384)
+			restored := newVM(1<<30, 384)
+			restored.NodeID, restored.RestoreSource, restored.RestoreWindowSeconds = "db-a", source.DatabaseID, 86400
+			restored.RestoreTarget = time.Date(2026, 10, 13, 9, 30, 15, 123456000, time.UTC)
+			vm, err := s.Place(ctx, restored)
+			if err != nil || vm.NodeID != "db-a" {
+				t.Fatalf("pinned placement = %+v, %v; want db-a despite db-b's free space", vm, err)
+			}
+			got, err := s.Get(ctx, vm.DatabaseID)
+			if err != nil || got.RestoreSource != source.DatabaseID || !got.RestoreTarget.Equal(restored.RestoreTarget) || got.RestoreWindowSeconds != 86400 {
+				t.Fatalf("lineage = %+v, %v", got, err)
+			}
+			pinnedFull := newVM(20<<30, 384)
+			pinnedFull.NodeID = "db-a"
+			if _, err := s.Place(ctx, pinnedFull); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("pinned to a full node = %v, want ErrNoCapacity", err)
+			}
+
+			lease, err := s.ClaimRestore(ctx, vm.DatabaseID, time.Time{}, time.Minute)
+			if err != nil || lease.IsZero() {
+				t.Fatalf("claim = %v, %v", lease, err)
+			}
+			if _, err := s.ClaimRestore(ctx, vm.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("second claim = %v, want ErrConflict", err)
+			}
+			renewed, err := s.ClaimRestore(ctx, vm.DatabaseID, lease, time.Minute)
+			if err != nil || renewed.Before(lease) {
+				t.Fatalf("renew = %v, %v", renewed, err)
+			}
+			if _, err := s.ClaimRestore(ctx, vm.DatabaseID, lease, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("renew with a stale lease = %v, want ErrConflict", err)
+			}
+			short, err := s.ClaimRestore(ctx, vm.DatabaseID, renewed, time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			if _, err := s.ClaimRestore(ctx, vm.DatabaseID, time.Time{}, time.Minute); err != nil {
+				t.Fatalf("claim after the lease %v lapsed = %v", short, err)
+			}
+			plain, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimRestore(ctx, plain.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("claim on a database that is not a restore = %v", err)
+			}
+			if _, err := s.ClaimRestore(ctx, uuid.NewString(), time.Time{}, time.Minute); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("claim on a missing database = %v", err)
+			}
+		})
+	}
+}

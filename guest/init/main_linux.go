@@ -96,7 +96,15 @@ func boot() error {
 		}
 		if database {
 			guestStage("mode-database")
-			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)))
+			target, restoring, targetErr := dbguest.RestoreTarget(string(cmdline))
+			if targetErr == nil && restoring && !dbguest.ArchiveEnabled(string(cmdline)) {
+				targetErr = errors.New("restore needs the archive relay")
+			}
+			if targetErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", targetErr)
+			}
+			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)), target)
 		}
 	}
 	root, err := assembleOverlay()
