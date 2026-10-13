@@ -602,6 +602,13 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   after every other probe, since storage cannot shrink back to the
   qualification spec; the report's `storage_resize` must match the backend
   for readiness. The native driver advertises it; Neon does not.
+- Metal (`TestMetalStorageResizeThroughService`, through the service's
+  journal and reconciler): a running database grown 1 -> 2 GiB parks, grows
+  and wakes in 9.3 s on a loaded host; parked and grown 2 -> 3 GiB, it
+  finishes in 65 ms and stays parked, waking on the 3 GiB filesystem at its
+  next query (4.3 s). The superblock matches each limit, the seeded rows
+  and the existing login survive, and a shrink is refused.
+  `TestMetalQualifyProvider` passes all 27 checks.
 
 ### Usage metering
 
