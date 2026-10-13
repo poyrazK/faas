@@ -4557,6 +4557,14 @@ const (
 	// measured memory exceeds its admission ceiling, schedd evicts until it
 	// is back under this share of the ceiling (ADR-909 proposal 3).
 	MeasuredEvictionTargetPercent = 90
+	// QuietPauseMaxVCPUOvercommitPercent caps a node's booked vCPU and CPU
+	// millicores, quiet-paused instances included, at this share of its
+	// budget under quiet pause admission (ADR-957); the gates otherwise
+	// count only active instances. The ADR's simulation peaked at 265%.
+	QuietPauseMaxVCPUOvercommitPercent = 300
+	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
+	// quiet-paused instances may be before admission counts every booking.
+	QuietPauseSampleMaxAgeMillis = 2000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to

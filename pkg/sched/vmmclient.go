@@ -390,6 +390,8 @@ type VMInstanceStat struct {
 	// writes 0 to net_rx_bytes — safe under additive-merge).
 	NetRxBytes       *int64
 	InflightRequests int64
+	// QuietPaused (ADR-957): vmmd holds the instance paused between requests.
+	QuietPaused bool
 	LastRequestAt    time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -1613,6 +1615,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		LeaseUID:         in.GetLeaseUid(),
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
+		QuietPaused:      in.GetQuietPaused(),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()
