@@ -506,7 +506,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -594,6 +593,9 @@ from .create_environment_git_source_request_approval_policy import CreateEnviron
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
+from .create_image_run_request import CreateImageRunRequest
+from .create_image_run_request_env import CreateImageRunRequestEnv
+from .create_image_run_request_pull import CreateImageRunRequestPull
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
 from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
@@ -1521,6 +1523,9 @@ from .github_recovery_status_response import GithubRecoveryStatusResponse
 from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
 from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
 from .grace_window_response import GraceWindowResponse
+from .image_run_response import ImageRunResponse
+from .image_run_response_image_status import ImageRunResponseImageStatus
+from .image_run_response_status import ImageRunResponseStatus
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
 from .import_app_open_api_body_paths import ImportAppOpenAPIBodyPaths
@@ -4568,7 +4573,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4654,6 +4658,9 @@ __all__ = (
     "CreateEnvironmentGitSourceRequestMode",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
+    "CreateImageRunRequest",
+    "CreateImageRunRequestEnv",
+    "CreateImageRunRequestPull",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
     "CreateIssueIngestTokenRequest",
@@ -5549,6 +5556,9 @@ __all__ = (
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
+    "ImageRunResponse",
+    "ImageRunResponseImageStatus",
+    "ImageRunResponseStatus",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
     "ImportAppOpenAPIBodyPaths",
