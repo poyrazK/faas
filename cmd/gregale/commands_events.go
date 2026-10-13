@@ -100,6 +100,8 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptionRetry(args[1:], "reset")
 	case "subscription-health":
 		return cmdEventsSubscriptionHealth(args[1:])
+	case "subscription-capacity-preview":
+		return cmdEventsSubscriptionCapacityPreview(args[1:])
 	case "subscription-capacity":
 		return cmdEventsSubscriptionControl(args[1:], "capacity")
 	case "subscription-status":

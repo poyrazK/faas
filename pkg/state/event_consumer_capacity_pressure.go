@@ -19,8 +19,9 @@ var _ EventConsumerCapacityPressureStore = (*PgStore)(nil)
 var _ EventConsumerCapacityPressureStore = (*MemStore)(nil)
 
 func buildEventConsumerCapacityPressure(app, sub string, now time.Time, limits api.EventDeliveryLimits, configured int, live [3]int64, waiting [3]int64, oldest [3]*time.Time) api.EventConsumerCapacityPressure {
+	planCeiling := limits.PerConsumer
 	limits.PerConsumer = effectiveEventConsumerCapacity(limits.PerConsumer, configured)
-	out := api.EventConsumerCapacityPressure{AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: now, Coverage: "live_slots_and_all_pending_application_recipients", Complete: true, ConfiguredMaxPendingDeliveries: configured, BlockingScope: eventCapacityScope(limits, live[0], live[1], live[2]), Scopes: make([]api.EventConsumerCapacityScope, 0, 3)}
+	out := api.EventConsumerCapacityPressure{PlanMaxPendingDeliveries: planCeiling, AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: now, Coverage: "live_slots_and_all_pending_application_recipients", Complete: true, ConfiguredMaxPendingDeliveries: configured, BlockingScope: eventCapacityScope(limits, live[0], live[1], live[2]), Scopes: make([]api.EventConsumerCapacityScope, 0, 3)}
 	names := [3]string{"consumer", "app", "account"}
 	ceilings := [3]int{limits.PerConsumer, limits.PerApp, limits.PerAccount}
 	advice := [3]string{

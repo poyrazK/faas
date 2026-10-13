@@ -3149,3 +3149,41 @@ observations reserve no capacity and guarantee neither immediate admission nor
 delivery order. Go/Node/Python SDKs expose the optional pressure models; existing
 watch thresholds and at-least-once execution behavior remain unchanged. See
 [ADR-1175](adr/1175-subscription-capacity-pressure-diagnostics.md).
+
+### Preview a subscription capacity change
+
+```sh
+gregale --json events subscription-capacity-preview APP SUB --max-pending 16
+gregale events subscription-capacity-preview APP SUB --max-pending 0 --timeout 5s --max-age 30s
+```
+
+This CLI command resolves the app UUID and reads existing delivery health, without
+sending controls or writing files. Pressure now exposes
+`plan_max_pending_deliveries`, the current plan allowance before applying the saved
+subscription setting. Preview requires this field; upgrade older servers before
+using it. It rejects missing, incomplete, mismatched, stale, future-dated or
+inconsistent pressure snapshots rather than inventing usable capacity. Default
+total read timeout is five seconds; max-age defaults to thirty seconds and uses
+existing watch bounds (100ms to 24h). Interrupting reads exits 130.
+
+The JSON report includes `read_only`, `advisory`, `valid`, the requested value,
+validated `pressure`, and a `projection` for valid proposals. Zero projects the
+current plan default. Positive values must fit the observed plan ceiling. Invalid
+proposals return `valid: false`, a validation error, no projection, and exit 1.
+Valid proposals exit 0 even if their projection would block new admission.
+
+Projection shows the effective consumer limit, available consumer slots, and
+`required_consumer_drain` before one additional ordinary delivery could fit. At
+exactly the limit, one delivery must drain. Lowering does not evict existing work.
+The projected first blocker follows consumer/app/account priority, while
+`shared_blocking_scopes` lists every full app/account ceiling. Increasing only the
+consumer setting cannot remove these shared limits. Usage counts trusted pending
+plus dispatching slots, including replay descendants, as in current diagnostics.
+
+`capacity_only_ready` does not establish full delivery eligibility or write
+permission/MFA. Pause, pacing, circuit, ordering, filters and per-recipient
+admission exceptions remain separate. Preview reserves nothing; plan and usage
+can change before apply. Review the report, then explicitly use
+`subscription-capacity APP SUB --max-pending N --yes` if desired. Server validation
+still controls admission, with no immediate-delivery, ordering or exactly-once
+promise. See [ADR-1176](adr/1176-guarded-subscription-capacity-preview.md).

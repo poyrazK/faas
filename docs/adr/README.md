@@ -504,6 +504,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1173 | [Read-only lineage control report reconciliation](1173-read-only-lineage-control-report-reconciliation.md) | accepted | Resolve fixed commands from retained server receipts without submitting controls |
 | 1174 | [Configurable subscription delivery capacity](1174-configurable-subscription-delivery-capacity.md) | accepted | Lower per-consumer live-delivery ceilings shared by routing and replay without exceeding plan caps |
 | 1175 | [Subscription capacity-pressure diagnostics](1175-subscription-capacity-pressure-diagnostics.md) | accepted | Read-only scope usage, effective ceilings and waiting acceptance ages from a complete pressure snapshot |
+| 1176 | [Guarded subscription capacity preview](1176-guarded-subscription-capacity-preview.md) | accepted | Read-only proposal validation and projected consumer/shared capacity from fresh scoped evidence |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

@@ -2668,6 +2668,18 @@ Set a lower live-delivery limit for one subscription
 | `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
 | `--yes` | confirm changing subscription capacity |  |
 
+### events subscription-capacity-preview
+
+Preview a proposed subscription capacity limit without changing controls
+
+`gregale events subscription-capacity-preview [--max-pending <N>] [--timeout <DURATION>] [--max-age <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--max-pending <N>` | proposed live ceiling; 0 restores plan default |  |
+| `--timeout <DURATION>` | total read deadline (default 5s) |  |
+| `--max-age <DURATION>` | maximum pressure snapshot age (default 30s) |  |
+
 ### events recovery-preview
 
 Preview a bounded selection of failed event consumers

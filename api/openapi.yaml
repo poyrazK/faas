@@ -63211,8 +63211,9 @@ components:
       type: object
       additionalProperties: false
       description: Read-only current live slot usage and effective capacity waiting reasons from one owned subscription snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation or delivery-order guarantee.
-      required: [app_id, subscription_id, observed_at, coverage, complete, blocking_scope, configured_max_pending_deliveries, scopes]
+      required: [app_id, subscription_id, observed_at, coverage, complete, blocking_scope, configured_max_pending_deliveries, plan_max_pending_deliveries, scopes]
       properties:
+        plan_max_pending_deliveries: { type: integer, minimum: 1, description: "Current plan consumer ceiling before applying the saved subscription setting; used to validate proposed capacity changes." }
         app_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }

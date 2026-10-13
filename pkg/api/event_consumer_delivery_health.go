@@ -86,6 +86,7 @@ type EventConsumerCapacityWaits struct {
 // Current admission pressure and effective recorded waiting reasons share one
 // snapshot. Oldest age is since acceptance, not continuous capacity-wait duration.
 type EventConsumerCapacityPressure struct {
+	PlanMaxPendingDeliveries       int                          `json:"plan_max_pending_deliveries"`
 	AppID                          string                       `json:"app_id"`
 	SubscriptionID                 string                       `json:"subscription_id"`
 	ObservedAt                     time.Time                    `json:"observed_at"`

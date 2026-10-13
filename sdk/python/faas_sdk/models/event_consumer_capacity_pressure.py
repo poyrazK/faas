@@ -32,6 +32,9 @@ class EventConsumerCapacityPressure:
 
     """
 
+    plan_max_pending_deliveries: int
+    """Current plan consumer ceiling before applying the saved subscription setting; used to validate proposed
+    capacity changes."""
     app_id: UUID
     subscription_id: UUID
     observed_at: datetime.datetime
@@ -49,6 +52,8 @@ class EventConsumerCapacityPressure:
     subscription; live app/account counts include sibling deliveries in those scopes."""
 
     def to_dict(self) -> dict[str, Any]:
+        plan_max_pending_deliveries = self.plan_max_pending_deliveries
+
         app_id = str(self.app_id)
 
         subscription_id = str(self.subscription_id)
@@ -72,6 +77,7 @@ class EventConsumerCapacityPressure:
 
         field_dict.update(
             {
+                "plan_max_pending_deliveries": plan_max_pending_deliveries,
                 "app_id": app_id,
                 "subscription_id": subscription_id,
                 "observed_at": observed_at,
@@ -90,6 +96,8 @@ class EventConsumerCapacityPressure:
         from ..models.event_consumer_capacity_scope import EventConsumerCapacityScope
 
         d = dict(src_dict)
+        plan_max_pending_deliveries = d.pop("plan_max_pending_deliveries")
+
         app_id = UUID(d.pop("app_id"))
 
         subscription_id = UUID(d.pop("subscription_id"))
@@ -112,6 +120,7 @@ class EventConsumerCapacityPressure:
             scopes.append(scopes_item)
 
         event_consumer_capacity_pressure = cls(
+            plan_max_pending_deliveries=plan_max_pending_deliveries,
             app_id=app_id,
             subscription_id=subscription_id,
             observed_at=observed_at,
