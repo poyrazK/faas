@@ -2,7 +2,9 @@
 
 - Status: Proposed. Rollout starts with function apps only (owner
   decision, 2026-10-13); services follow once functions have run well in
-  production.
+  production. Steps 1 and 2 are built, each behind switches that are off by
+  default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
+  `frozen_tier` (2026-10-13). Both canaries are pending.
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
