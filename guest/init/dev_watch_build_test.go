@@ -38,9 +38,17 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 			t.Fatalf("host %q reached the image: %+v", host, variables)
 		}
 	}
-	if err := devWatchRailpackConfig(map[string]any{}, api.BuildManifest{Framework: api.FrameworkRailpackPython, DevWatchCommand: "uvicorn app:app --reload"}); err == nil ||
+	if err := devWatchRailpackConfig(map[string]any{}, api.BuildManifest{Framework: api.FrameworkRailpackGo, DevWatchCommand: "air"}); err == nil ||
 		!strings.HasPrefix(err.Error(), api.CodeDevWatchUnsupported) {
-		t.Fatalf("python watch build error = %v, want %s", err, api.CodeDevWatchUnsupported)
+		t.Fatalf("go watch build error = %v, want %s", err, api.CodeDevWatchUnsupported)
+	}
+	python := map[string]any{}
+	if err := devWatchRailpackConfig(python, api.BuildManifest{Framework: api.FrameworkRailpackPython, DevWatchCommand: "uvicorn main:app --reload"}); err != nil {
+		t.Fatal(err)
+	}
+	pyVars := python["deploy"].(map[string]any)["variables"].(map[string]any)
+	if _, node := pyVars["NODE_ENV"]; node || pyVars["PYTHONPATH"] != "/app/src:/app" || pyVars[api.DevWatchEnv] != "1" {
+		t.Fatalf("python variables = %+v", pyVars)
 	}
 	if err := devWatchRailpackConfig(map[string]any{"steps": "not an object"}, m); err == nil {
 		t.Fatal("a malformed railpack.json was accepted")
@@ -51,10 +59,25 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 	}
 }
 
-// The overlay's build commands must turn Railpack's real Node plan with a
-// build script into a verbatim one, which is what makes live patches apply.
-func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
-	data, err := os.ReadFile("../../pkg/devpatch/testdata/railpack-0.38.0-node-build.json")
+// The overlay's build commands must turn Railpack's real plans with a build
+// step (a Node build script, a uv project install) into verbatim ones,
+// which is what makes live patches apply.
+func TestDevWatchOverlayMakesBuildPlansVerbatim(t *testing.T) {
+	for _, tc := range []struct {
+		fixture   string
+		framework api.BuildFramework
+		command   string
+	}{
+		{"railpack-0.38.0-node-build.json", api.FrameworkRailpackNode, "npm run dev"},
+		{"railpack-0.38.0-py-uv.json", api.FrameworkRailpackPython, "uvicorn main:app --reload"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) { checkDevWatchOverlayVerbatim(t, tc.fixture, tc.framework, tc.command) })
+	}
+}
+
+func checkDevWatchOverlayVerbatim(t *testing.T, fixture string, framework api.BuildFramework, command string) {
+	t.Helper()
+	data, err := os.ReadFile("../../pkg/devpatch/testdata/" + fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +85,7 @@ func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
 		t.Fatalf("fixture baseline = %+v, want build_command", got)
 	}
 	config := map[string]any{}
-	if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev"}); err != nil {
+	if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: framework, DevWatchCommand: command}); err != nil {
 		t.Fatal(err)
 	}
 	overrides := config["steps"].(map[string]any)["build"].(map[string]any)["commands"]
@@ -80,7 +103,7 @@ func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
 	if !got.Verbatim {
 		t.Fatalf("watch plan = %+v, want verbatim", got)
 	}
-	watched, err := devWatchSourceMap(api.BuildManifest{DevWatchCommand: "npm run dev"}, &got)
+	watched, err := devWatchSourceMap(api.BuildManifest{DevWatchCommand: command}, &got)
 	if err != nil || !watched.Watch || !watched.Verbatim {
 		t.Fatalf("watch source map = %+v, %v", watched, err)
 	}

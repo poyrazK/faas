@@ -420,6 +420,9 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
+	// ADR-1170: a watch-mode development server may listen on another port
+	// or on localhost only; bridge the runtime port to it.
+	go runDevWatchBridge(supRef.LastAppPID, manifest.EffectivePort(), slog.Default())
 	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
 	// cancellable context is shared between the HEALTHCHECK poll
 	// goroutine and the PID 1 signal-handler loop so both observe

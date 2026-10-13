@@ -19,21 +19,40 @@ func errDevWatchUnsupported(format string, args ...any) error {
 	return fmt.Errorf("%s: %s", api.CodeDevWatchUnsupported, fmt.Sprintf(format, args...))
 }
 
+// devWatchRuntime is what the watch overlay sets per Railpack language.
+type devWatchRuntime struct {
+	// binPath replaces the build step's commands: a non-executing path
+	// command, so the step only layers the source onto the installed
+	// dependencies and keeps their executables on PATH.
+	binPath   string
+	variables map[string]string
+}
+
+var devWatchRuntimes = map[api.BuildFramework]devWatchRuntime{
+	api.FrameworkRailpackNode: {binPath: "/app/node_modules/.bin", variables: map[string]string{"NODE_ENV": "development"}},
+	// Phase 4: the uv build step's `uv sync` over the full source installs
+	// the project into the venv, which is what makes uv apps non-verbatim.
+	// Without it the project runs from /app, so a src/ layout needs
+	// PYTHONPATH to import itself.
+	api.FrameworkRailpackPython: {binPath: "/app/.venv/bin", variables: map[string]string{"PYTHONPATH": "/app/src:/app"}},
+}
+
 // devWatchRailpackConfig adds the watch-mode settings to the platform
 // railpack.json overlay. It replaces the build step's commands with a single
 // non-executing path command, so the step only layers the source onto the
 // installed dependencies; sets the development command as the start command;
-// and marks the image with NODE_ENV=development and api.DevWatchEnv=1, which
-// tells guest-init to apply live patches without restarting the server. The
-// app's public hostname goes in api.DevWatchHostEnv and, for Vite-based
-// servers, which answer 403 to a Host they do not know, in
-// api.DevWatchViteAllowedHostsEnv.
+// and marks the image with api.DevWatchEnv=1, which tells guest-init to apply
+// live patches without restarting the server and to bridge the runtime port
+// to it. Node.js images also get NODE_ENV=development. The app's public
+// hostname goes in api.DevWatchHostEnv and, for Vite-based servers, which
+// answer 403 to a Host they do not know, in api.DevWatchViteAllowedHostsEnv.
 func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	if m.DevWatchCommand == "" {
 		return nil
 	}
-	if m.Framework != api.FrameworkRailpackNode {
-		return errDevWatchUnsupported("watch mode supports Node.js apps built without a Dockerfile; this build is %s", m.Framework)
+	runtime, ok := devWatchRuntimes[m.Framework]
+	if !ok {
+		return errDevWatchUnsupported("watch mode supports Node.js and Python apps built without a Dockerfile; this build is %s", m.Framework)
 	}
 	steps, err := childObject(config, "steps")
 	if err != nil {
@@ -43,7 +62,7 @@ func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	if err != nil {
 		return err
 	}
-	build["commands"] = []any{map[string]any{"path": "/app/node_modules/.bin"}}
+	build["commands"] = []any{map[string]any{"path": runtime.binPath}}
 	deploy, err := childObject(config, "deploy")
 	if err != nil {
 		return err
@@ -53,7 +72,9 @@ func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	if err != nil {
 		return err
 	}
-	variables["NODE_ENV"] = "development"
+	for name, value := range runtime.variables {
+		variables[name] = value
+	}
 	variables[api.DevWatchEnv] = "1"
 	if m.DevWatchHost != "" && api.ValidDevWatchHost(m.DevWatchHost) {
 		variables[api.DevWatchHostEnv] = m.DevWatchHost
