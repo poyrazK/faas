@@ -18300,6 +18300,60 @@ CREATE TABLE public.customer_operation_result_blobs (
 
 
 --
+-- Name: customer_operation_webhook_binding_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.customer_operation_webhook_binding_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: customer_operation_webhook_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_bindings (
+    endpoint_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation_name text NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    event_types text[] DEFAULT '{}'::text[] NOT NULL,
+    version bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_webhook_bindings_event_types_check CHECK (((cardinality(event_types) <= 32) AND (array_position(event_types, NULL::text) IS NULL))),
+    CONSTRAINT customer_operation_webhook_bindings_operation_name_check CHECK ((operation_name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_webhook_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_webhook_bindings_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: customer_operation_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    body_sha256 bytea NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    binding_version bigint NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_webhook_receipts_binding_version_check CHECK ((binding_version > 0)),
+    CONSTRAINT customer_operation_webhook_receipts_body_sha256_check CHECK ((octet_length(body_sha256) = 32)),
+    CONSTRAINT customer_operation_webhook_receipts_check CHECK ((expires_at > accepted_at)),
+    CONSTRAINT customer_operation_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256)))
+);
+
+
+--
 -- Name: customer_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33061,6 +33115,22 @@ ALTER TABLE ONLY public.customer_operation_workflow_states
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_job_run_id_key UNIQUE (job_run_id);
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_pkey PRIMARY KEY (endpoint_id);
+
+
+--
+-- Name: customer_operation_webhook_receipts customer_operation_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_receipts
+    ADD CONSTRAINT customer_operation_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
 
 
 --

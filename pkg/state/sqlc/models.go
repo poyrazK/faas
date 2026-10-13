@@ -1747,6 +1747,30 @@ type CustomerOperationStreamLease struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationWebhookBinding struct {
+	EndpointID       pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	OperationName    string
+	PlatformTenantID pgtype.UUID
+	EventTypes       []string
+	Version          int64
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type CustomerOperationWebhookReceipt struct {
+	EndpointID      pgtype.UUID
+	ProviderEventID string
+	BodySha256      []byte
+	AccountID       pgtype.UUID
+	OperationID     pgtype.UUID
+	BindingVersion  int64
+	AcceptedAt      pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
 type CustomerOperationWorkflowClaim struct {
 	WorkflowRunID    pgtype.UUID
 	OperationID      pgtype.UUID
