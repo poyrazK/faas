@@ -151,23 +151,32 @@ gregale mcp serve --transport stdio
 gregale --profile staging mcp serve --timeout 15s
 ```
 
-### mcp connections list
+### mcp connections
 
-List bounded, credential-free connection metadata through the bridge owner's socket.
+Inspect or revoke agent grants through a local operator socket
+
+#### mcp connections list
+
+List bounded connection metadata without credentials
 
 `gregale mcp connections list --socket <PATH> [--limit <N>] [--offset <N>]`
 
-The socket parent must be owned by the current user with mode 0700, and the socket
-must have mode 0600. Page size defaults to 20 and accepts 1–100; offset must be non-negative.
+| Flag | Meaning | |
+|---|---|---|
+| `--socket <PATH>` | owner-protected management control socket | required |
+| `--limit <N>` | page size from 1 to 100 (default 20) |  |
+| `--offset <N>` | non-negative page offset |  |
 
-### mcp connections revoke
+#### mcp connections revoke
 
-Revoke one exact bridge grant and cancel its active requests.
+Revoke one exact bridge grant and stop its observations
 
 `gregale mcp connections revoke --socket <PATH> --grant-id <ID>`
 
-Durable bridges acknowledge revocation after committing encrypted state. Native API
-keys and already accepted operations remain authoritative.
+| Flag | Meaning | |
+|---|---|---|
+| `--socket <PATH>` | owner-protected management control socket | required |
+| `--grant-id <ID>` | exact active bridge grant ID to revoke | required |
 
 ### mcp init
 
