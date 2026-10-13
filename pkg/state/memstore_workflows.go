@@ -1329,6 +1329,10 @@ func (m *MemStore) completeWorkflowCallback(_ context.Context, tenantID, runID, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.completeWorkflowCallbackLocked(tenantID, runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	run, ok := m.workflowRuns[runID]
 	if !ok {
 		return false, ErrWorkflowRunNotFound

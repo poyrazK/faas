@@ -1658,6 +1658,19 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 		return false, fmt.Errorf("pgstore: begin workflow callback: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	duplicate, err := completeWorkflowCallbackTx(ctx, tx, tenantID, runID, stepName, eventName, eventID, timeout, payload)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("pgstore: commit workflow callback: %w", err)
+	}
+	return duplicate, nil
+}
+
+// completeWorkflowCallbackTx records one callback inside the caller's
+// transaction, so an operation approval commits with its decision event.
+func completeWorkflowCallbackTx(ctx context.Context, tx pgx.Tx, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	var runStatus string
 	if tenantID == "" {
 		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
@@ -1678,9 +1691,6 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 	if err == nil {
 		if existing.RunID != runID || existing.EventName != eventName || !equalWorkflowJSON(existing.Payload, payload) {
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("pgstore: commit duplicate workflow callback: %w", err)
 		}
 		return true, nil
 	}
@@ -1718,9 +1728,6 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 		WHERE id = $1 AND status = 'awaiting_event'
 	`, runID, now); err != nil {
 		return false, fmt.Errorf("pgstore: wake workflow callback run: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("pgstore: commit workflow callback: %w", err)
 	}
 	return false, nil
 }
