@@ -21,5 +21,6 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY config.mjs server.mjs authz.mjs migrate.mjs ./
 COPY sql/ ./sql/
+COPY ui/ ./ui/
 EXPOSE 8080
 CMD ["node", "server.mjs"]

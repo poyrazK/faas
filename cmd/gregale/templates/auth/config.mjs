@@ -74,7 +74,8 @@ export function runtimeConfig(env) {
     PORT: String(gotrue.port),
     API_EXTERNAL_URL: api,
     GOTRUE_SITE_URL: site,
-    GOTRUE_URI_ALLOW_LIST: redirects.join(','),
+    // The hosted pages are always a valid redirect target (password reset).
+    GOTRUE_URI_ALLOW_LIST: [...redirects, `${external}/ui/**`].join(','),
     GOTRUE_DB_DRIVER: 'postgres',
     DATABASE_URL: databaseURL(env.DATABASE_URL),
     DB_NAMESPACE: 'auth',
@@ -96,7 +97,7 @@ export function runtimeConfig(env) {
     // Request logs would carry verification tokens from /verify query strings.
     GOTRUE_LOG_LEVEL: 'warn',
   }
-  return { external, api, gotrueEnv, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email: emailConfig(env), app: new URL(site).host }
+  return { external, api, gotrueEnv, redirects, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email: emailConfig(env), app: new URL(site).host }
 }
 
 // AUTH_AUTHZ declares custom roles and policies; gregale_auth.apply_authz

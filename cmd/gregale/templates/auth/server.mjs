@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
@@ -8,6 +9,38 @@ import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
 const authzPrefix = '/authz/v1/'
+const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation'])
+const assets = { '/ui/app.js': 'text/javascript; charset=utf-8', '/ui/style.css': 'text/css; charset=utf-8' }
+// The hosted pages load only their own script and style and call only this
+// origin; tokens arrive and leave in URL fragments, never in Referer.
+const pageHeaders = {
+  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache',
+}
+
+function readUI(name) {
+  return readFileSync(new URL(`./ui/${name}`, import.meta.url))
+}
+
+// serveUI answers /ui requests; it returns false for anything else.
+function serveUI(req, res, ui) {
+  const path = req.url.split('?')[0]
+  if (path !== '/ui' && !path.startsWith('/ui/')) return false
+  if (req.method !== 'GET' && req.method !== 'HEAD') { problem(res, 405, 'method_not_allowed'); return true }
+  if (path === '/ui/config.json') {
+    res.writeHead(200, { ...pageHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ site_url: ui.siteURL, redirect_urls: ui.redirectURLs, app: ui.app }))
+  } else if (assets[path]) {
+    res.writeHead(200, { ...pageHeaders, 'Content-Type': assets[path] })
+    res.end(readUI(path.slice('/ui/'.length)))
+  } else if (pages.has(path)) {
+    res.writeHead(200, { ...pageHeaders, 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(readUI('index.html'))
+  } else {
+    problem(res, 404, 'not_found')
+  }
+  return true
+}
 const hopByHop = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
 
 function problem(res, status, code) {
@@ -32,9 +65,10 @@ export function upstreamPath(url) {
   return null
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui } = {}) {
   return http.createServer((req, res) => {
     if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
+    if (ui && serveUI(req, res, ui)) return
     if (req.url === '/healthz') {
       if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
       const probe = http.get({ host: gotrue.host, port: upstreamPort, path: '/health', timeout: 2000 }, upstream => {
@@ -84,7 +118,8 @@ export function start(env = process.env) {
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
   const invitations = { mailer, external: config.external, app: config.app }
-  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations }) })
+  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app }
+  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations }), ui })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()

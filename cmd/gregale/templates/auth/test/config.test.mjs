@@ -32,7 +32,7 @@ test('builds the GoTrue environment from sealed settings', () => {
   assert.equal(g.GOTRUE_DISABLE_SIGNUP, 'false')
   assert.equal(g.GOTRUE_RATE_LIMIT_HEADER, 'X-Real-IP')
   assert.equal(g.GOTRUE_LOG_LEVEL, 'warn')
-  assert.equal(g.GOTRUE_URI_ALLOW_LIST, 'https://shop.example.com/callback,http://localhost:3000/cb')
+  assert.equal(g.GOTRUE_URI_ALLOW_LIST, 'https://shop.example.com/callback,http://localhost:3000/cb,https://shop-auth.gregale.app/ui/**')
   assert.equal(new URL(g.DATABASE_URL).searchParams.get('sslmode'), 'verify-full')
   // The child gets an explicit environment, never the whole process env.
   assert.equal(g.AUTH_JWT_SECRET, undefined)
