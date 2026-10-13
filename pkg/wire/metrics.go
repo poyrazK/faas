@@ -4822,6 +4822,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// another daemon still works but exports nothing until the daemon is
 	// added here.
 	schedd := []string{"schedd"}
+	meterd := []string{"meterd"}
+	// pkg/events.Platform: built with the daemon's OpsMetrics in apid,
+	// builderd, gatewayd-internal, schedd and vmmd.
+	eventEmitters := []string{"apid", "builderd", "gatewayd", "schedd", "vmmd"}
+	// pkg/audit.Auditor with metrics: apid, githubd, meterd and schedd
+	// (gatewayd-internal builds its auditor with nil metrics).
+	auditors := []string{"apid", "githubd", "meterd", "schedd"}
 	commonCollectors = withoutForeignCollectors(prefix, commonCollectors, map[prometheus.Collector][]string{
 		// Spec §4 names vmmd as the waitUntil tail owner; nothing
 		// writes these yet.
@@ -4836,16 +4843,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apiHostingPhaseDuration: {"apid", "builderd", "imaged", "vmmd"},
 		imagedOCIPull:           {"builderd", "imaged", "vmmd"},
 		deployStageDuration:     {"builderd", "imaged", "vmmd"},
-		// pkg/meter and pkg/safedeploy run in apid and meterd.
-		stripePushDur:               {"apid", "meterd"},
-		paddlePushDur:               {"apid", "meterd"},
-		polarPushDur:                {"apid", "meterd"},
-		meteredMBSecondsTotal:       {"apid", "meterd"},
-		deploymentAuditEmittedTotal: {"apid", "meterd"},
-		buildDur:                    {"builderd"},
-		gatewayDrainWaitSeconds:     {"gatewayd", "gatewayd_public"},
-		writeRedirectTotal:          {"gatewayd"},
-		writeRedirectLatency:        {"gatewayd"},
+		// pkg/meter runs in apid and meterd.
+		stripePushDur:         {"apid", "meterd"},
+		paddlePushDur:         {"apid", "meterd"},
+		polarPushDur:          {"apid", "meterd"},
+		meteredMBSecondsTotal: {"apid", "meterd"},
+
+		buildDur:                {"builderd"},
+		gatewayDrainWaitSeconds: {"gatewayd", "gatewayd_public"},
+		writeRedirectTotal:      {"gatewayd"},
+		writeRedirectLatency:    {"gatewayd"},
 		// pkg/sched types that only cmd/schedd constructs: Engine, Loop,
 		// Drain, ExecutionCoordinator and the scale-up Trigger.
 		executionActive:                    schedd,
@@ -4872,6 +4879,39 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		delayedTasks.scheduleLagSeconds:    schedd,
 		evictionFiredTotal:                 schedd,
 		scaleUpAdmitRPS:                    schedd,
+		eventsWriteFail:                    schedd,
+		wakePhaseEmitted:                   eventEmitters,
+		wakeIdentityInvalid:                eventEmitters,
+		wakePhaseDur:                       eventEmitters,
+		recoveryEventEmitted:               eventEmitters,
+		auditWriteFail:                     auditors,
+		auditWriteDur:                      auditors,
+		auditLogWriteTotal:                 auditors,
+		auditLogWriteFailuresTotal:         auditors,
+		// Only cmd/meterd constructs the safe-deploy orchestrator and the
+		// canary progression; the *AlertFired counters have no writer yet
+		// and stay with their family.
+		canaryProgressionAdvancedTotal:                   meterd,
+		canaryProgressionErrorsTotal:                     meterd,
+		canaryProgressionCircuitBreakerTotal:             meterd,
+		canaryProgressionZeroTimestampTotal:              meterd,
+		canaryProgressionHealthGateBlockedTotal:          meterd,
+		safedeployOrchestratorStartedTotal:               meterd,
+		safedeployOrchestratorCompletedTotal:             meterd,
+		safedeployOrchestratorAbortedTotal:               meterd,
+		safedeployOrchestratorStuckDetectedTotal:         meterd,
+		safedeployOrchestratorAuditEmitFailedTotal:       meterd,
+		safedeployOrchestratorStuckCheckMissingTimestamp: meterd,
+		safedeployOrchestratorAutoAbortedTotal:           meterd,
+		safedeployOrchestratorAutoAbortFailedTotal:       meterd,
+		safedeployInFlightRollouts:                       meterd,
+		deploymentAuditEmittedTotal:                      meterd,
+		deploymentAuditGCFailedTotal:                     meterd,
+		deploymentAuditGCRowsDeletedTotal:                meterd,
+		canaryStuckStepAlertFiredTotal:                   meterd,
+		safedeployAuditEmitFailingAlertFiredTotal:        meterd,
+		deploymentAuditGCFailingAlertFiredTotal:          meterd,
+		canaryFleetInFlightHighAlertFiredTotal:           meterd,
 	})
 	reg.MustRegister(commonCollectors...)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
