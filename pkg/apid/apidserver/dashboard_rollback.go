@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -47,7 +48,7 @@ func (s *server) dashboardRollback(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_, problem := s.rollbackAppCore(r, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID})
+	_, _, problem := s.rollbackAppCore(r, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID}, state.RollbackTriggerManual)
 	if problem != nil {
 		http.Redirect(w, r, "/dashboard/apps/"+slug+"?rollback=error", http.StatusSeeOther)
 		return

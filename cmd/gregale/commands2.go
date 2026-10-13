@@ -207,7 +207,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|immediate] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -303,6 +303,7 @@ func cmdApp(args []string) int {
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
 	preAuthBurst := fs.Int("pre-auth-burst", 0, "pre-auth burst per source")
+	releasePolicy := fs.String("release-policy", "", "default rollout for production releases: safe|immediate")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
@@ -627,6 +628,13 @@ func cmdApp(args []string) int {
 		}
 		req.PreAuthRateLimit = config
 	}
+	if explicit["release-policy"] {
+		v := *releasePolicy
+		if v == "" || !api.ValidReleasePolicy(v) {
+			return printErr("Invalid --release-policy", fmt.Errorf("must be 'safe' or 'immediate'; got %q", v))
+		}
+		req.ReleasePolicy = &v
+	}
 	if *healthPathWakes && *noHealthPathWakes {
 		return printErr("Invalid flags", fmt.Errorf("--health-path-wakes and --no-health-path-wakes are mutually exclusive"))
 	}
@@ -892,6 +900,9 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %t\n", "platform tenant required:", a.PlatformTenantRequired)
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		fmt.Printf("%-30s %s\n", "pre-auth limit:", preAuthSummary(a.Manifest.PreAuthRateLimit))
+		if a.ReleasePolicy != "" {
+			fmt.Printf("%-30s %s\n", "release policy:", a.ReleasePolicy)
+		}
 		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
 		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
 		if a.OnlyAllowDeclaredRoutes {
@@ -2361,7 +2372,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// required only when --canary-preset=custom. The CLI parses
 	// + validates BEFORE the network round-trip so a typo
 	// surfaces as an exit-2 error instead of a 422.
-	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|custom); empty = no canary")
+	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|custom); empty = the app release policy (safe: balanced for a live app; none opts out)")
 	canaryStages := fs.String("canary-stages", "", "comma-separated percent@duration pairs for --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
 	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout and first-wake 5xx rollback")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
@@ -2394,7 +2405,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// distinguishes "absent" from "explicit zero". The handler
 	// validates [0, 100] on the request path; we just thread the
 	// pointer through.
-	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
+	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = the app release policy)")
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
@@ -4320,7 +4331,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4349,7 +4360,7 @@ func cmdRollback(args []string) int {
 	interactive := false
 	checked := false
 	var err error
-	wait := false
+	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
@@ -4367,6 +4378,8 @@ func cmdRollback(args []string) int {
 			to = a[len("--to="):]
 		case a == "--wait":
 			wait = true
+		case a == "--no-wait":
+			noWait = true
 		case a == "--expected-current" || a == "--reason" || a == "--timeout" || a == "--poll-interval":
 			i++
 			if i >= len(rest) {
@@ -4430,6 +4443,9 @@ func cmdRollback(args []string) int {
 		}
 		return cmdRollbackInteractive(slug, timeout, interval)
 	}
+	if wait && noWait {
+		return printErr("Invalid rollback", errors.New("--wait and --no-wait are mutually exclusive"))
+	}
 	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
 		return printErr("Invalid rollback", err)
 	}
@@ -4443,6 +4459,12 @@ func cmdRollback(args []string) int {
 	dep, err := client.RollbackTo(context.Background(), slug, to)
 	if err != nil {
 		return printErr("Rollback failed", err)
+	}
+	// ADR-1160: a plain rollback waits until the previous release actually
+	// serves again and reports the measured recovery. An older server that
+	// returns no receipt keeps the request-only output below.
+	if !noWait && dep.RollbackOperation != nil && dep.RollbackOperation.ID != "" {
+		return waitPlainRollback(client, slug, *dep.RollbackOperation, timeout, interval)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
@@ -4471,19 +4493,10 @@ func validateRollbackFlags(checked bool, to, current, reason string, wait bool, 
 	switch {
 	case checked && current == "":
 		return errors.New("--expected-current requires a deployment id or vN revision")
-	case current == "" && (wait || reason != ""):
-		var used []string
-		if reason != "" {
-			used = append(used, "--reason")
-		}
-		if wait {
-			used = append(used, "--wait")
-		}
-		verb, pronoun := "applies", "it"
-		if len(used) > 1 {
-			verb, pronoun = "apply", "them"
-		}
-		return fmt.Errorf("%s only %s to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop %s", strings.Join(used, " and "), verb, pronoun)
+	case current == "" && reason != "":
+		// A plain rollback waits for its outcome by default (ADR-1160), so
+		// --wait is accepted there; only --reason needs the checked form.
+		return errors.New("--reason only applies to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop it")
 	case current != "" && to == "":
 		return errors.New("a checked rollback (--expected-current) also needs --to <deployment|vN>")
 	case timeout <= 0:

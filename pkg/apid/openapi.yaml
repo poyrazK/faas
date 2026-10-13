@@ -61899,6 +61899,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once."
+          type: string
+          enum: [safe, immediate]
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -63938,6 +63942,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-1160). Omit for safe."
+          type: string
+          enum: [safe, immediate]
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -64602,6 +64610,10 @@ components:
           type: [integer, "null"]
           minimum: 0
           maximum: 604800
+        release_policy:
+          description: "Set the default rollout for production releases (ADR-1160). Omit for no change."
+          type: [string, "null"]
+          enum: [safe, immediate, null]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -65336,6 +65348,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Effective default rollout for production releases (ADR-1160)."
+          type: string
+          enum: [safe, immediate]
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -66491,7 +66507,7 @@ components:
 
     RollbackOperation:
       type: object
-      description: Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      description: Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1160) reports preparing until its target serves (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
       required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -66511,6 +66527,18 @@ components:
         updated_at: { type: string, format: date-time }
         completed_at: { type: [string, "null"], format: date-time }
         audit_id: { type: string }
+        trigger:
+          type: string
+          enum: [manual, auto_5xx, alert]
+          description: What started a plain rollback. Absent for a checked rollback.
+        recovery_ms:
+          type: integer
+          minimum: 0
+          description: Milliseconds from the plain rollback request until its target served. Present once a plain rollback is complete.
+        error:
+          type: string
+          maxLength: 1024
+          description: Why a failed plain rollback did not restore the previous release; code carries the stable error code.
 
     RollbackRequest:
       description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."
