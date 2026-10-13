@@ -3827,6 +3827,11 @@ func (s *server) handler() http.Handler {
 	// handlers_oauth_code_callback.go for the full rationale on
 	// why this is a separate route from /oauth/callback.
 	mux.Handle("GET "+oauthCodeCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCodeCallback))))
+	mux.Handle("POST /v1/gitlab/connect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.startGitLabOAuth)))))
+	mux.Handle("GET "+gitLabOAuthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.finishGitLabOAuth))))
+	mux.Handle("GET /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitLabOAuthConnection))))
+	mux.Handle("DELETE /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.deleteGitLabOAuthConnection)))))
+	mux.Handle("POST /v1/gitlab/disconnect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.disconnectGitLabOAuthFromDashboard)))))
 	// /dashboard/install/connect mints the CSRF state cookie and
 	// redirects the dashboard's "Connect GitHub" button to GitHub's
 	// authorize URL. POST so it can't be triggered by an opportunistic

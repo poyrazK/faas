@@ -7761,17 +7761,42 @@ ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
 -- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation, provider)
 SELECT p.account_id, p.id, e.id, sqlc.arg(repository_id)::bigint,
        sqlc.arg(installation_id)::bigint, sqlc.arg(repository)::text,
        sqlc.arg(source_ref)::text, sqlc.arg(manifest_path)::text,
        sqlc.arg(mode)::text, sqlc.arg(approval_policy)::text, sqlc.arg(prune)::boolean,
-       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0),
+       sqlc.arg(provider)::text
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
 WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.id = sqlc.arg(project_id)::uuid
   AND e.slug = sqlc.arg(environment_slug)::text
-  AND p.repo_full_name = sqlc.arg(repository)::text AND p.install_id = sqlc.arg(installation_id)::bigint
+  AND ((sqlc.arg(provider)::text = 'github' AND p.repo_full_name = sqlc.arg(repository)::text
+       AND p.install_id = sqlc.arg(installation_id)::bigint)
+    OR (sqlc.arg(provider)::text = 'gitlab' AND EXISTS (
+       SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
 RETURNING *;
+
+-- name: GetGitLabOAuthConnection :one
+SELECT * FROM gitlab_oauth_connections WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: PutGitLabOAuthConnection :one
+INSERT INTO gitlab_oauth_connections (account_id, gitlab_user_id, username, credentials_sealed, expires_at)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(gitlab_user_id)::bigint,
+        sqlc.arg(username)::text, sqlc.arg(credentials_sealed)::bytea, sqlc.arg(expires_at)::timestamptz)
+ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id=EXCLUDED.gitlab_user_id,
+    username=EXCLUDED.username, credentials_sealed=EXCLUDED.credentials_sealed,
+    expires_at=EXCLUDED.expires_at, version=gitlab_oauth_connections.version+1, updated_at=now()
+RETURNING *;
+
+-- name: RotateGitLabOAuthConnection :one
+UPDATE gitlab_oauth_connections SET credentials_sealed=sqlc.arg(credentials_sealed)::bytea,
+    expires_at=sqlc.arg(expires_at)::timestamptz, version=version+1, updated_at=now()
+WHERE account_id=sqlc.arg(account_id)::uuid AND version=sqlc.arg(expected_version)::bigint
+RETURNING *;
+
+-- name: DeleteGitLabOAuthConnection :execrows
+DELETE FROM gitlab_oauth_connections WHERE account_id=sqlc.arg(account_id)::uuid;
 
 -- name: GetEnvironmentGitSource :one
 SELECT s.* FROM environment_git_sources s

@@ -7,7 +7,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
 | Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
-| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance | Other providers and incomplete or conflicting GitHub provenance |
+| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity for report mode | GitLab protected-branch evidence and workload provenance; incomplete or conflicting GitHub provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
 | Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
 | Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
@@ -33,6 +33,31 @@ gregale projects environments gitops bind shop staging \
 gregale projects environments gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
+
+For a GitLab.com source, an account owner first connects GitLab on the
+dashboard account page. The control plane needs a GitLab OAuth application
+with `read_api` and `read_repository` access. Set
+`FAAS_GITLAB_OAUTH_CLIENT_ID`, `FAAS_GITLAB_OAUTH_CLIENT_SECRET`, and
+`FAAS_GITLAB_OAUTH_REDIRECT_URI` on apid; register the exact HTTPS redirect
+URI ending in `/v1/gitlab/callback` in GitLab.com. The account connection is
+sealed at rest and can be disconnected on the account page. A GitLab source
+may be bound to a Gregale project without a GitHub installation:
+
+```sh
+gregale projects environments gitops bind shop staging \
+  --provider gitlab --repository group/subgroup/service \
+  --ref refs/heads/main --manifest-path environments/staging.yaml \
+  --mode report --approval-policy manual
+gregale projects environments gitops review shop staging \
+  --commit "$REVIEWED_COMMIT" > revision-review.json
+```
+
+GitLab.com sources currently support reporting, manual approval, and
+`prune=false` only. Gregale verifies the connected account's access, the
+canonical GitLab project path and numeric ID, and the immutable commit before
+reading a bounded archive. A source outage or OAuth disconnect is reported
+separately; it does not discard the last approved revision. GitLab
+protected-branch approval and workload enforcement are not qualified yet.
 
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 

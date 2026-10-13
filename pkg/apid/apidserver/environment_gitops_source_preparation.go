@@ -20,6 +20,9 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 	if !isCanonicalCommitSHA(lease.Revision.CommitSHA) || request.RevisionID != lease.Revision.ID || request.CommitSHA != lease.Revision.CommitSHA || request.DefinitionDigest != lease.Revision.Digest {
 		return artifact, state.ErrInvalidArgument
 	}
+	if lease.Source.Spec.Provider == "gitlab" {
+		return artifact, fmt.Errorf("GitLab workload source preparation requires a qualified production adapter")
+	}
 	if _, err := s.verifyEnvironmentGitRepository(ctx, lease.Source.AccountID, lease.Source.Spec.InstallationID, lease.Source.Spec.Repository, lease.Source.Spec.RepositoryID); err != nil {
 		return artifact, fmt.Errorf("verify Git build repository: %w", err)
 	}

@@ -257,6 +257,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUB_APP_KEY_PATH` | githubd, shared | `unit` |  |  | `` |  |
 | `FAAS_GITHUB_APP_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
+| `FAAS_GITLAB_OAUTH_CLIENT_ID` | apid | `secrets-env` |  |  | `` | optional GitLab.com GitOps OAuth application; delivered by /etc/faas/sealed.env on apid |
+| `FAAS_GITLAB_OAUTH_CLIENT_SECRET` | apid | `secrets-env` |  |  | `` | optional GitLab.com GitOps OAuth application secret; delivered by /etc/faas/sealed.env on apid |
+| `FAAS_GITLAB_OAUTH_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | optional HTTPS callback ending in /v1/gitlab/callback; delivered by /etc/faas/sealed.env on apid |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
